@@ -12,14 +12,24 @@ describe("web production root", () => {
     });
   });
 
-  test("fails closed when the browser API origin is not HTTPS", async () => {
-    const response = await createProductionHealthRoute({
-      DEPLOYMENT_ENVIRONMENT: "production",
-      NEXT_PUBLIC_API_ORIGIN: "http://api.example.com",
-    })();
+  const invalidApiOrigins = [
+    "http://api.example.com",
+    "https://user:password@api.example.com",
+    "https://api.example.com/v1",
+    "https://api.example.com?environment=production",
+    "https://api.example.com#production",
+  ] as const;
 
-    expect(response.status).toBe(503);
-  });
+  for (const invalidApiOrigin of invalidApiOrigins) {
+    test(`fails closed when the browser API origin is ${invalidApiOrigin}`, async () => {
+      const response = await createProductionHealthRoute({
+        DEPLOYMENT_ENVIRONMENT: "production",
+        NEXT_PUBLIC_API_ORIGIN: invalidApiOrigin,
+      })();
+
+      expect(response.status).toBe(503);
+    });
+  }
 
   test("accepts a direct HTTPS API Worker origin", async () => {
     const response = await createProductionHealthRoute({

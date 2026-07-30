@@ -7,23 +7,14 @@ locals {
   provider_control_bundle_path = abspath("${path.root}/../../apps/provider-control/dist/index.js")
 }
 
-resource "cloudflare_workers_script" "provider_control" {
-  account_id     = var.cloudflare_account_id
-  script_name    = local.provider_control_worker_name
-  content_file   = local.provider_control_bundle_path
-  content_sha256 = filesha256(local.provider_control_bundle_path)
-  main_module    = "index.js"
+resource "cloudflare_worker" "provider_control" {
+  account_id = var.cloudflare_account_id
+  name       = local.provider_control_worker_name
 
-  compatibility_date = "2026-07-30"
-
-  bindings = [
-    {
-      name = "DEPLOYMENT_ENVIRONMENT"
-      text = var.deployment_environment
-      type = "plain_text"
-    }
-  ]
-
+  subdomain = {
+    enabled          = false
+    previews_enabled = false
+  }
   observability = {
     enabled            = true
     head_sampling_rate = 1
@@ -41,21 +32,82 @@ resource "cloudflare_workers_script" "provider_control" {
   }
 }
 
-resource "cloudflare_workers_script_subdomain" "provider_control" {
-  account_id       = var.cloudflare_account_id
-  script_name      = cloudflare_workers_script.provider_control.script_name
-  enabled          = false
-  previews_enabled = false
-}
-
-resource "cloudflare_workers_script" "api" {
-  account_id     = var.cloudflare_account_id
-  script_name    = local.api_worker_name
-  content_file   = local.api_bundle_path
-  content_sha256 = filesha256(local.api_bundle_path)
-  main_module    = "index.js"
+resource "cloudflare_worker_version" "provider_control" {
+  account_id  = var.cloudflare_account_id
+  worker_id   = cloudflare_worker.provider_control.id
+  main_module = "index.js"
 
   compatibility_date = "2026-07-30"
+
+  modules = [
+    {
+      name         = "index.js"
+      content_file = local.provider_control_bundle_path
+      content_type = "application/javascript+module"
+    }
+  ]
+
+  bindings = [
+    {
+      name = "DEPLOYMENT_ENVIRONMENT"
+      text = var.deployment_environment
+      type = "plain_text"
+    }
+  ]
+}
+
+resource "cloudflare_workers_deployment" "provider_control" {
+  account_id  = var.cloudflare_account_id
+  script_name = cloudflare_worker.provider_control.name
+  strategy    = "percentage"
+
+  versions = [
+    {
+      percentage = 100
+      version_id = cloudflare_worker_version.provider_control.id
+    }
+  ]
+}
+
+resource "cloudflare_worker" "api" {
+  account_id = var.cloudflare_account_id
+  name       = local.api_worker_name
+
+  subdomain = {
+    enabled          = false
+    previews_enabled = false
+  }
+  observability = {
+    enabled            = true
+    head_sampling_rate = 1
+    logs = {
+      enabled            = true
+      head_sampling_rate = 1
+      invocation_logs    = true
+      persist            = true
+    }
+    traces = {
+      enabled            = true
+      head_sampling_rate = 1
+      persist            = true
+    }
+  }
+}
+
+resource "cloudflare_worker_version" "api" {
+  account_id  = var.cloudflare_account_id
+  worker_id   = cloudflare_worker.api.id
+  main_module = "index.js"
+
+  compatibility_date = "2026-07-30"
+
+  modules = [
+    {
+      name         = "index.js"
+      content_file = local.api_bundle_path
+      content_type = "application/javascript+module"
+    }
+  ]
 
   bindings = [
     {
@@ -65,40 +117,34 @@ resource "cloudflare_workers_script" "api" {
     },
     {
       name    = "PROVIDER_CONTROL"
-      service = cloudflare_workers_script.provider_control.script_name
+      service = cloudflare_worker.provider_control.name
       type    = "service"
     }
   ]
 
-  observability = {
-    enabled            = true
-    head_sampling_rate = 1
-    logs = {
-      enabled            = true
-      head_sampling_rate = 1
-      invocation_logs    = true
-      persist            = true
-    }
-    traces = {
-      enabled            = true
-      head_sampling_rate = 1
-      persist            = true
-    }
-  }
+  depends_on = [cloudflare_workers_deployment.provider_control]
 }
 
-resource "cloudflare_workers_script_subdomain" "api" {
-  account_id       = var.cloudflare_account_id
-  script_name      = cloudflare_workers_script.api.script_name
-  enabled          = false
-  previews_enabled = false
+resource "cloudflare_workers_deployment" "api" {
+  account_id  = var.cloudflare_account_id
+  script_name = cloudflare_worker.api.name
+  strategy    = "percentage"
+
+  versions = [
+    {
+      percentage = 100
+      version_id = cloudflare_worker_version.api.id
+    }
+  ]
 }
 
 resource "cloudflare_workers_custom_domain" "api" {
   account_id = var.cloudflare_account_id
   zone_id    = var.cloudflare_zone_id
   hostname   = var.api_hostname
-  service    = cloudflare_workers_script.api.script_name
+  service    = cloudflare_worker.api.name
+
+  depends_on = [cloudflare_workers_deployment.api]
 }
 
 resource "vercel_project" "web" {

@@ -15,7 +15,7 @@ output "web_hostname" {
 
 output "provider_control_service" {
   description = "Private service-binding target; no public hostname is declared."
-  value       = cloudflare_workers_script.provider_control.script_name
+  value       = cloudflare_worker.provider_control.name
 }
 
 output "vercel_project_id" {

@@ -18,31 +18,31 @@ run "development_topology" {
   }
 
   assert {
-    condition     = cloudflare_workers_script.api.script_name == "whatsapp-mcp-api-development"
+    condition     = cloudflare_worker.api.name == "whatsapp-mcp-api-development"
     error_message = "Development must have an environment-specific API Worker."
   }
 
   assert {
-    condition     = cloudflare_workers_script.provider_control.script_name == "whatsapp-mcp-provider-control-development"
+    condition     = cloudflare_worker.provider_control.name == "whatsapp-mcp-provider-control-development"
     error_message = "Development must have an environment-specific provider-control Worker."
   }
 
   assert {
     condition = one([
-      for binding in cloudflare_workers_script.api.bindings :
+      for binding in cloudflare_worker_version.api.bindings :
       binding.service if binding.name == "PROVIDER_CONTROL"
-    ]) == cloudflare_workers_script.provider_control.script_name
+    ]) == cloudflare_worker.provider_control.name
     error_message = "The API must bind to provider-control in the same environment."
   }
 
   assert {
     condition = (
-      cloudflare_workers_script_subdomain.api.enabled == false &&
-      cloudflare_workers_script_subdomain.api.previews_enabled == false &&
-      cloudflare_workers_script_subdomain.provider_control.enabled == false &&
-      cloudflare_workers_script_subdomain.provider_control.previews_enabled == false
+      cloudflare_worker.api.subdomain.enabled == false &&
+      cloudflare_worker.api.subdomain.previews_enabled == false &&
+      cloudflare_worker.provider_control.subdomain.enabled == false &&
+      cloudflare_worker.provider_control.subdomain.previews_enabled == false
     )
-    error_message = "Workers must not expose workers.dev or preview ingress."
+    error_message = "Workers must disable public generated hostnames before any version is deployed."
   }
 
   assert {
@@ -76,12 +76,12 @@ run "preview_topology" {
   }
 
   assert {
-    condition     = cloudflare_workers_script.api.script_name == "whatsapp-mcp-api-preview"
+    condition     = cloudflare_worker.api.name == "whatsapp-mcp-api-preview"
     error_message = "Preview must have an environment-specific API Worker."
   }
 
   assert {
-    condition     = cloudflare_workers_script.provider_control.script_name == "whatsapp-mcp-provider-control-preview"
+    condition     = cloudflare_worker.provider_control.name == "whatsapp-mcp-provider-control-preview"
     error_message = "Preview must have an environment-specific provider-control Worker."
   }
 
@@ -108,12 +108,12 @@ run "production_topology" {
   }
 
   assert {
-    condition     = cloudflare_workers_script.api.script_name == "whatsapp-mcp-api"
+    condition     = cloudflare_worker.api.name == "whatsapp-mcp-api"
     error_message = "Production must retain the canonical API Worker name."
   }
 
   assert {
-    condition     = cloudflare_workers_script.provider_control.script_name == "whatsapp-mcp-provider-control"
+    condition     = cloudflare_worker.provider_control.name == "whatsapp-mcp-provider-control"
     error_message = "Production must retain the canonical provider-control Worker name."
   }
 
