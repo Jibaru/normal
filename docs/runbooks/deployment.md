@@ -32,8 +32,8 @@ the test Layer marker.
 Deploy the private Worker first so the API service binding always has a target:
 
 ```sh
-bun run --cwd apps/provider-control wrangler deploy
-bun run --cwd apps/api wrangler deploy
+CI=true bun run --cwd apps/provider-control wrangler deploy
+CI=true bun run --cwd apps/api wrangler deploy
 vercel deploy --prod --cwd apps/web
 ```
 
