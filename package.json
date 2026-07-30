@@ -9,10 +9,13 @@
   ],
   "scripts": {
     "build": "turbo run build --cache-dir=.turbo/cache && bun run inspect:bundles",
+    "db:check": "bun run --cwd packages/db db:check",
+    "db:migrate": "bun run --cwd packages/db db:migrate",
     "dev": "turbo run dev --parallel --cache-dir=.turbo/cache",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "inspect:bundles": "bun scripts/inspect-production-bundles.ts",
+    "infra:validate": "tofu -chdir=infra/production fmt -check && tofu -chdir=infra/production init -backend=false && tofu -chdir=infra/production validate",
     "lint": "turbo run lint --cache-dir=.turbo/cache && biome check .sandcastle scripts",
     "test": "turbo run test --cache-dir=.turbo/cache",
     "typecheck": "tsc --noEmit -p tsconfig.tools.json && turbo run typecheck --cache-dir=.turbo/cache",

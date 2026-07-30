@@ -29,6 +29,7 @@
 *.pem
 .turbo/
 **/.wrangler/
+**/.terraform/
 
 # debug
 npm-debug.log*

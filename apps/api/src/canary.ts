@@ -1,7 +1,11 @@
-import type { HealthResponse } from "@whatsapp-mcp/contracts/health";
+import type {
+  HealthResponse,
+  ReadinessResponse,
+} from "@whatsapp-mcp/contracts/health";
 import { Effect, type Layer } from "effect";
 import {
   ApplicationConfig,
+  DatabaseReadiness,
   type HttpCompletedEvent,
   SafeTelemetry,
 } from "./services";
@@ -20,16 +24,30 @@ const jsonResponse = (body: unknown, status: number): Response =>
 const canaryProgram = (request: Request) =>
   Effect.gen(function* () {
     const config = yield* ApplicationConfig;
+    const database = yield* DatabaseReadiness;
     const telemetry = yield* SafeTelemetry;
     const path = new URL(request.url).pathname;
+    const isHealth = request.method === "GET" && path === "/health";
+    const isReady = request.method === "GET" && path === "/ready";
 
-    const response =
-      request.method === "GET" && path === "/health"
+    if (!isHealth) {
+      yield* database.check;
+    }
+
+    const response = isHealth
+      ? jsonResponse(
+          {
+            service: "api",
+            status: "ok",
+          } satisfies HealthResponse,
+          200,
+        )
+      : isReady
         ? jsonResponse(
             {
               service: "api",
-              status: "ok",
-            } satisfies HealthResponse,
+              status: "ready",
+            } satisfies ReadinessResponse,
             200,
           )
         : jsonResponse({ error: "not_found" }, 404);
@@ -37,8 +55,7 @@ const canaryProgram = (request: Request) =>
     const event: HttpCompletedEvent = {
       event: "http.request.completed",
       method: request.method,
-      route:
-        request.method === "GET" && path === "/health" ? "health" : "unmatched",
+      route: isHealth ? "health" : isReady ? "ready" : "unmatched",
       service: config.service,
       status: response.status,
     };
@@ -48,6 +65,11 @@ const canaryProgram = (request: Request) =>
   });
 
 export const createCanaryHandler =
-  (layer: Layer.Layer<ApplicationConfig | SafeTelemetry, unknown>) =>
+  (
+    layer: Layer.Layer<
+      ApplicationConfig | DatabaseReadiness | SafeTelemetry,
+      unknown
+    >,
+  ) =>
   (request: Request): Promise<Response> =>
     Effect.runPromise(canaryProgram(request).pipe(Effect.provide(layer)));

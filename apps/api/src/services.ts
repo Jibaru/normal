@@ -13,10 +13,18 @@ export const ApplicationConfig = Context.GenericTag<ApplicationConfig>(
   "@whatsapp-mcp/api/ApplicationConfig",
 );
 
+export interface DatabaseReadiness {
+  readonly check: Effect.Effect<void, unknown>;
+}
+
+export const DatabaseReadiness = Context.GenericTag<DatabaseReadiness>(
+  "@whatsapp-mcp/api/DatabaseReadiness",
+);
+
 export interface HttpCompletedEvent {
   readonly event: "http.request.completed";
   readonly method: string;
-  readonly route: "health" | "unmatched";
+  readonly route: "health" | "ready" | "unmatched";
   readonly service: DeployableName;
   readonly status: number;
 }

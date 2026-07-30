@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@whatsapp-mcp/contracts": "workspace:*",
+    "@whatsapp-mcp/db": "workspace:*",
     "@whatsapp-mcp/domain": "workspace:*",
     "effect": "3.22.1"
   },
