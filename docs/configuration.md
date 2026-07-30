@@ -11,6 +11,7 @@ request is accepted. Production roots accept only `development`, `preview`, or
 
 The API Worker receives a `PROVIDER_CONTROL` Cloudflare service binding. It is
 not a string environment value and cannot be supplied by a public request.
+The API health boundary fails closed when this required binding is absent.
 Provider-control has both `workers_dev` and preview URLs disabled, so the
 service binding is its only declared ingress.
 

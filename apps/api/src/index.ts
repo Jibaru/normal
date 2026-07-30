@@ -1,6 +1,7 @@
-import { type ApiEnvironment, createProductionHandler } from "./production";
+import { createProductionHandler } from "./production";
 
-interface Env extends ApiEnvironment {
+interface Env {
+  readonly DEPLOYMENT_ENVIRONMENT: string;
   readonly PROVIDER_CONTROL: Fetcher;
 }
 

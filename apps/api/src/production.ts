@@ -1,4 +1,4 @@
-import { Config, ConfigProvider, Effect, Layer } from "effect";
+import { Config, ConfigProvider, Data, Effect, Layer } from "effect";
 import { createCanaryHandler } from "./canary";
 import {
   ApplicationConfig,
@@ -8,6 +8,14 @@ import {
 
 export interface ApiEnvironment {
   readonly DEPLOYMENT_ENVIRONMENT?: string | undefined;
+  readonly PROVIDER_CONTROL?:
+    | {
+        readonly fetch: (
+          input: RequestInfo | URL,
+          init?: RequestInit,
+        ) => Promise<Response>;
+      }
+    | undefined;
 }
 
 const productionConfig = Config.all({
@@ -18,14 +26,22 @@ const productionConfig = Config.all({
   )("DEPLOYMENT_ENVIRONMENT"),
 });
 
+class MissingProviderControlBinding extends Data.TaggedError(
+  "MissingProviderControlBinding",
+) {}
+
 const configLayer = (environment: ApiEnvironment) =>
   Layer.effect(
     ApplicationConfig,
     productionConfig.pipe(
-      Effect.map((config) => ({
-        ...config,
-        service: "api" as const,
-      })),
+      Effect.flatMap((config) =>
+        typeof environment.PROVIDER_CONTROL?.fetch === "function"
+          ? Effect.succeed({
+              ...config,
+              service: "api" as const,
+            })
+          : Effect.fail(new MissingProviderControlBinding()),
+      ),
       Effect.withConfigProvider(
         ConfigProvider.fromMap(
           new Map(

@@ -1,11 +1,8 @@
 /**
- * Account-level Wasender operations live behind this boundary and are only
- * implemented by the provider-control Worker.
+ * Lifecycle writes reconcile provider state before another side effect. The
+ * concrete Wasender client remains private to this adapter subpath.
  */
-export interface WasenderControlClient {
-  readonly createSession: (request: Request) => Promise<Response>;
-  readonly connectSession: (request: Request) => Promise<Response>;
-  readonly getQrCode: (request: Request) => Promise<Response>;
-  readonly reconcileSession: (request: Request) => Promise<Response>;
-  readonly deleteSession: (request: Request) => Promise<Response>;
-}
+export const lifecycleWritePolicy = {
+  attemptTimeoutMs: 15_000,
+  repeatStrategy: "reconcile-before-repeat",
+} as const;
