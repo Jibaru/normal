@@ -15,6 +15,7 @@ export const makeTestRoot = () => {
     events,
     layer: Layer.merge(
       Layer.succeed(ApplicationConfig, {
+        apiOrigin: new URL("https://api.test.example"),
         environment: "test",
         service: "web",
       }),

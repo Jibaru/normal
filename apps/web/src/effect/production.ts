@@ -1,4 +1,4 @@
-import { Config, ConfigProvider, Effect, Layer } from "effect";
+import { Config, ConfigProvider, Data, Effect, Layer } from "effect";
 import { createHealthRoute } from "./canary";
 import {
   ApplicationConfig,
@@ -8,9 +8,11 @@ import {
 
 export interface WebEnvironment {
   readonly DEPLOYMENT_ENVIRONMENT?: string | undefined;
+  readonly NEXT_PUBLIC_API_ORIGIN?: string | undefined;
 }
 
 const productionConfig = Config.all({
+  apiOrigin: Config.string("NEXT_PUBLIC_API_ORIGIN"),
   environment: Config.literal(
     "development",
     "preview",
@@ -18,14 +20,38 @@ const productionConfig = Config.all({
   )("DEPLOYMENT_ENVIRONMENT"),
 });
 
+class InvalidApiOrigin extends Data.TaggedError("InvalidApiOrigin") {}
+
+const parseApiOrigin = (value: string) =>
+  Effect.try({
+    try: () => new URL(value),
+    catch: () => new InvalidApiOrigin(),
+  }).pipe(
+    Effect.filterOrFail(
+      (url) =>
+        url.protocol === "https:" &&
+        url.username === "" &&
+        url.password === "" &&
+        url.pathname === "/" &&
+        url.search === "" &&
+        url.hash === "",
+      () => new InvalidApiOrigin(),
+    ),
+  );
+
 const configLayer = (environment: WebEnvironment) =>
   Layer.effect(
     ApplicationConfig,
     productionConfig.pipe(
-      Effect.map((config) => ({
-        ...config,
-        service: "web" as const,
-      })),
+      Effect.flatMap(({ apiOrigin, environment }) =>
+        parseApiOrigin(apiOrigin).pipe(
+          Effect.map((validatedApiOrigin) => ({
+            apiOrigin: validatedApiOrigin,
+            environment,
+            service: "web" as const,
+          })),
+        ),
+      ),
       Effect.withConfigProvider(
         ConfigProvider.fromMap(
           new Map(

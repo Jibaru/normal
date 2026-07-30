@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "CI=true wrangler deploy --dry-run --outdir dist",
+    "build": "CI=true wrangler deploy --dry-run --env production --outdir dist",
     "dev": "wrangler dev",
     "lint": "biome check .",
     "test": "vitest run",

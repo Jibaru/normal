@@ -1,17 +1,25 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
 const originalEnvironment = process.env.DEPLOYMENT_ENVIRONMENT;
+const originalApiOrigin = process.env.NEXT_PUBLIC_API_ORIGIN;
 
 beforeAll(() => {
   process.env.DEPLOYMENT_ENVIRONMENT = "production";
+  process.env.NEXT_PUBLIC_API_ORIGIN = "https://api.example.com";
 });
 
 afterAll(() => {
   if (originalEnvironment === undefined) {
     delete process.env.DEPLOYMENT_ENVIRONMENT;
-    return;
+  } else {
+    process.env.DEPLOYMENT_ENVIRONMENT = originalEnvironment;
   }
-  process.env.DEPLOYMENT_ENVIRONMENT = originalEnvironment;
+
+  if (originalApiOrigin === undefined) {
+    delete process.env.NEXT_PUBLIC_API_ORIGIN;
+  } else {
+    process.env.NEXT_PUBLIC_API_ORIGIN = originalApiOrigin;
+  }
 });
 
 describe("web route entrypoint", () => {

@@ -25,6 +25,8 @@ bun run lint
 bun run typecheck
 bun run test
 bun run build
+bun run manifests:validate
+bun run infra:validate
 ```
 
 Run a deployable locally with Turbo filtering, for example:
@@ -39,6 +41,11 @@ Layer marker enters a deployable artifact.
 
 See [deployment configuration](docs/configuration.md) and the
 [deployment runbook](docs/runbooks/deployment.md).
+
+The OpenTofu compute topology in `infra/compute` uses separate state and
+authority for development, preview, and production. It declares the Vercel web
+project, the public API Worker custom-domain route, and the private
+provider-control Worker service binding.
 
 ## Sandcastle
 

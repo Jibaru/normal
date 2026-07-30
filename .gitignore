@@ -23,6 +23,13 @@
 # production
 /build
 **/dist/
+**/.terraform/
+*.tfplan
+*.tfstate
+*.tfstate.*
+*.auto.tfvars
+*.s3.tfbackend
+!*.s3.tfbackend.example
 
 # misc
 .DS_Store

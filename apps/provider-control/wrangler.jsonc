@@ -11,5 +11,25 @@
   },
   "vars": {
     "DEPLOYMENT_ENVIRONMENT": "production"
+  },
+  "env": {
+    "development": {
+      "name": "whatsapp-mcp-provider-control-development",
+      "vars": {
+        "DEPLOYMENT_ENVIRONMENT": "development"
+      }
+    },
+    "preview": {
+      "name": "whatsapp-mcp-provider-control-preview",
+      "vars": {
+        "DEPLOYMENT_ENVIRONMENT": "preview"
+      }
+    },
+    "production": {
+      "name": "whatsapp-mcp-provider-control",
+      "vars": {
+        "DEPLOYMENT_ENVIRONMENT": "production"
+      }
+    }
   }
 }

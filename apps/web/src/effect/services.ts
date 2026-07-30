@@ -5,6 +5,7 @@ import type {
 import { Context, type Effect } from "effect";
 
 export interface ApplicationConfig {
+  readonly apiOrigin: URL;
   readonly environment: DeploymentEnvironment;
   readonly service: DeployableName;
 }

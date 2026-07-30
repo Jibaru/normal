@@ -3,7 +3,7 @@
   "name": "whatsapp-mcp-api",
   "main": "src/index.ts",
   "compatibility_date": "2026-07-30",
-  "workers_dev": true,
+  "workers_dev": false,
   "preview_urls": false,
   "observability": {
     "enabled": true,
@@ -17,5 +17,43 @@
       "binding": "PROVIDER_CONTROL",
       "service": "whatsapp-mcp-provider-control"
     }
-  ]
+  ],
+  "env": {
+    "development": {
+      "name": "whatsapp-mcp-api-development",
+      "vars": {
+        "DEPLOYMENT_ENVIRONMENT": "development"
+      },
+      "services": [
+        {
+          "binding": "PROVIDER_CONTROL",
+          "service": "whatsapp-mcp-provider-control-development"
+        }
+      ]
+    },
+    "preview": {
+      "name": "whatsapp-mcp-api-preview",
+      "vars": {
+        "DEPLOYMENT_ENVIRONMENT": "preview"
+      },
+      "services": [
+        {
+          "binding": "PROVIDER_CONTROL",
+          "service": "whatsapp-mcp-provider-control-preview"
+        }
+      ]
+    },
+    "production": {
+      "name": "whatsapp-mcp-api",
+      "vars": {
+        "DEPLOYMENT_ENVIRONMENT": "production"
+      },
+      "services": [
+        {
+          "binding": "PROVIDER_CONTROL",
+          "service": "whatsapp-mcp-provider-control"
+        }
+      ]
+    }
+  }
 }
