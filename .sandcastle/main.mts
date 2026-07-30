@@ -161,6 +161,10 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
       });
 
       try {
+        const startingHead = (
+          await sandbox.exec("git rev-parse HEAD")
+        ).stdout.trim();
+
         // Run the implementer
         const implement = await sandbox.run({
           name: "implementer",
@@ -183,6 +187,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
             promptFile: "./.sandcastle/review-prompt.md",
             promptArgs: {
               BRANCH: issue.branch,
+              TARGET_BRANCH: startingHead,
             },
           });
 

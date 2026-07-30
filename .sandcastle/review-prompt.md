@@ -8,7 +8,7 @@ Load and follow the `code-review` skill with `{{TARGET_BRANCH}}` as the fixed po
 
 Before reviewing, confirm `{{BRANCH}}` is checked out and that `{{TARGET_BRANCH}}` resolves.
 
-Use issue references in the branch commits to locate the originating issue and any parent PRD. Treat them as the Spec source. Include `.sandcastle/CODING_STANDARDS.md`, `CONTEXT.md`, relevant ADRs under `docs/adr/`, and any other repository guidance discovered by the skill as Standards sources.
+Derive the originating issue number from the deterministic `sandcastle/issue-<id>` branch name, falling back to issue references in branch commits for nonstandard branch names. Read that issue, its comments, and any parent PRD, and treat them as the Spec source. Include `.sandcastle/CODING_STANDARDS.md`, `CONTEXT.md`, relevant ADRs under `docs/adr/`, and any other repository guidance discovered by the skill as Standards sources.
 
 The `code-review` skill itself is read-only. After it produces its separate Standards and Spec reports:
 

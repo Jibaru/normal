@@ -11,7 +11,7 @@ For each branch:
 3. After resolving conflicts, run `bun run lint`, `bun run typecheck`, and `bun run build` to verify everything works
 4. If tests fail, fix the issues before proceeding to the next branch
 
-After all branches are merged, make a single commit summarizing the merge.
+After all branches are merged, do not create an empty summary commit. The merged implementation commits, merge commits, and any verification-fix commits are the complete history.
 
 # CLOSE ISSUES
 

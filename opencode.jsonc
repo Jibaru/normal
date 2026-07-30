@@ -3,11 +3,11 @@
   "references": {
     "normal": {
       "path": "../normal-poc",
-      "description": "Normal: WhatsApp automation platform",
+      "description": "Normal: WhatsApp automation platform"
     },
     "normal-poc": {
       "path": "../normal-poc",
-      "description": "Normal POC",
-    },
-  },
+      "description": "Normal POC"
+    }
+  }
 }

@@ -22,7 +22,7 @@ This project uses [`next/font`](https://nextjs.org/docs/app/building-your-applic
 
 ## Sandcastle
 
-[Sandcastle](https://github.com/mattpocock/sandcastle) runs Codex agents in isolated Docker worktrees. The workflow plans open GitHub issues labeled `sandcastle`, implements and reviews unblocked issues in parallel, then merges completed branches.
+[Sandcastle](https://github.com/mattpocock/sandcastle) runs Codex agents in isolated Docker worktrees. The workflow plans open GitHub issues labeled `sandcastle` and `ready-for-agent`, implements and reviews unblocked issues in parallel, then merges completed branches.
 
 Prerequisites:
 
