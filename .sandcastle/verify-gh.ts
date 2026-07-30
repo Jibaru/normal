@@ -57,7 +57,7 @@ try {
   await exec("gh auth status");
 
   const createOutput = await exec(
-    'gh issue create --title "Sandcastle GH auth verification" --body "This issue was created by the Sandcastle verify-gh script. It will be closed and deleted automatically." --label "Sandcastle"',
+    'gh issue create --title "Sandcastle GH auth verification" --body "This issue was created by the Sandcastle verify-gh script. It will be closed and deleted automatically." --label "sandcastle"',
   );
 
   const issueNumberMatch = createOutput.match(/issues\/(\d+)/);

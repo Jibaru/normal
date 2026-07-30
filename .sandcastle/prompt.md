@@ -1,7 +1,7 @@
 # Context
 
 <!-- Use !`command` to pull in dynamic context. Commands run inside the sandbox. -->
-<!-- Example: !`git log --oneline -10` or !`gh issue list --state open --label Sandcastle --limit 100 --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'` -->
+<!-- Example: !`git log --oneline -10` or !`gh issue list --state open --label sandcastle --limit 100 --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'` -->
 
 # Task
 
