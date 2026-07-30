@@ -10,14 +10,19 @@ const isDirectNeonMigrationUrl = (
   try {
     const url = new URL(Redacted.value(value));
     const endpoint = url.hostname.split(".", 1)[0];
+    const sslModes = url.searchParams.getAll("sslmode");
+    const hasAuthorityOverride = ["host", "password", "port", "user"].some(
+      (parameter) => url.searchParams.has(parameter),
+    );
     return (
       (url.protocol === "postgres:" || url.protocol === "postgresql:") &&
       url.hostname.endsWith(".neon.tech") &&
       !endpoint?.endsWith("-pooler") &&
       url.username.length > 0 &&
       url.password.length > 0 &&
-      (url.searchParams.get("sslmode") === "require" ||
-        url.searchParams.get("sslmode") === "verify-full")
+      !hasAuthorityOverride &&
+      sslModes.length === 1 &&
+      (sslModes[0] === "require" || sslModes[0] === "verify-full")
     );
   } catch {
     return false;
