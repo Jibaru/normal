@@ -1,0 +1,26 @@
+{
+  "name": "@whatsapp-mcp/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "dev": "wrangler dev",
+    "lint": "biome check .",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@whatsapp-mcp/contracts": "workspace:*",
+    "@whatsapp-mcp/domain": "workspace:*",
+    "effect": "3.22.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260730.1",
+    "@cloudflare/vitest-pool-workers": "0.19.1",
+    "@types/bun": "^1.3.14",
+    "typescript": "^5",
+    "vitest": "4.1.10",
+    "wrangler": "4.116.0"
+  }
+}

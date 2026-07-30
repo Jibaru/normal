@@ -1,62 +1,51 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# WhatsApp MCP Platform
 
-## Getting Started
+A Bun-workspace monorepo for the three independently deployed applications
+defined by ADR 0002:
 
-First, run the development server:
+- `apps/web`: the Next.js product UI on Vercel
+- `apps/api`: the public Cloudflare API Worker
+- `apps/provider-control`: the private Cloudflare Worker reachable only through
+  an API service binding
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+Shared modules have explicit subpath exports and no catch-all barrel:
+
+- `packages/domain`: pure domain rules
+- `packages/contracts`: product and MCP schemas
+- `packages/db`: database configuration, migrations, and tenant repositories
+- `packages/wasender`: separate session, control, and webhook-normalization
+  boundaries
+
+## Local verification
+
+```sh
+bun install --frozen-lockfile
+bun run format:check
+bun run lint
+bun run typecheck
+bun run test
+bun run build
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Run a deployable locally with Turbo filtering, for example:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```sh
+bun run dev --filter=@whatsapp-mcp/web
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Production and test Effect roots are separate modules. Runtime configuration
+cannot select a test Layer, and the production build inspection fails if a test
+Layer marker enters a deployable artifact.
+
+See [deployment configuration](docs/configuration.md) and the
+[deployment runbook](docs/runbooks/deployment.md).
 
 ## Sandcastle
 
-[Sandcastle](https://github.com/mattpocock/sandcastle) runs Codex agents in isolated Docker worktrees. The workflow plans open GitHub issues labeled `sandcastle` and `ready-for-agent`, implements and reviews unblocked issues in parallel, then merges completed branches.
+Sandcastle runs issue agents in isolated Docker worktrees. After authenticating
+Docker, GitHub CLI, and Codex:
 
-Prerequisites:
-
-- Docker Desktop is running.
-- `gh auth status` succeeds for this repository.
-- Codex is authenticated at `~/.codex/auth.json`.
-
-Build the local sandbox image once after cloning:
-
-```bash
+```sh
 bun run sandcastle:build-image
-```
-
-Rebuild it after changing `.sandcastle/Dockerfile` or when the host UID/GID changes. Source and dependency changes do not require an image rebuild because Sandcastle bind-mounts a worktree and runs `bun install` when each sandbox starts.
-
-Run the issue workflow with:
-
-```bash
 bun run sandcastle
 ```
-
-The image is local (`sandcastle:whatsapp-mcp`); it does not need to be pushed to a registry.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.

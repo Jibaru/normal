@@ -1,0 +1,19 @@
+{
+  "name": "@whatsapp-mcp/domain",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./deployment": "./src/deployment.ts"
+  },
+  "scripts": {
+    "build": "bun build src/deployment.ts --outdir dist --target bun",
+    "lint": "biome check .",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "typescript": "^5"
+  }
+}

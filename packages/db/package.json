@@ -1,0 +1,22 @@
+{
+  "name": "@whatsapp-mcp/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./config": "./src/config.ts"
+  },
+  "scripts": {
+    "build": "bun build src/config.ts --outdir dist --target bun",
+    "lint": "biome check .",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "effect": "3.22.1"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "typescript": "^5"
+  }
+}

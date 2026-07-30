@@ -1,0 +1,21 @@
+{
+  "name": "@whatsapp-mcp/wasender",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./control": "./src/control.ts",
+    "./session": "./src/session.ts",
+    "./webhook": "./src/webhook.ts"
+  },
+  "scripts": {
+    "build": "bun build src/control.ts src/session.ts src/webhook.ts --outdir dist --target bun",
+    "lint": "biome check .",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "typescript": "^5"
+  }
+}

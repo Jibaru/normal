@@ -1,0 +1,23 @@
+{
+  "name": "@whatsapp-mcp/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./health": "./src/health.ts"
+  },
+  "scripts": {
+    "build": "bun build src/health.ts --outdir dist --target bun",
+    "lint": "biome check .",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@whatsapp-mcp/domain": "workspace:*",
+    "effect": "3.22.1"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "typescript": "^5"
+  }
+}
