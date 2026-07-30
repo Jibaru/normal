@@ -292,6 +292,35 @@ describe("KMS-rooted envelope encryption", () => {
     );
   });
 
+  test("rejects a different connection key with identical authenticated context", async () => {
+    const { accountKey, connectionKey, encryption } = await setup();
+    const replacementConnectionKey = await Effect.runPromise(
+      encryption.createConnectionKey({
+        accountId: "pa_account_one",
+        accountKey,
+        connectionId: "wac_connection_one",
+        keyVersion: 4,
+      }),
+    );
+    const ciphertext = await Effect.runPromise(
+      encryption.encrypt({
+        accountKey,
+        connectionKey,
+        context: context(),
+        plaintext: textEncoder.encode("secret"),
+      }),
+    );
+
+    await expectEncryptionFailure(
+      encryption.decrypt({
+        accountKey,
+        ciphertext,
+        connectionKey: replacementConnectionKey,
+        context: context(),
+      }),
+    );
+  });
+
   test("rejects substituted Personal Account key context", async () => {
     const { accountKey, encryption } = await setup();
 
@@ -356,5 +385,43 @@ describe("KMS-rooted envelope encryption", () => {
     for (const plaintext of kms.decryptedPlaintexts) {
       expect(Array.from(plaintext)).toEqual(new Array(32).fill(0));
     }
+  });
+
+  test("zeroes generated per-connection key bytes when wrapping ends", async () => {
+    const kms = await makeTestKms();
+    const generatedConnectionKeys: Array<Uint8Array> = [];
+    const encryption = makeEnvelopeEncryption({
+      contentRootKeyId:
+        "arn:aws:kms:us-east-1:111122223333:key/content-root-key",
+      environment: "preview",
+      kms: kms.service,
+      randomBytes: (length) => {
+        const bytes = crypto.getRandomValues(new Uint8Array(length));
+        if (length === 32) {
+          generatedConnectionKeys.push(bytes);
+        }
+        return bytes;
+      },
+    });
+    const accountKey = await Effect.runPromise(
+      encryption.createPersonalAccountKey({
+        accountId: "pa_account_one",
+        keyVersion: 1,
+      }),
+    );
+
+    await Effect.runPromise(
+      encryption.createConnectionKey({
+        accountId: "pa_account_one",
+        accountKey,
+        connectionId: "wac_connection_one",
+        keyVersion: 1,
+      }),
+    );
+
+    expect(generatedConnectionKeys).toHaveLength(1);
+    expect(Array.from(generatedConnectionKeys[0] ?? [])).toEqual(
+      new Array(32).fill(0),
+    );
   });
 });

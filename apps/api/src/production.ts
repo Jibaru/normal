@@ -59,6 +59,15 @@ class MissingProviderControlBinding extends Data.TaggedError(
   "MissingProviderControlBinding",
 ) {}
 
+const environmentConfigProvider = (environment: ApiEnvironment) =>
+  ConfigProvider.fromMap(
+    new Map(
+      Object.entries(environment).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ),
+    ),
+  );
+
 const configLayer = (environment: ApiEnvironment) =>
   Layer.effect(
     ApplicationConfig,
@@ -71,25 +80,7 @@ const configLayer = (environment: ApiEnvironment) =>
             })
           : Effect.fail(new MissingProviderControlBinding()),
       ),
-      Effect.withConfigProvider(
-        ConfigProvider.fromMap(
-          new Map(
-            Object.entries(environment).filter(
-              (entry): entry is [string, string] =>
-                typeof entry[1] === "string",
-            ),
-          ),
-        ),
-      ),
-    ),
-  );
-
-const environmentConfigProvider = (environment: ApiEnvironment) =>
-  ConfigProvider.fromMap(
-    new Map(
-      Object.entries(environment).filter(
-        (entry): entry is [string, string] => typeof entry[1] === "string",
-      ),
+      Effect.withConfigProvider(environmentConfigProvider(environment)),
     ),
   );
 

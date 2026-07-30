@@ -99,6 +99,7 @@ interface EnvelopeEncryptionOptions {
   readonly contentRootKeyId: string;
   readonly environment: DeploymentEnvironment;
   readonly kms: KmsKeyService;
+  readonly randomBytes?: ((length: number) => Uint8Array) | undefined;
 }
 
 const isPositiveVersion = (value: number) =>
@@ -232,6 +233,7 @@ export const makeEnvelopeEncryption = ({
   contentRootKeyId,
   environment,
   kms,
+  randomBytes = (length) => crypto.getRandomValues(new Uint8Array(length)),
 }: EnvelopeEncryptionOptions): EnvelopeEncryption => {
   const withAccountKey = <A>(
     operation: EncryptionOperation,
@@ -371,14 +373,12 @@ export const makeEnvelopeEncryption = ({
       } as const;
 
       return withAccountKey(operation, accountKey, (accountCryptoKey) => {
-        const keyBytes = crypto.getRandomValues(new Uint8Array(AES_KEY_BYTES));
+        const keyBytes = randomBytes(AES_KEY_BYTES);
         return Effect.acquireUseRelease(
           Effect.succeed(keyBytes),
           (plaintextKey) =>
             attemptCrypto(operation, async () => {
-              const nonce = crypto.getRandomValues(
-                new Uint8Array(AES_GCM_NONCE_BYTES),
-              );
+              const nonce = randomBytes(AES_GCM_NONCE_BYTES);
               const ciphertext = await crypto.subtle.encrypt(
                 {
                   additionalData: toArrayBuffer(
@@ -419,9 +419,7 @@ export const makeEnvelopeEncryption = ({
         connectionKey,
         (connectionCryptoKey) =>
           attemptCrypto(operation, async () => {
-            const nonce = crypto.getRandomValues(
-              new Uint8Array(AES_GCM_NONCE_BYTES),
-            );
+            const nonce = randomBytes(AES_GCM_NONCE_BYTES);
             const ciphertext = await crypto.subtle.encrypt(
               {
                 additionalData: toArrayBuffer(
