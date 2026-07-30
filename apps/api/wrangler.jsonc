@@ -11,6 +11,7 @@
     "head_sampling_rate": 1
   },
   "vars": {
+    "AWS_KMS_REGION": "us-east-1",
     "DEPLOYMENT_ENVIRONMENT": "production"
   },
   "services": [
@@ -23,6 +24,7 @@
     "development": {
       "name": "whatsapp-mcp-api-development",
       "vars": {
+        "AWS_KMS_REGION": "us-east-1",
         "DEPLOYMENT_ENVIRONMENT": "development"
       },
       "services": [
@@ -35,6 +37,7 @@
     "preview": {
       "name": "whatsapp-mcp-api-preview",
       "vars": {
+        "AWS_KMS_REGION": "us-east-1",
         "DEPLOYMENT_ENVIRONMENT": "preview"
       },
       "services": [
@@ -47,6 +50,7 @@
     "production": {
       "name": "whatsapp-mcp-api",
       "vars": {
+        "AWS_KMS_REGION": "us-east-1",
         "DEPLOYMENT_ENVIRONMENT": "production"
       },
       "services": [

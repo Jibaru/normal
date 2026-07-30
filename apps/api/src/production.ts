@@ -1,6 +1,12 @@
+import { KMSClient } from "@aws-sdk/client-kms";
 import { checkDatabaseReadiness } from "@whatsapp-mcp/db/connectivity";
-import { Config, ConfigProvider, Data, Effect, Layer } from "effect";
+import { Config, ConfigProvider, Data, Effect, Layer, Redacted } from "effect";
 import { createCanaryHandler } from "./canary";
+import { makeAwsKmsKeyService } from "./encryption/aws-kms";
+import {
+  EnvelopeEncryptionService,
+  makeEnvelopeEncryption,
+} from "./encryption/envelope";
 import {
   ApplicationConfig,
   DatabaseReadiness,
@@ -9,12 +15,17 @@ import {
 } from "./services";
 
 export interface ApiEnvironment {
+  readonly AWS_ACCESS_KEY_ID?: string | undefined;
+  readonly AWS_KMS_REGION?: string | undefined;
+  readonly AWS_SECRET_ACCESS_KEY?: string | undefined;
+  readonly AWS_SESSION_TOKEN?: string | undefined;
   readonly DEPLOYMENT_ENVIRONMENT?: string | undefined;
   readonly HYPERDRIVE?:
     | {
         readonly connectionString: string;
       }
     | undefined;
+  readonly KMS_CONTENT_ROOT_KEY_ARN?: string | undefined;
   readonly PROVIDER_CONTROL?:
     | {
         readonly fetch: (
@@ -33,9 +44,36 @@ const productionConfig = Config.all({
   )("DEPLOYMENT_ENVIRONMENT"),
 });
 
+const contentRootKeyArn = Config.string("KMS_CONTENT_ROOT_KEY_ARN").pipe(
+  Config.validate({
+    message: "KMS_CONTENT_ROOT_KEY_ARN must identify a KMS key in us-east-1",
+    validation: (value) =>
+      /^arn:aws(?:-[a-z]+)?:kms:us-east-1:[0-9]{12}:key\/[A-Za-z0-9-]+$/.test(
+        value,
+      ),
+  }),
+);
+
+const kmsConfig = Config.all({
+  accessKeyId: Config.redacted("AWS_ACCESS_KEY_ID"),
+  contentRootKeyArn,
+  region: Config.literal("us-east-1")("AWS_KMS_REGION"),
+  secretAccessKey: Config.redacted("AWS_SECRET_ACCESS_KEY"),
+  sessionToken: Config.redacted("AWS_SESSION_TOKEN"),
+});
+
 class MissingProviderControlBinding extends Data.TaggedError(
   "MissingProviderControlBinding",
 ) {}
+
+const environmentConfigProvider = (environment: ApiEnvironment) =>
+  ConfigProvider.fromMap(
+    new Map(
+      Object.entries(environment).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ),
+    ),
+  );
 
 const configLayer = (environment: ApiEnvironment) =>
   Layer.effect(
@@ -49,16 +87,33 @@ const configLayer = (environment: ApiEnvironment) =>
             })
           : Effect.fail(new MissingProviderControlBinding()),
       ),
-      Effect.withConfigProvider(
-        ConfigProvider.fromMap(
-          new Map(
-            Object.entries(environment).filter(
-              (entry): entry is [string, string] =>
-                typeof entry[1] === "string",
-            ),
-          ),
-        ),
-      ),
+      Effect.withConfigProvider(environmentConfigProvider(environment)),
+    ),
+  );
+
+const encryptionLayer = (environment: ApiEnvironment) =>
+  Layer.effect(
+    EnvelopeEncryptionService,
+    Config.all({
+      application: productionConfig,
+      kms: kmsConfig,
+    }).pipe(
+      Effect.map(({ application, kms }) => {
+        const client = new KMSClient({
+          credentials: {
+            accessKeyId: Redacted.value(kms.accessKeyId),
+            secretAccessKey: Redacted.value(kms.secretAccessKey),
+            sessionToken: Redacted.value(kms.sessionToken),
+          },
+          region: kms.region,
+        });
+        return makeEnvelopeEncryption({
+          contentRootKeyId: kms.contentRootKeyArn,
+          environment: application.environment,
+          kms: makeAwsKmsKeyService(client),
+        });
+      }),
+      Effect.withConfigProvider(environmentConfigProvider(environment)),
     ),
   );
 
@@ -100,6 +155,7 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
       configLayer(environment),
       databaseLayer(environment),
       telemetryLayer,
+      encryptionLayer(environment),
     ),
   );
 

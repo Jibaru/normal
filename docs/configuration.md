@@ -15,6 +15,11 @@ request is accepted. Production roots accept only `development`, `preview`, or
 | `CLOUDFLARE_ACCOUNT_ID` | Sensitive identifier | Wrangler | Cloudflare account selected for Worker deployment. |
 | `CLOUDFLARE_HYPERDRIVE_ID` | Sensitive identifier | API Wrangler config renderer | Set from OpenTofu output `api_hyperdrive_id`; it is rendered into a mode-0600 generated config, not committed. |
 | `CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID` | Sensitive identifier | API Wrangler config renderer | Set from OpenTofu output `webhook_hyperdrive_id`; it is rendered into a mode-0600 generated config, not committed. |
+| `AWS_KMS_REGION` | Non-secret | API | Must be exactly `us-east-1`, matching ADR 0013 and the KMS stack region. |
+| `KMS_CONTENT_ROOT_KEY_ARN` | Non-secret | API | The environment's `ContentRootKeyArn` CloudFormation output. The production root accepts only a `us-east-1` KMS key ARN. |
+| `AWS_ACCESS_KEY_ID` | Secret | API | Short-lived access key from the environment's `ContentRuntimeRole`; rotate before the role session expires. |
+| `AWS_SECRET_ACCESS_KEY` | Secret | API | Short-lived secret paired with `AWS_ACCESS_KEY_ID`; never log or commit it. |
+| `AWS_SESSION_TOKEN` | Secret | API | Required role-session token. Its absence prevents the API composition root from serving requests. |
 
 The API Worker receives `PROVIDER_CONTROL`, `HYPERDRIVE`, and
 `WEBHOOK_HYPERDRIVE` bindings. They are not string environment values and
@@ -67,5 +72,12 @@ placeholders. Production database state contains generated passwords and must
 use the encrypted, access-controlled S3-compatible backend configured during
 `tofu init`; never store a local production state file.
 
-Example files contain non-secret placeholders only. Add secrets with the
-platform secret command; never commit a populated environment file.
+The API production root also fails closed before serving requests when its KMS
+region, key ARN, or any short-lived role credential is absent or invalid.
+`KMS_CONTENT_ROOT_KEY_ARN` is safe to place in deployment configuration, while
+all three credential values belong in the platform secret store. The SDK
+receives redacted Effect configuration values and no credential, plaintext key,
+plaintext content, or ciphertext is included in application telemetry.
+
+Example files contain placeholders only. Add secrets with the platform secret
+command; never commit a populated environment file or `.dev.vars`.

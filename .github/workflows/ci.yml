@@ -24,6 +24,7 @@ jobs:
       - run: bun run format:check
       - run: bun run lint
       - run: bun run typecheck
+      - run: bun run validate:infra
       - run: bun run test
       - run: bun run build
       - run: bun run manifests:validate

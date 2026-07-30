@@ -1,0 +1,574 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "KMS roots and isolated IAM authorities for WhatsApp MCP envelope encryption",
+  "Parameters": {
+    "DeploymentEnvironment": {
+      "AllowedValues": ["development", "preview", "production"],
+      "Description": "Deployment environment bound into every KMS encryption context.",
+      "Type": "String"
+    },
+    "KmsAdministratorAssumerArn": {
+      "AllowedPattern": "^arn:aws(-[a-z]+)?:iam::[0-9]{12}:(role|user)/.+$",
+      "Description": "Bootstrap principal allowed to assume only the KMS lifecycle administrator role.",
+      "Type": "String"
+    },
+    "ContentRuntimeAssumerArn": {
+      "AllowedPattern": "^arn:aws(-[a-z]+)?:iam::[0-9]{12}:(role|user)/.+$",
+      "Description": "Workload identity allowed to assume only the API content runtime role.",
+      "Type": "String"
+    },
+    "DeletionCoordinatorAssumerArn": {
+      "AllowedPattern": "^arn:aws(-[a-z]+)?:iam::[0-9]{12}:(role|user)/.+$",
+      "Description": "Workload identity allowed to assume only the deletion coordinator role.",
+      "Type": "String"
+    },
+    "ProviderControlAssumerArn": {
+      "AllowedPattern": "^arn:aws(-[a-z]+)?:iam::[0-9]{12}:(role|user)/.+$",
+      "Description": "Workload identity allowed to assume only provider-control authority.",
+      "Type": "String"
+    },
+    "OrdinaryOperatorAssumerArn": {
+      "AllowedPattern": "^arn:aws(-[a-z]+)?:iam::[0-9]{12}:(role|user)/.+$",
+      "Description": "Human identity broker allowed to assume only ordinary operator authority.",
+      "Type": "String"
+    }
+  },
+  "Rules": {
+    "AuthoritiesUseDistinctBootstrapPrincipals": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Or": [
+                  {
+                    "Fn::Equals": [
+                      { "Ref": "KmsAdministratorAssumerArn" },
+                      { "Ref": "ContentRuntimeAssumerArn" }
+                    ]
+                  },
+                  {
+                    "Fn::Equals": [
+                      { "Ref": "KmsAdministratorAssumerArn" },
+                      { "Ref": "DeletionCoordinatorAssumerArn" }
+                    ]
+                  },
+                  {
+                    "Fn::Equals": [
+                      { "Ref": "KmsAdministratorAssumerArn" },
+                      { "Ref": "ProviderControlAssumerArn" }
+                    ]
+                  },
+                  {
+                    "Fn::Equals": [
+                      { "Ref": "KmsAdministratorAssumerArn" },
+                      { "Ref": "OrdinaryOperatorAssumerArn" }
+                    ]
+                  },
+                  {
+                    "Fn::Equals": [
+                      { "Ref": "ContentRuntimeAssumerArn" },
+                      { "Ref": "DeletionCoordinatorAssumerArn" }
+                    ]
+                  },
+                  {
+                    "Fn::Equals": [
+                      { "Ref": "ContentRuntimeAssumerArn" },
+                      { "Ref": "ProviderControlAssumerArn" }
+                    ]
+                  },
+                  {
+                    "Fn::Equals": [
+                      { "Ref": "ContentRuntimeAssumerArn" },
+                      { "Ref": "OrdinaryOperatorAssumerArn" }
+                    ]
+                  },
+                  {
+                    "Fn::Equals": [
+                      { "Ref": "DeletionCoordinatorAssumerArn" },
+                      { "Ref": "ProviderControlAssumerArn" }
+                    ]
+                  },
+                  {
+                    "Fn::Equals": [
+                      { "Ref": "DeletionCoordinatorAssumerArn" },
+                      { "Ref": "OrdinaryOperatorAssumerArn" }
+                    ]
+                  },
+                  {
+                    "Fn::Equals": [
+                      { "Ref": "ProviderControlAssumerArn" },
+                      { "Ref": "OrdinaryOperatorAssumerArn" }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "Every authority must use a distinct bootstrap principal."
+        }
+      ]
+    },
+    "DeployOnlyInUsEast1": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Equals": [
+              {
+                "Ref": "AWS::Region"
+              },
+              "us-east-1"
+            ]
+          },
+          "AssertDescription": "The private beta KMS roots must be deployed in us-east-1."
+        }
+      ]
+    }
+  },
+  "Resources": {
+    "KmsAdministratorRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Ref": "KmsAdministratorAssumerArn"
+                }
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Description": "Manages key lifecycle and policy but has no content cryptographic permissions.",
+        "ManagedPolicyArns": [],
+        "MaxSessionDuration": 3600,
+        "RoleName": {
+          "Fn::Sub": "whatsapp-mcp-${DeploymentEnvironment}-kms-administrator"
+        }
+      }
+    },
+    "ContentRuntimeRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Ref": "ContentRuntimeAssumerArn"
+                }
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Description": "API authority for Personal Account key generation/use and Deletion Capsule encryption.",
+        "ManagedPolicyArns": [],
+        "MaxSessionDuration": 3600,
+        "RoleName": {
+          "Fn::Sub": "whatsapp-mcp-${DeploymentEnvironment}-content-runtime"
+        }
+      }
+    },
+    "DeletionCoordinatorRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Ref": "DeletionCoordinatorAssumerArn"
+                }
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Description": "Decrypts short-lived Deletion Capsules and never tenant content.",
+        "ManagedPolicyArns": [],
+        "MaxSessionDuration": 3600,
+        "RoleName": {
+          "Fn::Sub": "whatsapp-mcp-${DeploymentEnvironment}-deletion-coordinator"
+        }
+      }
+    },
+    "ProviderControlRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Ref": "ProviderControlAssumerArn"
+                }
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Description": "Provider-control authority explicitly denied all platform KMS decryption.",
+        "ManagedPolicyArns": [],
+        "MaxSessionDuration": 3600,
+        "RoleName": {
+          "Fn::Sub": "whatsapp-mcp-${DeploymentEnvironment}-provider-control"
+        }
+      }
+    },
+    "OrdinaryOperatorRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Ref": "OrdinaryOperatorAssumerArn"
+                }
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Description": "Routine operational authority with no content or capsule decryption.",
+        "ManagedPolicyArns": [],
+        "MaxSessionDuration": 3600,
+        "RoleName": {
+          "Fn::Sub": "whatsapp-mcp-${DeploymentEnvironment}-ordinary-operator"
+        }
+      }
+    },
+    "ContentRootKey": {
+      "Type": "AWS::KMS::Key",
+      "Properties": {
+        "Description": {
+          "Fn::Sub": "WhatsApp MCP ${DeploymentEnvironment} Personal Account content root"
+        },
+        "Enabled": true,
+        "EnableKeyRotation": true,
+        "KeySpec": "SYMMETRIC_DEFAULT",
+        "KeyUsage": "ENCRYPT_DECRYPT",
+        "MultiRegion": false,
+        "PendingWindowInDays": 30,
+        "KeyPolicy": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "AllowKeyLifecycleAdministration",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": [
+                  {
+                    "Fn::GetAtt": ["KmsAdministratorRole", "Arn"]
+                  },
+                  {
+                    "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"
+                  }
+                ]
+              },
+              "Action": [
+                "kms:CancelKeyDeletion",
+                "kms:CreateAlias",
+                "kms:DeleteAlias",
+                "kms:DescribeKey",
+                "kms:DisableKey",
+                "kms:DisableKeyRotation",
+                "kms:EnableKey",
+                "kms:EnableKeyRotation",
+                "kms:GetKeyPolicy",
+                "kms:GetKeyRotationStatus",
+                "kms:ListAliases",
+                "kms:ListResourceTags",
+                "kms:PutKeyPolicy",
+                "kms:ScheduleKeyDeletion",
+                "kms:TagResource",
+                "kms:UntagResource",
+                "kms:UpdateAlias",
+                "kms:UpdateKeyDescription"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Sid": "AllowContentRuntimeAccountKeys",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Fn::GetAtt": ["ContentRuntimeRole", "Arn"]
+                }
+              },
+              "Action": ["kms:GenerateDataKey", "kms:Decrypt"],
+              "Resource": "*",
+              "Condition": {
+                "ForAllValues:StringEquals": {
+                  "kms:EncryptionContextKeys": [
+                    "environment",
+                    "purpose",
+                    "personalAccountId",
+                    "keyVersion"
+                  ]
+                },
+                "Null": {
+                  "kms:EncryptionContext:environment": "false",
+                  "kms:EncryptionContext:keyVersion": "false",
+                  "kms:EncryptionContext:personalAccountId": "false",
+                  "kms:EncryptionContext:purpose": "false"
+                },
+                "StringEquals": {
+                  "kms:EncryptionContext:environment": {
+                    "Ref": "DeploymentEnvironment"
+                  },
+                  "kms:EncryptionContext:purpose": "personal-account-key"
+                }
+              }
+            },
+            {
+              "Sid": "DenyNonContentAuthoritiesDecrypt",
+              "Effect": "Deny",
+              "Principal": {
+                "AWS": [
+                  {
+                    "Fn::GetAtt": ["DeletionCoordinatorRole", "Arn"]
+                  },
+                  {
+                    "Fn::GetAtt": ["ProviderControlRole", "Arn"]
+                  },
+                  {
+                    "Fn::GetAtt": ["OrdinaryOperatorRole", "Arn"]
+                  }
+                ]
+              },
+              "Action": "kms:Decrypt",
+              "Resource": "*"
+            }
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "environment",
+            "Value": {
+              "Ref": "DeploymentEnvironment"
+            }
+          },
+          {
+            "Key": "purpose",
+            "Value": "tenant-content-root"
+          }
+        ]
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "ContentRootAlias": {
+      "Type": "AWS::KMS::Alias",
+      "Properties": {
+        "AliasName": {
+          "Fn::Sub": "alias/whatsapp-mcp/${DeploymentEnvironment}/content-root"
+        },
+        "TargetKeyId": {
+          "Ref": "ContentRootKey"
+        }
+      }
+    },
+    "DeletionCoordinatorKey": {
+      "Type": "AWS::KMS::Key",
+      "Properties": {
+        "Description": {
+          "Fn::Sub": "WhatsApp MCP ${DeploymentEnvironment} Deletion Capsule root"
+        },
+        "Enabled": true,
+        "EnableKeyRotation": true,
+        "KeySpec": "SYMMETRIC_DEFAULT",
+        "KeyUsage": "ENCRYPT_DECRYPT",
+        "MultiRegion": false,
+        "PendingWindowInDays": 30,
+        "KeyPolicy": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "AllowKeyLifecycleAdministration",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": [
+                  {
+                    "Fn::GetAtt": ["KmsAdministratorRole", "Arn"]
+                  },
+                  {
+                    "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"
+                  }
+                ]
+              },
+              "Action": [
+                "kms:CancelKeyDeletion",
+                "kms:CreateAlias",
+                "kms:DeleteAlias",
+                "kms:DescribeKey",
+                "kms:DisableKey",
+                "kms:DisableKeyRotation",
+                "kms:EnableKey",
+                "kms:EnableKeyRotation",
+                "kms:GetKeyPolicy",
+                "kms:GetKeyRotationStatus",
+                "kms:ListAliases",
+                "kms:ListResourceTags",
+                "kms:PutKeyPolicy",
+                "kms:ScheduleKeyDeletion",
+                "kms:TagResource",
+                "kms:UntagResource",
+                "kms:UpdateAlias",
+                "kms:UpdateKeyDescription"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Sid": "AllowContentRuntimeCapsuleEncryption",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Fn::GetAtt": ["ContentRuntimeRole", "Arn"]
+                }
+              },
+              "Action": ["kms:Encrypt"],
+              "Resource": "*",
+              "Condition": {
+                "ForAllValues:StringEquals": {
+                  "kms:EncryptionContextKeys": [
+                    "environment",
+                    "purpose",
+                    "deletionMarkerId",
+                    "keyVersion"
+                  ]
+                },
+                "Null": {
+                  "kms:EncryptionContext:deletionMarkerId": "false",
+                  "kms:EncryptionContext:environment": "false",
+                  "kms:EncryptionContext:keyVersion": "false",
+                  "kms:EncryptionContext:purpose": "false"
+                },
+                "StringEquals": {
+                  "kms:EncryptionContext:environment": {
+                    "Ref": "DeploymentEnvironment"
+                  },
+                  "kms:EncryptionContext:purpose": "deletion-capsule"
+                }
+              }
+            },
+            {
+              "Sid": "AllowCoordinatorCapsuleDecryption",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Fn::GetAtt": ["DeletionCoordinatorRole", "Arn"]
+                }
+              },
+              "Action": ["kms:Decrypt"],
+              "Resource": "*",
+              "Condition": {
+                "ForAllValues:StringEquals": {
+                  "kms:EncryptionContextKeys": [
+                    "environment",
+                    "purpose",
+                    "deletionMarkerId",
+                    "keyVersion"
+                  ]
+                },
+                "Null": {
+                  "kms:EncryptionContext:deletionMarkerId": "false",
+                  "kms:EncryptionContext:environment": "false",
+                  "kms:EncryptionContext:keyVersion": "false",
+                  "kms:EncryptionContext:purpose": "false"
+                },
+                "StringEquals": {
+                  "kms:EncryptionContext:environment": {
+                    "Ref": "DeploymentEnvironment"
+                  },
+                  "kms:EncryptionContext:purpose": "deletion-capsule"
+                }
+              }
+            },
+            {
+              "Sid": "DenyNonCoordinatorCapsuleDecrypt",
+              "Effect": "Deny",
+              "Principal": {
+                "AWS": [
+                  {
+                    "Fn::GetAtt": ["ContentRuntimeRole", "Arn"]
+                  },
+                  {
+                    "Fn::GetAtt": ["ProviderControlRole", "Arn"]
+                  },
+                  {
+                    "Fn::GetAtt": ["OrdinaryOperatorRole", "Arn"]
+                  }
+                ]
+              },
+              "Action": "kms:Decrypt",
+              "Resource": "*"
+            }
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "environment",
+            "Value": {
+              "Ref": "DeploymentEnvironment"
+            }
+          },
+          {
+            "Key": "purpose",
+            "Value": "deletion-capsule-root"
+          }
+        ]
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "DeletionCoordinatorAlias": {
+      "Type": "AWS::KMS::Alias",
+      "Properties": {
+        "AliasName": {
+          "Fn::Sub": "alias/whatsapp-mcp/${DeploymentEnvironment}/deletion-coordinator"
+        },
+        "TargetKeyId": {
+          "Ref": "DeletionCoordinatorKey"
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "ContentRootKeyArn": {
+      "Description": "Configure the API as KMS_CONTENT_ROOT_KEY_ARN.",
+      "Value": {
+        "Fn::GetAtt": ["ContentRootKey", "Arn"]
+      }
+    },
+    "ContentRuntimeRoleArn": {
+      "Value": {
+        "Fn::GetAtt": ["ContentRuntimeRole", "Arn"]
+      }
+    },
+    "DeletionCoordinatorKeyArn": {
+      "Description": "Deletion Capsule key; never configure this as a content root.",
+      "Value": {
+        "Fn::GetAtt": ["DeletionCoordinatorKey", "Arn"]
+      }
+    },
+    "DeletionCoordinatorRoleArn": {
+      "Value": {
+        "Fn::GetAtt": ["DeletionCoordinatorRole", "Arn"]
+      }
+    }
+  }
+}

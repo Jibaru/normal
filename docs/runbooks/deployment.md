@@ -7,6 +7,8 @@
 - An authenticated Vercel CLI
 - A Cloudflare account and zone with Workers enabled for each authority scope
 - A Neon organization with a plan that supports a 30-day history window
+- An AWS account with permission to manage OpenTofu state, CloudFormation, KMS,
+  and named IAM roles in `us-east-1`
 - A Vercel team for each authority scope
 - Approved API and web custom domains
 - An encrypted, versioned S3 remote-state bucket and KMS key in `us-east-1`
@@ -14,9 +16,9 @@
 - Short-lived `NEON_API_KEY`, `CLOUDFLARE_API_TOKEN`, `VERCEL_API_TOKEN`, and
   AWS credentials for exactly the environment being changed
 
-No application KMS key, Clerk tenant, or Wasender account is required for this
-database and compute foundation. Later behaviors must add their real adapters
-and configuration before they become reachable.
+No Clerk tenant or Wasender account is required for this foundation. The API
+does require its environment-specific AWS KMS stack and short-lived
+`ContentRuntimeRole` credentials before it becomes healthy.
 
 Production authority must not be available to development or preview jobs.
 Use a separate production Cloudflare account and Vercel team, and a separate
@@ -61,6 +63,7 @@ bun install --frozen-lockfile
 bun run format:check
 bun run lint
 bun run typecheck
+bun run validate:infra
 bun run test
 bun run build
 bun run manifests:validate
@@ -168,6 +171,61 @@ newer-than-expected schema. An interrupted migration rolls back its version;
 rerun `bun run db:migrate` after correcting the cause. Never edit an applied
 migration—add a new forward migration.
 
+## Provision encryption authority
+
+Use a dedicated, versioned, non-public S3 bucket for OpenTofu state. Restrict
+bucket and object access to the infrastructure deployment authority, retain
+default encryption, and do not use either application KMS key to encrypt this
+bootstrap state. Native S3 lock files prevent concurrent state changes.
+
+Initialize and deploy one stack per environment. Use five distinct bootstrap
+principals for the KMS administrator, API content runtime, deletion coordinator,
+provider-control, and ordinary operator variables. Both OpenTofu and
+CloudFormation reject a repeated principal.
+
+```sh
+tofu -chdir=infra/aws init \
+  -backend-config="bucket=replace-with-infrastructure-state-bucket" \
+  -backend-config="key=whatsapp-mcp/production/kms.tfstate" \
+  -backend-config="region=us-east-1"
+
+tofu -chdir=infra/aws plan \
+  -out=kms.tfplan \
+  -var="deployment_environment=production" \
+  -var="kms_administrator_assumer_arn=arn:aws:iam::111122223333:role/replace-kms-admin-bootstrap" \
+  -var="content_runtime_assumer_arn=arn:aws:iam::111122223333:role/replace-api-workload-bootstrap" \
+  -var="deletion_coordinator_assumer_arn=arn:aws:iam::111122223333:role/replace-deletion-bootstrap" \
+  -var="provider_control_assumer_arn=arn:aws:iam::111122223333:role/replace-provider-bootstrap" \
+  -var="ordinary_operator_assumer_arn=arn:aws:iam::111122223333:role/replace-human-operator-bootstrap"
+
+tofu -chdir=infra/aws apply kms.tfplan
+```
+
+Record the `content_root_key_arn`, `content_runtime_role_arn`,
+`deletion_coordinator_key_arn`, and `deletion_coordinator_role_arn` OpenTofu
+outputs in the environment's deployment inventory. Configure
+`KMS_CONTENT_ROOT_KEY_ARN` from `content_root_key_arn`. The content key and
+Deletion Capsule key are retained if a stack is deleted or replaced; never
+schedule their deletion as part of ordinary rollback. The owning AWS account
+principal retains key-policy recovery authority for lifecycle and policy
+operations only; that statement grants no cryptographic operation.
+
+The API credential broker must assume only `ContentRuntimeRole` and continuously
+rotate its short-lived access key, secret, and session token in the Cloudflare
+secret store before expiration. Configure the three values with `wrangler
+secret put`; do not give Cloudflare the administrator, deletion coordinator,
+provider-control, or ordinary operator credentials. The trusted bootstrap
+principal also needs a narrowly scoped `sts:AssumeRole` identity policy for
+that one role because the template deliberately declares only each role's trust
+side.
+
+AWS KMS records cryptographic operations in CloudTrail. Encryption context is
+non-secret audit data and is limited here to environment, purpose, opaque
+Personal Account or deletion-marker identity, and key version. Alert on denied
+decrypts, disabled keys, scheduled deletion, policy changes, and rotation being
+disabled. Never copy key plaintext, application plaintext, data-key envelopes,
+or ciphertext into application logs or incident tickets.
+
 ## Deploy
 
 OpenTofu uploads both Worker bundles and orders provider-control before the API
@@ -200,6 +258,9 @@ before the build and points to the same-environment Worker. There is no Vercel
 rewrite or server-side API proxy. The rendered API config is mode `0600`,
 ignored by Git, and fails generation unless both real 32-character Hyperdrive
 identifiers are present.
+The Worker manifests set `AWS_KMS_REGION` explicitly. Set
+`KMS_CONTENT_ROOT_KEY_ARN` in the API deployment configuration and populate the
+three AWS credential secrets before deployment.
 
 ## Smoke check
 
@@ -246,3 +307,11 @@ accounts/zones, Vercel teams, state buckets/KMS keys, provider tokens, domain
 ownership, and DNS approval. These values are intentionally absent from source.
 No code substitution, fake provider, public provider-control route, or
 production fallback is needed when the external values become available.
+
+Roll application code back without rolling back, replacing, disabling, or
+deleting either KMS key.
+Versioned ciphertext retains the key metadata needed across application
+rollbacks and automatic KMS key-material rotation. Treat an incorrect key
+policy or alias as a forward-fix: restore the reviewed template, validate it,
+deploy it, and confirm denied/allowed CloudTrail events before reopening
+traffic.
