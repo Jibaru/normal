@@ -4,17 +4,24 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./health": "./src/health.ts"
+    "./cursor": "./src/cursor.ts",
+    "./handles": "./src/handles.ts",
+    "./health": "./src/health.ts",
+    "./mcp-error": "./src/mcp-error.ts",
+    "./mcp-result": "./src/mcp-result.ts",
+    "./mcp-schema": "./src/mcp-schema.ts",
+    "./stored-media-uri": "./src/stored-media-uri.ts"
   },
   "scripts": {
-    "build": "bun build src/health.ts --outdir dist --target bun",
+    "build": "bun build src/*.ts --outdir dist --target bun",
     "lint": "biome check .",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@whatsapp-mcp/domain": "workspace:*",
-    "effect": "3.22.1"
+    "effect": "3.22.1",
+    "nanoid": "5.1.6"
   },
   "devDependencies": {
     "@types/bun": "^1.3.14",
