@@ -9,9 +9,13 @@ const isDirectNeonMigrationUrl = (
 ): boolean => {
   try {
     const url = new URL(Redacted.value(value));
+    const endpoint = url.hostname.split(".", 1)[0];
     return (
       (url.protocol === "postgres:" || url.protocol === "postgresql:") &&
       url.hostname.endsWith(".neon.tech") &&
+      !endpoint?.endsWith("-pooler") &&
+      url.username.length > 0 &&
+      url.password.length > 0 &&
       (url.searchParams.get("sslmode") === "require" ||
         url.searchParams.get("sslmode") === "verify-full")
     );

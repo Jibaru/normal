@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { PGlite } from "@electric-sql/pglite";
-import { EXPECTED_SCHEMA_VERSION, runMigrations } from "../src/migrations";
+import {
+  EXPECTED_SCHEMA_VERSION,
+  MigrationDriftError,
+  runMigrations,
+} from "../src/migrations";
 import { assertExpectedSchemaVersion } from "../src/readiness";
 
 const accountA = "10000000-0000-4000-8000-000000000001";
@@ -41,6 +45,20 @@ describe("production migrations", () => {
     expect(result.rows).toHaveLength(1);
     expect(result.rows[0]?.version).toBe(EXPECTED_SCHEMA_VERSION);
     expect(result.rows[0]?.checksum).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  test("refuses an applied migration whose checksum has changed", async () => {
+    await runMigrations(database);
+    await database.query(
+      `UPDATE app_private.schema_migrations
+       SET checksum = repeat('0', 64)
+       WHERE version = $1`,
+      [EXPECTED_SCHEMA_VERSION],
+    );
+
+    await expect(runMigrations(database)).rejects.toBeInstanceOf(
+      MigrationDriftError,
+    );
   });
 
   test("exposes only the schema version needed by restricted readiness", async () => {

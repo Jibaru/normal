@@ -58,6 +58,8 @@ describe("migrationConfig", () => {
     "http://example.test/database",
     "postgresql://owner:secret@example.neon.tech/database",
     "postgresql://owner:secret@localhost/database?sslmode=require",
+    "postgresql://owner:secret@ep-example-pooler.us-east-1.aws.neon.tech/database?sslmode=require",
+    "postgresql://owner@example.neon.tech/database?sslmode=require",
   ])("rejects unsafe production migration URL %s", async (url) => {
     await expect(
       Effect.runPromise(

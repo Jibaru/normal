@@ -1,5 +1,5 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, relative, resolve, sep } from "node:path";
 
 const [outputArgument] = process.argv.slice(2);
 
@@ -21,6 +21,19 @@ const config = JSON.parse(await readFile(sourcePath, "utf8")) as Record<
   string,
   unknown
 >;
+const rebasePath = (value: string): string =>
+  relative(dirname(outputPath), resolve(dirname(sourcePath), value)).replaceAll(
+    sep,
+    "/",
+  );
+
+for (const key of ["$schema", "main"]) {
+  const value = config[key];
+  if (typeof value !== "string") {
+    throw new Error(`API Wrangler source config must define string ${key}`);
+  }
+  config[key] = rebasePath(value);
+}
 
 config.hyperdrive = [
   {
@@ -37,3 +50,4 @@ await mkdir(dirname(outputPath), { recursive: true });
 await writeFile(outputPath, `${JSON.stringify(config, null, 2)}\n`, {
   mode: 0o600,
 });
+await chmod(outputPath, 0o600);
