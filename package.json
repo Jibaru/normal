@@ -9,6 +9,8 @@
   ],
   "scripts": {
     "build": "turbo run build --cache-dir=.turbo/cache && bun run inspect:bundles",
+    "db:check": "bun run --cwd packages/db db:check",
+    "db:migrate": "bun run --cwd packages/db db:migrate",
     "dev": "turbo run dev --parallel --cache-dir=.turbo/cache",
     "format": "biome format --write .",
     "format:check": "biome format .",

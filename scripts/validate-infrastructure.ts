@@ -22,12 +22,14 @@ const run = async (command: string[]): Promise<void> => {
 };
 
 await run(["tofu", "fmt", "-check", "-recursive", "infra"]);
-await run([
-  "tofu",
-  "-chdir=infra/compute",
-  "init",
-  "-backend=false",
-  "-input=false",
-]);
-await run(["tofu", "-chdir=infra/compute", "validate", "-no-color"]);
+for (const stack of ["compute", "production"]) {
+  await run([
+    "tofu",
+    `-chdir=infra/${stack}`,
+    "init",
+    "-backend=false",
+    "-input=false",
+  ]);
+  await run(["tofu", `-chdir=infra/${stack}`, "validate", "-no-color"]);
+}
 await run(["tofu", "-chdir=infra/compute", "test", "-no-color"]);

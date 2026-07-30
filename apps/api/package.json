@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "CI=true wrangler deploy --dry-run --env production --outdir dist",
+    "build": "CLOUDFLARE_HYPERDRIVE_ID=00000000000000000000000000000000 CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID=11111111111111111111111111111111 bun ../../scripts/render-api-wrangler.ts .wrangler/build.jsonc && CI=true wrangler deploy --dry-run --config .wrangler/build.jsonc --outdir dist",
     "dev": "wrangler dev",
     "lint": "biome check .",
     "test": "vitest run",
@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@whatsapp-mcp/contracts": "workspace:*",
+    "@whatsapp-mcp/db": "workspace:*",
     "@whatsapp-mcp/domain": "workspace:*",
     "effect": "3.22.1"
   },

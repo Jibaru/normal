@@ -1,13 +1,20 @@
+import { checkDatabaseReadiness } from "@whatsapp-mcp/db/connectivity";
 import { Config, ConfigProvider, Data, Effect, Layer } from "effect";
 import { createCanaryHandler } from "./canary";
 import {
   ApplicationConfig,
+  DatabaseReadiness,
   type HttpCompletedEvent,
   SafeTelemetry,
 } from "./services";
 
 export interface ApiEnvironment {
   readonly DEPLOYMENT_ENVIRONMENT?: string | undefined;
+  readonly HYPERDRIVE?:
+    | {
+        readonly connectionString: string;
+      }
+    | undefined;
   readonly PROVIDER_CONTROL?:
     | {
         readonly fetch: (
@@ -60,6 +67,24 @@ const telemetryLayer = Layer.succeed(SafeTelemetry, {
     Effect.sync(() => console.info(JSON.stringify(event))),
 });
 
+class MissingHyperdriveBinding extends Data.TaggedError(
+  "MissingHyperdriveBinding",
+) {}
+
+const databaseLayer = (environment: ApiEnvironment) =>
+  Layer.succeed(DatabaseReadiness, {
+    check:
+      typeof environment.HYPERDRIVE?.connectionString === "string"
+        ? Effect.tryPromise({
+            try: () =>
+              checkDatabaseReadiness(
+                environment.HYPERDRIVE?.connectionString ?? "",
+              ),
+            catch: (cause) => cause,
+          })
+        : Effect.fail(new MissingHyperdriveBinding()),
+  });
+
 const unavailable = (): Response =>
   new Response(JSON.stringify({ service: "api", status: "unavailable" }), {
     headers: {
@@ -71,7 +96,11 @@ const unavailable = (): Response =>
 
 export const createProductionHandler = (environment: ApiEnvironment) => {
   const handler = createCanaryHandler(
-    Layer.merge(configLayer(environment), telemetryLayer),
+    Layer.mergeAll(
+      configLayer(environment),
+      databaseLayer(environment),
+      telemetryLayer,
+    ),
   );
 
   return async (request: Request): Promise<Response> => {
@@ -80,7 +109,7 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     } catch {
       console.error(
         JSON.stringify({
-          event: "configuration.invalid",
+          event: "request.unavailable",
           service: "api",
         }),
       );

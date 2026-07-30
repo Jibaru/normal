@@ -4,19 +4,27 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./config": "./src/config.ts"
+    "./config": "./src/config.ts",
+    "./connectivity": "./src/connectivity.ts",
+    "./migrations": "./src/migrations.ts",
+    "./readiness": "./src/readiness.ts"
   },
   "scripts": {
-    "build": "bun build src/config.ts --outdir dist --target bun",
+    "build": "bun build src/config.ts src/connectivity.ts src/migrations.ts src/readiness.ts src/schema-version.ts --outdir dist --target bun",
+    "db:check": "bun src/check-cli.ts",
+    "db:migrate": "bun src/migrate-cli.ts",
     "lint": "biome check .",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "effect": "3.22.1"
+    "effect": "3.22.1",
+    "pg": "8.22.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.4",
     "@types/bun": "^1.3.14",
+    "@types/pg": "8.20.0",
     "typescript": "^5"
   }
 }

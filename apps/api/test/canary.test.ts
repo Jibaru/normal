@@ -43,4 +43,18 @@ describe("API Worker canary", () => {
     });
     expect(JSON.stringify(root.events)).not.toContain("do-not-log");
   });
+
+  test("checks the production database boundary before reporting readiness", async () => {
+    const root = makeTestRoot();
+    const response = await createCanaryHandler(root.layer)(
+      new Request("https://api.example.test/ready"),
+    );
+
+    expect(response.status).toBe(200);
+    expect((await response.json()) as unknown).toEqual({
+      service: "api",
+      status: "ready",
+    });
+    expect(root.databaseChecks).toBe(1);
+  });
 });

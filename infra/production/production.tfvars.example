@@ -1,0 +1,3 @@
+cloudflare_account_id = "replace-with-cloudflare-account-id"
+neon_org_id            = "replace-with-neon-organization-id"
+project_name           = "whatsapp-mcp-private-beta"

@@ -15,6 +15,11 @@ export default defineConfig({
     }),
   ],
   test: {
+    server: {
+      deps: {
+        inline: ["pg"],
+      },
+    },
     testTimeout: 30_000,
   },
 });

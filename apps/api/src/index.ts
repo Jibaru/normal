@@ -2,6 +2,7 @@ import { createProductionHandler } from "./production";
 
 interface Env {
   readonly DEPLOYMENT_ENVIRONMENT: string;
+  readonly HYPERDRIVE: Hyperdrive;
   readonly PROVIDER_CONTROL: Fetcher;
 }
 
