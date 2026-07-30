@@ -7,6 +7,8 @@ export type TextContentBlock = {
 
 export type AdditionalContentBlock = {
   readonly type: "resource_link";
+  readonly name: string;
+  readonly uri: string;
   readonly [key: string]: unknown;
 };
 

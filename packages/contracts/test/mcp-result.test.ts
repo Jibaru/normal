@@ -42,6 +42,7 @@ describe("MCP result builders", () => {
       [
         {
           type: "resource_link",
+          name: "Stored Media",
           uri: "whatsapp-media://connections/example",
         },
       ],
@@ -50,6 +51,7 @@ describe("MCP result builders", () => {
     expect(result.content[0]?.type).toBe("text");
     expect(result.content[1]).toEqual({
       type: "resource_link",
+      name: "Stored Media",
       uri: "whatsapp-media://connections/example",
     });
   });
