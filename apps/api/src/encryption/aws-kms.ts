@@ -35,9 +35,18 @@ export const makeAwsKmsKeyService = (
             KeySpec: "AES_256",
           }),
         );
+        if (
+          !result.CiphertextBlob ||
+          result.CiphertextBlob.byteLength === 0 ||
+          !result.Plaintext ||
+          result.Plaintext.byteLength === 0
+        ) {
+          result.Plaintext?.fill(0);
+          throw new AwsKmsError({ operation: "generate-data-key" });
+        }
         return {
-          ciphertext: requiredBytes(result.CiphertextBlob, "generate-data-key"),
-          plaintext: requiredBytes(result.Plaintext, "generate-data-key"),
+          ciphertext: result.CiphertextBlob,
+          plaintext: result.Plaintext,
         };
       },
       catch: () =>

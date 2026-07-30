@@ -3,8 +3,9 @@
 ## Prerequisites
 
 - Bun 1.3.14
+- OpenTofu 1.12.5
 - A Cloudflare account with Workers enabled
-- An AWS account with permission to deploy CloudFormation, KMS, and named IAM
+- An AWS account with permission to manage CloudFormation, KMS, and named IAM
   roles in `us-east-1`
 - A Vercel project whose root directory is `apps/web`
 - `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` in the operator's secret
@@ -32,38 +33,42 @@ the test Layer marker.
 
 ## Provision encryption authority
 
-Validate and deploy one stack per deployment environment. Use five distinct
-bootstrap principals for the KMS administrator, API content runtime, deletion
-coordinator, provider-control, and ordinary operator parameters; reusing one
-principal defeats the declared authority separation.
+Use a dedicated, versioned, non-public S3 bucket for OpenTofu state. Restrict
+bucket and object access to the infrastructure deployment authority, retain
+default encryption, and do not use either application KMS key to encrypt this
+bootstrap state. Native S3 lock files prevent concurrent state changes.
+
+Initialize and deploy one stack per environment. Use five distinct bootstrap
+principals for the KMS administrator, API content runtime, deletion coordinator,
+provider-control, and ordinary operator variables. Both OpenTofu and
+CloudFormation reject a repeated principal.
 
 ```sh
-aws cloudformation validate-template \
-  --region us-east-1 \
-  --template-body file://infra/aws/kms.template.json
+tofu -chdir=infra/aws init \
+  -backend-config="bucket=replace-with-infrastructure-state-bucket" \
+  -backend-config="key=whatsapp-mcp/production/kms.tfstate" \
+  -backend-config="region=us-east-1"
 
-aws cloudformation deploy \
-  --region us-east-1 \
-  --stack-name whatsapp-mcp-production-kms \
-  --template-file infra/aws/kms.template.json \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --parameter-overrides \
-    DeploymentEnvironment=production \
-    KmsAdministratorAssumerArn=arn:aws:iam::111122223333:role/replace-kms-admin-bootstrap \
-    ContentRuntimeAssumerArn=arn:aws:iam::111122223333:role/replace-api-workload-bootstrap \
-    DeletionCoordinatorAssumerArn=arn:aws:iam::111122223333:role/replace-deletion-bootstrap \
-    ProviderControlAssumerArn=arn:aws:iam::111122223333:role/replace-provider-bootstrap \
-    OrdinaryOperatorAssumerArn=arn:aws:iam::111122223333:role/replace-human-operator-bootstrap
+tofu -chdir=infra/aws plan \
+  -out=kms.tfplan \
+  -var="deployment_environment=production" \
+  -var="kms_administrator_assumer_arn=arn:aws:iam::111122223333:role/replace-kms-admin-bootstrap" \
+  -var="content_runtime_assumer_arn=arn:aws:iam::111122223333:role/replace-api-workload-bootstrap" \
+  -var="deletion_coordinator_assumer_arn=arn:aws:iam::111122223333:role/replace-deletion-bootstrap" \
+  -var="provider_control_assumer_arn=arn:aws:iam::111122223333:role/replace-provider-bootstrap" \
+  -var="ordinary_operator_assumer_arn=arn:aws:iam::111122223333:role/replace-human-operator-bootstrap"
+
+tofu -chdir=infra/aws apply kms.tfplan
 ```
 
-Record the `ContentRootKeyArn`, `ContentRuntimeRoleArn`,
-`DeletionCoordinatorKeyArn`, and `DeletionCoordinatorRoleArn` stack outputs in
-the environment's deployment inventory. Configure
-`KMS_CONTENT_ROOT_KEY_ARN` from the first output. The content key and Deletion
-Capsule key are retained if a stack is deleted or replaced; never schedule
-their deletion as part of ordinary rollback. The owning AWS account principal
-retains key-policy recovery authority for lifecycle and policy operations only;
-that statement grants no cryptographic operation.
+Record the `content_root_key_arn`, `content_runtime_role_arn`,
+`deletion_coordinator_key_arn`, and `deletion_coordinator_role_arn` OpenTofu
+outputs in the environment's deployment inventory. Configure
+`KMS_CONTENT_ROOT_KEY_ARN` from `content_root_key_arn`. The content key and
+Deletion Capsule key are retained if a stack is deleted or replaced; never
+schedule their deletion as part of ordinary rollback. The owning AWS account
+principal retains key-policy recovery authority for lifecycle and policy
+operations only; that statement grants no cryptographic operation.
 
 The API credential broker must assume only `ContentRuntimeRole` and continuously
 rotate its short-lived access key, secret, and session token in the Cloudflare

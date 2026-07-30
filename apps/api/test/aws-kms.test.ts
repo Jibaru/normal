@@ -96,4 +96,27 @@ describe("AWS KMS adapter", () => {
       left: { _tag: "AwsKmsError", operation: "generate-data-key" },
     });
   });
+
+  test("zeroes returned plaintext when KMS omits the ciphertext blob", async () => {
+    const plaintext = new Uint8Array(32).fill(7);
+    const client = {
+      send: async () => ({ Plaintext: plaintext }),
+    } as unknown as KMSClient;
+    const service = makeAwsKmsKeyService(client);
+
+    const result = await Effect.runPromise(
+      Effect.either(
+        service.generateDataKey({
+          encryptionContext: {},
+          keyId: "arn:aws:kms:us-east-1:111122223333:key/content",
+        }),
+      ),
+    );
+
+    expect(result).toMatchObject({
+      _tag: "Left",
+      left: { _tag: "AwsKmsError", operation: "generate-data-key" },
+    });
+    expect(Array.from(plaintext)).toEqual(new Array(32).fill(0));
+  });
 });

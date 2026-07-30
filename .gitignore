@@ -29,6 +29,10 @@
 *.pem
 .turbo/
 **/.wrangler/
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
 
 # debug
 npm-debug.log*

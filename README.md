@@ -23,6 +23,7 @@ bun install --frozen-lockfile
 bun run format:check
 bun run lint
 bun run typecheck
+bun run validate:infra
 bun run test
 bun run build
 ```

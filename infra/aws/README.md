@@ -1,8 +1,9 @@
 # AWS encryption infrastructure
 
-`kms.template.json` declares one environment's two non-exportable,
+`main.tf` is the OpenTofu entry point and manages `kms.template.json` as one
+CloudFormation stack per environment. The template declares two non-exportable,
 single-Region symmetric KMS keys and five separated IAM authorities. Deploy it
-only in `us-east-1`; the template rule rejects other regions.
+only in `us-east-1`; both OpenTofu and the template enforce that region.
 
 - `ContentRuntimeRole` can generate and decrypt only Personal Account data keys
   carrying the exact environment/account/purpose/version encryption context.
@@ -20,11 +21,13 @@ becoming unmanageable if the named administrator role is lost. It does not
 receive Encrypt, Decrypt, GenerateDataKey, or ReEncrypt permission from either
 key policy.
 
-Every role trusts a different parameterized bootstrap principal. The caller
-must grant each bootstrap principal `sts:AssumeRole` for only its matching role;
-this template does not create or broaden those external identities.
+Every role trusts a different parameterized bootstrap principal. OpenTofu and
+the CloudFormation template reject reuse of one principal across authorities.
+The caller must grant each bootstrap principal `sts:AssumeRole` for only its
+matching role; this configuration does not create or broaden those external
+identities.
 
 Both keys enable automatic rotation, use a 30-day pending-deletion window, and
 are retained when the stack is deleted or replaced. See the deployment runbook
-for validation, stack deployment, credential delivery, monitoring, and
-rollback.
+for remote-state requirements, validation, deployment, credential delivery,
+monitoring, and rollback.

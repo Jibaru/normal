@@ -16,7 +16,7 @@
     "lint": "turbo run lint --cache-dir=.turbo/cache && biome check .sandcastle scripts",
     "test": "turbo run test --cache-dir=.turbo/cache",
     "typecheck": "tsc --noEmit -p tsconfig.tools.json && turbo run typecheck --cache-dir=.turbo/cache",
-    "validate:infra": "bun scripts/validate-kms-infrastructure.ts",
+    "validate:infra": "bun scripts/validate-kms-infrastructure.ts && tofu -chdir=infra/aws fmt -check && tofu -chdir=infra/aws init -backend=false -input=false && tofu -chdir=infra/aws validate",
     "sandcastle": "bun .sandcastle/main.mts",
     "sandcastle:build-image": "sandcastle docker build-image",
     "sandcastle:verify-gh": "bun .sandcastle/verify-gh.ts"

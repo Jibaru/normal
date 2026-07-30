@@ -26,7 +26,23 @@ type TemplateResource = {
   readonly Type: string;
 };
 
+type DistinctAuthoritiesRule = {
+  readonly Assertions: ReadonlyArray<{
+    readonly Assert: {
+      readonly "Fn::Not": ReadonlyArray<{
+        readonly "Fn::Or": ReadonlyArray<{
+          readonly "Fn::Equals": readonly [
+            { readonly Ref: string },
+            { readonly Ref: string },
+          ];
+        }>;
+      }>;
+    };
+  }>;
+};
+
 const resources = template.Resources as Record<string, TemplateResource>;
+const rules = template.Rules as Record<string, unknown>;
 
 const statementsFor = (resourceName: string) => {
   const resource = resources[resourceName];
@@ -208,5 +224,25 @@ describe("AWS KMS infrastructure", () => {
         },
       });
     }
+
+    const principalParameters = Object.values(roleToPrincipal).sort();
+    const expectedPairs = principalParameters
+      .flatMap((left, leftIndex) =>
+        principalParameters
+          .slice(leftIndex + 1)
+          .map((right) => `${left}|${right}`),
+      )
+      .sort();
+    const distinctRule =
+      rules.AuthoritiesUseDistinctBootstrapPrincipals as DistinctAuthoritiesRule;
+    const comparisons =
+      distinctRule.Assertions[0]?.Assert["Fn::Not"][0]?.["Fn::Or"] ?? [];
+    const actualPairs = comparisons
+      .map(({ "Fn::Equals": [left, right] }) =>
+        [left.Ref, right.Ref].sort().join("|"),
+      )
+      .sort();
+
+    expect(actualPairs).toEqual(expectedPairs);
   });
 });

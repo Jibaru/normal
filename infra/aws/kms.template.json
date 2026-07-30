@@ -34,6 +34,81 @@
     }
   },
   "Rules": {
+    "AuthoritiesUseDistinctBootstrapPrincipals": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Or": [
+                  {
+                    "Fn::Equals": [
+                      { "Ref": "KmsAdministratorAssumerArn" },
+                      { "Ref": "ContentRuntimeAssumerArn" }
+                    ]
+                  },
+                  {
+                    "Fn::Equals": [
+                      { "Ref": "KmsAdministratorAssumerArn" },
+                      { "Ref": "DeletionCoordinatorAssumerArn" }
+                    ]
+                  },
+                  {
+                    "Fn::Equals": [
+                      { "Ref": "KmsAdministratorAssumerArn" },
+                      { "Ref": "ProviderControlAssumerArn" }
+                    ]
+                  },
+                  {
+                    "Fn::Equals": [
+                      { "Ref": "KmsAdministratorAssumerArn" },
+                      { "Ref": "OrdinaryOperatorAssumerArn" }
+                    ]
+                  },
+                  {
+                    "Fn::Equals": [
+                      { "Ref": "ContentRuntimeAssumerArn" },
+                      { "Ref": "DeletionCoordinatorAssumerArn" }
+                    ]
+                  },
+                  {
+                    "Fn::Equals": [
+                      { "Ref": "ContentRuntimeAssumerArn" },
+                      { "Ref": "ProviderControlAssumerArn" }
+                    ]
+                  },
+                  {
+                    "Fn::Equals": [
+                      { "Ref": "ContentRuntimeAssumerArn" },
+                      { "Ref": "OrdinaryOperatorAssumerArn" }
+                    ]
+                  },
+                  {
+                    "Fn::Equals": [
+                      { "Ref": "DeletionCoordinatorAssumerArn" },
+                      { "Ref": "ProviderControlAssumerArn" }
+                    ]
+                  },
+                  {
+                    "Fn::Equals": [
+                      { "Ref": "DeletionCoordinatorAssumerArn" },
+                      { "Ref": "OrdinaryOperatorAssumerArn" }
+                    ]
+                  },
+                  {
+                    "Fn::Equals": [
+                      { "Ref": "ProviderControlAssumerArn" },
+                      { "Ref": "OrdinaryOperatorAssumerArn" }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "Every authority must use a distinct bootstrap principal."
+        }
+      ]
+    },
     "DeployOnlyInUsEast1": {
       "Assertions": [
         {

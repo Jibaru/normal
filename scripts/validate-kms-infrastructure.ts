@@ -21,7 +21,20 @@ type Resource = {
 
 const template = (await Bun.file("infra/aws/kms.template.json").json()) as {
   readonly Resources?: Readonly<Record<string, Resource>>;
-  readonly Rules?: Readonly<Record<string, unknown>>;
+  readonly Rules?: Readonly<
+    Record<
+      string,
+      {
+        readonly Assertions?: ReadonlyArray<{
+          readonly Assert?: {
+            readonly "Fn::Not"?: ReadonlyArray<{
+              readonly "Fn::Or"?: ReadonlyArray<unknown>;
+            }>;
+          };
+        }>;
+      }
+    >
+  >;
 };
 
 const resources = template.Resources;
@@ -29,6 +42,16 @@ assert(resources, "CloudFormation template must declare resources");
 assert(
   template.Rules?.DeployOnlyInUsEast1,
   "CloudFormation template must reject regions other than us-east-1",
+);
+assert(
+  template.Rules?.AuthoritiesUseDistinctBootstrapPrincipals,
+  "CloudFormation template must reject shared authority bootstrap principals",
+);
+assert.equal(
+  template.Rules.AuthoritiesUseDistinctBootstrapPrincipals.Assertions?.[0]
+    ?.Assert?.["Fn::Not"]?.[0]?.["Fn::Or"]?.length,
+  10,
+  "CloudFormation template must compare every pair of authority principals",
 );
 
 for (const keyName of ["ContentRootKey", "DeletionCoordinatorKey"]) {
