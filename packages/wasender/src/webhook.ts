@@ -3,7 +3,6 @@ import type { AdapterEffect, AdapterReference, UtcTimestamp } from "./common";
 import type { LifecycleConnectionState } from "./control";
 import type {
   ContactLocator,
-  ConvergenceVersion,
   DirectoryContact,
   DirectoryGroup,
   IdentityBearingSendStatus,
@@ -20,6 +19,13 @@ export type {
 } from "./common";
 
 export type WebhookItemIdentity = AdapterReference<"WebhookItemIdentity">;
+export type ConvergenceVersion = AdapterReference<"ConvergenceVersion">;
+
+export type ConvergenceVersionComparison =
+  | "after"
+  | "before"
+  | "equal"
+  | "incomparable";
 
 export interface ConvergenceEvidence {
   readonly occurredAt: UtcTimestamp | null;
@@ -46,7 +52,12 @@ export interface NormalizedMessageContent {
 
 interface NormalizedItemBase {
   readonly evidence: ConvergenceEvidence;
-  readonly itemIdentity: WebhookItemIdentity | null;
+  /**
+   * A stable-identity token when the provider supplies one, otherwise the
+   * semantic fallback required by ADR 0016. Raw provider identities never
+   * become the runtime value.
+   */
+  readonly itemIdentity: WebhookItemIdentity;
   readonly itemIndex: number;
 }
 
@@ -130,6 +141,14 @@ export interface NormalizedWebhookDelivery {
  * returned as safe classifications so valid siblings remain processable.
  */
 export interface WebhookNormalization {
+  /**
+   * Compares opaque versions without exposing provider version syntax or
+   * ordering rules to the ingestion domain.
+   */
+  readonly compareVersions: (request: {
+    readonly left: ConvergenceVersion;
+    readonly right: ConvergenceVersion;
+  }) => AdapterEffect<ConvergenceVersionComparison>;
   readonly normalize: (request: {
     readonly payload: Uint8Array;
     readonly receivedAt: UtcTimestamp;

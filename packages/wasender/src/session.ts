@@ -26,7 +26,6 @@ export type ContactLocator = AdapterReference<"ContactLocator">;
 export type GroupLocator = AdapterReference<"GroupLocator">;
 export type MediaSource = ProtectedAdapterValue<"MediaSource">;
 export type StableMessageIdentity = AdapterReference<"StableMessageIdentity">;
-export type ConvergenceVersion = AdapterReference<"ConvergenceVersion">;
 export type RecipientLocator = ContactLocator | GroupLocator;
 
 export interface DirectoryContact {
@@ -226,7 +225,7 @@ export const guardedMediaDownloadPolicy = {
   ambiguity: "partial-bytes-must-be-discarded",
   attemptTimeoutMs: 60_000,
   maxAttempts: 1,
-  maximumResponseBytes: maximumMediaDownloadBytes,
+  maxResponseBytes: maximumMediaDownloadBytes,
   operationClass: "media-download",
   reconciliation: "restart-from-byte-zero",
 } as const;

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, expectTypeOf, test } from "bun:test";
 import { Effect, Layer, Redacted, Stream } from "effect";
 import {
   type LifecycleSession,
@@ -17,13 +17,16 @@ import {
   type MediaSource,
   makeBoundedRetryAfterMs,
   makeMediaDownloadByteLimit,
+  type ProviderNeutralFailure,
   SessionDirectory,
   type StableMessageIdentity,
   TextSending,
 } from "../src/session";
 import {
+  type ConvergenceVersion,
   type NormalizedWebhookDelivery,
   type NormalizedWebhookItem,
+  type WebhookItemIdentity,
   WebhookNormalization,
 } from "../src/webhook";
 
@@ -34,6 +37,10 @@ const contact = "sealed-contact" as ContactLocator;
 const group = "sealed-group" as GroupLocator;
 const messageIdentity = "keyed-message-identity" as StableMessageIdentity;
 const mediaSource = Redacted.make("media-source") as MediaSource;
+const webhookItemIdentity =
+  "keyed-webhook-item-identity" as WebhookItemIdentity;
+const earlierVersion = "sealed-earlier-version" as ConvergenceVersion;
+const laterVersion = "sealed-later-version" as ConvergenceVersion;
 
 const lifecycleSession: LifecycleSession = {
   authority: sessionAuthority,
@@ -63,7 +70,7 @@ const webhookDelivery: NormalizedWebhookDelivery = {
         occurredAt: "2026-07-30T12:00:00Z",
         version: null,
       },
-      itemIdentity: null,
+      itemIdentity: webhookItemIdentity,
       itemIndex: 0,
       kind: "send_evidence",
       messageIdentity,
@@ -91,7 +98,7 @@ const normalizedItemKinds = [
     },
     direction: "inbound",
     evidence,
-    itemIdentity: null,
+    itemIdentity: webhookItemIdentity,
     itemIndex: 0,
     kind: "message_upsert",
     messageIdentity,
@@ -107,7 +114,7 @@ const normalizedItemKinds = [
     },
     editedAt: "2026-07-30T12:01:00Z",
     evidence,
-    itemIdentity: null,
+    itemIdentity: webhookItemIdentity,
     itemIndex: 1,
     kind: "message_edit",
     messageIdentity,
@@ -115,7 +122,7 @@ const normalizedItemKinds = [
   {
     deletedAt: "2026-07-30T12:02:00Z",
     evidence,
-    itemIdentity: null,
+    itemIdentity: webhookItemIdentity,
     itemIndex: 2,
     kind: "message_delete",
     messageIdentity,
@@ -123,7 +130,7 @@ const normalizedItemKinds = [
   {
     direction: "outbound",
     evidence,
-    itemIdentity: null,
+    itemIdentity: webhookItemIdentity,
     itemIndex: 3,
     kind: "send_evidence",
     messageIdentity,
@@ -132,7 +139,7 @@ const normalizedItemKinds = [
   {
     contact: contactEntry,
     evidence,
-    itemIdentity: null,
+    itemIdentity: webhookItemIdentity,
     itemIndex: 4,
     kind: "directory_contact",
   },
@@ -143,13 +150,13 @@ const normalizedItemKinds = [
       joined: true,
       recipient: group,
     } satisfies DirectoryGroup,
-    itemIdentity: null,
+    itemIdentity: webhookItemIdentity,
     itemIndex: 5,
     kind: "directory_group",
   },
   {
     evidence,
-    itemIdentity: null,
+    itemIdentity: webhookItemIdentity,
     itemIndex: 6,
     kind: "connection_state",
     state: "connected",
@@ -277,25 +284,43 @@ describe("provider-neutral capability seam", () => {
 
   test("normalizes every webhook item independently", async () => {
     const layer = Layer.succeed(WebhookNormalization, {
+      compareVersions: ({ left, right }) =>
+        Effect.succeed(
+          left === right
+            ? "equal"
+            : left === earlierVersion
+              ? "before"
+              : "after",
+        ),
       normalize: () => Effect.succeed(webhookDelivery),
     });
 
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         const normalizer = yield* WebhookNormalization;
-        return yield* normalizer.normalize({
+        const delivery = yield* normalizer.normalize({
           payload: new Uint8Array([123, 125]),
           receivedAt: "2026-07-30T12:00:01Z",
         });
+        const versionComparison = yield* normalizer.compareVersions({
+          left: earlierVersion,
+          right: laterVersion,
+        });
+        return { delivery, versionComparison };
       }).pipe(Effect.provide(layer)),
     );
 
-    expect(result.items).toHaveLength(2);
-    expect(result.items.map((item) => item.kind)).toEqual([
+    expect(result.delivery.items).toHaveLength(2);
+    expect(result.delivery.items.map((item) => item.kind)).toEqual([
       "send_evidence",
       "unsupported",
     ]);
-    expect(JSON.stringify(result)).not.toContain("wasender");
+    expect(result.delivery.items[0]).toHaveProperty(
+      "itemIdentity",
+      webhookItemIdentity,
+    );
+    expect(result.versionComparison).toBe("before");
+    expect(JSON.stringify(result.delivery)).not.toContain("wasender");
   });
 
   test("fixes the supported provider-neutral webhook item kinds", () => {
@@ -322,5 +347,22 @@ describe("provider-neutral capability seam", () => {
     expect(Number(makeBoundedRetryAfterMs(250))).toBe(250);
     expect(Number(makeBoundedRetryAfterMs(25_000))).toBe(5_000);
     expect(() => makeBoundedRetryAfterMs(-1)).toThrow(RangeError);
+  });
+
+  test("couples failure decisions to operation classes", () => {
+    type LifecycleFailure = Extract<
+      ProviderNeutralFailure,
+      { readonly operation: "lifecycle-write" }
+    >;
+    type TextSendFailure = Extract<
+      ProviderNeutralFailure,
+      { readonly operation: "text-send" }
+    >;
+
+    expectTypeOf<LifecycleFailure["retryDecision"]>().toEqualTypeOf<
+      "do_not_retry" | "reconcile_before_repeat"
+    >();
+    expectTypeOf<LifecycleFailure["retryAfterMs"]>().toEqualTypeOf<null>();
+    expectTypeOf<TextSendFailure>().toEqualTypeOf<never>();
   });
 });

@@ -63,7 +63,7 @@ describe("@whatsapp-mcp/wasender boundaries", () => {
       ambiguity: "partial-bytes-must-be-discarded",
       attemptTimeoutMs: 60_000,
       maxAttempts: 1,
-      maximumResponseBytes: 100_000_000,
+      maxResponseBytes: 100_000_000,
       operationClass: "media-download",
       reconciliation: "restart-from-byte-zero",
     });

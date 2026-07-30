@@ -36,7 +36,10 @@ failure cannot escape through an untyped native stream error.
 
 Webhook normalization returns one result per logical item. Unsupported and
 malformed items are classified in place, allowing valid siblings from the same
-delivery to continue independently.
+delivery to continue independently. Every supported item carries an opaque
+stable or semantic-fallback identity for downstream deduplication. Provider
+version tokens remain opaque; ingestion asks the normalization capability to
+compare them instead of learning provider version syntax or ordering rules.
 
 ## Operation policies
 
