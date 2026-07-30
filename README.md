@@ -20,6 +20,32 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Sandcastle
+
+[Sandcastle](https://github.com/mattpocock/sandcastle) runs Codex agents in isolated Docker worktrees. The workflow plans open GitHub issues labeled `sandcastle`, implements and reviews unblocked issues in parallel, then merges completed branches.
+
+Prerequisites:
+
+- Docker Desktop is running.
+- `gh auth status` succeeds for this repository.
+- Codex is authenticated at `~/.codex/auth.json`.
+
+Build the local sandbox image once after cloning:
+
+```bash
+bun run sandcastle:build-image
+```
+
+Rebuild it after changing `.sandcastle/Dockerfile` or when the host UID/GID changes. Source and dependency changes do not require an image rebuild because Sandcastle bind-mounts a worktree and runs `bun install` when each sandbox starts.
+
+Run the issue workflow with:
+
+```bash
+bun run sandcastle
+```
+
+The image is local (`sandcastle:whatsapp-mcp`); it does not need to be pushed to a registry.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

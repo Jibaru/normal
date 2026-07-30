@@ -1,0 +1,3 @@
+# Fail closed when tool-call audit is unavailable
+
+Every MCP tool invocation and protected resource read durably creates a metadata-only Tool Call Log record before decrypting data, serving media, or invoking Wasender; if that write fails, the operation does not run. Results update the record before a response is released where possible, while durable Send Operations remain the source of truth for side effects that may outlive a log-update failure. Tool Call Logs retain safe filters, opaque references, identity, timing, outcome, counts, and latency for 90 days, but never duplicate message bodies, media, full phone numbers, credentials, OAuth tokens, or raw provider payloads.

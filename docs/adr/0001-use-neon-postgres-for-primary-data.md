@@ -1,0 +1,3 @@
+# Use Neon Postgres for primary data
+
+Use Neon Postgres as the primary relational database for Personal Accounts, WhatsApp Connections, encrypted messages, MCP Authorizations, and audit records, with Cloudflare Workers connecting through Hyperdrive. Every tenant-owned row is scoped to a Personal Account and protected by PostgreSQL row-level security under a restricted non-owner application role; sensitive WhatsApp fields are also encrypted at the application layer. Neon was chosen over shared D1 for its defense-in-depth tenant isolation, over per-tenant D1 to avoid database-binding and provisioning complexity, and over PlanetScale for lower-cost bursty operation during the initial product stage.

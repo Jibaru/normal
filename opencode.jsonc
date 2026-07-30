@@ -1,0 +1,13 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "references": {
+    "normal": {
+      "path": "../normal-poc",
+      "description": "Normal: WhatsApp automation platform",
+    },
+    "normal-poc": {
+      "path": "../normal-poc",
+      "description": "Normal POC",
+    },
+  },
+}
