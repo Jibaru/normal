@@ -5,6 +5,13 @@ export default defineConfig({
   plugins: [
     cloudflareTest({
       miniflare: {
+        bindings: {
+          AWS_ACCESS_KEY_ID: "test-temporary-access-key",
+          AWS_SECRET_ACCESS_KEY: "test-temporary-secret",
+          AWS_SESSION_TOKEN: "test-temporary-session-token",
+          KMS_CONTENT_ROOT_KEY_ARN:
+            "arn:aws:kms:us-east-1:111122223333:key/00000000-0000-0000-0000-000000000001",
+        },
         serviceBindings: {
           PROVIDER_CONTROL: () => new Response(null, { status: 204 }),
         },

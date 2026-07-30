@@ -1,0 +1,9 @@
+# Non-secret local values
+DEPLOYMENT_ENVIRONMENT=development
+AWS_KMS_REGION=us-east-1
+KMS_CONTENT_ROOT_KEY_ARN=arn:aws:kms:us-east-1:111122223333:key/replace-with-content-root-key-id
+
+# Short-lived credentials for the ContentRuntimeRole; never commit real values.
+AWS_ACCESS_KEY_ID=replace-with-temporary-access-key-id
+AWS_SECRET_ACCESS_KEY=replace-with-temporary-secret-access-key
+AWS_SESSION_TOKEN=replace-with-temporary-session-token
