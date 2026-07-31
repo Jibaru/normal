@@ -6,6 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
+    "experimentalScannerIgnores": ["worktrees"],
     "ignoreUnknown": true,
     "includes": [
       "**",

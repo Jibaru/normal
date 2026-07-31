@@ -3,5 +3,6 @@
   "compilerOptions": {
     "types": ["bun", "node"]
   },
+  "exclude": [".sandcastle/worktrees"],
   "include": [".sandcastle/**/*.ts", ".sandcastle/**/*.mts", "scripts/**/*.ts"]
 }
