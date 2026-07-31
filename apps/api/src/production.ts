@@ -23,6 +23,16 @@ import {
   makeConnectionSetupNumberTokens,
 } from "./connection-setup";
 import {
+  ConnectionSetupCleanupClock,
+  ConnectionSetupCleanupIdentifiers,
+  ConnectionSetupCleanupPersistence,
+  ConnectionSetupCleanupPersistenceError,
+  ConnectionSetupCleanupProvider,
+  connectionSetupCleanupMessage,
+  handleConnectionSetupCleanupBatch,
+  isConnectionSetupCleanupMessage,
+} from "./connection-setup-cleanup";
+import {
   ConnectionSetupProvisioningClock,
   ConnectionSetupProvisioningIdentifiers,
   ConnectionSetupProvisioningPersistence,
@@ -449,6 +459,19 @@ const personalAccountIdentifiersLayer = Layer.succeed(
 
 const connectionSetupPersistenceLayer = (environment: ApiEnvironment) =>
   Layer.succeed(ConnectionSetupPersistence, {
+    cancel: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgConnectionSetupRepository(connectionString).cancel(
+            input,
+          );
+        },
+        catch: () => new ConnectionSetupPersistenceError(),
+      }),
     prepare: (input) =>
       Effect.tryPromise({
         try: () => {
@@ -559,6 +582,75 @@ const connectionSetupProvisioningPersistenceLayer = (
       }),
   });
 
+const connectionSetupCleanupPersistenceLayer = (environment: ApiEnvironment) =>
+  Layer.succeed(ConnectionSetupCleanupPersistence, {
+    claim: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgConnectionSetupRepository(connectionString).claimCleanup(
+            input,
+          );
+        },
+        catch: () => new ConnectionSetupCleanupPersistenceError(),
+      }),
+    finish: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgConnectionSetupRepository(
+            connectionString,
+          ).finishCleanup(input);
+        },
+        catch: () => new ConnectionSetupCleanupPersistenceError(),
+      }),
+    listCandidates: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgConnectionSetupRepository(
+            connectionString,
+          ).listCleanupCandidates(input);
+        },
+        catch: () => new ConnectionSetupCleanupPersistenceError(),
+      }),
+    release: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgConnectionSetupRepository(
+            connectionString,
+          ).releaseCleanupLease(input);
+        },
+        catch: () => new ConnectionSetupCleanupPersistenceError(),
+      }),
+    renew: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgConnectionSetupRepository(
+            connectionString,
+          ).renewCleanupLease(input);
+        },
+        catch: () => new ConnectionSetupCleanupPersistenceError(),
+      }),
+  });
+
 const unavailableProviderResult = (
   operation: "lifecycle-write" | "safe-read",
 ): {
@@ -600,6 +692,26 @@ const connectionSetupProvisioningProviderLayer = (
       }).pipe(Effect.catchAll((failure) => Effect.succeed(failure))),
   });
 
+const connectionSetupCleanupProviderLayer = (environment: ApiEnvironment) =>
+  Layer.succeed(ConnectionSetupCleanupProvider, {
+    delete: (input) =>
+      Effect.tryPromise({
+        try: () =>
+          (
+            environment.PROVIDER_CONTROL as ProviderControlService
+          ).deleteSession(input),
+        catch: () => unavailableProviderResult("lifecycle-write"),
+      }).pipe(Effect.catchAll((failure) => Effect.succeed(failure))),
+    reconcile: (input) =>
+      Effect.tryPromise({
+        try: () =>
+          (
+            environment.PROVIDER_CONTROL as ProviderControlService
+          ).reconcileSession(input),
+        catch: () => unavailableProviderResult("safe-read"),
+      }).pipe(Effect.catchAll((failure) => Effect.succeed(failure))),
+  });
+
 const connectionSetupProvisioningQueueLayer = (environment: ApiEnvironment) =>
   Layer.succeed(ConnectionSetupProvisioningQueue, {
     enqueue: (setupId) =>
@@ -611,6 +723,19 @@ const connectionSetupProvisioningQueueLayer = (environment: ApiEnvironment) =>
           }
           await (queue as Pick<Queue, "send">).send(
             connectionSetupProvisioningMessage(setupId),
+          );
+        },
+        catch: () => new ConnectionSetupProvisioningQueueError(),
+      }),
+    enqueueCleanup: (setupId) =>
+      Effect.tryPromise({
+        try: async () => {
+          const queue = environment.CONNECTION_SETUP_PROVISIONING_QUEUE;
+          if (!hasMethods(queue, ["send"])) {
+            throw new Error("Connection Setup cleanup Queue unavailable");
+          }
+          await (queue as Pick<Queue, "send">).send(
+            connectionSetupCleanupMessage(setupId),
           );
         },
         catch: () => new ConnectionSetupProvisioningQueueError(),
@@ -755,6 +880,15 @@ const connectionSetupProvisioningRuntimeLayer = Layer.mergeAll(
   }),
   Layer.succeed(ConnectionSetupProvisioningIdentifiers, {
     nextWorkerId: Effect.sync(() => `cspw_${randomBase64Url()}`),
+  }),
+);
+
+const connectionSetupCleanupRuntimeLayer = Layer.mergeAll(
+  Layer.succeed(ConnectionSetupCleanupClock, {
+    now: Effect.sync(() => new Date().toISOString()),
+  }),
+  Layer.succeed(ConnectionSetupCleanupIdentifiers, {
+    nextWorkerId: Effect.sync(() => `cscw_${randomBase64Url()}`),
   }),
 );
 
@@ -1062,18 +1196,58 @@ export const createProductionQueueHandler =
       }
       return;
     }
-    const layer = Layer.mergeAll(
-      encryptionLayer(environment),
-      telemetryLayer,
-      connectionSetupProvisioningPersistenceLayer(environment),
-      connectionSetupProvisioningProviderLayer(environment),
-      connectionSetupProvisioningRuntimeLayer,
+    const cleanupMessages = batch.messages.filter((message) =>
+      isConnectionSetupCleanupMessage(message.body),
     );
-    await handleConnectionSetupProvisioningBatch(batch, layer);
+    const provisioningMessages = batch.messages.filter(
+      (message) => !isConnectionSetupCleanupMessage(message.body),
+    );
+    if (cleanupMessages.length > 0) {
+      const cleanupLayer = Layer.mergeAll(
+        telemetryLayer,
+        connectionSetupCleanupPersistenceLayer(environment),
+        connectionSetupCleanupProviderLayer(environment),
+        connectionSetupCleanupRuntimeLayer,
+      );
+      await handleConnectionSetupCleanupBatch(
+        { ...batch, messages: cleanupMessages },
+        cleanupLayer,
+      );
+    }
+    if (provisioningMessages.length > 0) {
+      const provisioningLayer = Layer.mergeAll(
+        encryptionLayer(environment),
+        telemetryLayer,
+        connectionSetupProvisioningPersistenceLayer(environment),
+        connectionSetupProvisioningProviderLayer(environment),
+        connectionSetupProvisioningRuntimeLayer,
+      );
+      await handleConnectionSetupProvisioningBatch(
+        { ...batch, messages: provisioningMessages },
+        provisioningLayer,
+      );
+    }
   };
 
+interface ConnectionSetupScheduledRepository {
+  readonly expire: ReturnType<typeof makePgConnectionSetupRepository>["expire"];
+  readonly listCleanupCandidates: ReturnType<
+    typeof makePgConnectionSetupRepository
+  >["listCleanupCandidates"];
+  readonly listProvisioningCandidates: ReturnType<
+    typeof makePgConnectionSetupRepository
+  >["listProvisioningCandidates"];
+}
+
 export const createProductionScheduledHandler =
-  (environment: ApiEnvironment) =>
+  (
+    environment: ApiEnvironment,
+    dependencies: {
+      readonly makeRepository?: (
+        connectionString: string,
+      ) => ConnectionSetupScheduledRepository;
+    } = {},
+  ) =>
   async (controller: ScheduledController): Promise<void> => {
     if (controller.cron !== "* * * * *") return;
     const connectionString = environment.HYPERDRIVE?.connectionString;
@@ -1084,23 +1258,48 @@ export const createProductionScheduledHandler =
     ) {
       throw new Error("Connection Setup provisioning recovery unavailable");
     }
-    const candidates = await makePgConnectionSetupRepository(
-      connectionString,
-    ).listProvisioningCandidates({
+    const repository = (
+      dependencies.makeRepository ?? makePgConnectionSetupRepository
+    )(connectionString);
+    const observedAt = new Date(controller.scheduledTime).toISOString();
+    const expired = await repository.expire({
       limit: 100,
-      observedAt: new Date(controller.scheduledTime).toISOString(),
+      observedAt,
     });
-    if (candidates.length > 0) {
+    const cleanupCandidates = await repository.listCleanupCandidates({
+      limit: 100,
+      observedAt,
+    });
+    const provisioningCandidates = await repository.listProvisioningCandidates({
+      limit: 100,
+      observedAt,
+    });
+    if (cleanupCandidates.length > 0) {
       await (queue as Pick<Queue, "sendBatch">).sendBatch(
-        candidates.map((setupId) => ({
+        cleanupCandidates.map((setupId) => ({
+          body: connectionSetupCleanupMessage(setupId),
+        })),
+      );
+    }
+    if (provisioningCandidates.length > 0) {
+      await (queue as Pick<Queue, "sendBatch">).sendBatch(
+        provisioningCandidates.map((setupId) => ({
           body: connectionSetupProvisioningMessage(setupId),
         })),
       );
     }
     Effect.runSync(
       safeTelemetry.emit({
-        candidateCount: candidates.length,
+        candidateCount: provisioningCandidates.length,
         event: "connection_setup.provision.recovery_enqueued",
+        service: "api",
+      }),
+    );
+    Effect.runSync(
+      safeTelemetry.emit({
+        candidateCount: cleanupCandidates.length,
+        event: "connection_setup.cleanup.recovery_enqueued",
+        expiredCount: expired.length,
         service: "api",
       }),
     );

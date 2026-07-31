@@ -20,6 +20,8 @@ export interface ConnectionSetupRecord {
   readonly expiresAt: string;
   readonly setupId: string;
   readonly state:
+    | "cancelled"
+    | "expired"
     | "provisioned"
     | "provisioning_failed"
     | "provisioning_pending"
@@ -154,12 +156,65 @@ export interface ListConnectionSetupProvisioningCandidatesInput {
   readonly observedAt: string;
 }
 
+export interface CancelConnectionSetupInput {
+  readonly cancelledAt: string;
+  readonly clerkUserId: string;
+  readonly setupId: string;
+}
+
+export interface CancelledConnectionSetup {
+  readonly cleanupState: "complete" | "pending" | "retrying";
+  readonly outcome: "cancelled" | "replay";
+  readonly setupId: string;
+  readonly state: "cancelled" | "expired";
+}
+
+export interface ConnectionSetupCleanupClaimInput {
+  readonly claimedAt: string;
+  readonly setupId: string;
+  readonly workerId: string;
+}
+
+export type ConnectionSetupCleanupClaim = {
+  readonly outcome:
+    | "claimed"
+    | "complete"
+    | "leased"
+    | "not_found"
+    | "not_terminal";
+};
+
+export interface ConnectionSetupCleanupLeaseInput {
+  readonly observedAt: string;
+  readonly setupId: string;
+  readonly workerId: string;
+}
+
+export interface ReleaseConnectionSetupCleanupLeaseInput
+  extends ConnectionSetupCleanupLeaseInput {
+  readonly failureCode: string;
+}
+
+export interface ListConnectionSetupCleanupCandidatesInput {
+  readonly limit: number;
+  readonly observedAt: string;
+}
+
 export interface ConnectionSetupRepository {
+  readonly cancel: (
+    input: CancelConnectionSetupInput,
+  ) => Promise<CancelledConnectionSetup | null>;
+  readonly claimCleanup: (
+    input: ConnectionSetupCleanupClaimInput,
+  ) => Promise<ConnectionSetupCleanupClaim>;
   readonly claimProvisioning: (
     input: ConnectionSetupProvisioningClaimInput,
   ) => Promise<ConnectionSetupProvisioningClaim>;
   readonly finishProvisioning: (
     input: FinishConnectionSetupProvisioningInput,
+  ) => Promise<boolean>;
+  readonly finishCleanup: (
+    input: ConnectionSetupCleanupLeaseInput,
   ) => Promise<boolean>;
   readonly failProvisioning: (
     input: ReleaseConnectionSetupProvisioningLeaseInput,
@@ -167,15 +222,27 @@ export interface ConnectionSetupRepository {
   readonly listProvisioningCandidates: (
     input: ListConnectionSetupProvisioningCandidatesInput,
   ) => Promise<ReadonlyArray<string>>;
+  readonly listCleanupCandidates: (
+    input: ListConnectionSetupCleanupCandidatesInput,
+  ) => Promise<ReadonlyArray<string>>;
   readonly prepare: (
     input: PrepareConnectionSetupInput,
   ) => Promise<PreparedConnectionSetup | null>;
   readonly releaseProvisioningLease: (
     input: ReleaseConnectionSetupProvisioningLeaseInput,
   ) => Promise<boolean>;
+  readonly releaseCleanupLease: (
+    input: ReleaseConnectionSetupCleanupLeaseInput,
+  ) => Promise<boolean>;
   readonly renewProvisioningLease: (
     input: RenewConnectionSetupProvisioningLeaseInput,
   ) => Promise<boolean>;
+  readonly renewCleanupLease: (
+    input: ConnectionSetupCleanupLeaseInput,
+  ) => Promise<boolean>;
+  readonly expire: (
+    input: ListConnectionSetupCleanupCandidatesInput,
+  ) => Promise<ReadonlyArray<string>>;
   readonly start: (
     input: StartConnectionSetupInput,
   ) => Promise<StartedConnectionSetup>;
@@ -277,7 +344,9 @@ const setupRecord = (
   const expiresAt = timestamp(row?.[`${prefix}expires_at`]);
   if (
     typeof setupId !== "string" ||
-    (state !== "provisioned" &&
+    (state !== "cancelled" &&
+      state !== "expired" &&
+      state !== "provisioned" &&
       state !== "provisioning_failed" &&
       state !== "provisioning_pending" &&
       state !== "provisioning_quarantined") ||
@@ -316,6 +385,52 @@ interface ProvisioningClaimRow extends Record<string, unknown> {
   readonly outcome: unknown;
   readonly personal_account_id: unknown;
 }
+
+interface CancelConnectionSetupRow extends Record<string, unknown> {
+  readonly outcome: unknown;
+  readonly setup_cleanup_state: unknown;
+  readonly setup_id: unknown;
+  readonly setup_state: unknown;
+}
+
+const cancelledConnectionSetup = (
+  row: CancelConnectionSetupRow | undefined,
+): CancelledConnectionSetup | null => {
+  if (row === undefined) return null;
+  if (
+    (row.outcome !== "cancelled" && row.outcome !== "replay") ||
+    typeof row.setup_id !== "string" ||
+    (row.setup_state !== "cancelled" && row.setup_state !== "expired") ||
+    (row.setup_cleanup_state !== "pending" &&
+      row.setup_cleanup_state !== "retrying" &&
+      row.setup_cleanup_state !== "complete")
+  ) {
+    throw new Error("invalid Connection Setup cancellation");
+  }
+  return {
+    cleanupState: row.setup_cleanup_state,
+    outcome: row.outcome,
+    setupId: row.setup_id,
+    state: row.setup_state,
+  };
+};
+
+const cleanupClaimOutcomes = new Set<ConnectionSetupCleanupClaim["outcome"]>([
+  "claimed",
+  "complete",
+  "leased",
+  "not_found",
+  "not_terminal",
+]);
+
+const setupIds = (
+  rows: ReadonlyArray<{ readonly setup_id: unknown }>,
+  message: string,
+): ReadonlyArray<string> =>
+  rows.map((row) => {
+    if (typeof row.setup_id !== "string") throw new Error(message);
+    return row.setup_id;
+  });
 
 const provisioningClaim = (
   setupId: string,
@@ -411,6 +526,34 @@ const serializedProviderSessions = (
 export const makeConnectionSetupRepository = (
   provider: ConnectionSetupConnectionProvider,
 ): ConnectionSetupRepository => ({
+  cancel: (input) =>
+    provider.withConnection(async (connection) => {
+      const result = await connection.query<CancelConnectionSetupRow>(
+        `SELECT *
+         FROM app_private.cancel_connection_setup($1, $2, $3)`,
+        [input.clerkUserId, input.setupId, input.cancelledAt],
+      );
+      return cancelledConnectionSetup(result.rows[0]);
+    }),
+  claimCleanup: (input) =>
+    provider.withConnection(async (connection) => {
+      const result = await connection.query<{ outcome: unknown }>(
+        `SELECT app_private.claim_connection_setup_cleanup(
+           $1, $2, $3
+         ) AS outcome`,
+        [input.setupId, input.workerId, input.claimedAt],
+      );
+      const outcome = result.rows[0]?.outcome;
+      if (
+        typeof outcome !== "string" ||
+        !cleanupClaimOutcomes.has(
+          outcome as ConnectionSetupCleanupClaim["outcome"],
+        )
+      ) {
+        throw new Error("invalid Connection Setup cleanup claim");
+      }
+      return { outcome: outcome as ConnectionSetupCleanupClaim["outcome"] };
+    }),
   claimProvisioning: (input) =>
     provider.withConnection(async (connection) => {
       const result = await connection.query<ProvisioningClaimRow>(
@@ -419,6 +562,28 @@ export const makeConnectionSetupRepository = (
         [input.setupId, input.workerId, input.claimedAt],
       );
       return provisioningClaim(input.setupId, result.rows[0]);
+    }),
+  expire: (input) =>
+    provider.withConnection(async (connection) => {
+      const result = await connection.query<{ setup_id: unknown }>(
+        `SELECT setup_id
+         FROM app_private.expire_connection_setups($1, $2)`,
+        [input.observedAt, input.limit],
+      );
+      return setupIds(result.rows, "invalid expired Connection Setup");
+    }),
+  finishCleanup: (input) =>
+    provider.withConnection(async (connection) => {
+      const result = await connection.query<{ finished: unknown }>(
+        `SELECT app_private.finish_connection_setup_cleanup(
+           $1, $2, $3
+         ) AS finished`,
+        [input.setupId, input.workerId, input.observedAt],
+      );
+      if (typeof result.rows[0]?.finished !== "boolean") {
+        throw new Error("invalid Connection Setup cleanup result");
+      }
+      return result.rows[0].finished;
     }),
   finishProvisioning: (input) =>
     provider.withConnection(async (connection) => {
@@ -461,12 +626,22 @@ export const makeConnectionSetupRepository = (
          )`,
         [input.observedAt, input.limit],
       );
-      return result.rows.map((row) => {
-        if (typeof row.setup_id !== "string") {
-          throw new Error("invalid Connection Setup provisioning candidate");
-        }
-        return row.setup_id;
-      });
+      return setupIds(
+        result.rows,
+        "invalid Connection Setup provisioning candidate",
+      );
+    }),
+  listCleanupCandidates: (input) =>
+    provider.withConnection(async (connection) => {
+      const result = await connection.query<{ setup_id: unknown }>(
+        `SELECT setup_id
+         FROM app_private.list_connection_setup_cleanup_candidates($1, $2)`,
+        [input.observedAt, input.limit],
+      );
+      return setupIds(
+        result.rows,
+        "invalid Connection Setup cleanup candidate",
+      );
     }),
   prepare: (input) =>
     provider.withConnection((connection) =>
@@ -543,6 +718,19 @@ export const makeConnectionSetupRepository = (
       }
       return result.rows[0].released;
     }),
+  releaseCleanupLease: (input) =>
+    provider.withConnection(async (connection) => {
+      const result = await connection.query<{ released: unknown }>(
+        `SELECT app_private.release_connection_setup_cleanup_lease(
+           $1, $2, $3, $4
+         ) AS released`,
+        [input.setupId, input.workerId, input.observedAt, input.failureCode],
+      );
+      if (typeof result.rows[0]?.released !== "boolean") {
+        throw new Error("invalid Connection Setup cleanup release");
+      }
+      return result.rows[0].released;
+    }),
   renewProvisioningLease: (input) =>
     provider.withConnection(async (connection) => {
       const result = await connection.query<{ renewed: unknown }>(
@@ -553,6 +741,19 @@ export const makeConnectionSetupRepository = (
       );
       if (typeof result.rows[0]?.renewed !== "boolean") {
         throw new Error("invalid Connection Setup provisioning renewal");
+      }
+      return result.rows[0].renewed;
+    }),
+  renewCleanupLease: (input) =>
+    provider.withConnection(async (connection) => {
+      const result = await connection.query<{ renewed: unknown }>(
+        `SELECT app_private.renew_connection_setup_cleanup_lease(
+           $1, $2, $3
+         ) AS renewed`,
+        [input.setupId, input.workerId, input.observedAt],
+      );
+      if (typeof result.rows[0]?.renewed !== "boolean") {
+        throw new Error("invalid Connection Setup cleanup renewal");
       }
       return result.rows[0].renewed;
     }),

@@ -34,6 +34,9 @@ export interface ConnectionSetupProvisioningQueueService {
   readonly enqueue: (
     setupId: string,
   ) => Effect.Effect<void, ConnectionSetupProvisioningQueueError>;
+  readonly enqueueCleanup: (
+    setupId: string,
+  ) => Effect.Effect<void, ConnectionSetupProvisioningQueueError>;
 }
 
 export const ConnectionSetupProvisioningQueue =

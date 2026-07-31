@@ -552,9 +552,29 @@ becomes usable. A production quarantine is an incident: pause new onboarding,
 retain every reservation and encrypted provider reference, and do not manually
 repeat create or release the number. Use audited restricted diagnostics for
 state/counts only, preserve provider evidence, and follow the provider cleanup
-procedure once the cleanup workflow is deployed. A growing recovery candidate
+procedure below. A growing recovery candidate
 count, repeated normalized failure code, or setup approaching its 15-minute
 expiry requires paging the on-call operator.
+
+Cancel one incomplete non-production Connection Setup in the product and
+confirm `DELETE /v1/connection-setups/{setup_id}` returns `cancelled` with
+`cleanup_state: pending`; repeat it and confirm an idempotent replay. Start a
+second setup and make no browser request after its deadline. Confirm the minute
+cron changes it to `expired` at 15 minutes and enqueues cleanup. For both
+paths, verify provider-control reconciles before delete, deletes no more than
+one matching session per attempt, reconciles again, and releases the WhatsApp
+Number only after confirmed absence. The same number must remain unavailable
+while absence is unknown and become available after cleanup completes.
+
+Page the on-call operator when cleanup recovery candidates grow, a normalized
+cleanup failure repeats, or a reservation remains held after the expected
+provider recovery window. Do not manually delete the reservation, clear a
+lease, or change `cancelled`/`expired` back to a provisioning state. First
+restore provider-control or Queue health, then let the reconcile-first worker
+confirm absence. Inspect only terminal state, cleanup state, attempt count,
+lease age, and allowlisted failure code through restricted diagnostics; never
+log the setup identifier, number token, encrypted number, provider locator,
+session authority, or raw provider response.
 
 In the same non-production environment, start authorization from one reviewed
 allowlisted MCP Client. Confirm the consent page names that client and starts

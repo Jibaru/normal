@@ -335,6 +335,39 @@ optional normalized failure code, plus recovery candidate counts; it never
 contains setup/account identifiers, number material, provider values, or
 ciphertext.
 
+## Connection Setup cancellation, expiry, and cleanup
+
+The owning User cancels an incomplete setup with `DELETE
+/v1/connection-setups/{setup_id}`. The transition to `cancelled` is
+idempotent and immediately prevents provisioning from advancing. The existing
+minute cron transitions every incomplete setup whose fixed 15-minute deadline
+has passed to `expired`; expiry does not depend on a browser request.
+
+Both terminal transitions persist `cleanup_state: pending` and publish a
+`connection_setup.cleanup` message to the existing Connection Setup Queue.
+The durable minute recovery scan republishes eligible cleanup work if request
+publication or Queue delivery fails. Cleanup waits for any provisioning lease
+that was active at the terminal transition to expire, then obtains its own
+two-minute lease. This closes the race in which an already-authorized provider
+create could otherwise occur after cleanup observed absence.
+
+Every cleanup attempt asks provider-control to reconcile the deterministic
+setup marker. Confirmed absence atomically sets `cleanup_state: complete`,
+releases the WhatsApp Number reservation, and destroys the setup key envelope
+and encrypted provisional provider-session rows. Presence deletes at most one
+reconciled provider session; the next attempt must reconcile again before
+another delete or reservation release. Duplicate sessions are therefore
+removed one reconcile-first attempt at a time. Read, delete, timeout, and
+lease failures retain the reservation, record only an allowlisted normalized
+failure code, and remain eligible for recovery. A cancelled or expired state
+is never changed by cleanup.
+
+No new production secret, binding, public route to provider-control, or test
+provider selection is introduced. Cleanup reuses the API's restricted Neon
+role, existing same-environment provider-control service binding, and existing
+durable Queue. Safe telemetry is limited to cancellation outcome, expired and
+candidate counts, cleanup outcome, and optional normalized failure code.
+
 ## Wasender media authority
 
 The Wasender media adapter has no hostname, endpoint, redirect, timeout, or

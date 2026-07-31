@@ -105,6 +105,40 @@ describe("public-boundary Worker harness", () => {
       ...firstBody.connection_setup,
       idempotent_replay: true,
     });
+
+    const cancelRequest = () =>
+      new Request(
+        `https://api.example.test/v1/connection-setups/${String(
+          firstBody.connection_setup.id,
+        )}`,
+        {
+          headers: {
+            authorization: "Bearer signed-test-user",
+            origin: "http://127.0.0.1:3000",
+          },
+          method: "DELETE",
+        },
+      );
+    const cancelled = await exports.default.fetch(cancelRequest());
+    const cancelReplay = await exports.default.fetch(cancelRequest());
+
+    expect(cancelled.status).toBe(200);
+    expect(await cancelled.json()).toEqual({
+      connection_setup: {
+        cleanup_state: "pending",
+        id: firstBody.connection_setup.id,
+        idempotent_replay: false,
+        state: "cancelled",
+      },
+    });
+    expect(await cancelReplay.json()).toEqual({
+      connection_setup: {
+        cleanup_state: "pending",
+        id: firstBody.connection_setup.id,
+        idempotent_replay: true,
+        state: "cancelled",
+      },
+    });
   });
 
   test("provisions a Connection Setup through the actual Queue boundary", async () => {

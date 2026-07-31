@@ -1,5 +1,6 @@
 import { IdempotencyKey } from "@whatsapp-mcp/contracts/handles";
 import type {
+  CancelledConnectionSetup,
   PreparedConnectionSetup,
   StartConnectionSetupInput,
   StartedConnectionSetup,
@@ -43,6 +44,14 @@ export class ConnectionSetupTokenError extends Data.TaggedError(
 ) {}
 
 export interface ConnectionSetupPersistenceService {
+  readonly cancel: (input: {
+    readonly cancelledAt: string;
+    readonly clerkUserId: string;
+    readonly setupId: string;
+  }) => Effect.Effect<
+    CancelledConnectionSetup | null,
+    ConnectionSetupPersistenceError
+  >;
   readonly prepare: (input: {
     readonly clerkUserId: string;
     readonly idempotencyKey: string;
@@ -148,6 +157,8 @@ type ConnectionSetupOutcome =
         readonly expiresAt: string;
         readonly setupId: string;
         readonly state:
+          | "cancelled"
+          | "expired"
           | "provisioned"
           | "provisioning_failed"
           | "provisioning_pending"
@@ -241,14 +252,51 @@ export const startConnectionSetup = (
           });
     if ("setup" in result) {
       const queue = yield* ConnectionSetupProvisioningQueue;
-      yield* queue.enqueue(result.setup.setupId);
+      if (
+        result.setup.state === "cancelled" ||
+        result.setup.state === "expired"
+      ) {
+        yield* queue.enqueueCleanup(result.setup.setupId);
+      } else {
+        yield* queue.enqueue(result.setup.setupId);
+      }
+    }
+    return result;
+  });
+
+export const cancelConnectionSetup = (
+  clerkUserId: string,
+  setupId: string,
+): Effect.Effect<
+  CancelledConnectionSetup,
+  | ConnectionSetupNotAccessible
+  | ConnectionSetupPersistenceError
+  | ConnectionSetupProvisioningQueueError,
+  | ConnectionSetupClockService
+  | ConnectionSetupPersistenceService
+  | ConnectionSetupProvisioningQueueService
+> =>
+  Effect.gen(function* () {
+    const clock = yield* ConnectionSetupClock;
+    const persistence = yield* ConnectionSetupPersistence;
+    const result = yield* persistence.cancel({
+      cancelledAt: yield* clock.now,
+      clerkUserId,
+      setupId,
+    });
+    if (result === null) {
+      return yield* Effect.fail(new ConnectionSetupNotAccessible());
+    }
+    if (result.cleanupState === "pending") {
+      const queue = yield* ConnectionSetupProvisioningQueue;
+      yield* queue.enqueueCleanup(setupId);
     }
     return result;
   });
 
 const corsHeaders = (browserOrigin: string): HeadersInit => ({
   "access-control-allow-headers": "authorization,content-type",
-  "access-control-allow-methods": "OPTIONS,POST",
+  "access-control-allow-methods": "DELETE,OPTIONS,POST",
   "access-control-allow-origin": browserOrigin,
   vary: "Origin",
 });
@@ -332,6 +380,30 @@ const successResponse = (
     browserOrigin,
   );
 
+const cancellationResponse = (
+  result: CancelledConnectionSetup,
+  browserOrigin: string,
+): Response =>
+  jsonResponse(
+    {
+      connection_setup: {
+        cleanup_state: result.cleanupState,
+        id: result.setupId,
+        idempotent_replay: result.outcome === "replay",
+        state: result.state,
+      },
+    },
+    200,
+    browserOrigin,
+  );
+
+const setupIdFromCancellationPath = (pathname: string): string | null => {
+  const match = /^\/v1\/connection-setups\/(cst_[A-Za-z0-9_-]{21})$/u.exec(
+    pathname,
+  );
+  return match?.[1] ?? null;
+};
+
 export const createConnectionSetupHandler =
   (
     layer: Layer.Layer<ConnectionSetupRequirements, unknown>,
@@ -339,8 +411,10 @@ export const createConnectionSetupHandler =
   ) =>
   async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
+    const cancellationSetupId = setupIdFromCancellationPath(url.pathname);
     if (
-      url.pathname !== CONNECTION_SETUP_ROUTE ||
+      (url.pathname !== CONNECTION_SETUP_ROUTE &&
+        cancellationSetupId === null) ||
       request.headers.get("origin") !== browserOrigin
     ) {
       return notFound();
@@ -351,7 +425,39 @@ export const createConnectionSetupHandler =
         status: 204,
       });
     }
-    if (request.method !== "POST") {
+    if (request.method === "DELETE" && cancellationSetupId !== null) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          const identity = yield* HumanIdentity;
+          const clerkUserId = yield* identity.verify(request);
+          const result = yield* cancelConnectionSetup(
+            clerkUserId,
+            cancellationSetupId,
+          );
+          const telemetry = yield* SafeTelemetry;
+          yield* telemetry.emit({
+            event: "connection_setup.cancel.completed",
+            outcome: result.outcome,
+            service: "api",
+          });
+          return result;
+        }).pipe(
+          Effect.provide(layer),
+          Effect.match({
+            onFailure: (failure: unknown) =>
+              typeof failure === "object" &&
+              failure !== null &&
+              "_tag" in failure &&
+              (failure._tag === "InvalidHumanIdentity" ||
+                failure._tag === "ConnectionSetupNotAccessible")
+                ? notFound(browserOrigin)
+                : jsonResponse({ error: "unavailable" }, 503, browserOrigin),
+            onSuccess: (result) => cancellationResponse(result, browserOrigin),
+          }),
+        ),
+      );
+    }
+    if (request.method !== "POST" || url.pathname !== CONNECTION_SETUP_ROUTE) {
       return notFound(browserOrigin);
     }
 
@@ -403,4 +509,5 @@ export const createConnectionSetupHandler =
   };
 
 export const isConnectionSetupRequest = (request: Request): boolean =>
-  new URL(request.url).pathname === CONNECTION_SETUP_ROUTE;
+  new URL(request.url).pathname === CONNECTION_SETUP_ROUTE ||
+  setupIdFromCancellationPath(new URL(request.url).pathname) !== null;

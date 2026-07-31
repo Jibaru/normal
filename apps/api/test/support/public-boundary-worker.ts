@@ -54,7 +54,7 @@ const connectionSetups = new Map<
       readonly createdAt: string;
       readonly expiresAt: string;
       readonly setupId: string;
-      readonly state: "provisioning_pending";
+      readonly state: "cancelled" | "expired" | "provisioning_pending";
     };
   }
 >();
@@ -189,6 +189,7 @@ const makeTestLayer = (failure: FailureTarget | undefined) => {
     }),
     Layer.succeed(ConnectionSetupProvisioningQueue, {
       enqueue: () => Effect.void,
+      enqueueCleanup: () => Effect.void,
     }),
     Layer.succeed(ConnectionSetupProvisioningClock, {
       now: Effect.succeed("2026-01-02T03:05:00.000Z"),
@@ -321,6 +322,30 @@ const makeTestLayer = (failure: FailureTarget | undefined) => {
       rotateRefreshCredential: () => Effect.die("not used"),
     }),
     Layer.succeed(ConnectionSetupPersistence, {
+      cancel: ({ clerkUserId, setupId }) =>
+        Effect.sync(() => {
+          if (clerkUserId !== "user_test_public_boundary") return null;
+          const entry = [...connectionSetups.entries()].find(
+            ([, value]) => value.setup.setupId === setupId,
+          );
+          if (entry === undefined) return null;
+          const [idempotencyKey, value] = entry;
+          const replay =
+            value.setup.state === "cancelled" ||
+            value.setup.state === "expired";
+          const state =
+            value.setup.state === "expired" ? "expired" : "cancelled";
+          connectionSetups.set(idempotencyKey, {
+            ...value,
+            setup: { ...value.setup, state },
+          });
+          return {
+            cleanupState: "pending" as const,
+            outcome: replay ? ("replay" as const) : ("cancelled" as const),
+            setupId,
+            state,
+          };
+        }),
       prepare: ({ idempotencyKey, numberToken }) =>
         Effect.sync(() => {
           const existing = connectionSetups.get(idempotencyKey);
