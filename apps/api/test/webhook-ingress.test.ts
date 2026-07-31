@@ -289,6 +289,36 @@ describe("authenticated Webhook Event ingress", () => {
     expect(streamed.calls).toEqual([]);
   });
 
+  test("returns unavailable when the request body stream fails before persistence", async () => {
+    const harness = makeHarness();
+    const failedBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(new Error("request body unavailable"));
+      },
+    });
+
+    const response = await harness.handler(
+      new Request(endpoint, {
+        body: failedBody,
+        duplex: "half",
+        headers: {
+          "content-type": "application/json",
+          "x-webhook-signature": "connection-webhook-secret",
+        },
+        method: "POST",
+      } as RequestInit),
+    );
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "unavailable" });
+    expect(harness.calls).toEqual([]);
+    expect(harness.events.at(-1)).toEqual({
+      event: "webhook_ingress.completed",
+      outcome: "unavailable",
+      service: "api",
+    });
+  });
+
   test("returns failure unless both R2 persistence and Queue publication succeed", async () => {
     const r2Failure = makeHarness({ storeUnavailable: true });
     const queueFailure = makeHarness({ queueUnavailable: true });

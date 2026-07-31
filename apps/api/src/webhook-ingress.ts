@@ -106,7 +106,7 @@ export type WebhookIngressRequirements =
   | WebhookIngressQueueService;
 
 type RequestBodyResult =
-  | { readonly outcome: "invalid" | "too_large" }
+  | { readonly outcome: "invalid" | "too_large" | "unavailable" }
   | { readonly bytes: Uint8Array; readonly outcome: "valid" };
 
 const boundedBody = async (request: Request): Promise<RequestBodyResult> => {
@@ -126,7 +126,12 @@ const boundedBody = async (request: Request): Promise<RequestBodyResult> => {
   const chunks: Uint8Array[] = [];
   let byteLength = 0;
   while (true) {
-    const result = await reader.read();
+    const result = await reader.read().catch(async () => {
+      for (const chunk of chunks) chunk.fill(0);
+      await reader.cancel().catch(() => undefined);
+      return null;
+    });
+    if (result === null) return { outcome: "unavailable" };
     if (result.done) break;
     byteLength += result.value.byteLength;
     if (byteLength > maximumPayloadBytes) {
@@ -340,7 +345,11 @@ export const createWebhookIngressHandler =
     if (body.outcome !== "valid") {
       return emitOutcome(
         layer,
-        body.outcome === "too_large" ? "too_large" : "invalid_payload",
+        body.outcome === "too_large"
+          ? "too_large"
+          : body.outcome === "unavailable"
+            ? "unavailable"
+            : "invalid_payload",
       );
     }
     const signature = request.headers.get("x-webhook-signature") ?? "";
