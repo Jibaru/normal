@@ -61,12 +61,20 @@ export interface OAuthProtocolRequestFailedEvent {
   readonly status: number;
 }
 
+export interface OAuthAuthorizationDecisionCompletedEvent {
+  readonly clientClass: string;
+  readonly event: "oauth.authorization.decision.completed";
+  readonly outcome: "approved" | "denied";
+  readonly service: "api";
+}
+
 export interface SafeTelemetry {
   readonly emit: (event: SafeTelemetryEvent) => Effect.Effect<void>;
 }
 
 export type SafeTelemetryEvent =
   | HttpCompletedEvent
+  | OAuthAuthorizationDecisionCompletedEvent
   | OAuthAuthorizationRequestCompletedEvent
   | OAuthProtocolRequestFailedEvent
   | PersonalAccountBootstrapCompletedEvent

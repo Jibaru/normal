@@ -101,6 +101,7 @@ const makeHarness = (
         request.headers.get("authorization") !== "Bearer signed-clerk-token"
           ? Effect.fail(new InvalidHumanIdentity())
           : Effect.succeed(clerkUserId),
+      verifyRecently: () => Effect.die("not used"),
     }),
     Layer.succeed(PersonalAccountPersistence, persistence),
     Layer.succeed(PrivateBetaConfig, {

@@ -443,6 +443,7 @@ describe("production migrations", () => {
         AND proname IN (
           'bootstrap_personal_account_for_clerk',
           'bootstrap_whatsapp_connection_for_ingress',
+          'bootstrap_mcp_authorization',
           'admit_personal_account_for_clerk',
           'resolve_personal_account_for_clerk'
         )
@@ -452,6 +453,11 @@ describe("production migrations", () => {
       {
         config: ["search_path=pg_catalog, pg_temp"],
         proname: "admit_personal_account_for_clerk",
+        prosecdef: true,
+      },
+      {
+        config: ["search_path=pg_catalog, pg_temp"],
+        proname: "bootstrap_mcp_authorization",
         prosecdef: true,
       },
       {
@@ -507,6 +513,18 @@ describe("production migrations", () => {
         database.query(
           "SELECT app_private.bootstrap_personal_account_for_clerk($1)",
           ["clerk_user_a"],
+        ),
+      ).rejects.toThrow();
+      await expect(
+        database.query(
+          `SELECT app_private.bootstrap_mcp_authorization(
+            $1, $2, $3, transaction_timestamp()
+          )`,
+          [
+            "40000000-0000-4000-8000-000000000001",
+            "A".repeat(43),
+            "approved-client",
+          ],
         ),
       ).rejects.toThrow();
     } finally {

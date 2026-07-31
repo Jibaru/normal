@@ -1,6 +1,7 @@
 import {
   type AuthRequest,
   type ClientInfo,
+  OAuthError,
   type OAuthHelpers,
   OAuthProvider,
 } from "@cloudflare/workers-oauth-provider";
@@ -34,7 +35,7 @@ export interface OAuthConfiguration {
   readonly resource: string;
 }
 
-interface OAuthKv {
+export interface OAuthKv {
   readonly delete: (key: string) => Promise<void>;
   readonly get: (
     key: string,
@@ -61,6 +62,11 @@ interface OAuthHandlerOptions {
   ) => Promise<Response>;
   readonly configuration: OAuthConfiguration;
   readonly environment: OAuthEnvironment;
+  readonly isAuthorizationActive: (input: {
+    readonly authorizationId: string;
+    readonly clientId: string;
+    readonly oauthSubject: string;
+  }) => Promise<boolean>;
   readonly telemetry: (
     event:
       | OAuthAuthorizationRequestCompletedEvent
@@ -279,7 +285,7 @@ const hashLookup = async (secret: string): Promise<string> => {
   return bytesToBase64Url(new Uint8Array(hash));
 };
 
-const sealAuthorizationRequest = async (
+export const sealAuthorizationRequest = async (
   request: AuthRequest,
   client: AllowlistedOAuthClient,
   configuration: OAuthConfiguration,
@@ -326,6 +332,133 @@ const sealAuthorizationRequest = async (
     { expirationTtl: AUTHORIZATION_REQUEST_TTL_SECONDS },
   );
   return lookupSecret;
+};
+
+const base64UrlToBytes = (value: string): Uint8Array => {
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) {
+    throw new Error("invalid base64url");
+  }
+  const padded = value
+    .replaceAll("-", "+")
+    .replaceAll("_", "/")
+    .padEnd(Math.ceil(value.length / 4) * 4, "=");
+  return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
+};
+
+export interface OpenedAuthorizationRequest {
+  readonly client: AllowlistedOAuthClient;
+  readonly expiresAt: number;
+  readonly request: AuthRequest;
+}
+
+const isAuthRequest = (value: unknown): value is AuthRequest => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const request = value as Record<string, unknown>;
+  return (
+    request.responseType === "code" &&
+    typeof request.clientId === "string" &&
+    typeof request.redirectUri === "string" &&
+    Array.isArray(request.scope) &&
+    request.scope.every((scope) => typeof scope === "string") &&
+    typeof request.state === "string" &&
+    typeof request.codeChallenge === "string" &&
+    request.codeChallengeMethod === "S256" &&
+    (typeof request.resource === "string" ||
+      (Array.isArray(request.resource) &&
+        request.resource.every((resource) => typeof resource === "string")))
+  );
+};
+
+export const openAuthorizationRequest = async (
+  handoff: string,
+  configuration: OAuthConfiguration,
+  kv: OAuthKv,
+  consume = false,
+): Promise<OpenedAuthorizationRequest> => {
+  if (!/^[A-Za-z0-9_-]{43}$/.test(handoff)) {
+    throw new Error("invalid authorization handoff");
+  }
+  const keyHash = await hashLookup(handoff);
+  const keyName = `oauth:authorization-request:${keyHash}`;
+  const serialized = await kv.get(keyName);
+  if (typeof serialized !== "string") {
+    throw new Error("authorization handoff unavailable");
+  }
+  let envelope: unknown;
+  try {
+    envelope = JSON.parse(serialized);
+  } catch {
+    throw new Error("invalid authorization handoff");
+  }
+  if (
+    typeof envelope !== "object" ||
+    envelope === null ||
+    Array.isArray(envelope)
+  ) {
+    throw new Error("invalid authorization handoff");
+  }
+  const record = envelope as Record<string, unknown>;
+  if (
+    record.version !== 1 ||
+    typeof record.iv !== "string" ||
+    typeof record.ciphertext !== "string"
+  ) {
+    throw new Error("invalid authorization handoff");
+  }
+  const key = await crypto.subtle.importKey(
+    "raw",
+    hexToBytes(Redacted.value(configuration.protocolEncryptionKey)),
+    "AES-GCM",
+    false,
+    ["decrypt"],
+  );
+  const plaintext = await crypto.subtle.decrypt(
+    {
+      additionalData: new TextEncoder().encode(configuration.resource),
+      iv: base64UrlToBytes(record.iv),
+      name: "AES-GCM",
+      tagLength: 128,
+    },
+    key,
+    base64UrlToBytes(record.ciphertext),
+  );
+  const opened = JSON.parse(new TextDecoder().decode(plaintext)) as Record<
+    string,
+    unknown
+  >;
+  const client = configuration.clients.find(
+    (candidate) =>
+      candidate.clientId === opened.clientId &&
+      candidate.clientClass === opened.clientClass &&
+      candidate.clientName === opened.clientName,
+  );
+  if (
+    opened.version !== 1 ||
+    !client ||
+    typeof opened.expiresAt !== "number" ||
+    !Number.isSafeInteger(opened.expiresAt) ||
+    opened.expiresAt <= Date.now() ||
+    !isAuthRequest(opened.request) ||
+    opened.request.clientId !== client.clientId ||
+    !client.redirectUris.includes(opened.request.redirectUri) ||
+    opened.request.resource !== configuration.resource ||
+    opened.request.scope.length === 0 ||
+    opened.request.scope.some(
+      (scope) => !OAUTH_SCOPES.includes(scope as (typeof OAUTH_SCOPES)[number]),
+    )
+  ) {
+    throw new Error("invalid authorization handoff");
+  }
+  if (consume) {
+    await kv.delete(keyName);
+  }
+  return {
+    client,
+    expiresAt: opened.expiresAt,
+    request: opened.request,
+  };
 };
 
 const requestedParameter = (url: URL, name: string): string | undefined => {
@@ -493,6 +626,8 @@ const isOAuthProviderRequest = (
     (url.pathname === "/oauth/authorize" ||
       url.pathname === "/oauth/token" ||
       url.pathname === "/oauth/register" ||
+      url.pathname === "/v1/oauth/consent/inspect" ||
+      url.pathname === "/v1/oauth/consent/decision" ||
       url.pathname === "/.well-known/oauth-authorization-server" ||
       url.pathname === "/.well-known/oauth-protected-resource" ||
       url.pathname === "/.well-known/oauth-protected-resource/mcp" ||
@@ -536,6 +671,44 @@ export const createOAuthHandler = (
     },
     scopesSupported: [...OAUTH_SCOPES],
     tokenEndpoint: `${options.configuration.issuer}/oauth/token`,
+    tokenExchangeCallback: async (exchange) => {
+      const props =
+        typeof exchange.props === "object" &&
+        exchange.props !== null &&
+        !Array.isArray(exchange.props)
+          ? (exchange.props as Record<string, unknown>)
+          : {};
+      const authorizationId = props.authorizationId;
+      const oauthSubject = props.oauthSubject;
+      if (
+        typeof authorizationId !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+          authorizationId,
+        ) ||
+        typeof oauthSubject !== "string" ||
+        !/^[A-Za-z0-9_-]{43}$/.test(oauthSubject) ||
+        exchange.userId !== oauthSubject ||
+        !(await options.isAuthorizationActive({
+          authorizationId,
+          clientId: exchange.clientId,
+          oauthSubject,
+        }))
+      ) {
+        throw new OAuthError("invalid_grant", {
+          description: "The MCP Authorization is not active.",
+        });
+      }
+      const tokenProperties = {
+        accessTokenTTL: 10 * 60,
+        accessTokenProps: props,
+      };
+      return exchange.grantType === "authorization_code"
+        ? {
+            ...tokenProperties,
+            refreshTokenTTL: 30 * 24 * 60 * 60,
+          }
+        : tokenProperties;
+    },
   });
 
   return async (request, context) => {
