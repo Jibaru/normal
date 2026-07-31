@@ -19,6 +19,7 @@ export interface ApiEnvironment {
   readonly AWS_KMS_REGION?: string | undefined;
   readonly AWS_SECRET_ACCESS_KEY?: string | undefined;
   readonly AWS_SESSION_TOKEN?: string | undefined;
+  readonly DELETION_MARKERS?: unknown;
   readonly DEPLOYMENT_ENVIRONMENT?: string | undefined;
   readonly HYPERDRIVE?:
     | {
@@ -26,6 +27,8 @@ export interface ApiEnvironment {
       }
     | undefined;
   readonly KMS_CONTENT_ROOT_KEY_ARN?: string | undefined;
+  readonly INGESTION_QUEUE?: unknown;
+  readonly OAUTH_KV?: unknown;
   readonly PROVIDER_CONTROL?:
     | {
         readonly fetch: (
@@ -34,6 +37,8 @@ export interface ApiEnvironment {
         ) => Promise<Response>;
       }
     | undefined;
+  readonly STORED_MEDIA?: unknown;
+  readonly WEBHOOK_INGRESS?: unknown;
 }
 
 const productionConfig = Config.all({
@@ -66,6 +71,48 @@ class MissingProviderControlBinding extends Data.TaggedError(
   "MissingProviderControlBinding",
 ) {}
 
+class MissingCloudflareBinding extends Data.TaggedError(
+  "MissingCloudflareBinding",
+)<{ readonly binding: string }> {}
+
+const hasMethods = (
+  value: unknown,
+  methods: ReadonlyArray<string>,
+): value is Record<
+  string,
+  (...arguments_: ReadonlyArray<unknown>) => unknown
+> =>
+  typeof value === "object" &&
+  value !== null &&
+  methods.every(
+    (method) =>
+      typeof (value as Record<string, unknown>)[method] === "function",
+  );
+
+const validateCloudflareBindings = (
+  environment: ApiEnvironment,
+): Effect.Effect<void, MissingCloudflareBinding> => {
+  const bindings = [
+    [
+      "DELETION_MARKERS",
+      environment.DELETION_MARKERS,
+      ["delete", "get", "put"],
+    ],
+    ["INGESTION_QUEUE", environment.INGESTION_QUEUE, ["send"]],
+    ["OAUTH_KV", environment.OAUTH_KV, ["delete", "get", "put"]],
+    ["STORED_MEDIA", environment.STORED_MEDIA, ["delete", "get", "put"]],
+    ["WEBHOOK_INGRESS", environment.WEBHOOK_INGRESS, ["delete", "get", "put"]],
+  ] as const;
+
+  for (const [binding, value, methods] of bindings) {
+    if (!hasMethods(value, methods)) {
+      return Effect.fail(new MissingCloudflareBinding({ binding }));
+    }
+  }
+
+  return Effect.void;
+};
+
 const environmentConfigProvider = (environment: ApiEnvironment) =>
   ConfigProvider.fromMap(
     new Map(
@@ -80,12 +127,16 @@ const configLayer = (environment: ApiEnvironment) =>
     ApplicationConfig,
     productionConfig.pipe(
       Effect.flatMap((config) =>
-        typeof environment.PROVIDER_CONTROL?.fetch === "function"
-          ? Effect.succeed({
-              ...config,
-              service: "api" as const,
-            })
-          : Effect.fail(new MissingProviderControlBinding()),
+        Effect.gen(function* () {
+          if (typeof environment.PROVIDER_CONTROL?.fetch !== "function") {
+            return yield* Effect.fail(new MissingProviderControlBinding());
+          }
+          yield* validateCloudflareBindings(environment);
+          return {
+            ...config,
+            service: "api" as const,
+          };
+        }),
       ),
       Effect.withConfigProvider(environmentConfigProvider(environment)),
     ),

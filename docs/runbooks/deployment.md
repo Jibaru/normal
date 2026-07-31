@@ -118,7 +118,11 @@ tofu -chdir=infra/compute show "$DEPLOYMENT_ENVIRONMENT.tfplan"
 Confirm that the plan contains exactly one Vercel web project/domain, a public
 API Worker/custom domain, one private provider-control Worker, disabled
 `workers.dev` and preview URLs for both Workers, and an API-to-provider-control
-service binding. Apply the reviewed plan:
+service binding. It must also contain three private R2 buckets with disabled
+managed domains, the seven-day Webhook Event lifecycle, the indefinite deletion
+marker lock, one OAuth KV namespace, an ingestion Queue and active DLQ, the two
+Queue consumers, and the three API schedules. Provider-control must have no R2,
+KV, or Queue binding. Apply the reviewed plan:
 
 ```sh
 tofu -chdir=infra/compute apply "$DEPLOYMENT_ENVIRONMENT.tfplan"
@@ -253,10 +257,17 @@ export CLOUDFLARE_HYPERDRIVE_ID="$(
 export CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID="$(
   tofu -chdir=infra/production output -raw webhook_hyperdrive_id
 )"
-bun scripts/render-api-wrangler.ts apps/api/.wrangler/production.jsonc
+export CLOUDFLARE_OAUTH_KV_ID="$(
+  tofu -chdir=infra/compute output -raw oauth_kv_namespace_id
+)"
+bun scripts/render-api-wrangler.ts \
+  apps/api/.wrangler/production.jsonc \
+  "$DEPLOYMENT_ENVIRONMENT"
 CI=true bun run --cwd apps/api wrangler deploy \
-  --config .wrangler/production.jsonc
-unset CLOUDFLARE_HYPERDRIVE_ID CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID
+  --config .wrangler/production.jsonc \
+  --env "$DEPLOYMENT_ENVIRONMENT"
+unset CLOUDFLARE_HYPERDRIVE_ID CLOUDFLARE_OAUTH_KV_ID \
+  CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID
 export VERCEL_ORG_ID="$(tofu -chdir=infra/compute output -raw vercel_team_id)"
 export VERCEL_PROJECT_ID="$(tofu -chdir=infra/compute output -raw vercel_project_id)"
 vercel deploy --prod --yes --cwd apps/web
@@ -268,7 +279,9 @@ represents development, preview, or production. `NEXT_PUBLIC_API_ORIGIN` is set
 before the build and points to the same-environment Worker. There is no Vercel
 rewrite or server-side API proxy. The rendered API config is mode `0600`,
 ignored by Git, and fails generation unless both real 32-character Hyperdrive
-identifiers are present.
+identifiers and the current environment's real 32-character OAuth KV identifier
+are present. The selected environment receives the same three R2 buckets, Queue
+producer and consumers, DLQ, and schedules as the reviewed OpenTofu plan.
 The Worker manifests set `AWS_KMS_REGION` explicitly. Set
 `KMS_CONTENT_ROOT_KEY_ARN` in the API deployment configuration and populate the
 three AWS credential secrets before deployment.
@@ -385,6 +398,13 @@ closed; deploy a forward-compatible application or forward-fix migration
 instead of deleting migration records or reverting tenant-isolation DDL. For a
 failed, unrecorded migration, correct the cause and rerun the serialized
 migration command before deploying application traffic.
+
+Do not destroy, unlock, rename, or remove the deletion-marker bucket during a
+rollback or environment teardown. Its OpenTofu resource deliberately has
+`prevent_destroy`, and its indefinite lock is the restore-external deletion
+authority. Retire other environment resources only after Queue drain and
+retention cleanup; retain the marker bucket and its isolated encrypted state
+under the production recovery authority.
 
 ## External rollout gates
 

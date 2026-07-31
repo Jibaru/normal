@@ -1,6 +1,7 @@
 const repositoryRoot = import.meta.dir.replace(/\/scripts$/, "");
 const environments = ["development", "preview", "production"] as const;
 const deployables = ["api", "provider-control"] as const;
+const oauthKvValidationId = "22222222222222222222222222222222";
 
 for (const deployable of deployables) {
   const manifestPath = `${repositoryRoot}/apps/${deployable}/wrangler.jsonc`;
@@ -22,6 +23,37 @@ for (const deployable of deployables) {
   for (const environment of environments) {
     const workerSuffix = environment === "production" ? "" : `-${environment}`;
     const outputDirectory = `${repositoryRoot}/.wrangler/manifest-validation/${deployable}-${environment}`;
+    let configPath = manifestPath;
+
+    if (deployable === "api") {
+      configPath = `${repositoryRoot}/.wrangler/manifest-validation/api-${environment}.jsonc`;
+      const renderer = Bun.spawn(
+        ["bun", "scripts/render-api-wrangler.ts", configPath, environment],
+        {
+          cwd: repositoryRoot,
+          env: {
+            ...Bun.env,
+            CLOUDFLARE_HYPERDRIVE_ID: "00000000000000000000000000000000",
+            CLOUDFLARE_OAUTH_KV_ID: oauthKvValidationId,
+            CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID:
+              "11111111111111111111111111111111",
+          },
+          stderr: "pipe",
+          stdout: "pipe",
+        },
+      );
+      const [rendererExitCode, rendererStdout, rendererStderr] =
+        await Promise.all([
+          renderer.exited,
+          new Response(renderer.stdout).text(),
+          new Response(renderer.stderr).text(),
+        ]);
+      if (rendererExitCode !== 0) {
+        console.error(`${rendererStdout}\n${rendererStderr}`);
+        throw new Error(`Could not render API ${environment} bindings.`);
+      }
+    }
+
     const process = Bun.spawn(
       [
         "bun",
@@ -31,6 +63,8 @@ for (const deployable of deployables) {
         "wrangler",
         "deploy",
         "--dry-run",
+        "--config",
+        configPath,
         "--env",
         environment,
         "--outdir",
@@ -74,6 +108,31 @@ for (const deployable of deployables) {
     ) {
       throw new Error(
         `API ${environment} does not bind to provider-control in the same environment.`,
+      );
+    }
+
+    if (deployable === "api") {
+      const requiredBindings = [
+        `env.OAUTH_KV (${oauthKvValidationId})`,
+        `env.INGESTION_QUEUE (whatsapp-mcp-ingestion${workerSuffix})`,
+        `env.WEBHOOK_INGRESS (whatsapp-mcp-webhook-ingress${workerSuffix})`,
+        `env.STORED_MEDIA (whatsapp-mcp-stored-media${workerSuffix})`,
+        `env.DELETION_MARKERS (whatsapp-mcp-deletion-markers${workerSuffix})`,
+      ];
+      for (const binding of requiredBindings) {
+        if (!output.includes(binding)) {
+          throw new Error(
+            `API ${environment} is missing required binding ${binding}.`,
+          );
+        }
+      }
+    } else if (
+      ["KV Namespace", "Queue", "R2 Bucket"].some((resource) =>
+        output.includes(resource),
+      )
+    ) {
+      throw new Error(
+        `Provider-control ${environment} must receive no OAuth, Queue, or R2 authority.`,
       );
     }
   }

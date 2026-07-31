@@ -1,10 +1,19 @@
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 
-const [outputArgument] = process.argv.slice(2);
+const [outputArgument, environmentArgument = "production"] =
+  process.argv.slice(2);
 
 if (!outputArgument) {
-  throw new Error("usage: render-api-wrangler.ts <output-path>");
+  throw new Error(
+    "usage: render-api-wrangler.ts <output-path> [development|preview|production]",
+  );
+}
+
+if (!["development", "preview", "production"].includes(environmentArgument)) {
+  throw new Error(
+    "deployment environment must be development, preview, or production",
+  );
 }
 
 const requireIdentifier = (name: string): string => {
@@ -21,6 +30,26 @@ const config = JSON.parse(await readFile(sourcePath, "utf8")) as Record<
   string,
   unknown
 >;
+const oauthKvNamespaceId = requireIdentifier("CLOUDFLARE_OAUTH_KV_ID");
+const oauthKvPlaceholder = "replace-with-rendered-oauth-kv-id";
+const renderOAuthKv = (target: Record<string, unknown>): void => {
+  const namespaces = target.kv_namespaces;
+  if (!Array.isArray(namespaces)) {
+    throw new Error("API Wrangler source config must declare OAuth KV");
+  }
+  const oauth = namespaces.find(
+    (namespace) =>
+      typeof namespace === "object" &&
+      namespace !== null &&
+      (namespace as Record<string, unknown>).binding === "OAUTH_KV",
+  ) as Record<string, unknown> | undefined;
+  if (!oauth || oauth.id !== oauthKvPlaceholder) {
+    throw new Error(
+      "API Wrangler source config must use the OAuth KV placeholder",
+    );
+  }
+  oauth.id = oauthKvNamespaceId;
+};
 const rebasePath = (value: string): string =>
   relative(dirname(outputPath), resolve(dirname(sourcePath), value)).replaceAll(
     sep,
@@ -35,7 +64,24 @@ for (const key of ["$schema", "main"]) {
   config[key] = rebasePath(value);
 }
 
-config.hyperdrive = [
+if (environmentArgument === "production") {
+  renderOAuthKv(config);
+}
+const environments = config.env;
+if (typeof environments !== "object" || environments === null) {
+  throw new Error("API Wrangler source config must declare environments");
+}
+const selectedEnvironment = (environments as Record<string, unknown>)[
+  environmentArgument
+];
+if (typeof selectedEnvironment !== "object" || selectedEnvironment === null) {
+  throw new Error(
+    `API Wrangler source config is missing ${environmentArgument}`,
+  );
+}
+renderOAuthKv(selectedEnvironment as Record<string, unknown>);
+
+const hyperdrive = [
   {
     binding: "HYPERDRIVE",
     id: requireIdentifier("CLOUDFLARE_HYPERDRIVE_ID"),
@@ -45,6 +91,8 @@ config.hyperdrive = [
     id: requireIdentifier("CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID"),
   },
 ];
+config.hyperdrive = hyperdrive;
+(selectedEnvironment as Record<string, unknown>).hyperdrive = hyperdrive;
 
 await mkdir(dirname(outputPath), { recursive: true });
 await writeFile(outputPath, `${JSON.stringify(config, null, 2)}\n`, {

@@ -57,6 +57,42 @@ run "development_topology" {
     ]) == "https://api.dev.example.com"
     error_message = "The web deployment must call the API Worker directly."
   }
+
+  assert {
+    condition = (
+      cloudflare_r2_bucket.webhook_ingress.name == "whatsapp-mcp-webhook-ingress-development" &&
+      cloudflare_r2_bucket.stored_media.name == "whatsapp-mcp-stored-media-development" &&
+      cloudflare_r2_bucket.deletion_markers.name == "whatsapp-mcp-deletion-markers-development" &&
+      cloudflare_workers_kv_namespace.oauth.title == "whatsapp-mcp-oauth-development" &&
+      cloudflare_queue.ingestion.queue_name == "whatsapp-mcp-ingestion-development" &&
+      cloudflare_queue.dead_letter.queue_name == "whatsapp-mcp-ingestion-dlq-development"
+    )
+    error_message = "Development state resources must use isolated environment-specific names."
+  }
+
+  assert {
+    condition = toset([
+      for binding in cloudflare_worker_version.api.bindings :
+      "${binding.type}:${binding.name}"
+      ]) == toset([
+      "kv_namespace:OAUTH_KV",
+      "plain_text:DEPLOYMENT_ENVIRONMENT",
+      "queue:INGESTION_QUEUE",
+      "r2_bucket:DELETION_MARKERS",
+      "r2_bucket:STORED_MEDIA",
+      "r2_bucket:WEBHOOK_INGRESS",
+      "service:PROVIDER_CONTROL",
+    ])
+    error_message = "The API Worker must receive exactly its state, queue producer, and provider-control capabilities."
+  }
+
+  assert {
+    condition = toset([
+      for binding in cloudflare_worker_version.provider_control.bindings :
+      "${binding.type}:${binding.name}"
+    ]) == toset(["plain_text:DEPLOYMENT_ENVIRONMENT"])
+    error_message = "Provider-control must receive no OAuth, R2, or Queue authority."
+  }
 }
 
 run "preview_topology" {
@@ -120,6 +156,58 @@ run "production_topology" {
   assert {
     condition     = output.provider_control_service == "whatsapp-mcp-provider-control"
     error_message = "Provider-control must be exported only as a service-binding target."
+  }
+
+  assert {
+    condition = (
+      cloudflare_r2_managed_domain.webhook_ingress.enabled == false &&
+      cloudflare_r2_managed_domain.stored_media.enabled == false &&
+      cloudflare_r2_managed_domain.deletion_markers.enabled == false
+    )
+    error_message = "Every R2 bucket must explicitly disable its public r2.dev domain."
+  }
+
+  assert {
+    condition = one([
+      for rule in cloudflare_r2_bucket_lifecycle.webhook_ingress.rules :
+      rule.delete_objects_transition.condition.max_age
+      if rule.id == "expire-encrypted-webhook-events"
+    ]) == 604800
+    error_message = "Encrypted Webhook Events must expire after seven days."
+  }
+
+  assert {
+    condition = one([
+      for rule in cloudflare_r2_bucket_lock.deletion_markers.rules :
+      rule.condition.type
+      if rule.id == "retain-deletion-markers"
+    ]) == "Indefinite"
+    error_message = "Deletion markers must be protected by an indefinite bucket lock."
+  }
+
+  assert {
+    condition = (
+      cloudflare_queue_consumer.ingestion.dead_letter_queue == cloudflare_queue.dead_letter.queue_name &&
+      cloudflare_queue_consumer.ingestion.settings.max_retries == 7 &&
+      cloudflare_queue_consumer.ingestion.settings.retry_delay == 10800 &&
+      cloudflare_queue.dead_letter.settings.message_retention_period == 345600
+    )
+    error_message = "Ingestion must have seven bounded retries over roughly 21 hours before the four-day DLQ."
+  }
+
+  assert {
+    condition = (
+      cloudflare_queue_consumer.ingestion.script_name == cloudflare_worker.api.name &&
+      cloudflare_queue_consumer.dead_letter.script_name == cloudflare_worker.api.name
+    )
+    error_message = "The API Worker must actively consume both ingestion and dead-letter queues."
+  }
+
+  assert {
+    condition = toset([
+      for schedule in cloudflare_workers_cron_trigger.api.schedules : schedule.cron
+    ]) == toset(["* * * * *", "*/5 * * * *", "0 * * * *"])
+    error_message = "The API Worker must schedule maintenance, five-minute health reconciliation, and hourly retention work."
   }
 }
 
