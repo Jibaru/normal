@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   canStartNewSend,
+  connectionSideEffectAvailability,
   isWhatsAppConnectionState,
   whatsappConnectionStates,
 } from "../src/whatsapp-connection";
@@ -25,5 +26,19 @@ describe("WhatsApp Connection state", () => {
     expect(
       whatsappConnectionStates.filter((state) => canStartNewSend(state)),
     ).toEqual(["connected"]);
+  });
+
+  test("provides one stable availability decision for unsafe new side effects", () => {
+    expect(connectionSideEffectAvailability("connected")).toEqual({
+      decision: "allowed",
+    });
+    for (const state of whatsappConnectionStates.filter(
+      (candidate) => candidate !== "connected",
+    )) {
+      expect(connectionSideEffectAvailability(state)).toEqual({
+        decision: "blocked",
+        reason: state,
+      });
+    }
   });
 });

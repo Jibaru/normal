@@ -7,8 +7,11 @@ import type {
 import type {
   ActivateWhatsAppConnectionInput,
   ConnectionSetupActivation,
+  WhatsAppConnectionLifecycleAction,
+  WhatsAppConnectionLifecycleClaim,
   WhatsAppConnectionRecord,
 } from "@whatsapp-mcp/db/whatsapp-connection";
+import type { WhatsAppConnectionState } from "@whatsapp-mcp/domain/whatsapp-connection";
 import { Context, Data, Effect, type Layer } from "effect";
 import {
   HumanIdentity,
@@ -27,6 +30,8 @@ import {
 const CONNECTIONS_ROUTE = "/v1/whatsapp-connections";
 const qrRoutePattern =
   /^\/v1\/connection-setups\/(cst_[A-Za-z0-9_-]{21})\/qr$/u;
+const lifecycleRoutePattern =
+  /^\/v1\/whatsapp-connections\/(con_[A-Za-z0-9_-]{21})\/(disconnect|reconnect)$/u;
 
 export class WhatsAppConnectionPersistenceError extends Data.TaggedError(
   "WhatsAppConnectionPersistenceError",
@@ -57,6 +62,26 @@ export interface WhatsAppConnectionPersistenceService {
     ReadonlyArray<WhatsAppConnectionRecord>,
     WhatsAppConnectionPersistenceError
   >;
+  readonly claimLifecycle: (input: {
+    readonly action: WhatsAppConnectionLifecycleAction;
+    readonly claimId: string;
+    readonly clerkUserId: string;
+    readonly publicId: string;
+    readonly requestedAt: string;
+  }) => Effect.Effect<
+    WhatsAppConnectionLifecycleClaim | null,
+    WhatsAppConnectionPersistenceError
+  >;
+  readonly finishLifecycle: (input: {
+    readonly claimId: string;
+    readonly clerkUserId: string;
+    readonly observedAt: string;
+    readonly publicId: string;
+    readonly state: Exclude<WhatsAppConnectionState, "deleting">;
+  }) => Effect.Effect<
+    WhatsAppConnectionRecord | null,
+    WhatsAppConnectionPersistenceError
+  >;
   readonly loadSetup: (input: {
     readonly clerkUserId: string;
     readonly observedAt: string;
@@ -74,6 +99,9 @@ export const WhatsAppConnectionPersistence =
 
 export interface WhatsAppConnectionProviderService {
   readonly connect: (input: {
+    readonly session: string;
+  }) => Effect.Effect<ProviderControlResult<LifecycleSession>>;
+  readonly disconnect: (input: {
     readonly session: string;
   }) => Effect.Effect<ProviderControlResult<LifecycleSession>>;
   readonly getQrCode: (input: {
@@ -100,6 +128,7 @@ export const WhatsAppConnectionClock =
 
 export interface WhatsAppConnectionIdentifiersService {
   readonly nextConnectionId: Effect.Effect<string>;
+  readonly nextLifecycleClaimId: Effect.Effect<string>;
   readonly nextPublicId: Effect.Effect<string>;
   readonly nextWebhookIdentityKey: Effect.Effect<Uint8Array>;
 }
@@ -134,6 +163,20 @@ type SetupObservation =
         | "pending"
         | "provisioning_failed"
         | "provisioning_quarantined";
+    };
+
+type LifecycleObservation =
+  | {
+      readonly action: WhatsAppConnectionLifecycleAction;
+      readonly connection: WhatsAppConnectionRecord;
+      readonly outcome: "complete" | "in_progress" | "recovery_required";
+    }
+  | {
+      readonly action: "reconnect";
+      readonly connection: WhatsAppConnectionRecord;
+      readonly expiresAt: string | null;
+      readonly image: Uint8Array;
+      readonly outcome: "qr_available";
     };
 
 const decodeBase64 = (value: string): Uint8Array => {
@@ -367,9 +410,176 @@ export const observeConnectionSetup = (
       : { outcome: "connecting" };
   });
 
+const lifecycleState = (
+  action: WhatsAppConnectionLifecycleAction,
+  reconciliation: SessionReconciliation,
+): {
+  readonly session: LifecycleSession | null;
+  readonly state: Exclude<WhatsAppConnectionState, "deleting">;
+} => {
+  if (reconciliation.outcome === "duplicates") {
+    return { session: null, state: "degraded" };
+  }
+  if (reconciliation.outcome === "absent") {
+    return {
+      session: null,
+      state: action === "disconnect" ? "disconnected" : "reconnect_required",
+    };
+  }
+  return {
+    session: reconciliation.session,
+    state: reconciliation.session.connectionState,
+  };
+};
+
+export const reconcileWhatsAppConnectionLifecycle = (
+  clerkUserId: string,
+  publicId: string,
+  action: WhatsAppConnectionLifecycleAction,
+): Effect.Effect<
+  LifecycleObservation,
+  WhatsAppConnectionNotAccessible | WhatsAppConnectionPersistenceError,
+  | WhatsAppConnectionClockService
+  | WhatsAppConnectionIdentifiersService
+  | WhatsAppConnectionPersistenceService
+  | WhatsAppConnectionProviderService
+> =>
+  Effect.gen(function* () {
+    const identifiers = yield* WhatsAppConnectionIdentifiers;
+    const clock = yield* WhatsAppConnectionClock;
+    const persistence = yield* WhatsAppConnectionPersistence;
+    const claimId = yield* identifiers.nextLifecycleClaimId;
+    const requestedAt = yield* clock.now;
+    const claim = yield* persistence.claimLifecycle({
+      action,
+      claimId,
+      clerkUserId,
+      publicId,
+      requestedAt,
+    });
+    if (claim === null) {
+      return yield* Effect.fail(new WhatsAppConnectionNotAccessible());
+    }
+    if (claim.outcome !== "claimed") {
+      return {
+        action,
+        connection: claim.connection,
+        outcome: claim.outcome,
+      };
+    }
+
+    const provider = yield* WhatsAppConnectionProvider;
+    let providerSession: LifecycleSession | null = null;
+    let state: Exclude<WhatsAppConnectionState, "deleting"> = "degraded";
+    const reconciled = yield* provider.reconcile({
+      setupMarker: claim.setupMarker,
+    });
+    if (reconciled.ok) {
+      ({ session: providerSession, state } = lifecycleState(
+        action,
+        reconciled.value,
+      ));
+    }
+
+    const needsWrite =
+      providerSession !== null &&
+      (action === "disconnect"
+        ? providerSession.connectionState === "connected" ||
+          providerSession.connectionState === "connecting"
+        : providerSession.connectionState === "disconnected" ||
+          providerSession.connectionState === "reconnect_required");
+
+    if (needsWrite && providerSession !== null) {
+      const written =
+        action === "disconnect"
+          ? yield* provider.disconnect({ session: providerSession.session })
+          : yield* provider.connect({ session: providerSession.session });
+      if (written.ok) {
+        providerSession = written.value;
+        state =
+          action === "disconnect" &&
+          written.value.connectionState === "reconnect_required"
+            ? "disconnected"
+            : written.value.connectionState;
+      } else {
+        const afterAmbiguousWrite = yield* provider.reconcile({
+          setupMarker: claim.setupMarker,
+        });
+        if (afterAmbiguousWrite.ok) {
+          ({ session: providerSession, state } = lifecycleState(
+            action,
+            afterAmbiguousWrite.value,
+          ));
+        } else {
+          providerSession = null;
+          state = "degraded";
+        }
+      }
+    }
+
+    if (
+      action === "disconnect" &&
+      state !== "disconnected" &&
+      state !== "reconnect_required"
+    ) {
+      state = "degraded";
+    }
+    if (action === "disconnect" && state === "reconnect_required") {
+      state = "disconnected";
+    }
+
+    const observedAt = yield* clock.now;
+    const connection = yield* persistence.finishLifecycle({
+      claimId,
+      clerkUserId,
+      observedAt,
+      publicId,
+      state,
+    });
+    if (connection === null) {
+      return {
+        action,
+        connection: claim.connection,
+        outcome: "in_progress",
+      };
+    }
+
+    if (
+      action === "reconnect" &&
+      providerSession !== null &&
+      state === "connecting"
+    ) {
+      const qr = yield* provider.getQrCode({
+        session: providerSession.session,
+      });
+      if (qr.ok && qr.value.state === "available") {
+        return {
+          action,
+          connection,
+          expiresAt: qr.value.expiresAt,
+          image: qr.value.image,
+          outcome: "qr_available",
+        };
+      }
+    }
+
+    const complete =
+      (action === "disconnect" && connection.state === "disconnected") ||
+      (action === "reconnect" && connection.state === "connected");
+    return {
+      action,
+      connection,
+      outcome: complete
+        ? "complete"
+        : connection.state === "connecting"
+          ? "in_progress"
+          : "recovery_required",
+    };
+  });
+
 const corsHeaders = (browserOrigin: string): HeadersInit => ({
   "access-control-allow-headers": "authorization",
-  "access-control-allow-methods": "GET,OPTIONS",
+  "access-control-allow-methods": "GET,POST,OPTIONS",
   "access-control-allow-origin": browserOrigin,
   vary: "Origin",
 });
@@ -423,6 +633,25 @@ const qrResponse = (
     status: 200,
   });
 
+const reconnectQrResponse = (
+  observation: Extract<LifecycleObservation, { outcome: "qr_available" }>,
+  browserOrigin: string,
+): Response =>
+  new Response(observation.image, {
+    headers: {
+      ...corsHeaders(browserOrigin),
+      "cache-control": "no-store",
+      "content-security-policy": "default-src 'none'",
+      "content-type": "image/svg+xml",
+      ...(observation.expiresAt === null
+        ? {}
+        : { "x-whatsapp-connection-qr-expires-at": observation.expiresAt }),
+      "x-content-type-options": "nosniff",
+      "x-whatsapp-connection-state": observation.connection.state,
+    },
+    status: 200,
+  });
+
 const connectionJson = (connection: WhatsAppConnectionRecord) => ({
   display_name: connection.displayName,
   id: connection.publicId,
@@ -439,8 +668,11 @@ export const createWhatsAppConnectionHandler =
   async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     const qrMatch = qrRoutePattern.exec(url.pathname);
+    const lifecycleMatch = lifecycleRoutePattern.exec(url.pathname);
     if (
-      (url.pathname !== CONNECTIONS_ROUTE && qrMatch === null) ||
+      (url.pathname !== CONNECTIONS_ROUTE &&
+        qrMatch === null &&
+        lifecycleMatch === null) ||
       request.headers.get("origin") !== browserOrigin
     ) {
       return notFound();
@@ -451,7 +683,10 @@ export const createWhatsAppConnectionHandler =
         status: 204,
       });
     }
-    if (request.method !== "GET") {
+    if (
+      (lifecycleMatch === null && request.method !== "GET") ||
+      (lifecycleMatch !== null && request.method !== "POST")
+    ) {
       return notFound(browserOrigin);
     }
 
@@ -459,6 +694,29 @@ export const createWhatsAppConnectionHandler =
       Effect.gen(function* () {
         const identity = yield* HumanIdentity;
         const clerkUserId = yield* identity.verify(request);
+        if (lifecycleMatch !== null) {
+          const publicId = lifecycleMatch[1];
+          const action = lifecycleMatch[2];
+          if (
+            publicId === undefined ||
+            (action !== "disconnect" && action !== "reconnect")
+          ) {
+            return yield* Effect.fail(new WhatsAppConnectionNotAccessible());
+          }
+          const observation = yield* reconcileWhatsAppConnectionLifecycle(
+            clerkUserId,
+            publicId,
+            action,
+          );
+          const telemetry = yield* SafeTelemetry;
+          yield* telemetry.emit({
+            event: "whatsapp_connection.lifecycle.completed",
+            operation: action,
+            outcome: observation.outcome,
+            service: "api",
+          });
+          return { kind: "lifecycle" as const, observation };
+        }
         if (qrMatch !== null) {
           const setupId = qrMatch[1];
           if (setupId === undefined) {
@@ -497,6 +755,27 @@ export const createWhatsAppConnectionHandler =
               ? notFound(browserOrigin)
               : jsonResponse({ error: "unavailable" }, 503, browserOrigin),
           onSuccess: (result) => {
+            if (result.kind === "lifecycle") {
+              const observation = result.observation;
+              if (observation.outcome === "qr_available") {
+                return reconnectQrResponse(observation, browserOrigin);
+              }
+              return jsonResponse(
+                {
+                  lifecycle: {
+                    action: observation.action,
+                    outcome: observation.outcome,
+                  },
+                  whatsapp_connection: connectionJson(observation.connection),
+                },
+                observation.outcome === "complete"
+                  ? 200
+                  : observation.outcome === "in_progress"
+                    ? 202
+                    : 409,
+                browserOrigin,
+              );
+            }
             if (result.kind === "connections") {
               return jsonResponse(
                 {
@@ -542,5 +821,9 @@ export const createWhatsAppConnectionHandler =
 
 export const isWhatsAppConnectionRequest = (request: Request): boolean => {
   const path = new URL(request.url).pathname;
-  return path === CONNECTIONS_ROUTE || qrRoutePattern.test(path);
+  return (
+    path === CONNECTIONS_ROUTE ||
+    qrRoutePattern.test(path) ||
+    lifecycleRoutePattern.test(path)
+  );
 };

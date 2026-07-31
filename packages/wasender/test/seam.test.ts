@@ -191,6 +191,11 @@ describe("provider-neutral capability seam", () => {
         return Effect.succeed(lifecycleSession);
       },
       deleteSession: () => Effect.succeed({ state: "present" }),
+      disconnectSession: () =>
+        Effect.succeed({
+          ...lifecycleSession,
+          connectionState: "disconnected",
+        }),
       getQrCode: () => Effect.succeed({ state: "not_available" }),
       listSessions: () => Effect.succeed([]),
       reconcileSession: () => {

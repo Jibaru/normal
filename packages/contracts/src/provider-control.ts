@@ -52,6 +52,7 @@ export const decodeReconcileSessionRequest = strictDecode(
 export const decodeListSessionsRequest = strictDecode(ListSessionsRequest);
 export const decodeCreateSessionRequest = strictDecode(CreateSessionRequest);
 export const decodeConnectSessionRequest = strictDecode(SessionRequest);
+export const decodeDisconnectSessionRequest = strictDecode(SessionRequest);
 export const decodeGetQrCodeRequest = strictDecode(SessionRequest);
 export const decodeDeleteSessionRequest = strictDecode(SessionRequest);
 
@@ -166,6 +167,7 @@ export type ProviderControlRpcMethod =
   | "connectSession"
   | "createSession"
   | "deleteSession"
+  | "disconnectSession"
   | "getQrCode"
   | "listSessions"
   | "reconcileSession";
@@ -187,6 +189,9 @@ export interface ProviderControlService {
   readonly deleteSession: (
     request: SessionRequest,
   ) => Promise<ProviderControlResult<SessionDeletionObservation>>;
+  readonly disconnectSession: (
+    request: SessionRequest,
+  ) => Promise<ProviderControlResult<LifecycleSession>>;
   readonly getQrCode: (
     request: SessionRequest,
   ) => Promise<ProviderControlResult<QrCodeObservation>>;

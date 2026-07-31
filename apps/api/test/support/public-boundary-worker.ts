@@ -83,12 +83,24 @@ let authorizationRevokedAt: Date | null = null;
 const testAuthorizationId = "mca_123456789012345678901";
 const providerObservations: string[] = [];
 const qrObservations = new Map<string, number>();
+let providerConnectionState:
+  | "connected"
+  | "connecting"
+  | "disconnected"
+  | "reconnect_required"
+  | "degraded" = "disconnected";
+let lifecycleClaimId: string | null = null;
 const whatsAppConnections: Array<{
-  readonly displayName: null;
-  readonly numberSuffix: string;
-  readonly publicId: string;
-  readonly state: "connected";
-  readonly stateChangedAt: string;
+  displayName: null;
+  numberSuffix: string;
+  publicId: string;
+  state:
+    | "connected"
+    | "connecting"
+    | "degraded"
+    | "disconnected"
+    | "reconnect_required";
+  stateChangedAt: string;
 }> = [];
 const publishedWebhookMessages: WebhookIngressQueueMessage[] = [];
 let nextWebhookObjectId = 0;
@@ -440,6 +452,9 @@ const makeTestLayer = (
     }),
     Layer.succeed(WhatsAppConnectionIdentifiers, {
       nextConnectionId: Effect.succeed("20000000-0000-4000-8000-000000000018"),
+      nextLifecycleClaimId: Effect.succeed(
+        "40000000-0000-4000-8000-000000000018",
+      ),
       nextPublicId: Effect.succeed("con_000000000000000000018"),
       nextWebhookIdentityKey: Effect.succeed(new Uint8Array(32).fill(18)),
     }),
@@ -457,6 +472,71 @@ const makeTestLayer = (
           };
           whatsAppConnections.push(connection);
           return connection;
+        }),
+      claimLifecycle: ({
+        action,
+        claimId,
+        clerkUserId,
+        publicId,
+        requestedAt,
+      }) =>
+        Effect.sync(() => {
+          const connection = whatsAppConnections.find(
+            (candidate) =>
+              clerkUserId === "user_test_public_boundary" &&
+              candidate.publicId === publicId,
+          );
+          if (connection === undefined) return null;
+          const target = action === "disconnect" ? "disconnected" : "connected";
+          if (connection.state === target) {
+            return {
+              connection: { ...connection },
+              outcome: "complete" as const,
+            };
+          }
+          if (lifecycleClaimId !== null) {
+            return {
+              connection: { ...connection },
+              outcome: "in_progress" as const,
+            };
+          }
+          lifecycleClaimId = claimId;
+          connection.state =
+            action === "disconnect" ? "degraded" : "connecting";
+          connection.stateChangedAt = requestedAt;
+          return {
+            action,
+            connection: { ...connection },
+            outcome: "claimed" as const,
+            setupMarker: [...connectionSetups.values()][0]?.setup.setupId ?? "",
+          };
+        }),
+      finishLifecycle: ({
+        claimId,
+        clerkUserId,
+        observedAt,
+        publicId,
+        state,
+      }) =>
+        Effect.sync(() => {
+          const connection = whatsAppConnections.find(
+            (candidate) =>
+              clerkUserId === "user_test_public_boundary" &&
+              candidate.publicId === publicId,
+          );
+          if (
+            connection === undefined ||
+            lifecycleClaimId === null ||
+            lifecycleClaimId !== claimId
+          ) {
+            return null;
+          }
+          lifecycleClaimId = null;
+          if (connection.state !== state) {
+            connection.state = state;
+            connection.stateChangedAt = observedAt;
+          }
+          return { ...connection };
         }),
       list: (clerkUserId) =>
         Effect.succeed(
@@ -512,11 +592,25 @@ const makeTestLayer = (
       connect: () =>
         Effect.sync(() => {
           providerObservations.push("connectSession");
+          providerConnectionState = "connecting";
           return {
             ok: true as const,
             value: {
               authority: "test-session-authority",
               connectionState: "connecting" as const,
+              session: "wsl_0000000000000000000000000000000000000000000",
+            },
+          };
+        }),
+      disconnect: () =>
+        Effect.sync(() => {
+          providerObservations.push("disconnectSession");
+          providerConnectionState = "disconnected";
+          return {
+            ok: true as const,
+            value: {
+              authority: "test-session-authority",
+              connectionState: "disconnected" as const,
               session: "wsl_0000000000000000000000000000000000000000000",
             },
           };
@@ -540,16 +634,19 @@ const makeTestLayer = (
         Effect.sync(() => {
           providerObservations.push("reconcileSession");
           const session = "wsl_0000000000000000000000000000000000000000000";
+          if (
+            providerConnectionState === "connecting" &&
+            (qrObservations.get(session) ?? 0) > 0
+          ) {
+            providerConnectionState = "connected";
+          }
           return {
             ok: true as const,
             value: {
               outcome: "present" as const,
               session: {
                 authority: "test-session-authority",
-                connectionState:
-                  (qrObservations.get(session) ?? 0) > 0
-                    ? ("connected" as const)
-                    : ("disconnected" as const),
+                connectionState: providerConnectionState,
                 session,
               },
             },

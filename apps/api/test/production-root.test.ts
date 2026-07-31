@@ -48,6 +48,18 @@ describe("API production root", () => {
     expect(response.status).toBe(503);
   });
 
+  test("fails closed when the provider-control binding cannot disconnect", async () => {
+    const environment = validEnvironment();
+    const { disconnectSession: _missing, ...providerControlWithoutDisconnect } =
+      environment.PROVIDER_CONTROL;
+    const response = await createProductionHandler({
+      ...environment,
+      PROVIDER_CONTROL: providerControlWithoutDisconnect,
+    })(new Request("https://api.example.test/health"));
+
+    expect(response.status).toBe(503);
+  });
+
   test("fails closed when Stored Media cannot start multipart uploads", async () => {
     const environment = validEnvironment();
     const { createMultipartUpload: _missing, ...storedMediaWithoutMultipart } =

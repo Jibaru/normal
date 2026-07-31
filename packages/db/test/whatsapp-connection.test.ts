@@ -300,6 +300,209 @@ describe("WhatsApp Connection repository", () => {
     expect(qrColumns.rows).toEqual([{ count: 0 }]);
   });
 
+  test("serializes disconnect and reconnect claims while preserving retained identity", async () => {
+    const repository = makeWhatsAppConnectionRepository(provider);
+    await repository.activate(activationInput);
+
+    const disconnect = await repository.claimLifecycle({
+      action: "disconnect",
+      claimId: "40000000-0000-4000-8000-000000000031",
+      clerkUserId: "user_connectiona",
+      publicId,
+      requestedAt: "2026-07-31T12:05:00.000Z",
+    });
+    const concurrent = await repository.claimLifecycle({
+      action: "disconnect",
+      claimId: "40000000-0000-4000-8000-000000000032",
+      clerkUserId: "user_connectiona",
+      publicId,
+      requestedAt: "2026-07-31T12:05:01.000Z",
+    });
+
+    expect(disconnect).toEqual({
+      action: "disconnect",
+      connection: {
+        displayName: null,
+        numberSuffix: "3456",
+        publicId,
+        state: "degraded",
+        stateChangedAt: "2026-07-31T12:05:00.000Z",
+      },
+      outcome: "claimed",
+      setupMarker: setupId,
+    });
+    if (disconnect?.outcome !== "claimed") {
+      throw new Error("expected claimed disconnect lifecycle");
+    }
+    expect(concurrent).toEqual({
+      connection: disconnect.connection,
+      outcome: "in_progress",
+    });
+    await expect(
+      repository.finishLifecycle({
+        claimId: "40000000-0000-4000-8000-000000000032",
+        clerkUserId: "user_connectiona",
+        observedAt: "2026-07-31T12:05:02.000Z",
+        publicId,
+        state: "connected",
+      }),
+    ).resolves.toBeNull();
+
+    const disconnected = await repository.finishLifecycle({
+      claimId: "40000000-0000-4000-8000-000000000031",
+      clerkUserId: "user_connectiona",
+      observedAt: "2026-07-31T12:05:03.000Z",
+      publicId,
+      state: "disconnected",
+    });
+    expect(disconnected).toMatchObject({
+      publicId,
+      state: "disconnected",
+      stateChangedAt: "2026-07-31T12:05:03.000Z",
+    });
+
+    const replay = await repository.claimLifecycle({
+      action: "disconnect",
+      claimId: "40000000-0000-4000-8000-000000000033",
+      clerkUserId: "user_connectiona",
+      publicId,
+      requestedAt: "2026-07-31T12:05:04.000Z",
+    });
+    expect(replay).toMatchObject({
+      connection: { publicId, state: "disconnected" },
+      outcome: "complete",
+    });
+
+    const reconnect = await repository.claimLifecycle({
+      action: "reconnect",
+      claimId: "40000000-0000-4000-8000-000000000034",
+      clerkUserId: "user_connectiona",
+      publicId,
+      requestedAt: "2026-07-31T12:05:05.000Z",
+    });
+    expect(reconnect).toMatchObject({
+      action: "reconnect",
+      connection: {
+        publicId,
+        state: "connecting",
+        stateChangedAt: "2026-07-31T12:05:05.000Z",
+      },
+      outcome: "claimed",
+      setupMarker: setupId,
+    });
+
+    const reconnected = await repository.finishLifecycle({
+      claimId: "40000000-0000-4000-8000-000000000034",
+      clerkUserId: "user_connectiona",
+      observedAt: "2026-07-31T12:05:06.000Z",
+      publicId,
+      state: "connected",
+    });
+    expect(reconnected).toMatchObject({
+      numberSuffix: "3456",
+      publicId,
+      state: "connected",
+    });
+
+    const retained = await database.query<{
+      connection_count: number;
+      reservation_count: number;
+      setup_count: number;
+    }>(`
+      SELECT
+        (SELECT count(*)::integer FROM app.whatsapp_connections)
+          AS connection_count,
+        (SELECT count(*)::integer FROM app.whatsapp_number_reservations)
+          AS reservation_count,
+        (SELECT count(*)::integer FROM app.connection_setups)
+          AS setup_count
+    `);
+    expect(retained.rows).toEqual([
+      {
+        connection_count: 1,
+        reservation_count: 1,
+        setup_count: 1,
+      },
+    ]);
+  });
+
+  test("keeps lifecycle claims tenant scoped and rejects stale completion regression", async () => {
+    const repository = makeWhatsAppConnectionRepository(provider);
+    await repository.activate(activationInput);
+
+    await expect(
+      repository.claimLifecycle({
+        action: "disconnect",
+        claimId: "40000000-0000-4000-8000-000000000035",
+        clerkUserId: "user_connectionb",
+        publicId,
+        requestedAt: "2026-07-31T12:06:00.000Z",
+      }),
+    ).resolves.toBeNull();
+
+    await repository.claimLifecycle({
+      action: "disconnect",
+      claimId: "40000000-0000-4000-8000-000000000036",
+      clerkUserId: "user_connectiona",
+      publicId,
+      requestedAt: "2026-07-31T12:06:00.000Z",
+    });
+    await expect(
+      repository.finishLifecycle({
+        claimId: "40000000-0000-4000-8000-000000000036",
+        clerkUserId: "user_connectiona",
+        observedAt: "2026-07-31T12:05:59.000Z",
+        publicId,
+        state: "disconnected",
+      }),
+    ).resolves.toBeNull();
+    await expect(repository.listForUser("user_connectiona")).resolves.toEqual([
+      expect.objectContaining({
+        publicId,
+        state: "degraded",
+        stateChangedAt: "2026-07-31T12:06:00.000Z",
+      }),
+    ]);
+  });
+
+  test("does not regress the state-change time when a later claim has an older timestamp", async () => {
+    const repository = makeWhatsAppConnectionRepository(provider);
+    await repository.activate(activationInput);
+
+    await repository.claimLifecycle({
+      action: "disconnect",
+      claimId: "40000000-0000-4000-8000-000000000037",
+      clerkUserId: "user_connectiona",
+      publicId,
+      requestedAt: "2026-07-31T12:07:00.000Z",
+    });
+    await repository.finishLifecycle({
+      claimId: "40000000-0000-4000-8000-000000000037",
+      clerkUserId: "user_connectiona",
+      observedAt: "2026-07-31T12:07:01.000Z",
+      publicId,
+      state: "disconnected",
+    });
+
+    const reconnect = await repository.claimLifecycle({
+      action: "reconnect",
+      claimId: "40000000-0000-4000-8000-000000000038",
+      clerkUserId: "user_connectiona",
+      publicId,
+      requestedAt: "2026-07-31T12:06:59.000Z",
+    });
+
+    expect(reconnect).toMatchObject({
+      action: "reconnect",
+      connection: {
+        publicId,
+        state: "connecting",
+        stateChangedAt: "2026-07-31T12:07:01.000Z",
+      },
+      outcome: "claimed",
+    });
+  });
+
   test("counts an activated Setup and its Connection as one retained slot", async () => {
     const connections = makeWhatsAppConnectionRepository(provider);
     const setups = makeConnectionSetupRepository(provider);
