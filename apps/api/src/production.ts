@@ -370,6 +370,7 @@ const configLayer = (environment: ApiEnvironment) =>
               "connectSession",
               "createSession",
               "deleteSession",
+              "disconnectSession",
               "fetch",
               "getQrCode",
               "listSessions",
