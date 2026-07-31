@@ -91,3 +91,37 @@ variable "clerk_publishable_key" {
     error_message = "clerk_publishable_key must use Clerk's public key format."
   }
 }
+
+variable "oauth_clients" {
+  description = "Reviewed MCP Client allowlist with exact redirect URIs for this environment."
+  type = list(object({
+    client_class  = string
+    client_id     = string
+    client_name   = string
+    redirect_uris = list(string)
+  }))
+
+  validation {
+    condition = (
+      length(var.oauth_clients) > 0 &&
+      length(var.oauth_clients) <= 32 &&
+      length(distinct([for client in var.oauth_clients : client.client_id])) == length(var.oauth_clients) &&
+      alltrue([
+        for client in var.oauth_clients :
+        can(regex("^[a-z][a-z0-9_-]{0,63}$", client.client_class)) &&
+        can(regex("^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$", client.client_id)) &&
+        length(trimspace(client.client_name)) > 0 &&
+        length(client.client_name) <= 128 &&
+        length(client.redirect_uris) > 0 &&
+        length(client.redirect_uris) <= 8 &&
+        length(distinct(client.redirect_uris)) == length(client.redirect_uris) &&
+        alltrue([
+          for redirect_uri in client.redirect_uris :
+          can(regex("^https://[^#]+$", redirect_uri)) ||
+          can(regex("^http://(127\\.0\\.0\\.1|localhost|\\[::1\\])(?::[0-9]+)?/[^#]*$", redirect_uri))
+        ])
+      ])
+    )
+    error_message = "oauth_clients must contain 1-32 unique reviewed clients with safe classes, IDs, names, and exact HTTPS or loopback redirects."
+  }
+}

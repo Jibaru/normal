@@ -25,6 +25,7 @@ import {
   makeStoredMediaContainer,
   StoredMediaContainerService,
 } from "./encryption/stored-media-container";
+import { createOAuthHandler, loadOAuthConfiguration } from "./oauth";
 import {
   createPersonalAccountHandler,
   isPersonalAccountRequest,
@@ -61,7 +62,11 @@ export interface ApiEnvironment {
   readonly KMS_CONTENT_ROOT_KEY_ARN?: string | undefined;
   readonly KMS_DELETION_COORDINATOR_KEY_ARN?: string | undefined;
   readonly INGESTION_QUEUE?: unknown;
+  readonly OAUTH_CLIENT_REGISTRY?: string | undefined;
+  readonly OAUTH_ISSUER?: string | undefined;
   readonly OAUTH_KV?: unknown;
+  readonly OAUTH_PROTOCOL_ENCRYPTION_KEY?: string | undefined;
+  readonly OAUTH_RESOURCE?: string | undefined;
   readonly PROVIDER_CONTROL?: unknown;
   readonly STORED_MEDIA?: unknown;
   readonly WEBHOOK_INGRESS?: unknown;
@@ -509,13 +514,41 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     layer,
     environment.CLERK_AUTHORIZED_PARTY ?? "",
   );
+  const oauthConfiguration = Effect.runPromise(
+    loadOAuthConfiguration(environment as unknown as Record<string, unknown>),
+  );
 
-  return async (request: Request): Promise<Response> => {
+  const applicationHandler = async (request: Request): Promise<Response> => {
+    if (isPersonalAccountRequest(request)) {
+      return personalAccountHandler(request);
+    }
+    return handler(request);
+  };
+
+  return async (
+    request: Request,
+    context?: ExecutionContext,
+  ): Promise<Response> => {
     try {
-      if (isPersonalAccountRequest(request)) {
-        return await personalAccountHandler(request);
-      }
-      return await handler(request);
+      const configuration = await oauthConfiguration;
+      const oauthHandler = createOAuthHandler({
+        applicationHandler: (nextRequest) => applicationHandler(nextRequest),
+        configuration,
+        environment: environment as Parameters<
+          typeof createOAuthHandler
+        >[0]["environment"],
+        telemetry: (event) => {
+          Effect.runSync(safeTelemetry.emit(event));
+        },
+      });
+      return await oauthHandler(
+        request,
+        context ??
+          ({
+            passThroughOnException: () => undefined,
+            waitUntil: () => undefined,
+          } as unknown as ExecutionContext),
+      );
     } catch {
       console.error(
         JSON.stringify({

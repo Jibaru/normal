@@ -20,3 +20,13 @@ CLERK_ISSUER=https://replace-with-clerk-frontend-api.clerk.accounts.dev
 CLERK_JWT_KEY="-----BEGIN PUBLIC KEY-----
 replace-with-clerk-jwt-public-key
 -----END PUBLIC KEY-----"
+
+# OAuth issuer and resource must use the API custom origin. The registry is the
+# reviewed MCP Client allowlist; every redirect is matched exactly.
+OAUTH_ISSUER=https://api.example.test
+OAUTH_RESOURCE=https://api.example.test/mcp
+OAUTH_CLIENT_REGISTRY='[{"clientClass":"approved","clientId":"replace-with-reviewed-client-id","clientName":"Replace with reviewed MCP Client","redirectUris":["https://client.example.test/oauth/callback"]}]'
+
+# Encrypts short-lived authorization requests handed to the web consent UI.
+# Generate independently with openssl rand -hex 32.
+OAUTH_PROTOCOL_ENCRYPTION_KEY=replace-with-dedicated-32-byte-hex-secret

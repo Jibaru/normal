@@ -47,12 +47,28 @@ export interface PersonalAccountBootstrapCompletedEvent {
   readonly service: "api";
 }
 
+export interface OAuthAuthorizationRequestCompletedEvent {
+  readonly clientClass?: string | undefined;
+  readonly event: "oauth.authorization.request.completed";
+  readonly outcome: "accepted" | "invalid_request";
+  readonly service: "api";
+}
+
+export interface OAuthProtocolRequestFailedEvent {
+  readonly code: string;
+  readonly event: "oauth.protocol.request.failed";
+  readonly service: "api";
+  readonly status: number;
+}
+
 export interface SafeTelemetry {
   readonly emit: (event: SafeTelemetryEvent) => Effect.Effect<void>;
 }
 
 export type SafeTelemetryEvent =
   | HttpCompletedEvent
+  | OAuthAuthorizationRequestCompletedEvent
+  | OAuthProtocolRequestFailedEvent
   | PersonalAccountBootstrapCompletedEvent
   | StoredMediaContainerEvent;
 

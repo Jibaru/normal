@@ -1,0 +1,549 @@
+import {
+  type AuthRequest,
+  type ClientInfo,
+  type OAuthHelpers,
+  OAuthProvider,
+} from "@cloudflare/workers-oauth-provider";
+import { Config, ConfigProvider, Data, Effect, Redacted } from "effect";
+import type {
+  OAuthAuthorizationRequestCompletedEvent,
+  OAuthProtocolRequestFailedEvent,
+} from "./services";
+
+export const OAUTH_SCOPES = [
+  "connections:read",
+  "directory:read",
+  "messages:read",
+  "messages:send",
+] as const;
+
+const AUTHORIZATION_REQUEST_TTL_SECONDS = 10 * 60;
+
+export interface AllowlistedOAuthClient {
+  readonly clientClass: string;
+  readonly clientId: string;
+  readonly clientName: string;
+  readonly redirectUris: ReadonlyArray<string>;
+}
+
+export interface OAuthConfiguration {
+  readonly clients: ReadonlyArray<AllowlistedOAuthClient>;
+  readonly consentOrigin: string;
+  readonly issuer: string;
+  readonly protocolEncryptionKey: Redacted.Redacted<string>;
+  readonly resource: string;
+}
+
+interface OAuthKv {
+  readonly delete: (key: string) => Promise<void>;
+  readonly get: (
+    key: string,
+    options?: unknown,
+  ) => Promise<string | null | unknown>;
+  readonly put: (
+    key: string,
+    value: string,
+    options?: { readonly expirationTtl?: number },
+  ) => Promise<void>;
+}
+
+interface OAuthEnvironment {
+  readonly OAUTH_KV: OAuthKv;
+  readonly OAUTH_PROVIDER?: OAuthHelpers | undefined;
+  readonly [binding: string]: unknown;
+}
+
+interface OAuthHandlerOptions {
+  readonly applicationHandler: (
+    request: Request,
+    environment: OAuthEnvironment,
+    context: ExecutionContext,
+  ) => Promise<Response>;
+  readonly configuration: OAuthConfiguration;
+  readonly environment: OAuthEnvironment;
+  readonly telemetry: (
+    event:
+      | OAuthAuthorizationRequestCompletedEvent
+      | OAuthProtocolRequestFailedEvent,
+  ) => void;
+}
+
+class InvalidOAuthConfiguration extends Data.TaggedError(
+  "InvalidOAuthConfiguration",
+) {}
+
+const environmentConfigProvider = (environment: Record<string, unknown>) =>
+  ConfigProvider.fromMap(
+    new Map(
+      Object.entries(environment).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ),
+    ),
+  );
+
+const isExactHttpsOrigin = (value: string): boolean => {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" &&
+      url.username === "" &&
+      url.password === "" &&
+      url.pathname === "/" &&
+      url.search === "" &&
+      url.hash === "" &&
+      url.origin === value
+    );
+  } catch {
+    return false;
+  }
+};
+
+const isPermittedRedirectUri = (value: string): boolean => {
+  try {
+    const url = new URL(value);
+    const loopback =
+      url.protocol === "http:" &&
+      ["127.0.0.1", "[::1]", "localhost"].includes(url.hostname);
+    return (
+      url.username === "" &&
+      url.password === "" &&
+      url.hash === "" &&
+      (url.protocol === "https:" || loopback) &&
+      url.toString() === value
+    );
+  } catch {
+    return false;
+  }
+};
+
+const parseClientRegistry = (
+  serialized: string,
+): ReadonlyArray<AllowlistedOAuthClient> => {
+  if (serialized.length > 32_768) {
+    throw new InvalidOAuthConfiguration();
+  }
+
+  let value: unknown;
+  try {
+    value = JSON.parse(serialized);
+  } catch {
+    throw new InvalidOAuthConfiguration();
+  }
+
+  if (!Array.isArray(value) || value.length === 0 || value.length > 32) {
+    throw new InvalidOAuthConfiguration();
+  }
+
+  const clients: Array<AllowlistedOAuthClient> = [];
+  const clientIds = new Set<string>();
+  for (const candidate of value) {
+    if (
+      typeof candidate !== "object" ||
+      candidate === null ||
+      Array.isArray(candidate)
+    ) {
+      throw new InvalidOAuthConfiguration();
+    }
+    const record = candidate as Record<string, unknown>;
+    if (
+      Object.keys(record).sort().join(",") !==
+        "clientClass,clientId,clientName,redirectUris" ||
+      typeof record.clientClass !== "string" ||
+      !/^[a-z][a-z0-9_-]{0,63}$/.test(record.clientClass) ||
+      typeof record.clientId !== "string" ||
+      !/^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/.test(record.clientId) ||
+      clientIds.has(record.clientId) ||
+      typeof record.clientName !== "string" ||
+      record.clientName.length < 1 ||
+      record.clientName.length > 128 ||
+      record.clientName.trim() !== record.clientName ||
+      !Array.isArray(record.redirectUris) ||
+      record.redirectUris.length < 1 ||
+      record.redirectUris.length > 8 ||
+      record.redirectUris.some(
+        (redirect) =>
+          typeof redirect !== "string" || !isPermittedRedirectUri(redirect),
+      ) ||
+      new Set(record.redirectUris).size !== record.redirectUris.length
+    ) {
+      throw new InvalidOAuthConfiguration();
+    }
+    clientIds.add(record.clientId);
+    clients.push({
+      clientClass: record.clientClass,
+      clientId: record.clientId,
+      clientName: record.clientName,
+      redirectUris: record.redirectUris as ReadonlyArray<string>,
+    });
+  }
+
+  return clients;
+};
+
+export const loadOAuthConfiguration = (
+  environment: Record<string, unknown>,
+): Effect.Effect<OAuthConfiguration, unknown> =>
+  Config.all({
+    apiAudience: Config.string("CLERK_API_AUDIENCE").pipe(
+      Config.validate({
+        message: "CLERK_API_AUDIENCE must be an exact HTTPS origin",
+        validation: isExactHttpsOrigin,
+      }),
+    ),
+    clientRegistry: Config.string("OAUTH_CLIENT_REGISTRY"),
+    consentOrigin: Config.string("CLERK_AUTHORIZED_PARTY").pipe(
+      Config.validate({
+        message: "CLERK_AUTHORIZED_PARTY must be an exact HTTPS origin",
+        validation: isExactHttpsOrigin,
+      }),
+    ),
+    issuer: Config.string("OAUTH_ISSUER").pipe(
+      Config.validate({
+        message: "OAUTH_ISSUER must be an exact HTTPS origin",
+        validation: isExactHttpsOrigin,
+      }),
+    ),
+    protocolEncryptionKey: Config.redacted(
+      "OAUTH_PROTOCOL_ENCRYPTION_KEY",
+    ).pipe(
+      Config.validate({
+        message:
+          "OAUTH_PROTOCOL_ENCRYPTION_KEY must be a 32-byte hexadecimal secret",
+        validation: (value) => /^[a-f0-9]{64}$/iu.test(Redacted.value(value)),
+      }),
+    ),
+    resource: Config.string("OAUTH_RESOURCE"),
+  }).pipe(
+    Effect.flatMap((configuration) =>
+      Effect.try({
+        try: () => {
+          const resource = new URL(configuration.resource);
+          if (
+            resource.protocol !== "https:" ||
+            resource.username !== "" ||
+            resource.password !== "" ||
+            configuration.apiAudience !== configuration.issuer ||
+            resource.origin !== configuration.issuer ||
+            resource.pathname !== "/mcp" ||
+            resource.search !== "" ||
+            resource.hash !== "" ||
+            resource.toString() !== configuration.resource
+          ) {
+            throw new InvalidOAuthConfiguration();
+          }
+          return {
+            clients: parseClientRegistry(configuration.clientRegistry),
+            consentOrigin: configuration.consentOrigin,
+            issuer: configuration.issuer,
+            protocolEncryptionKey: configuration.protocolEncryptionKey,
+            resource: configuration.resource,
+          };
+        },
+        catch: () => new InvalidOAuthConfiguration(),
+      }),
+    ),
+    Effect.withConfigProvider(environmentConfigProvider(environment)),
+  );
+
+const jsonError = (): Response =>
+  new Response(JSON.stringify({ error: "invalid_authorization_request" }), {
+    headers: {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+    },
+    status: 400,
+  });
+
+const bytesToBase64Url = (value: Uint8Array): string =>
+  btoa(String.fromCharCode(...value))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/u, "");
+
+const hexToBytes = (value: string): Uint8Array =>
+  Uint8Array.from(value.match(/.{2}/gu) ?? [], (byte) =>
+    Number.parseInt(byte, 16),
+  );
+
+const randomSecret = (): string => {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return bytesToBase64Url(bytes);
+};
+
+const hashLookup = async (secret: string): Promise<string> => {
+  const hash = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(secret),
+  );
+  return bytesToBase64Url(new Uint8Array(hash));
+};
+
+const sealAuthorizationRequest = async (
+  request: AuthRequest,
+  client: AllowlistedOAuthClient,
+  configuration: OAuthConfiguration,
+  kv: OAuthKv,
+): Promise<string> => {
+  const lookupSecret = randomSecret();
+  const iv = new Uint8Array(12);
+  crypto.getRandomValues(iv);
+  const key = await crypto.subtle.importKey(
+    "raw",
+    hexToBytes(Redacted.value(configuration.protocolEncryptionKey)),
+    "AES-GCM",
+    false,
+    ["encrypt"],
+  );
+  const plaintext = new TextEncoder().encode(
+    JSON.stringify({
+      clientClass: client.clientClass,
+      clientId: client.clientId,
+      clientName: client.clientName,
+      expiresAt: Date.now() + AUTHORIZATION_REQUEST_TTL_SECONDS * 1_000,
+      request,
+      version: 1,
+    }),
+  );
+  const ciphertext = await crypto.subtle.encrypt(
+    {
+      additionalData: new TextEncoder().encode(configuration.resource),
+      iv,
+      name: "AES-GCM",
+      tagLength: 128,
+    },
+    key,
+    plaintext,
+  );
+  const keyHash = await hashLookup(lookupSecret);
+  await kv.put(
+    `oauth:authorization-request:${keyHash}`,
+    JSON.stringify({
+      ciphertext: bytesToBase64Url(new Uint8Array(ciphertext)),
+      iv: bytesToBase64Url(iv),
+      version: 1,
+    }),
+    { expirationTtl: AUTHORIZATION_REQUEST_TTL_SECONDS },
+  );
+  return lookupSecret;
+};
+
+const requestedParameter = (url: URL, name: string): string | undefined => {
+  const values = url.searchParams.getAll(name);
+  return values.length === 1 && values[0] !== "" ? values[0] : undefined;
+};
+
+const clientInfoFor = (client: AllowlistedOAuthClient): ClientInfo => ({
+  clientId: client.clientId,
+  clientName: client.clientName,
+  grantTypes: ["authorization_code", "refresh_token"],
+  redirectUris: [...client.redirectUris],
+  responseTypes: ["code"],
+  tokenEndpointAuthMethod: "none",
+});
+
+const makeAllowlistedKv = (
+  kv: OAuthKv,
+  clients: ReadonlyArray<AllowlistedOAuthClient>,
+): OAuthKv => {
+  const registry = new Map(
+    clients.map((client) => [client.clientId, clientInfoFor(client)]),
+  );
+  return new Proxy(kv, {
+    get: (target, property) => {
+      if (property === "get") {
+        return async (key: string, options?: unknown) => {
+          if (key.startsWith("client:")) {
+            const client = registry.get(key.slice("client:".length));
+            if (!client) {
+              return null;
+            }
+            const wantsJson =
+              options === "json" ||
+              (typeof options === "object" &&
+                options !== null &&
+                (options as { readonly type?: unknown }).type === "json");
+            return wantsJson ? client : JSON.stringify(client);
+          }
+          return target.get(key, options);
+        };
+      }
+      const value = Reflect.get(target, property);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+};
+
+const makeAllowlistedEnvironment = (
+  environment: OAuthEnvironment,
+  clients: ReadonlyArray<AllowlistedOAuthClient>,
+): OAuthEnvironment => {
+  const allowlistedKv = makeAllowlistedKv(environment.OAUTH_KV, clients);
+  return new Proxy(environment, {
+    get: (target, property) =>
+      property === "OAUTH_KV" ? allowlistedKv : Reflect.get(target, property),
+  });
+};
+
+const makeAuthorizationHandler = (
+  options: OAuthHandlerOptions,
+): ExportedHandler<OAuthEnvironment> => ({
+  fetch: async (request, environment, context) => {
+    const url = new URL(request.url);
+    if (request.method !== "GET" || url.pathname !== "/oauth/authorize") {
+      if (url.pathname.startsWith("/oauth/")) {
+        return new Response(JSON.stringify({ error: "not_found" }), {
+          headers: {
+            "cache-control": "no-store",
+            "content-type": "application/json; charset=utf-8",
+          },
+          status: 404,
+        });
+      }
+      return options.applicationHandler(request, environment, context);
+    }
+
+    let clientClass: string | undefined;
+    try {
+      const clientId = requestedParameter(url, "client_id");
+      const redirectUri = requestedParameter(url, "redirect_uri");
+      const resource = requestedParameter(url, "resource");
+      const responseType = requestedParameter(url, "response_type");
+      const codeChallenge = requestedParameter(url, "code_challenge");
+      const codeChallengeMethod = requestedParameter(
+        url,
+        "code_challenge_method",
+      );
+      const requestedScope = requestedParameter(url, "scope")
+        ?.split(" ")
+        .filter(Boolean);
+      const client = options.configuration.clients.find(
+        (candidate) => candidate.clientId === clientId,
+      );
+      clientClass = client?.clientClass;
+      if (
+        !client ||
+        !redirectUri ||
+        !client.redirectUris.includes(redirectUri) ||
+        resource !== options.configuration.resource ||
+        responseType !== "code" ||
+        !codeChallenge ||
+        !/^[A-Za-z0-9_-]{43,128}$/.test(codeChallenge) ||
+        codeChallengeMethod !== "S256" ||
+        !requestedScope ||
+        requestedScope.length === 0 ||
+        new Set(requestedScope).size !== requestedScope.length ||
+        requestedScope.some(
+          (scope) =>
+            !OAUTH_SCOPES.includes(scope as (typeof OAUTH_SCOPES)[number]),
+        ) ||
+        !environment.OAUTH_PROVIDER
+      ) {
+        throw new Error("invalid authorization request");
+      }
+
+      const parsed = await environment.OAUTH_PROVIDER.parseAuthRequest(request);
+      const handoff = await sealAuthorizationRequest(
+        parsed,
+        client,
+        options.configuration,
+        options.environment.OAUTH_KV,
+      );
+      const consent = new URL(
+        "/oauth/consent",
+        options.configuration.consentOrigin,
+      );
+      consent.searchParams.set("request", handoff);
+      options.telemetry({
+        clientClass,
+        event: "oauth.authorization.request.completed",
+        outcome: "accepted",
+        service: "api",
+      });
+      return Response.redirect(consent.toString(), 302);
+    } catch {
+      options.telemetry({
+        clientClass,
+        event: "oauth.authorization.request.completed",
+        outcome: "invalid_request",
+        service: "api",
+      });
+      return jsonError();
+    }
+  },
+});
+
+const addNoStore = (response: Response): Response => {
+  const headers = new Headers(response.headers);
+  headers.set("cache-control", "no-store");
+  return new Response(response.body, {
+    headers,
+    status: response.status,
+    statusText: response.statusText,
+  });
+};
+
+const isOAuthProviderRequest = (
+  request: Request,
+  configuration: OAuthConfiguration,
+): boolean => {
+  const url = new URL(request.url);
+  return (
+    url.origin === configuration.issuer &&
+    (url.pathname === "/oauth/authorize" ||
+      url.pathname === "/oauth/token" ||
+      url.pathname === "/oauth/register" ||
+      url.pathname === "/.well-known/oauth-authorization-server" ||
+      url.pathname === "/.well-known/oauth-protected-resource" ||
+      url.pathname === "/.well-known/oauth-protected-resource/mcp" ||
+      url.pathname === "/mcp")
+  );
+};
+
+export const createOAuthHandler = (
+  options: OAuthHandlerOptions,
+): ((request: Request, context: ExecutionContext) => Promise<Response>) => {
+  const allowlistedEnvironment = makeAllowlistedEnvironment(
+    options.environment,
+    options.configuration.clients,
+  );
+  const provider = new OAuthProvider<OAuthEnvironment>({
+    accessTokenTTL: 10 * 60,
+    allowImplicitFlow: false,
+    allowPlainPKCE: false,
+    apiHandler: {
+      fetch: options.applicationHandler,
+    },
+    apiRoute: options.configuration.resource,
+    authorizeEndpoint: `${options.configuration.issuer}/oauth/authorize`,
+    clientIdMetadataDocumentEnabled: false,
+    defaultHandler: makeAuthorizationHandler(options),
+    onError: (error) => {
+      options.telemetry({
+        code: error.code,
+        event: "oauth.protocol.request.failed",
+        service: "api",
+        status: error.status,
+      });
+    },
+    refreshTokenTTL: 30 * 24 * 60 * 60,
+    resourceMetadata: {
+      authorization_servers: [options.configuration.issuer],
+      bearer_methods_supported: ["header"],
+      resource: options.configuration.resource,
+      resource_name: "WhatsApp MCP",
+      scopes_supported: [...OAUTH_SCOPES],
+    },
+    scopesSupported: [...OAUTH_SCOPES],
+    tokenEndpoint: `${options.configuration.issuer}/oauth/token`,
+  });
+
+  return async (request, context) => {
+    if (!isOAuthProviderRequest(request, options.configuration)) {
+      return options.applicationHandler(request, options.environment, context);
+    }
+    return addNoStore(
+      await provider.fetch(request, allowlistedEnvironment, context),
+    );
+  };
+};

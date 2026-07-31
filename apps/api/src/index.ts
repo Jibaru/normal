@@ -19,12 +19,17 @@ export interface Env {
   readonly INGESTION_QUEUE: Queue;
   readonly KMS_CONTENT_ROOT_KEY_ARN: string;
   readonly KMS_DELETION_COORDINATOR_KEY_ARN: string;
+  readonly OAUTH_CLIENT_REGISTRY: string;
+  readonly OAUTH_ISSUER: string;
   readonly OAUTH_KV: KVNamespace;
+  readonly OAUTH_PROTOCOL_ENCRYPTION_KEY: string;
+  readonly OAUTH_RESOURCE: string;
   readonly PROVIDER_CONTROL: Fetcher & ProviderControlService;
   readonly STORED_MEDIA: R2Bucket;
   readonly WEBHOOK_INGRESS: R2Bucket;
 }
 
 export default createWorker<Env>({
-  fetch: (request, env) => createProductionHandler(env)(request),
+  fetch: (request, env, context) =>
+    createProductionHandler(env)(request, context),
 });

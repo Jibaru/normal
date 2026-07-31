@@ -3,7 +3,7 @@
   "name": "whatsapp-mcp-api",
   "main": "src/index.ts",
   "compatibility_date": "2026-07-30",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "workers_dev": false,
   "preview_urls": false,
   "observability": {
@@ -18,10 +18,13 @@
     "CLERK_API_AUDIENCE": "replace-with-rendered-api-audience",
     "CLERK_AUTHORIZED_PARTY": "replace-with-rendered-authorized-party",
     "CLERK_ISSUER": "replace-with-rendered-clerk-issuer",
+    "OAUTH_CLIENT_REGISTRY": "replace-with-rendered-oauth-client-registry",
+    "OAUTH_ISSUER": "replace-with-rendered-oauth-issuer",
+    "OAUTH_RESOURCE": "replace-with-rendered-oauth-resource",
     "DEPLOYMENT_ENVIRONMENT": "production"
   },
   "secrets": {
-    "required": ["CLERK_JWT_KEY"]
+    "required": ["CLERK_JWT_KEY", "OAUTH_PROTOCOL_ENCRYPTION_KEY"]
   },
   "services": [
     {
@@ -91,10 +94,13 @@
         "CLERK_API_AUDIENCE": "replace-with-rendered-api-audience",
         "CLERK_AUTHORIZED_PARTY": "replace-with-rendered-authorized-party",
         "CLERK_ISSUER": "replace-with-rendered-clerk-issuer",
+        "OAUTH_CLIENT_REGISTRY": "replace-with-rendered-oauth-client-registry",
+        "OAUTH_ISSUER": "replace-with-rendered-oauth-issuer",
+        "OAUTH_RESOURCE": "replace-with-rendered-oauth-resource",
         "DEPLOYMENT_ENVIRONMENT": "development"
       },
       "secrets": {
-        "required": ["CLERK_JWT_KEY"]
+        "required": ["CLERK_JWT_KEY", "OAUTH_PROTOCOL_ENCRYPTION_KEY"]
       },
       "services": [
         {
@@ -164,10 +170,13 @@
         "CLERK_API_AUDIENCE": "replace-with-rendered-api-audience",
         "CLERK_AUTHORIZED_PARTY": "replace-with-rendered-authorized-party",
         "CLERK_ISSUER": "replace-with-rendered-clerk-issuer",
+        "OAUTH_CLIENT_REGISTRY": "replace-with-rendered-oauth-client-registry",
+        "OAUTH_ISSUER": "replace-with-rendered-oauth-issuer",
+        "OAUTH_RESOURCE": "replace-with-rendered-oauth-resource",
         "DEPLOYMENT_ENVIRONMENT": "preview"
       },
       "secrets": {
-        "required": ["CLERK_JWT_KEY"]
+        "required": ["CLERK_JWT_KEY", "OAUTH_PROTOCOL_ENCRYPTION_KEY"]
       },
       "services": [
         {
@@ -237,10 +246,13 @@
         "CLERK_API_AUDIENCE": "replace-with-rendered-api-audience",
         "CLERK_AUTHORIZED_PARTY": "replace-with-rendered-authorized-party",
         "CLERK_ISSUER": "replace-with-rendered-clerk-issuer",
+        "OAUTH_CLIENT_REGISTRY": "replace-with-rendered-oauth-client-registry",
+        "OAUTH_ISSUER": "replace-with-rendered-oauth-issuer",
+        "OAUTH_RESOURCE": "replace-with-rendered-oauth-resource",
         "DEPLOYMENT_ENVIRONMENT": "production"
       },
       "secrets": {
-        "required": ["CLERK_JWT_KEY"]
+        "required": ["CLERK_JWT_KEY", "OAUTH_PROTOCOL_ENCRYPTION_KEY"]
       },
       "services": [
         {

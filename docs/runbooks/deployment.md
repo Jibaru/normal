@@ -170,11 +170,14 @@ exact `https://<api_hostname>` origin. Record the exact issuer and publishable
 key in the protected `.tfvars` file as `clerk_issuer` and
 `clerk_publishable_key`; retain the default `clerk_jwt_template` unless the
 reviewed browser configuration uses another safe name. Copy the template's PEM
-public key without changing its line breaks, then load it into the API Worker
-shell:
+public key without changing its line breaks. Load it and a separately generated
+32-byte OAuth protocol-encryption key into the API Worker shell:
 
 ```sh
 wrangler secret put CLERK_JWT_KEY \
+  --cwd apps/api \
+  --env "$DEPLOYMENT_ENVIRONMENT"
+openssl rand -hex 32 | wrangler secret put OAUTH_PROTOCOL_ENCRYPTION_KEY \
   --cwd apps/api \
   --env "$DEPLOYMENT_ENVIRONMENT"
 wrangler secret list \
@@ -182,7 +185,8 @@ wrangler secret list \
   --env "$DEPLOYMENT_ENVIRONMENT"
 ```
 
-The API list must include `CLERK_JWT_KEY`; the value is never printed. Keeping
+The API list must include `CLERK_JWT_KEY` and
+`OAUTH_PROTOCOL_ENCRYPTION_KEY`; values are never printed. Keeping
 the public verification key in the secret store prevents unreviewed copying
 into source, browser bundles, plans, or state. Apply this external Clerk
 dashboard gate independently in development, preview, and production. The
@@ -202,9 +206,10 @@ tofu -chdir=infra/compute show "$DEPLOYMENT_ENVIRONMENT.tfplan"
 Confirm that the plan contains exactly one Vercel web project/domain, a public
 API Worker/custom domain, one private provider-control Worker, disabled
 `workers.dev` and preview URLs for both Workers, and an API-to-provider-control
-service binding. The API version must inherit only `CLERK_JWT_KEY` for Clerk
-verification and receive exact audience, authorized-party, and issuer text
-bindings; provider-control must receive none of them. The Vercel project must
+service binding. The API version must inherit `CLERK_JWT_KEY` and the OAuth
+protocol-encryption key, and receive exact Clerk audience, authorized-party,
+OAuth issuer/resource, and reviewed client-registry text bindings;
+provider-control must receive none of them. The Vercel project must
 receive only the public Clerk key and JWT template name. It must also contain
 four private R2 buckets with disabled
 managed domains, the seven-day Webhook Event lifecycle, the isolated Deletion
@@ -393,6 +398,11 @@ export CLOUDFLARE_OAUTH_KV_ID="$(
 export CLERK_API_AUDIENCE="$(tofu -chdir=infra/compute output -raw api_origin)"
 export CLERK_AUTHORIZED_PARTY="$(tofu -chdir=infra/compute output -raw web_origin)"
 export CLERK_ISSUER="$(sed -n 's/^[[:space:]]*clerk_issuer[[:space:]]*=[[:space:]]*\"\\([^\"]*\\)\"[[:space:]]*$/\\1/p' "$TFVARS_PATH")"
+export OAUTH_CLIENT_REGISTRY="$(
+  tofu -chdir=infra/compute output -raw oauth_client_registry
+)"
+export OAUTH_ISSUER="$CLERK_API_AUDIENCE"
+export OAUTH_RESOURCE="$OAUTH_ISSUER/mcp"
 bun scripts/render-api-wrangler.ts \
   apps/api/.wrangler/production.jsonc \
   "$DEPLOYMENT_ENVIRONMENT"
@@ -401,7 +411,8 @@ CI=true bun run --cwd apps/api wrangler deploy \
   --env "$DEPLOYMENT_ENVIRONMENT"
 unset CLOUDFLARE_HYPERDRIVE_ID CLOUDFLARE_OAUTH_KV_ID \
   CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID CLERK_API_AUDIENCE \
-  CLERK_AUTHORIZED_PARTY CLERK_ISSUER
+  CLERK_AUTHORIZED_PARTY CLERK_ISSUER OAUTH_CLIENT_REGISTRY \
+  OAUTH_ISSUER OAUTH_RESOURCE
 export VERCEL_ORG_ID="$(tofu -chdir=infra/compute output -raw vercel_team_id)"
 export VERCEL_PROJECT_ID="$(tofu -chdir=infra/compute output -raw vercel_project_id)"
 vercel deploy --prod --yes --cwd apps/web
@@ -419,9 +430,11 @@ producer and consumers, DLQ, and schedules as the reviewed OpenTofu plan. The
 Worker manifests set `AWS_KMS_REGION` explicitly. Set
 `KMS_CONTENT_ROOT_KEY_ARN` and `KMS_DELETION_COORDINATOR_KEY_ARN` in the API
 deployment configuration and populate the marker HMAC plus three AWS credential
-secrets before deployment. `CLERK_JWT_KEY` must already exist on the selected
-API Worker and is preserved as an inherited secret binding. Rendering fails
-unless the Clerk audience, authorized party, and issuer are exact HTTPS origins.
+secrets before deployment. `CLERK_JWT_KEY` and
+`OAUTH_PROTOCOL_ENCRYPTION_KEY` must already exist on the selected API Worker
+and are preserved as inherited secret bindings. Rendering fails unless the
+Clerk audience, authorized party, Clerk issuer, OAuth issuer, exact MCP
+resource, and non-empty reviewed client registry are valid.
 
 Provider-control authority is populated during the first-deployment bootstrap
 above, directly in Cloudflare's secret store. The Wrangler manifest declares
@@ -452,8 +465,19 @@ API_ORIGIN="$(tofu -chdir=infra/compute output -raw api_origin)"
 WEB_ORIGIN="$(tofu -chdir=infra/compute output -raw web_origin)"
 curl --fail --silent "$API_ORIGIN/health"
 curl --fail --silent "$API_ORIGIN/ready"
+curl --fail --silent \
+  "$API_ORIGIN/.well-known/oauth-authorization-server"
+curl --fail --silent \
+  "$API_ORIGIN/.well-known/oauth-protected-resource/mcp"
 curl --fail --silent "$WEB_ORIGIN/health"
 ```
+
+Confirm the metadata advertises only `$API_ORIGIN` as issuer and authorization
+server, `$API_ORIGIN/mcp` as resource, S256 PKCE, the four documented scopes,
+and no registration endpoint. An authorization request from an unregistered
+client and one from a registered client with a one-character redirect change
+must both return `400` without a `Location` header. Do not complete real consent
+or a token exchange during this metadata smoke check.
 
 Sign in through the deployed web application with a designated smoke-test Clerk
 User and bootstrap once. Confirm the browser sends `POST

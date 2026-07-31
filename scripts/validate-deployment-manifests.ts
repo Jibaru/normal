@@ -52,6 +52,43 @@ for (const deployable of deployables) {
         );
       }
     }
+  } else {
+    const requiredSecretNames = [
+      "CLERK_JWT_KEY",
+      "OAUTH_PROTOCOL_ENCRYPTION_KEY",
+    ];
+    const configurations = [
+      ["top level", manifest],
+      ...Object.entries(
+        (manifest.env as Record<string, Record<string, unknown>> | undefined) ??
+          {},
+      ),
+    ] as const;
+    for (const [configurationName, configuration] of configurations) {
+      const requiredSecrets = (
+        configuration.secrets as
+          | { readonly required?: ReadonlyArray<string> }
+          | undefined
+      )?.required;
+      if (
+        JSON.stringify([...(requiredSecrets ?? [])].sort()) !==
+        JSON.stringify(requiredSecretNames)
+      ) {
+        throw new Error(
+          `API ${configurationName} configuration must require both identity and OAuth protocol secrets.`,
+        );
+      }
+    }
+    const compatibilityFlags = manifest.compatibility_flags;
+    if (
+      !Array.isArray(compatibilityFlags) ||
+      !compatibilityFlags.includes("global_fetch_strictly_public") ||
+      !compatibilityFlags.includes("nodejs_compat")
+    ) {
+      throw new Error(
+        "API must enable Node.js compatibility and strict public global fetch.",
+      );
+    }
   }
 
   if (
@@ -85,6 +122,10 @@ for (const deployable of deployables) {
             CLERK_API_AUDIENCE: "https://api.example.test",
             CLERK_AUTHORIZED_PARTY: "https://app.example.test",
             CLERK_ISSUER: "https://clerk.example.test",
+            OAUTH_CLIENT_REGISTRY:
+              '[{"clientClass":"approved","clientId":"approved-client","clientName":"Approved MCP Client","redirectUris":["https://client.example.test/callback"]}]',
+            OAUTH_ISSUER: "https://api.example.test",
+            OAUTH_RESOURCE: "https://api.example.test/mcp",
           },
           stderr: "pipe",
           stdout: "pipe",
@@ -164,6 +205,9 @@ for (const deployable of deployables) {
         'env.CLERK_API_AUDIENCE ("https://api.example.test")',
         'env.CLERK_AUTHORIZED_PARTY ("https://app.example.test")',
         'env.CLERK_ISSUER ("https://clerk.example.test")',
+        'env.OAUTH_CLIENT_REGISTRY ("[{"clientClass":"approved","clientId"...")',
+        'env.OAUTH_ISSUER ("https://api.example.test")',
+        'env.OAUTH_RESOURCE ("https://api.example.test/mcp")',
       ]) {
         if (!output.includes(binding)) {
           throw new Error(

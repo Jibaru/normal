@@ -1,125 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { createProductionHandler } from "../src/production";
-import { TEST_CLERK_JWT_PUBLIC_KEY } from "./support/clerk";
-
-const validEnvironment = () => ({
-  AWS_ACCESS_KEY_ID: "temporary-access-key",
-  AWS_KMS_REGION: "us-east-1",
-  AWS_SECRET_ACCESS_KEY: "temporary-secret",
-  AWS_SESSION_TOKEN: "temporary-session-token",
-  CLERK_API_AUDIENCE: "https://api.example.test",
-  CLERK_AUTHORIZED_PARTY: "https://app.example.test",
-  CLERK_ISSUER: "https://clerk.example.test",
-  CLERK_JWT_KEY: TEST_CLERK_JWT_PUBLIC_KEY,
-  DELETION_CAPSULES: {
-    get: async () => null,
-    put: async () => null,
-  },
-  DELETION_MARKER_HMAC_SECRET:
-    "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
-  DELETION_MARKERS: {
-    get: async () => null,
-    list: async () => ({ objects: [], truncated: false }),
-    put: async () => null,
-  },
-  DEPLOYMENT_ENVIRONMENT: "production",
-  HYPERDRIVE: {
-    connectionString: "postgresql://runtime@hyperdrive.internal/database",
-  },
-  INGESTION_QUEUE: {
-    send: async () => undefined,
-  },
-  KMS_CONTENT_ROOT_KEY_ARN:
-    "arn:aws:kms:us-east-1:111122223333:key/00000000-0000-0000-0000-000000000001",
-  KMS_DELETION_COORDINATOR_KEY_ARN:
-    "arn:aws:kms:us-east-1:111122223333:key/00000000-0000-0000-0000-000000000002",
-  OAUTH_KV: {
-    delete: async () => undefined,
-    get: async () => null,
-    put: async () => undefined,
-  },
-  PROVIDER_CONTROL: {
-    connectSession: async () => ({
-      error: {
-        _tag: "ProviderControlFailure" as const,
-        code: "configuration_invalid" as const,
-        operation: "boundary" as const,
-        retryAfterMs: null,
-        retryDecision: "do_not_retry" as const,
-      },
-      ok: false as const,
-    }),
-    createSession: async () => ({
-      error: {
-        _tag: "ProviderControlFailure" as const,
-        code: "configuration_invalid" as const,
-        operation: "boundary" as const,
-        retryAfterMs: null,
-        retryDecision: "do_not_retry" as const,
-      },
-      ok: false as const,
-    }),
-    deleteSession: async () => ({
-      error: {
-        _tag: "ProviderControlFailure" as const,
-        code: "configuration_invalid" as const,
-        operation: "boundary" as const,
-        retryAfterMs: null,
-        retryDecision: "do_not_retry" as const,
-      },
-      ok: false as const,
-    }),
-    fetch: async () => new Response(null, { status: 204 }),
-    getQrCode: async () => ({
-      error: {
-        _tag: "ProviderControlFailure" as const,
-        code: "configuration_invalid" as const,
-        operation: "boundary" as const,
-        retryAfterMs: null,
-        retryDecision: "do_not_retry" as const,
-      },
-      ok: false as const,
-    }),
-    listSessions: async () => ({
-      error: {
-        _tag: "ProviderControlFailure" as const,
-        code: "configuration_invalid" as const,
-        operation: "boundary" as const,
-        retryAfterMs: null,
-        retryDecision: "do_not_retry" as const,
-      },
-      ok: false as const,
-    }),
-    reconcileSession: async () => ({
-      error: {
-        _tag: "ProviderControlFailure" as const,
-        code: "configuration_invalid" as const,
-        operation: "boundary" as const,
-        retryAfterMs: null,
-        retryDecision: "do_not_retry" as const,
-      },
-      ok: false as const,
-    }),
-  },
-  STORED_MEDIA: {
-    createMultipartUpload: async () => ({
-      abort: async () => undefined,
-      complete: async () => ({}),
-      uploadPart: async (partNumber: number) => ({
-        etag: "test-etag",
-        partNumber,
-      }),
-    }),
-    delete: async () => undefined,
-    get: async () => null,
-    put: async () => null,
-  },
-  WEBHOOK_INGRESS: {
-    delete: async () => undefined,
-    get: async () => null,
-    put: async () => null,
-  },
-});
+import { validEnvironment } from "./support/production";
 
 describe("API production root", () => {
   test("accepts valid production configuration", async () => {
@@ -219,6 +100,10 @@ describe("API production root", () => {
     "CLERK_AUTHORIZED_PARTY",
     "CLERK_ISSUER",
     "CLERK_JWT_KEY",
+    "OAUTH_CLIENT_REGISTRY",
+    "OAUTH_ISSUER",
+    "OAUTH_PROTOCOL_ENCRYPTION_KEY",
+    "OAUTH_RESOURCE",
   ] as const)("fails closed when %s is absent", async (configuration) => {
     const { [configuration]: _missing, ...environment } = validEnvironment();
     const response = await createProductionHandler(environment)(
@@ -236,6 +121,23 @@ describe("API production root", () => {
     [
       "CLERK_JWT_KEY",
       "-----BEGIN PUBLIC KEY-----\ncHJvZHVjdGlvbi1wdWJsaWMta2V5\n-----END PUBLIC KEY-----",
+    ],
+    ["OAUTH_ISSUER", "http://api.example.test"],
+    ["OAUTH_ISSUER", "https://other-api.example.test"],
+    ["OAUTH_RESOURCE", "https://api.example.test/other"],
+    ["OAUTH_PROTOCOL_ENCRYPTION_KEY", "not-a-32-byte-key"],
+    ["OAUTH_CLIENT_REGISTRY", "not-json"],
+    ["OAUTH_CLIENT_REGISTRY", "[]"],
+    [
+      "OAUTH_CLIENT_REGISTRY",
+      JSON.stringify([
+        {
+          clientClass: "approved",
+          clientId: "approved-client",
+          clientName: "Approved MCP Client",
+          redirectUris: ["https://client.example.test/callback#fragment"],
+        },
+      ]),
     ],
   ] as const)(
     "fails closed when %s is invalid",

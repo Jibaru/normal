@@ -14,6 +14,10 @@ request is accepted. Production roots accept only `development`, `preview`, or
 | `CLERK_AUTHORIZED_PARTY` | Non-secret | API | Exact bare HTTPS web origin allowed by both the token `azp` claim and request `Origin`. OpenTofu derives it from `web_hostname`. |
 | `CLERK_ISSUER` | Non-secret | API | Exact HTTPS issuer for the same-environment Clerk instance. |
 | `CLERK_JWT_KEY` | Secret deployment material | API | PEM public key for the custom Clerk JWT template. Store it only as a Cloudflare Worker secret so verification does not depend on a network lookup. Replace it when Clerk rotates the template signing key. |
+| `OAUTH_ISSUER` | Non-secret | API OAuth provider | Exact API HTTPS origin and RFC 8414 issuer. It must equal `CLERK_API_AUDIENCE`; OpenTofu derives both from `api_hostname`. |
+| `OAUTH_RESOURCE` | Non-secret | API OAuth provider | Exact protected MCP resource, formed as `OAUTH_ISSUER` plus `/mcp`. |
+| `OAUTH_CLIENT_REGISTRY` | Non-secret reviewed policy | API OAuth provider | JSON allowlist rendered from `oauth_clients`, containing each stable MCP Client ID, class, display name, and exact permitted redirects. |
+| `OAUTH_PROTOCOL_ENCRYPTION_KEY` | Secret | API OAuth provider | Dedicated 32-byte hex AES key for short-lived consent handoff records. Generate with `openssl rand -hex 32`; never reuse another platform key. |
 | `DATABASE_URL` | Secret | Database tooling that consumes `@whatsapp-mcp/db/config` | Issue a restricted Neon role URL, store it in the deployment secret store, and rotate it through Neon plus the deployment platform. API production traffic uses Hyperdrive instead. |
 | `MIGRATION_DATABASE_URL` | Secret | `bun run db:migrate` and `bun run db:check` | Obtain the direct, unpooled owner URL from the sensitive OpenTofu output. It must be a TLS Neon URL and must never be configured on a Worker or web deployable. Rotate it by rotating the Neon migration-owner password. |
 | `NEON_API_KEY` | Secret | OpenTofu Neon provider | Issue an organization-scoped automation key, keep it only in the infrastructure runner, and rotate it in Neon. |
@@ -72,6 +76,44 @@ the provider-control artifact and rejects provider-control secret names from
 the API and web artifacts.
 The API also disables generated Cloudflare hostnames and is public only on its
 declared custom domain.
+
+## MCP OAuth discovery and client policy
+
+The API Worker serves RFC 8414 authorization-server metadata at
+`/.well-known/oauth-authorization-server` and RFC 9728 protected-resource
+metadata at `/.well-known/oauth-protected-resource` and its MCP-specific
+`/mcp` suffix. It advertises the API origin as issuer, the exact `/mcp`
+resource, S256-only PKCE, and the four MCP scopes. Implicit flow, dynamic
+client registration, and Client ID Metadata Documents are disabled.
+
+Before consent, the API exactly matches `client_id`, `redirect_uri`,
+`resource`, response type, and PKCE against `OAUTH_CLIENT_REGISTRY`; failures
+return locally and never redirect. A valid request is parsed by Cloudflare's
+OAuth provider, AES-256-GCM encrypted, stored in OAuth KV for at most ten
+minutes under a SHA-256 lookup key, and handed to the web consent origin using
+a random 256-bit opaque value. Client IDs and redirects do not appear in that
+handoff URL or KV key. The provider stores protocol secrets only by hash and
+encrypts grant props. Per ADR 0003, Neon—not KV—remains authoritative for MCP
+Authorization, scopes, selected WhatsApp Connections, account state, and
+revocation.
+
+Declare the reviewed per-environment allowlist through `oauth_clients`:
+
+```hcl
+oauth_clients = [{
+  client_class  = "approved"
+  client_id     = "reviewed-client-id"
+  client_name   = "Reviewed MCP Client"
+  redirect_uris = ["https://client.example.com/oauth/callback"]
+}]
+```
+
+HTTPS redirects and explicitly configured HTTP loopback redirects are accepted
+at configuration time; authorization still requires exact string equality.
+Treat every client, redirect, or client-class change as an authorization-policy
+change and review the environment-isolated plan. KV never acts as the client
+registry: removing an entry from the deployed configuration makes that client
+unavailable to new authorization and token requests immediately.
 
 Provider-control startup also validates both Wasender secrets before serving
 even its private health route or an RPC method. The Wrangler manifest declares
@@ -197,6 +239,7 @@ repository:
 | `clerk_issuer` | Exact HTTPS issuer for the same-environment Clerk instance. |
 | `clerk_jwt_template` | Safe custom JWT template name; defaults to `whatsapp-api`. |
 | `clerk_publishable_key` | Public browser key for the same-environment Clerk instance. |
+| `oauth_clients` | Reviewed environment-specific MCP Client classes, IDs, names, and exact redirects. |
 
 Provider and backend credentials are ambient only:
 

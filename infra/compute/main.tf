@@ -8,10 +8,18 @@ locals {
   deletion_capsules_bucket_name = "whatsapp-mcp-deletion-capsules${local.environment_suffix}"
   deletion_markers_bucket_name  = "whatsapp-mcp-deletion-markers${local.environment_suffix}"
   oauth_kv_namespace_name       = "whatsapp-mcp-oauth${local.environment_suffix}"
-  ingestion_queue_name          = "whatsapp-mcp-ingestion${local.environment_suffix}"
-  dead_letter_queue_name        = "whatsapp-mcp-ingestion-dlq${local.environment_suffix}"
-  api_bundle_path               = abspath("${path.root}/../../apps/api/dist/index.js")
-  provider_control_bundle_path  = abspath("${path.root}/../../apps/provider-control/dist/index.js")
+  oauth_client_registry = jsonencode([
+    for client in var.oauth_clients : {
+      clientClass  = client.client_class
+      clientId     = client.client_id
+      clientName   = client.client_name
+      redirectUris = client.redirect_uris
+    }
+  ])
+  ingestion_queue_name         = "whatsapp-mcp-ingestion${local.environment_suffix}"
+  dead_letter_queue_name       = "whatsapp-mcp-ingestion-dlq${local.environment_suffix}"
+  api_bundle_path              = abspath("${path.root}/../../apps/api/dist/index.js")
+  provider_control_bundle_path = abspath("${path.root}/../../apps/provider-control/dist/index.js")
 }
 
 resource "cloudflare_r2_bucket" "webhook_ingress" {
@@ -255,7 +263,8 @@ resource "cloudflare_worker_version" "api" {
   worker_id   = cloudflare_worker.api.id
   main_module = "index.js"
 
-  compatibility_date = "2026-07-30"
+  compatibility_date  = "2026-07-30"
+  compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 
   modules = [
     {
@@ -289,6 +298,25 @@ resource "cloudflare_worker_version" "api" {
     {
       name = "CLERK_JWT_KEY"
       type = "inherit"
+    },
+    {
+      name = "OAUTH_CLIENT_REGISTRY"
+      text = local.oauth_client_registry
+      type = "plain_text"
+    },
+    {
+      name = "OAUTH_ISSUER"
+      text = "https://${var.api_hostname}"
+      type = "plain_text"
+    },
+    {
+      name = "OAUTH_PROTOCOL_ENCRYPTION_KEY"
+      type = "inherit"
+    },
+    {
+      name = "OAUTH_RESOURCE"
+      text = "https://${var.api_hostname}/mcp"
+      type = "plain_text"
     },
     {
       name         = "OAUTH_KV"

@@ -17,6 +17,12 @@ run "development_topology" {
     web_hostname           = "app.dev.example.com"
     clerk_issuer           = "https://clerk.dev.example.com"
     clerk_publishable_key  = "pk_test_Y2xlcmsuZGV2LmV4YW1wbGUuY29tJA"
+    oauth_clients = [{
+      client_class  = "approved"
+      client_id     = "approved-client"
+      client_name   = "Approved MCP Client"
+      redirect_uris = ["https://client.example.test/callback"]
+    }]
   }
 
   assert {
@@ -79,11 +85,15 @@ run "development_topology" {
       "${binding.type}:${binding.name}"
       ]) == toset([
       "inherit:CLERK_JWT_KEY",
+      "inherit:OAUTH_PROTOCOL_ENCRYPTION_KEY",
       "kv_namespace:OAUTH_KV",
       "plain_text:CLERK_API_AUDIENCE",
       "plain_text:CLERK_AUTHORIZED_PARTY",
       "plain_text:CLERK_ISSUER",
       "plain_text:DEPLOYMENT_ENVIRONMENT",
+      "plain_text:OAUTH_CLIENT_REGISTRY",
+      "plain_text:OAUTH_ISSUER",
+      "plain_text:OAUTH_RESOURCE",
       "queue:INGESTION_QUEUE",
       "r2_bucket:DELETION_CAPSULES",
       "r2_bucket:DELETION_MARKERS",
@@ -110,6 +120,28 @@ run "development_topology" {
       ]) == "https://clerk.dev.example.com"
     )
     error_message = "Clerk tokens must be bound to the exact same-environment API, web origin, and issuer."
+  }
+
+  assert {
+    condition = (
+      one([
+        for binding in cloudflare_worker_version.api.bindings :
+        binding.text if binding.name == "OAUTH_ISSUER"
+      ]) == "https://api.dev.example.com" &&
+      one([
+        for binding in cloudflare_worker_version.api.bindings :
+        binding.text if binding.name == "OAUTH_RESOURCE"
+      ]) == "https://api.dev.example.com/mcp" &&
+      jsondecode(one([
+        for binding in cloudflare_worker_version.api.bindings :
+        binding.text if binding.name == "OAUTH_CLIENT_REGISTRY"
+      ]))[0].redirectUris == ["https://client.example.test/callback"] &&
+      toset(cloudflare_worker_version.api.compatibility_flags) == toset([
+        "global_fetch_strictly_public",
+        "nodejs_compat",
+      ])
+    )
+    error_message = "OAuth must bind the exact API issuer/resource, reviewed redirects, and strict fetch compatibility."
   }
 
   assert {
@@ -155,6 +187,12 @@ run "preview_topology" {
     web_hostname           = "app.preview.example.com"
     clerk_issuer           = "https://clerk.preview.example.com"
     clerk_publishable_key  = "pk_test_Y2xlcmsucHJldmlldy5leGFtcGxlJA"
+    oauth_clients = [{
+      client_class  = "approved"
+      client_id     = "approved-client"
+      client_name   = "Approved MCP Client"
+      redirect_uris = ["https://client.example.test/callback"]
+    }]
   }
 
   assert {
@@ -189,6 +227,12 @@ run "production_topology" {
     web_hostname           = "app.example.com"
     clerk_issuer           = "https://clerk.example.com"
     clerk_publishable_key  = "pk_live_Y2xlcmsuZXhhbXBsZS5jb20k"
+    oauth_clients = [{
+      client_class  = "approved"
+      client_id     = "approved-client"
+      client_name   = "Approved MCP Client"
+      redirect_uris = ["https://client.example.test/callback"]
+    }]
   }
 
   assert {
@@ -276,6 +320,12 @@ run "reject_same_web_and_api_origin" {
     web_hostname           = "app.example.com"
     clerk_issuer           = "https://clerk.example.com"
     clerk_publishable_key  = "pk_live_Y2xlcmsuZXhhbXBsZS5jb20k"
+    oauth_clients = [{
+      client_class  = "approved"
+      client_id     = "approved-client"
+      client_name   = "Approved MCP Client"
+      redirect_uris = ["https://client.example.test/callback"]
+    }]
   }
 
   expect_failures = [vercel_project.web]

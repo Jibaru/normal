@@ -46,6 +46,45 @@ const requireHttpsOrigin = (name: string): string => {
   throw new Error(`${name} must be an exact HTTPS origin`);
 };
 
+const requireOAuthClientRegistry = (): string => {
+  const serialized = process.env.OAUTH_CLIENT_REGISTRY;
+  try {
+    const clients = JSON.parse(serialized ?? "") as unknown;
+    if (
+      serialized &&
+      serialized.length <= 32_768 &&
+      Array.isArray(clients) &&
+      clients.length >= 1 &&
+      clients.length <= 32 &&
+      clients.every(
+        (client) =>
+          typeof client === "object" &&
+          client !== null &&
+          !Array.isArray(client) &&
+          typeof (client as Record<string, unknown>).clientClass === "string" &&
+          typeof (client as Record<string, unknown>).clientId === "string" &&
+          typeof (client as Record<string, unknown>).clientName === "string" &&
+          Array.isArray((client as Record<string, unknown>).redirectUris),
+      )
+    ) {
+      return serialized;
+    }
+  } catch {
+    // The single safe error below intentionally does not echo configuration.
+  }
+  throw new Error(
+    "OAUTH_CLIENT_REGISTRY must contain at least one allowlisted MCP Client",
+  );
+};
+
+const requireMcpResource = (issuer: string): string => {
+  const resource = process.env.OAUTH_RESOURCE;
+  if (resource === `${issuer}/mcp`) {
+    return resource;
+  }
+  throw new Error("OAUTH_RESOURCE must be the issuer's exact /mcp resource");
+};
+
 const sourcePath = resolve(import.meta.dir, "../apps/api/wrangler.jsonc");
 const outputPath = resolve(process.cwd(), outputArgument);
 const config = JSON.parse(await readFile(sourcePath, "utf8")) as Record<
@@ -54,17 +93,26 @@ const config = JSON.parse(await readFile(sourcePath, "utf8")) as Record<
 >;
 const oauthKvNamespaceId = requireIdentifier("CLOUDFLARE_OAUTH_KV_ID");
 const oauthKvPlaceholder = "replace-with-rendered-oauth-kv-id";
-const clerkVariables = {
+const oauthIssuer = requireHttpsOrigin("OAUTH_ISSUER");
+const apiVariables = {
   CLERK_API_AUDIENCE: requireHttpsOrigin("CLERK_API_AUDIENCE"),
   CLERK_AUTHORIZED_PARTY: requireHttpsOrigin("CLERK_AUTHORIZED_PARTY"),
   CLERK_ISSUER: requireHttpsOrigin("CLERK_ISSUER"),
+  OAUTH_CLIENT_REGISTRY: requireOAuthClientRegistry(),
+  OAUTH_ISSUER: oauthIssuer,
+  OAUTH_RESOURCE: requireMcpResource(oauthIssuer),
 };
-const renderClerkVariables = (target: Record<string, unknown>): void => {
+if (apiVariables.CLERK_API_AUDIENCE !== oauthIssuer) {
+  throw new Error(
+    "OAUTH_ISSUER must equal the same-environment CLERK_API_AUDIENCE",
+  );
+}
+const renderApiVariables = (target: Record<string, unknown>): void => {
   const variables = target.vars;
   if (typeof variables !== "object" || variables === null) {
     throw new Error("API Wrangler source config must declare variables");
   }
-  Object.assign(variables, clerkVariables);
+  Object.assign(variables, apiVariables);
 };
 const renderOAuthKv = (target: Record<string, unknown>): void => {
   const namespaces = target.kv_namespaces;
@@ -101,7 +149,7 @@ for (const key of ["$schema", "main"]) {
 if (environmentArgument === "production") {
   renderOAuthKv(config);
 }
-renderClerkVariables(config);
+renderApiVariables(config);
 const environments = config.env;
 if (typeof environments !== "object" || environments === null) {
   throw new Error("API Wrangler source config must declare environments");
@@ -115,7 +163,7 @@ if (typeof selectedEnvironment !== "object" || selectedEnvironment === null) {
   );
 }
 renderOAuthKv(selectedEnvironment as Record<string, unknown>);
-renderClerkVariables(selectedEnvironment as Record<string, unknown>);
+renderApiVariables(selectedEnvironment as Record<string, unknown>);
 
 const hyperdrive = [
   {
