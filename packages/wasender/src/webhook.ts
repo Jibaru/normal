@@ -163,3 +163,10 @@ export const webhookNormalizationPolicy = {
   maximumPayloadBytes: 1_048_576,
   operationClass: "webhook-normalization",
 } as const;
+
+export {
+  importWebhookIdentityKey,
+  makeWasenderWebhookNormalization,
+  makeWasenderWebhookNormalizationLayer,
+  WebhookIdentityKeyError,
+} from "./wasender-webhook-normalization";

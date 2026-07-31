@@ -81,3 +81,15 @@ plaintext content, or ciphertext is included in application telemetry.
 
 Example files contain placeholders only. Add secrets with the platform secret
 command; never commit a populated environment file or `.dev.vars`.
+
+## Per-connection webhook identity material
+
+Webhook normalization uses a cryptographically random key of at least 32 bytes
+for each WhatsApp Connection. This is connection data, not deployment
+configuration: generate it while provisioning the connection, envelope-encrypt
+it under the connection boundary, and import it with
+`importWebhookIdentityKey` before constructing the production Wasender
+normalization Layer. Do not introduce a shared `WASENDER_WEBHOOK_IDENTITY_KEY`
+environment value, place plaintext key material in Neon or OpenTofu state, or
+reuse the key across WhatsApp Connections. Key import fails closed when the
+decoded value is shorter than 256 bits.

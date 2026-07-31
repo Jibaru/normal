@@ -11,8 +11,9 @@ Effect capabilities:
 - `WebhookNormalization` turns one authenticated delivery into independently
   processable provider-neutral items.
 
-Production implementations arrive in issues 12 through 16. This contract does
-not add network access, configuration, credentials, or a selectable fake.
+Production lifecycle, Directory, send, and media implementations arrive in
+issues 12 through 15. Issue 16 supplies the production webhook normalization
+Layer. The seam does not add runtime provider selection or a selectable fake.
 The production lifecycle Layer will close over the account-level Provider API
 Credential, which is never a capability input or output. Newly provisioned
 per-session authority is returned only as a log-safe `Redacted` value so the
@@ -40,6 +41,54 @@ delivery to continue independently. Every supported item carries an opaque
 stable or semantic-fallback identity for downstream deduplication. Provider
 version tokens remain opaque; ingestion asks the normalization capability to
 compare them instead of learning provider version syntax or ordering rules.
+
+## Webhook normalization
+
+`importWebhookIdentityKey` accepts at least 32 bytes and imports a non-extractable
+HMAC-SHA-256 key. The API composition that owns a WhatsApp Connection must
+generate this key from a cryptographically secure random source, envelope-encrypt
+it with that connection's data, and use
+`makeWasenderWebhookNormalizationLayer` only after decrypting it. A key is scoped
+to one WhatsApp Connection. It is not a global environment variable, Wasender
+credential, or OpenTofu input, and it must never be logged.
+
+The normalizer implements the reviewed Wasender shapes for `messages.upsert`,
+the incoming-message variants, `message.sent`, `messages.update`,
+`messages.delete`, `message-receipt.update`, `contacts.upsert`,
+`contacts.update`, `groups.upsert`, `groups.update`, and `session.status`.
+Documented object and array forms are accepted where Wasender has emitted both.
+Each element keeps its provider position as `itemIndex`; one malformed element
+does not change the indices or results of its valid siblings. Unsupported event
+families become `unsupported` items instead of entering the Message Store.
+
+Provider message, recipient, contact, group, and item identities are converted
+to connection-keyed HMAC tokens before they cross the adapter boundary. Media
+download/decryption material crosses only as an Effect `Redacted` value.
+Occurrence evidence is normalized to UTC, authenticated inside an opaque
+adapter version token, and compared only through `compareVersions`. The same
+logical item therefore receives the same identity when Wasender retries it,
+duplicates it in one batch, or regroups it with different siblings. The
+normalizer does not correlate sends by recipient, content, timestamp, or
+candidate uniqueness.
+
+Wasender status codes map as follows: error to `failed`, pending to `accepted`,
+sent to `sent`, delivered to `delivered`, and read or played to `read`. Session
+states map to the domain's connected, connecting, disconnected,
+reconnect-required, and degraded states. A contact LID is never guessed to be a
+phone number; only an explicit number or a phone-number JID can populate the
+internal Directory phone value.
+
+Safe telemetry may report only the operation class, normalized item kind or
+classification, item count, byte count, duration, and outcome. Never log the
+payload, normalized content, provider event name, opaque identities, protected
+versions, phone numbers, or redacted media source. A `response_too_large`
+failure is permanent; cryptographic/runtime failures defer to the bounded
+ingestion retry policy.
+
+The test fixtures record the Wasender documentation reviewed for each supported
+shape. When the vendor changes a schema, add a reviewed fixture and preserve
+the existing item classifications until the change is deliberately supported;
+do not edit encrypted source during operator replay.
 
 ## Operation policies
 

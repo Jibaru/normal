@@ -1,0 +1,535 @@
+import { describe, expect, test } from "bun:test";
+import { Effect, Redacted } from "effect";
+import {
+  importWebhookIdentityKey,
+  makeWasenderWebhookNormalization,
+  makeWasenderWebhookNormalizationLayer,
+  type NormalizedWebhookDelivery,
+  WebhookNormalization,
+} from "../src/webhook";
+import {
+  connectionFixtures,
+  contactsFixture,
+  deletionFixture,
+  editFixture,
+  groupsFixture,
+  messageBatchFixture,
+  receiptFixture,
+  sentFixtures,
+  statusFixture,
+} from "./fixtures/webhook";
+
+const encoder = new TextEncoder();
+const receivedAt = "2026-07-30T12:00:00.000Z";
+const identityKeyBytes = encoder.encode("0123456789abcdef0123456789abcdef");
+
+const encode = (value: unknown): Uint8Array =>
+  encoder.encode(JSON.stringify(value));
+
+const makeNormalizer = async (): Promise<WebhookNormalization> => {
+  const key = await Effect.runPromise(
+    importWebhookIdentityKey(identityKeyBytes),
+  );
+  return makeWasenderWebhookNormalization(key);
+};
+
+const normalize = async (
+  normalizer: WebhookNormalization,
+  value: unknown,
+): Promise<NormalizedWebhookDelivery> =>
+  Effect.runPromise(
+    normalizer.normalize({
+      payload: encode(value),
+      receivedAt,
+    }),
+  );
+
+describe("Wasender webhook normalization", () => {
+  test("provides the production capability as an Effect Layer", async () => {
+    const key = await Effect.runPromise(
+      importWebhookIdentityKey(identityKeyBytes),
+    );
+    const delivery = await Effect.runPromise(
+      Effect.gen(function* () {
+        const normalizer = yield* WebhookNormalization;
+        return yield* normalizer.normalize({
+          payload: encode(groupsFixture),
+          receivedAt,
+        });
+      }).pipe(Effect.provide(makeWasenderWebhookNormalizationLayer(key))),
+    );
+
+    expect(delivery.items).toMatchObject([{ kind: "directory_group" }]);
+  });
+
+  test("normalizes every valid message in a batch around malformed siblings", async () => {
+    const normalizer = await makeNormalizer();
+    const delivery = await normalize(normalizer, messageBatchFixture);
+
+    expect(delivery.items.map((item) => item.kind)).toEqual([
+      "message_upsert",
+      "message_upsert",
+      "malformed",
+      "message_upsert",
+      "message_upsert",
+      "unsupported",
+    ]);
+    expect(delivery.items[2]).toEqual({
+      classification: "missing_required_identity",
+      itemIndex: 2,
+      kind: "malformed",
+    });
+    expect(delivery.items[0]).toMatchObject({
+      content: { mediaSource: null, text: "hello", type: "text" },
+      direction: "inbound",
+      itemIndex: 0,
+      kind: "message_upsert",
+      sentAt: "2025-07-28T10:59:50.000Z",
+    });
+    expect(delivery.items[1]).toMatchObject({
+      content: { text: "photo", type: "image" },
+      itemIndex: 1,
+      kind: "message_upsert",
+    });
+    expect(delivery.items[3]).toMatchObject({
+      content: {
+        mediaSource: null,
+        text: "optional fields absent",
+        type: "text",
+      },
+      itemIndex: 3,
+      kind: "message_upsert",
+      sentAt: "2025-07-28T11:00:00.000Z",
+    });
+    expect(delivery.items[4]).toMatchObject({
+      kind: "message_upsert",
+      sender: null,
+    });
+    expect(delivery.items[5]).toEqual({
+      classification: "unsupported_item_kind",
+      itemIndex: 5,
+      kind: "unsupported",
+    });
+
+    const serialized = JSON.stringify(delivery);
+    expect(serialized).not.toContain("inbound-text-1");
+    expect(serialized).not.toContain("15550101");
+    expect(serialized).not.toContain("provider-media-key");
+    expect(serialized).not.toContain("provider-object");
+    const image = delivery.items[1];
+    expect(image?.kind).toBe("message_upsert");
+    if (image?.kind === "message_upsert") {
+      const mediaSource = image.content.mediaSource;
+      if (mediaSource === null) {
+        throw new Error("expected a protected media source");
+      }
+      expect(Redacted.value(mediaSource)).toContain("provider-media-key");
+    }
+  });
+
+  test("normalizes edits, deletions, and receipt or send evidence", async () => {
+    const normalizer = await makeNormalizer();
+    const deliveries = await Promise.all(
+      [
+        editFixture,
+        deletionFixture,
+        statusFixture,
+        receiptFixture,
+        ...sentFixtures,
+      ].map((fixture) => normalize(normalizer, fixture)),
+    );
+
+    expect(
+      deliveries.map(({ items }) => items.map((item) => item.kind)),
+    ).toEqual([
+      ["message_edit"],
+      ["message_delete", "malformed"],
+      ["send_evidence", "send_evidence"],
+      ["send_evidence"],
+      ["message_upsert"],
+      ["send_evidence"],
+    ]);
+    expect(deliveries[0]?.items[0]).toMatchObject({
+      content: { mediaSource: null, text: "hello, edited", type: "text" },
+      editedAt: "2025-07-28T11:00:50.000Z",
+      kind: "message_edit",
+    });
+    expect(deliveries[1]?.items[1]).toEqual({
+      classification: "missing_required_identity",
+      itemIndex: 1,
+      kind: "malformed",
+    });
+    expect(deliveries[2]?.items).toMatchObject([
+      { kind: "send_evidence", status: "read" },
+      { kind: "send_evidence", status: "failed" },
+    ]);
+    expect(deliveries[3]?.items[0]).toMatchObject({
+      kind: "send_evidence",
+      status: "read",
+    });
+    expect(deliveries[4]?.items[0]).toMatchObject({
+      content: { mediaSource: null, text: "sent text", type: "text" },
+      direction: "outbound",
+      kind: "message_upsert",
+    });
+    expect(deliveries[5]?.items[0]).toMatchObject({
+      kind: "send_evidence",
+      status: "failed",
+    });
+  });
+
+  test("falls back to receipt time for deletion and rejects content-free edits", async () => {
+    const normalizer = await makeNormalizer();
+    const deletionWithoutTimestamp = {
+      event: "messages.delete",
+      data: {
+        keys: [deletionFixture.data.keys[0]],
+      },
+    };
+    const editWithoutContent = {
+      ...editFixture,
+      data: {
+        messages: {
+          ...editFixture.data.messages,
+          message: {
+            protocolMessage: {
+              ...editFixture.data.messages.message.protocolMessage,
+              editedMessage: undefined,
+            },
+          },
+        },
+      },
+    };
+
+    const deletion = await normalize(normalizer, deletionWithoutTimestamp);
+    const repeatedDeletion = await normalize(
+      normalizer,
+      deletionWithoutTimestamp,
+    );
+    const edit = await normalize(normalizer, editWithoutContent);
+
+    expect(deletion.items[0]).toMatchObject({
+      deletedAt: receivedAt,
+      kind: "message_delete",
+    });
+    expect(repeatedDeletion).toEqual(deletion);
+    expect(edit.items).toEqual([
+      {
+        classification: "invalid_item_shape",
+        itemIndex: 0,
+        kind: "malformed",
+      },
+    ]);
+  });
+
+  test("normalizes Directory and connection-state changes with missing optional fields", async () => {
+    const normalizer = await makeNormalizer();
+    const contacts = await normalize(normalizer, contactsFixture);
+    const groups = await normalize(normalizer, groupsFixture);
+    const states = await Promise.all(
+      connectionFixtures.map((fixture) => normalize(normalizer, fixture)),
+    );
+
+    expect(contacts.items).toMatchObject([
+      {
+        contact: {
+          active: true,
+          displayName: "Ada",
+          phoneNumber: "+15550108",
+        },
+        kind: "directory_contact",
+      },
+      {
+        contact: {
+          active: true,
+          displayName: null,
+          phoneNumber: "+15550109",
+        },
+        kind: "directory_contact",
+      },
+      {
+        contact: {
+          active: true,
+          displayName: "Linked identity",
+          phoneNumber: null,
+        },
+        kind: "directory_contact",
+      },
+      {
+        classification: "missing_required_identity",
+        kind: "malformed",
+      },
+    ]);
+    expect(groups.items).toMatchObject([
+      {
+        group: { displayName: "Family", joined: true },
+        kind: "directory_group",
+      },
+    ]);
+    expect(states.map(({ items }) => items[0])).toMatchObject([
+      { kind: "connection_state", state: "connected" },
+      { kind: "connection_state", state: "connecting" },
+      { kind: "connection_state", state: "reconnect_required" },
+    ]);
+  });
+
+  test("changes a Directory item identity when its normalized phone changes", async () => {
+    const normalizer = await makeNormalizer();
+    const contact = contactsFixture.data[0];
+    const first = await normalize(normalizer, {
+      ...contactsFixture,
+      data: [{ ...contact, phoneNumber: "+15550111" }],
+    });
+    const second = await normalize(normalizer, {
+      ...contactsFixture,
+      data: [{ ...contact, phoneNumber: "+15550112" }],
+    });
+    const firstItem = first.items[0];
+    const secondItem = second.items[0];
+    if (
+      firstItem?.kind !== "directory_contact" ||
+      secondItem?.kind !== "directory_contact"
+    ) {
+      throw new Error("expected Directory contact items");
+    }
+
+    expect(firstItem.contact.phoneNumber).toBe("+15550111");
+    expect(secondItem.contact.phoneNumber).toBe("+15550112");
+    expect(firstItem.itemIdentity).not.toBe(secondItem.itemIdentity);
+  });
+
+  test("does not erase Directory fields from unrelated partial updates", async () => {
+    const normalizer = await makeNormalizer();
+    const contacts = await normalize(normalizer, {
+      event: "contacts.update",
+      timestamp: contactsFixture.timestamp,
+      data: [
+        { jid: "15550108@s.whatsapp.net", status: "available" },
+        { jid: "15550109@s.whatsapp.net", name: "Grace" },
+      ],
+    });
+    const groups = await normalize(normalizer, {
+      event: "groups.update",
+      timestamp: groupsFixture.timestamp,
+      data: [
+        { jid: "120363000001@g.us", announce: true, restrict: false },
+        { jid: "120363000002@g.us", subject: "Friends" },
+      ],
+    });
+
+    expect(contacts.items).toMatchObject([
+      { kind: "unsupported" },
+      { contact: { displayName: "Grace" }, kind: "directory_contact" },
+    ]);
+    expect(groups.items).toMatchObject([
+      { kind: "unsupported" },
+      { group: { displayName: "Friends" }, kind: "directory_group" },
+    ]);
+  });
+
+  test("distinguishes later repeated mutable states from exact retries", async () => {
+    const normalizer = await makeNormalizer();
+    const contactAtFirstOccurrence = {
+      ...contactsFixture,
+      data: [contactsFixture.data[0]],
+    };
+    const contactAtLaterOccurrence = {
+      ...contactAtFirstOccurrence,
+      timestamp: contactsFixture.timestamp + 60,
+    };
+    const statusAtLaterOccurrence = {
+      ...statusFixture,
+      timestamp: statusFixture.timestamp + 60_000,
+    };
+
+    const [contactFirst, contactRetry, contactLater, statusFirst, statusLater] =
+      await Promise.all([
+        normalize(normalizer, contactAtFirstOccurrence),
+        normalize(normalizer, contactAtFirstOccurrence),
+        normalize(normalizer, contactAtLaterOccurrence),
+        normalize(normalizer, statusFixture),
+        normalize(normalizer, statusAtLaterOccurrence),
+      ]);
+    const identities = [
+      contactFirst.items[0],
+      contactRetry.items[0],
+      contactLater.items[0],
+      statusFirst.items[0],
+      statusLater.items[0],
+    ].map((item) =>
+      item !== undefined &&
+      item.kind !== "malformed" &&
+      item.kind !== "unsupported"
+        ? item.itemIdentity
+        : null,
+    );
+
+    expect(identities[0]).toBe(identities[1]);
+    expect(identities[0]).not.toBe(identities[2]);
+    expect(identities[3]).not.toBe(identities[4]);
+  });
+
+  test("deduplicates regrouped logical items while retaining duplicate batch positions", async () => {
+    const normalizer = await makeNormalizer();
+    const firstMessage = messageBatchFixture.data.messages[0];
+    const regrouped = {
+      ...messageBatchFixture,
+      data: {
+        messages: [firstMessage, messageBatchFixture.data.messages[1]],
+      },
+    };
+    const repeated = {
+      ...messageBatchFixture,
+      data: {
+        messages: [firstMessage, firstMessage],
+      },
+    };
+    const original = await normalize(normalizer, messageBatchFixture);
+    const repeatedDelivery = await normalize(normalizer, messageBatchFixture);
+    const regroupedResult = await normalize(normalizer, regrouped);
+    const repeatedResult = await normalize(normalizer, repeated);
+
+    expect(repeatedDelivery).toEqual(original);
+
+    expect(regroupedResult.items[0]).toMatchObject({
+      itemIdentity:
+        original.items[0]?.kind === "message_upsert"
+          ? original.items[0].itemIdentity
+          : "unexpected",
+    });
+    expect(regroupedResult.items[1]).toMatchObject({
+      itemIdentity:
+        original.items[1]?.kind === "message_upsert"
+          ? original.items[1].itemIdentity
+          : "unexpected",
+    });
+    expect(repeatedResult.items).toHaveLength(2);
+    expect(repeatedResult.items[0]).toMatchObject({ itemIndex: 0 });
+    expect(repeatedResult.items[1]).toMatchObject({ itemIndex: 1 });
+    if (
+      repeatedResult.items[0]?.kind === "message_upsert" &&
+      repeatedResult.items[1]?.kind === "message_upsert"
+    ) {
+      expect(repeatedResult.items[0].itemIdentity).toBe(
+        repeatedResult.items[1].itemIdentity,
+      );
+    }
+  });
+
+  test("compares authenticated occurrence evidence independently of delivery order", async () => {
+    const normalizer = await makeNormalizer();
+    const results = await Promise.all(
+      connectionFixtures.map((fixture) => normalize(normalizer, fixture)),
+    );
+    const versions = results.map(({ items }) => {
+      const item = items[0];
+      if (item?.kind !== "connection_state" || item.evidence.version === null) {
+        throw new Error("expected connection-state convergence evidence");
+      }
+      return item.evidence.version;
+    });
+    const [connectedVersion, connectingVersion, reconnectVersion] = versions;
+    if (
+      connectedVersion === undefined ||
+      connectingVersion === undefined ||
+      reconnectVersion === undefined
+    ) {
+      throw new Error("expected three convergence versions");
+    }
+
+    expect(
+      await Effect.runPromise(
+        normalizer.compareVersions({
+          left: connectingVersion,
+          right: connectedVersion,
+        }),
+      ),
+    ).toBe("before");
+    expect(
+      await Effect.runPromise(
+        normalizer.compareVersions({
+          left: reconnectVersion,
+          right: connectingVersion,
+        }),
+      ),
+    ).toBe("before");
+
+    const otherKey = await Effect.runPromise(
+      importWebhookIdentityKey(
+        encoder.encode("abcdef0123456789abcdef0123456789"),
+      ),
+    );
+    const otherConnection = makeWasenderWebhookNormalization(otherKey);
+    expect(
+      await Effect.runPromise(
+        otherConnection.compareVersions({
+          left: connectedVersion,
+          right: connectingVersion,
+        }),
+      ),
+    ).toBe("incomparable");
+  });
+
+  test("classifies unsupported and malformed top-level deliveries", async () => {
+    const normalizer = await makeNormalizer();
+
+    expect(
+      await normalize(normalizer, { event: "messages.reaction", data: [] }),
+    ).toEqual({
+      items: [
+        {
+          classification: "unsupported_item_kind",
+          itemIndex: 0,
+          kind: "unsupported",
+        },
+      ],
+    });
+    expect(await normalize(normalizer, ["not", "an", "envelope"])).toEqual({
+      items: [
+        {
+          classification: "invalid_top_level_shape",
+          itemIndex: null,
+          kind: "malformed",
+        },
+      ],
+    });
+    expect(
+      await Effect.runPromise(
+        normalizer.normalize({
+          payload: encoder.encode("not json"),
+          receivedAt,
+        }),
+      ),
+    ).toEqual({
+      items: [
+        {
+          classification: "invalid_top_level_shape",
+          itemIndex: null,
+          kind: "malformed",
+        },
+      ],
+    });
+  });
+
+  test("rejects weak identity keys and oversized payloads", async () => {
+    const keyError = await Effect.runPromise(
+      Effect.flip(importWebhookIdentityKey(encoder.encode("too short"))),
+    );
+    expect(keyError).toMatchObject({ _tag: "WebhookIdentityKeyError" });
+
+    const normalizer = await makeNormalizer();
+    const payloadError = await Effect.runPromise(
+      Effect.flip(
+        normalizer.normalize({
+          payload: new Uint8Array(1_048_577),
+          receivedAt,
+        }),
+      ),
+    );
+    expect(payloadError).toMatchObject({
+      code: "response_too_large",
+      operation: "webhook-normalization",
+      retryDecision: "do_not_retry",
+    });
+  });
+});
