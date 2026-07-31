@@ -6,6 +6,11 @@ const validEnvironment = () => ({
   AWS_KMS_REGION: "us-east-1",
   AWS_SECRET_ACCESS_KEY: "temporary-secret",
   AWS_SESSION_TOKEN: "temporary-session-token",
+  CLERK_API_AUDIENCE: "https://api.example.test",
+  CLERK_AUTHORIZED_PARTY: "https://app.example.test",
+  CLERK_ISSUER: "https://clerk.example.test",
+  CLERK_JWT_KEY:
+    "-----BEGIN PUBLIC KEY-----\nproduction-public-key\n-----END PUBLIC KEY-----",
   DELETION_CAPSULES: {
     get: async () => null,
     put: async () => null,
@@ -208,6 +213,37 @@ describe("API production root", () => {
 
     expect(response.status).toBe(503);
   });
+
+  test.each([
+    "CLERK_API_AUDIENCE",
+    "CLERK_AUTHORIZED_PARTY",
+    "CLERK_ISSUER",
+    "CLERK_JWT_KEY",
+  ] as const)("fails closed when %s is absent", async (configuration) => {
+    const { [configuration]: _missing, ...environment } = validEnvironment();
+    const response = await createProductionHandler(environment)(
+      new Request("https://api.example.test/health"),
+    );
+
+    expect(response.status).toBe(503);
+  });
+
+  test.each([
+    ["CLERK_API_AUDIENCE", "http://api.example.test"],
+    ["CLERK_AUTHORIZED_PARTY", "https://app.example.test/path"],
+    ["CLERK_ISSUER", "https://user@clerk.example.test"],
+    ["CLERK_JWT_KEY", "not-a-public-key"],
+  ] as const)(
+    "fails closed when %s is invalid",
+    async (configuration, value) => {
+      const response = await createProductionHandler({
+        ...validEnvironment(),
+        [configuration]: value,
+      })(new Request("https://api.example.test/health"));
+
+      expect(response.status).toBe(503);
+    },
+  );
 
   test("fails closed for a KMS root outside us-east-1", async () => {
     const response = await createProductionHandler({

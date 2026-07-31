@@ -24,6 +24,28 @@ const requireIdentifier = (name: string): string => {
   return value;
 };
 
+const requireHttpsOrigin = (name: string): string => {
+  const value = process.env[name];
+  try {
+    const url = new URL(value ?? "");
+    if (
+      value &&
+      url.protocol === "https:" &&
+      url.username === "" &&
+      url.password === "" &&
+      url.pathname === "/" &&
+      url.search === "" &&
+      url.hash === "" &&
+      url.origin === value
+    ) {
+      return value;
+    }
+  } catch {
+    // The single safe error below intentionally does not echo configuration.
+  }
+  throw new Error(`${name} must be an exact HTTPS origin`);
+};
+
 const sourcePath = resolve(import.meta.dir, "../apps/api/wrangler.jsonc");
 const outputPath = resolve(process.cwd(), outputArgument);
 const config = JSON.parse(await readFile(sourcePath, "utf8")) as Record<
@@ -32,6 +54,18 @@ const config = JSON.parse(await readFile(sourcePath, "utf8")) as Record<
 >;
 const oauthKvNamespaceId = requireIdentifier("CLOUDFLARE_OAUTH_KV_ID");
 const oauthKvPlaceholder = "replace-with-rendered-oauth-kv-id";
+const clerkVariables = {
+  CLERK_API_AUDIENCE: requireHttpsOrigin("CLERK_API_AUDIENCE"),
+  CLERK_AUTHORIZED_PARTY: requireHttpsOrigin("CLERK_AUTHORIZED_PARTY"),
+  CLERK_ISSUER: requireHttpsOrigin("CLERK_ISSUER"),
+};
+const renderClerkVariables = (target: Record<string, unknown>): void => {
+  const variables = target.vars;
+  if (typeof variables !== "object" || variables === null) {
+    throw new Error("API Wrangler source config must declare variables");
+  }
+  Object.assign(variables, clerkVariables);
+};
 const renderOAuthKv = (target: Record<string, unknown>): void => {
   const namespaces = target.kv_namespaces;
   if (!Array.isArray(namespaces)) {
@@ -67,6 +101,7 @@ for (const key of ["$schema", "main"]) {
 if (environmentArgument === "production") {
   renderOAuthKv(config);
 }
+renderClerkVariables(config);
 const environments = config.env;
 if (typeof environments !== "object" || environments === null) {
   throw new Error("API Wrangler source config must declare environments");
@@ -80,6 +115,7 @@ if (typeof selectedEnvironment !== "object" || selectedEnvironment === null) {
   );
 }
 renderOAuthKv(selectedEnvironment as Record<string, unknown>);
+renderClerkVariables(selectedEnvironment as Record<string, unknown>);
 
 const hyperdrive = [
   {

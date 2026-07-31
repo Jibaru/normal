@@ -1,6 +1,7 @@
 import { Config, ConfigProvider, Data, Effect, Layer } from "effect";
 import { parseApiOrigin } from "./api-origin";
 import { createHealthRoute } from "./canary";
+import { isClerkJwtTemplate, isClerkPublishableKey } from "./clerk-config";
 import {
   ApplicationConfig,
   type HttpCompletedEvent,
@@ -10,10 +11,24 @@ import {
 export interface WebEnvironment {
   readonly DEPLOYMENT_ENVIRONMENT?: string | undefined;
   readonly NEXT_PUBLIC_API_ORIGIN?: string | undefined;
+  readonly NEXT_PUBLIC_CLERK_JWT_TEMPLATE?: string | undefined;
+  readonly NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?: string | undefined;
 }
 
 const productionConfig = Config.all({
   apiOrigin: Config.string("NEXT_PUBLIC_API_ORIGIN"),
+  clerkJwtTemplate: Config.string("NEXT_PUBLIC_CLERK_JWT_TEMPLATE").pipe(
+    Config.validate({
+      message: "NEXT_PUBLIC_CLERK_JWT_TEMPLATE is invalid",
+      validation: isClerkJwtTemplate,
+    }),
+  ),
+  clerkPublishableKey: Config.string("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY").pipe(
+    Config.validate({
+      message: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is invalid",
+      validation: isClerkPublishableKey,
+    }),
+  ),
   environment: Config.literal(
     "development",
     "preview",
@@ -36,14 +51,17 @@ const configLayer = (environment: WebEnvironment) =>
   Layer.effect(
     ApplicationConfig,
     productionConfig.pipe(
-      Effect.flatMap(({ apiOrigin, environment }) =>
-        validatedApiOrigin(apiOrigin).pipe(
-          Effect.map((validatedApiOrigin) => ({
-            apiOrigin: validatedApiOrigin,
-            environment,
-            service: "web" as const,
-          })),
-        ),
+      Effect.flatMap(
+        ({ apiOrigin, clerkJwtTemplate, clerkPublishableKey, environment }) =>
+          validatedApiOrigin(apiOrigin).pipe(
+            Effect.map((validatedApiOrigin) => ({
+              apiOrigin: validatedApiOrigin,
+              clerkJwtTemplate,
+              clerkPublishableKey,
+              environment,
+              service: "web" as const,
+            })),
+          ),
       ),
       Effect.withConfigProvider(
         ConfigProvider.fromMap(

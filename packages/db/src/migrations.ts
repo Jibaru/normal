@@ -48,6 +48,17 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 2,
   },
+  {
+    name: "Personal Account bootstrap",
+    sql: await readFile(
+      new NodeUrl(
+        "../migrations/0003_personal_account_bootstrap.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    version: 3,
+  },
 ];
 
 const checksum = (sql: string): string =>

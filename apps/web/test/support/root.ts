@@ -16,6 +16,8 @@ export const makeTestRoot = () => {
     layer: Layer.merge(
       Layer.succeed(ApplicationConfig, {
         apiOrigin: new URL("https://api.test.example"),
+        clerkJwtTemplate: "whatsapp-api",
+        clerkPublishableKey: "pk_test_Y2xlcmsuZXhhbXBsZS50ZXN0JA",
         environment: "test",
         service: "web",
       }),

@@ -272,6 +272,25 @@ resource "cloudflare_worker_version" "api" {
       type = "plain_text"
     },
     {
+      name = "CLERK_API_AUDIENCE"
+      text = "https://${var.api_hostname}"
+      type = "plain_text"
+    },
+    {
+      name = "CLERK_AUTHORIZED_PARTY"
+      text = "https://${var.web_hostname}"
+      type = "plain_text"
+    },
+    {
+      name = "CLERK_ISSUER"
+      text = var.clerk_issuer
+      type = "plain_text"
+    },
+    {
+      name = "CLERK_JWT_KEY"
+      type = "inherit"
+    },
+    {
       name         = "OAUTH_KV"
       namespace_id = cloudflare_workers_kv_namespace.oauth.id
       type         = "kv_namespace"
@@ -407,6 +426,18 @@ resource "vercel_project" "web" {
     {
       key       = "NEXT_PUBLIC_API_ORIGIN"
       value     = "https://${var.api_hostname}"
+      target    = ["production"]
+      sensitive = false
+    },
+    {
+      key       = "NEXT_PUBLIC_CLERK_JWT_TEMPLATE"
+      value     = var.clerk_jwt_template
+      target    = ["production"]
+      sensitive = false
+    },
+    {
+      key       = "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"
+      value     = var.clerk_publishable_key
       target    = ["production"]
       sensitive = false
     }

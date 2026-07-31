@@ -6,6 +6,13 @@ import {
 import { createProductionHealthRoute } from "../src/effect/production";
 
 describe("web production root", () => {
+  const validEnvironment = {
+    DEPLOYMENT_ENVIRONMENT: "production",
+    NEXT_PUBLIC_API_ORIGIN: "https://api.example.com",
+    NEXT_PUBLIC_CLERK_JWT_TEMPLATE: "whatsapp-api",
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_Y2xlcmsuZXhhbXBsZS50ZXN0JA",
+  } as const;
+
   test("fails closed when deployment configuration is absent", async () => {
     const response = await createProductionHealthRoute({})();
 
@@ -27,7 +34,7 @@ describe("web production root", () => {
   for (const invalidApiOrigin of invalidApiOrigins) {
     test(`fails closed when the browser API origin is ${invalidApiOrigin}`, async () => {
       const response = await createProductionHealthRoute({
-        DEPLOYMENT_ENVIRONMENT: "production",
+        ...validEnvironment,
         NEXT_PUBLIC_API_ORIGIN: invalidApiOrigin,
       })();
 
@@ -36,12 +43,28 @@ describe("web production root", () => {
   }
 
   test("accepts a direct HTTPS API Worker origin", async () => {
-    const response = await createProductionHealthRoute({
-      DEPLOYMENT_ENVIRONMENT: "production",
-      NEXT_PUBLIC_API_ORIGIN: "https://api.example.com",
-    })();
+    const response = await createProductionHealthRoute(validEnvironment)();
 
     expect(response.status).toBe(200);
+  });
+
+  test.each([
+    "NEXT_PUBLIC_CLERK_JWT_TEMPLATE",
+    "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+  ] as const)("fails closed when %s is absent", async (name) => {
+    const { [name]: _missing, ...environment } = validEnvironment;
+    const response = await createProductionHealthRoute(environment)();
+
+    expect(response.status).toBe(503);
+  });
+
+  test("rejects an unsafe Clerk JWT template name", async () => {
+    const response = await createProductionHealthRoute({
+      ...validEnvironment,
+      NEXT_PUBLIC_CLERK_JWT_TEMPLATE: "template with spaces",
+    })();
+
+    expect(response.status).toBe(503);
   });
 
   test("shares validated browser configuration with the product UI", () => {

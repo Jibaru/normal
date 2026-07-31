@@ -11,3 +11,12 @@ AWS_SESSION_TOKEN=replace-with-temporary-session-token
 
 # Dedicated marker-key HMAC secret; generate independently with openssl rand -hex 32.
 DELETION_MARKER_HMAC_SECRET=replace-with-dedicated-32-byte-hex-secret
+
+# Clerk custom JWT verification. The template aud must equal the API origin,
+# and azp plus the browser Origin must equal the web origin.
+CLERK_API_AUDIENCE=https://api.example.test
+CLERK_AUTHORIZED_PARTY=https://app.example.test
+CLERK_ISSUER=https://replace-with-clerk-frontend-api.clerk.accounts.dev
+CLERK_JWT_KEY="-----BEGIN PUBLIC KEY-----
+replace-with-clerk-jwt-public-key
+-----END PUBLIC KEY-----"

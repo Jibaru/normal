@@ -41,11 +41,20 @@ export interface HttpCompletedEvent {
   readonly status: number;
 }
 
+export interface PersonalAccountBootstrapCompletedEvent {
+  readonly event: "personal_account.bootstrap.completed";
+  readonly outcome: "created" | "recovered";
+  readonly service: "api";
+}
+
 export interface SafeTelemetry {
   readonly emit: (event: SafeTelemetryEvent) => Effect.Effect<void>;
 }
 
-export type SafeTelemetryEvent = HttpCompletedEvent | StoredMediaContainerEvent;
+export type SafeTelemetryEvent =
+  | HttpCompletedEvent
+  | PersonalAccountBootstrapCompletedEvent
+  | StoredMediaContainerEvent;
 
 export const SafeTelemetry = Context.GenericTag<SafeTelemetry>(
   "@whatsapp-mcp/api/SafeTelemetry",

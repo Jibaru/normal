@@ -8,6 +8,12 @@ request is accepted. Production roots accept only `development`, `preview`, or
 | --- | --- | --- | --- |
 | `DEPLOYMENT_ENVIRONMENT` | Non-secret | Web, API, provider-control | Set to the deployed environment. Change only as part of a deployment. |
 | `NEXT_PUBLIC_API_ORIGIN` | Non-secret | Web browser bundle and web startup validation | OpenTofu sets the same-environment API Worker's bare HTTPS origin. It is frozen into the browser bundle at build time. |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Public identifier | Web browser bundle and web startup validation | Copy the publishable key from the same-environment Clerk instance. OpenTofu freezes it into that environment's browser bundle. |
+| `NEXT_PUBLIC_CLERK_JWT_TEMPLATE` | Non-secret | Web browser bundle and web startup validation | Name of the same-environment Clerk custom JWT template. The default and recommended value is `whatsapp-api`. |
+| `CLERK_API_AUDIENCE` | Non-secret | API | Exact bare HTTPS API origin. OpenTofu derives it from `api_hostname`; the custom JWT template's `aud` claim must match it exactly. |
+| `CLERK_AUTHORIZED_PARTY` | Non-secret | API | Exact bare HTTPS web origin allowed by both the token `azp` claim and request `Origin`. OpenTofu derives it from `web_hostname`. |
+| `CLERK_ISSUER` | Non-secret | API | Exact HTTPS issuer for the same-environment Clerk instance. |
+| `CLERK_JWT_KEY` | Secret deployment material | API | PEM public key for the custom Clerk JWT template. Store it only as a Cloudflare Worker secret so verification does not depend on a network lookup. Replace it when Clerk rotates the template signing key. |
 | `DATABASE_URL` | Secret | Database tooling that consumes `@whatsapp-mcp/db/config` | Issue a restricted Neon role URL, store it in the deployment secret store, and rotate it through Neon plus the deployment platform. API production traffic uses Hyperdrive instead. |
 | `MIGRATION_DATABASE_URL` | Secret | `bun run db:migrate` and `bun run db:check` | Obtain the direct, unpooled owner URL from the sensitive OpenTofu output. It must be a TLS Neon URL and must never be configured on a Worker or web deployable. Rotate it by rotating the Neon migration-owner password. |
 | `NEON_API_KEY` | Secret | OpenTofu Neon provider | Issue an organization-scoped automation key, keep it only in the infrastructure runner, and rotate it in Neon. |
@@ -92,6 +98,34 @@ origin with no credentials, path, query, or fragment. The Vercel manifest has
 no rewrite or proxy to the API. Browser data-plane requests therefore go
 directly to the API Worker.
 
+## Clerk human identity and Personal Account bootstrap
+
+Each deployment environment uses its own Clerk instance or satellite domain.
+Create the `whatsapp-api` custom JWT template with a 60-second lifetime and an
+`aud` claim equal to that environment's exact API origin. Do not add tenant,
+role, email, name, or other profile claims: the API consumes only Clerk's
+standard `sub`, `iss`, `aud`, `azp`, `iat`, `nbf`, `exp`, and `sts` claims.
+Configure the Clerk application to allow only the exact web origin represented
+by `CLERK_AUTHORIZED_PARTY`.
+
+The API verifies the token locally with `CLERK_JWT_KEY` and independently
+requires the exact issuer, audience, authorized party, short expiry, and request
+Origin. It then maps the verified Clerk User through narrow fixed-search-path
+database functions, starts a transaction with `SET LOCAL
+app.personal_account_id`, and relies on RLS for the remaining tenant access.
+The first successful request creates exactly one active Personal Account and
+one KMS-wrapped Personal Account data key. Neon stores the fixed private-beta
+three-connection and 5 GB limits on that account and is the value source for
+the bootstrap response; retries and concurrent tabs recover that same account.
+A deleting or deleted mapping, invalid identity, wrong tenant, wrong Origin, or
+unavailable key returns the same public not-found boundary and never discloses
+an identifier.
+
+Bootstrap telemetry is limited to `personal_account.bootstrap.completed`, the
+API service name, and an allowlisted `created` or `recovered` outcome. Never add
+Clerk User IDs, Personal Account IDs, token claims, Origin values, network
+addresses, key identifiers, ciphertext, or profile data to this event.
+
 ## Wasender media authority
 
 The Wasender media adapter has no hostname, endpoint, redirect, timeout, or
@@ -160,6 +194,9 @@ repository:
 | `vercel_team_id` | Team restricted to that environment's authority scope. |
 | `api_hostname` | Public custom hostname routed to the API Worker. |
 | `web_hostname` | Distinct public hostname assigned to the Vercel web project. |
+| `clerk_issuer` | Exact HTTPS issuer for the same-environment Clerk instance. |
+| `clerk_jwt_template` | Safe custom JWT template name; defaults to `whatsapp-api`. |
+| `clerk_publishable_key` | Public browser key for the same-environment Clerk instance. |
 
 Provider and backend credentials are ambient only:
 

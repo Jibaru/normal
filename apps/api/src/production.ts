@@ -1,6 +1,9 @@
 import { KMSClient } from "@aws-sdk/client-kms";
 import { checkDatabaseReadiness } from "@whatsapp-mcp/db/connectivity";
+import { makePgPersonalAccountRepository } from "@whatsapp-mcp/db/personal-account";
 import { Config, ConfigProvider, Data, Effect, Layer, Redacted } from "effect";
+import { makeClerkHumanIdentity } from "./auth/clerk";
+import { HumanIdentity } from "./auth/human-identity";
 import { createCanaryHandler } from "./canary";
 import {
   type DeletionCapsuleWriteBucket,
@@ -23,6 +26,13 @@ import {
   StoredMediaContainerService,
 } from "./encryption/stored-media-container";
 import {
+  createPersonalAccountHandler,
+  isPersonalAccountRequest,
+  PersonalAccountIdentifiers,
+  PersonalAccountPersistence,
+  PersonalAccountPersistenceError,
+} from "./personal-account";
+import {
   ApplicationConfig,
   DatabaseReadiness,
   RestoreSafeDeletion,
@@ -35,6 +45,10 @@ export interface ApiEnvironment {
   readonly AWS_KMS_REGION?: string | undefined;
   readonly AWS_SECRET_ACCESS_KEY?: string | undefined;
   readonly AWS_SESSION_TOKEN?: string | undefined;
+  readonly CLERK_API_AUDIENCE?: string | undefined;
+  readonly CLERK_AUTHORIZED_PARTY?: string | undefined;
+  readonly CLERK_ISSUER?: string | undefined;
+  readonly CLERK_JWT_KEY?: string | undefined;
   readonly DELETION_CAPSULES?: unknown;
   readonly DELETION_MARKER_HMAC_SECRET?: string | undefined;
   readonly DELETION_MARKERS?: unknown;
@@ -59,6 +73,47 @@ const productionConfig = Config.all({
     "preview",
     "production",
   )("DEPLOYMENT_ENVIRONMENT"),
+});
+
+const isExactHttpsOrigin = (value: string): boolean => {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" &&
+      url.username === "" &&
+      url.password === "" &&
+      url.pathname === "/" &&
+      url.search === "" &&
+      url.hash === "" &&
+      url.origin === value
+    );
+  } catch {
+    return false;
+  }
+};
+
+const httpsOriginConfig = (name: string) =>
+  Config.string(name).pipe(
+    Config.validate({
+      message: `${name} must be an exact HTTPS origin`,
+      validation: isExactHttpsOrigin,
+    }),
+  );
+
+const clerkConfig = Config.all({
+  audience: httpsOriginConfig("CLERK_API_AUDIENCE"),
+  authorizedParty: httpsOriginConfig("CLERK_AUTHORIZED_PARTY"),
+  issuer: httpsOriginConfig("CLERK_ISSUER"),
+  jwtKey: Config.redacted("CLERK_JWT_KEY").pipe(
+    Config.validate({
+      message: "CLERK_JWT_KEY must be a PEM public key",
+      validation: (value) =>
+        Redacted.value(value).length <= 10_000 &&
+        /^-----BEGIN PUBLIC KEY-----\n[\s\S]+\n-----END PUBLIC KEY-----$/.test(
+          Redacted.value(value),
+        ),
+    }),
+  ),
 });
 
 const contentRootKeyArn = Config.string("KMS_CONTENT_ROOT_KEY_ARN").pipe(
@@ -220,6 +275,57 @@ const encryptionLayer = (environment: ApiEnvironment) =>
     ),
   );
 
+const humanIdentityLayer = (environment: ApiEnvironment) =>
+  Layer.effect(
+    HumanIdentity,
+    clerkConfig.pipe(
+      Effect.map((config) =>
+        makeClerkHumanIdentity({
+          ...config,
+          jwtKey: Redacted.value(config.jwtKey),
+        }),
+      ),
+      Effect.withConfigProvider(environmentConfigProvider(environment)),
+    ),
+  );
+
+const personalAccountPersistenceLayer = (environment: ApiEnvironment) =>
+  Layer.succeed(PersonalAccountPersistence, {
+    create: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgPersonalAccountRepository(connectionString).create(
+            input,
+          );
+        },
+        catch: () => new PersonalAccountPersistenceError(),
+      }),
+    resolve: (clerkUserId) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgPersonalAccountRepository(connectionString).resolve(
+            clerkUserId,
+          );
+        },
+        catch: () => new PersonalAccountPersistenceError(),
+      }),
+  });
+
+const personalAccountIdentifiersLayer = Layer.succeed(
+  PersonalAccountIdentifiers,
+  {
+    next: Effect.sync(() => crypto.randomUUID()),
+  },
+);
+
 const deletionLayer = (environment: ApiEnvironment) =>
   Layer.effect(
     RestoreSafeDeletion,
@@ -338,19 +444,28 @@ const unavailable = (): Response =>
   });
 
 export const createProductionHandler = (environment: ApiEnvironment) => {
-  const handler = createCanaryHandler(
-    Layer.mergeAll(
-      configLayer(environment),
-      databaseLayer(environment),
-      telemetryLayer,
-      encryptionLayer(environment),
-      deletionLayer(environment),
-      storedMediaContainerLayer(environment),
-    ),
+  const layer = Layer.mergeAll(
+    configLayer(environment),
+    databaseLayer(environment),
+    telemetryLayer,
+    encryptionLayer(environment),
+    deletionLayer(environment),
+    storedMediaContainerLayer(environment),
+    humanIdentityLayer(environment),
+    personalAccountPersistenceLayer(environment),
+    personalAccountIdentifiersLayer,
+  );
+  const handler = createCanaryHandler(layer);
+  const personalAccountHandler = createPersonalAccountHandler(
+    layer,
+    environment.CLERK_AUTHORIZED_PARTY ?? "",
   );
 
   return async (request: Request): Promise<Response> => {
     try {
+      if (isPersonalAccountRequest(request)) {
+        return await personalAccountHandler(request);
+      }
       return await handler(request);
     } catch {
       console.error(

@@ -82,6 +82,9 @@ for (const deployable of deployables) {
             CLOUDFLARE_OAUTH_KV_ID: oauthKvValidationId,
             CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID:
               "11111111111111111111111111111111",
+            CLERK_API_AUDIENCE: "https://api.example.test",
+            CLERK_AUTHORIZED_PARTY: "https://app.example.test",
+            CLERK_ISSUER: "https://clerk.example.test",
           },
           stderr: "pipe",
           stdout: "pipe",
@@ -157,6 +160,17 @@ for (const deployable of deployables) {
     }
 
     if (deployable === "api") {
+      for (const binding of [
+        'env.CLERK_API_AUDIENCE ("https://api.example.test")',
+        'env.CLERK_AUTHORIZED_PARTY ("https://app.example.test")',
+        'env.CLERK_ISSUER ("https://clerk.example.test")',
+      ]) {
+        if (!output.includes(binding)) {
+          throw new Error(
+            `API ${environment} is missing required Clerk binding ${binding}.`,
+          );
+        }
+      }
       const requiredBindings = [
         `env.OAUTH_KV (${oauthKvValidationId})`,
         `env.INGESTION_QUEUE (whatsapp-mcp-ingestion${workerSuffix})`,

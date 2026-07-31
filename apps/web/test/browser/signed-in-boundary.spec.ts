@@ -4,8 +4,10 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   page,
   request,
 }) => {
+  let apiMethod: string | undefined;
   await page.route("https://api.example.test/**", async (route) => {
     const original = route.request();
+    apiMethod = original.method();
     const localUrl = new URL(original.url());
     localUrl.protocol = "http:";
     localUrl.hostname = "127.0.0.1";
@@ -26,8 +28,15 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     Object.defineProperty(window, "Clerk", {
       configurable: false,
       value: {
+        loaded: true,
         session: {
-          getToken: async () => "signed-test-user",
+          getToken: async (options: unknown) => {
+            Object.defineProperty(window, "__requestedTokenTemplate", {
+              configurable: true,
+              value: options,
+            });
+            return "signed-test-user";
+          },
         },
       },
       writable: false,
@@ -36,12 +45,23 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await page.goto("/");
 
   await page
-    .getByRole("button", { name: "Check signed-in API access" })
+    .getByRole("button", { name: "Bootstrap Personal Account" })
     .click();
 
   await expect(page.getByTestId("api-boundary-status")).toHaveText(
-    "Connected as user_test_public_boundary",
+    "Personal Account ready",
   );
+  expect(
+    await page.evaluate(
+      () =>
+        (
+          window as unknown as {
+            readonly __requestedTokenTemplate?: unknown;
+          }
+        ).__requestedTokenTemplate,
+    ),
+  ).toEqual({ template: "whatsapp-api" });
+  expect(apiMethod).toBe("POST");
 });
 
 test("recovers when the external identity token lookup fails", async ({
@@ -51,6 +71,7 @@ test("recovers when the external identity token lookup fails", async ({
     Object.defineProperty(window, "Clerk", {
       configurable: false,
       value: {
+        loaded: true,
         session: {
           getToken: async () => {
             throw new Error("identity unavailable");
@@ -63,7 +84,7 @@ test("recovers when the external identity token lookup fails", async ({
   await page.goto("/");
 
   const button = page.getByRole("button", {
-    name: "Check signed-in API access",
+    name: "Bootstrap Personal Account",
   });
   await button.click();
 
@@ -71,4 +92,44 @@ test("recovers when the external identity token lookup fails", async ({
     "unavailable",
   );
   await expect(button).toBeEnabled();
+});
+
+test("opens the real Clerk sign-in flow when no browser session exists", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "Clerk", {
+      configurable: false,
+      value: {
+        loaded: true,
+        openSignIn: () => {
+          Object.defineProperty(window, "__openedClerkSignIn", {
+            configurable: true,
+            value: true,
+          });
+        },
+        session: null,
+      },
+      writable: false,
+    });
+  });
+  await page.goto("/");
+
+  await page
+    .getByRole("button", { name: "Bootstrap Personal Account" })
+    .click();
+
+  await expect(page.getByTestId("api-boundary-status")).toHaveText(
+    "signed_out",
+  );
+  expect(
+    await page.evaluate(
+      () =>
+        (
+          window as unknown as {
+            readonly __openedClerkSignIn?: boolean;
+          }
+        ).__openedClerkSignIn,
+    ),
+  ).toBe(true);
 });

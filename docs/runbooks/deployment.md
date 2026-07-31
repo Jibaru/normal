@@ -10,6 +10,8 @@
 - An AWS account with permission to manage OpenTofu state, CloudFormation, KMS,
   and named IAM roles in `us-east-1`
 - A Vercel team for each authority scope
+- A separate Clerk instance or satellite domain for each authority scope, with
+  its publishable key and custom-JWT PEM public key available to the deployer
 - Approved API and web custom domains
 - An encrypted, versioned S3 remote-state bucket and KMS key in `us-east-1`
   for each environment
@@ -117,19 +119,20 @@ tofu -chdir=infra/compute init \
 bun run build
 ```
 
-For a new environment only, create the provider-control Worker shell before the
-full plan so Cloudflare has a target for its version-scoped secrets. Review and
-apply this bootstrap target; it contains no Worker version or secret value:
+For a new environment only, create both Worker shells before the full plan so
+Cloudflare has targets for their version-scoped secrets. Review and apply this
+bootstrap target; it contains no Worker version or secret value:
 
 ```sh
 tofu -chdir=infra/compute plan \
   -target=cloudflare_worker.provider_control \
+  -target=cloudflare_worker.api \
   -var-file="$TFVARS_PATH" \
-  -out="$DEPLOYMENT_ENVIRONMENT-provider-control-bootstrap.tfplan"
+  -out="$DEPLOYMENT_ENVIRONMENT-worker-shell-bootstrap.tfplan"
 tofu -chdir=infra/compute show \
-  "$DEPLOYMENT_ENVIRONMENT-provider-control-bootstrap.tfplan"
+  "$DEPLOYMENT_ENVIRONMENT-worker-shell-bootstrap.tfplan"
 tofu -chdir=infra/compute apply \
-  "$DEPLOYMENT_ENVIRONMENT-provider-control-bootstrap.tfplan"
+  "$DEPLOYMENT_ENVIRONMENT-worker-shell-bootstrap.tfplan"
 ```
 
 Generate the 32-byte locator key inside the approved recovery inventory, where
@@ -161,6 +164,32 @@ values. Delete the bootstrap plan after the Worker shell and bindings exist.
 For an existing environment where the list already contains both names, skip
 the bootstrap target and bulk upload.
 
+In the same environment's Clerk dashboard, create the `whatsapp-api` custom JWT
+template with a 60-second lifetime and only an `aud` claim whose value is the
+exact `https://<api_hostname>` origin. Record the exact issuer and publishable
+key in the protected `.tfvars` file as `clerk_issuer` and
+`clerk_publishable_key`; retain the default `clerk_jwt_template` unless the
+reviewed browser configuration uses another safe name. Copy the template's PEM
+public key without changing its line breaks, then load it into the API Worker
+shell:
+
+```sh
+wrangler secret put CLERK_JWT_KEY \
+  --cwd apps/api \
+  --env "$DEPLOYMENT_ENVIRONMENT"
+wrangler secret list \
+  --cwd apps/api \
+  --env "$DEPLOYMENT_ENVIRONMENT"
+```
+
+The API list must include `CLERK_JWT_KEY`; the value is never printed. Keeping
+the public verification key in the secret store prevents unreviewed copying
+into source, browser bundles, plans, or state. Apply this external Clerk
+dashboard gate independently in development, preview, and production. The
+exact JWT audience must match `CLERK_API_AUDIENCE`, and Clerk's standard `azp`
+must match `CLERK_AUTHORIZED_PARTY`; a mismatch intentionally makes bootstrap
+unavailable.
+
 Now create and inspect the complete saved plan:
 
 ```sh
@@ -173,7 +202,11 @@ tofu -chdir=infra/compute show "$DEPLOYMENT_ENVIRONMENT.tfplan"
 Confirm that the plan contains exactly one Vercel web project/domain, a public
 API Worker/custom domain, one private provider-control Worker, disabled
 `workers.dev` and preview URLs for both Workers, and an API-to-provider-control
-service binding. It must also contain four private R2 buckets with disabled
+service binding. The API version must inherit only `CLERK_JWT_KEY` for Clerk
+verification and receive exact audience, authorized-party, and issuer text
+bindings; provider-control must receive none of them. The Vercel project must
+receive only the public Clerk key and JWT template name. It must also contain
+four private R2 buckets with disabled
 managed domains, the seven-day Webhook Event lifecycle, the isolated Deletion
 Capsule bucket with destroy protection, the indefinite deletion-marker lock,
 one OAuth KV namespace, an ingestion Queue and active DLQ, the two Queue
@@ -357,6 +390,9 @@ export CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID="$(
 export CLOUDFLARE_OAUTH_KV_ID="$(
   tofu -chdir=infra/compute output -raw oauth_kv_namespace_id
 )"
+export CLERK_API_AUDIENCE="$(tofu -chdir=infra/compute output -raw api_origin)"
+export CLERK_AUTHORIZED_PARTY="$(tofu -chdir=infra/compute output -raw web_origin)"
+export CLERK_ISSUER="$(sed -n 's/^[[:space:]]*clerk_issuer[[:space:]]*=[[:space:]]*\"\\([^\"]*\\)\"[[:space:]]*$/\\1/p' "$TFVARS_PATH")"
 bun scripts/render-api-wrangler.ts \
   apps/api/.wrangler/production.jsonc \
   "$DEPLOYMENT_ENVIRONMENT"
@@ -364,7 +400,8 @@ CI=true bun run --cwd apps/api wrangler deploy \
   --config .wrangler/production.jsonc \
   --env "$DEPLOYMENT_ENVIRONMENT"
 unset CLOUDFLARE_HYPERDRIVE_ID CLOUDFLARE_OAUTH_KV_ID \
-  CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID
+  CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID CLERK_API_AUDIENCE \
+  CLERK_AUTHORIZED_PARTY CLERK_ISSUER
 export VERCEL_ORG_ID="$(tofu -chdir=infra/compute output -raw vercel_team_id)"
 export VERCEL_PROJECT_ID="$(tofu -chdir=infra/compute output -raw vercel_project_id)"
 vercel deploy --prod --yes --cwd apps/web
@@ -382,7 +419,9 @@ producer and consumers, DLQ, and schedules as the reviewed OpenTofu plan. The
 Worker manifests set `AWS_KMS_REGION` explicitly. Set
 `KMS_CONTENT_ROOT_KEY_ARN` and `KMS_DELETION_COORDINATOR_KEY_ARN` in the API
 deployment configuration and populate the marker HMAC plus three AWS credential
-secrets before deployment.
+secrets before deployment. `CLERK_JWT_KEY` must already exist on the selected
+API Worker and is preserved as an inherited secret binding. Rendering fails
+unless the Clerk audience, authorized party, and issuer are exact HTTPS origins.
 
 Provider-control authority is populated during the first-deployment bootstrap
 above, directly in Cloudflare's secret store. The Wrangler manifest declares
@@ -415,6 +454,17 @@ curl --fail --silent "$API_ORIGIN/health"
 curl --fail --silent "$API_ORIGIN/ready"
 curl --fail --silent "$WEB_ORIGIN/health"
 ```
+
+Sign in through the deployed web application with a designated smoke-test Clerk
+User and bootstrap once. Confirm the browser sends `POST
+/v1/personal-account/bootstrap` directly to `API_ORIGIN`, the UI reports
+`Personal Account ready`, and a retry reports the same state without creating a
+second account. A wrong Origin, expired token, or token from another environment
+must produce the same not-found response. Do not copy a token into shell
+history, query tenant tables with an owner role, or log identifiers to prove
+this check. Safe telemetry may show only
+`personal_account.bootstrap.completed` with `created` on the first request and
+`recovered` on the retry.
 
 The readiness response proves a restricted Hyperdrive connection can read the
 exact expected schema version. It emits only an allowlisted request outcome;

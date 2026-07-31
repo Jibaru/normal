@@ -24,7 +24,7 @@ export default defineConfig({
     },
     {
       command:
-        "DEPLOYMENT_ENVIRONMENT=development NEXT_PUBLIC_API_ORIGIN=https://api.example.test bun run build && bun run start --hostname 127.0.0.1 --port 3000",
+        "DEPLOYMENT_ENVIRONMENT=development NEXT_PUBLIC_API_ORIGIN=https://api.example.test NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_Y2xlcmsuZXhhbXBsZS50ZXN0JA NEXT_PUBLIC_CLERK_JWT_TEMPLATE=whatsapp-api bun run build && bun run start --hostname 127.0.0.1 --port 3000",
       reuseExistingServer: !process.env.CI,
       timeout: 180_000,
       url: webOrigin,

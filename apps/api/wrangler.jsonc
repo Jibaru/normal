@@ -15,7 +15,13 @@
   },
   "vars": {
     "AWS_KMS_REGION": "us-east-1",
+    "CLERK_API_AUDIENCE": "replace-with-rendered-api-audience",
+    "CLERK_AUTHORIZED_PARTY": "replace-with-rendered-authorized-party",
+    "CLERK_ISSUER": "replace-with-rendered-clerk-issuer",
     "DEPLOYMENT_ENVIRONMENT": "production"
+  },
+  "secrets": {
+    "required": ["CLERK_JWT_KEY"]
   },
   "services": [
     {
@@ -82,7 +88,13 @@
       },
       "vars": {
         "AWS_KMS_REGION": "us-east-1",
+        "CLERK_API_AUDIENCE": "replace-with-rendered-api-audience",
+        "CLERK_AUTHORIZED_PARTY": "replace-with-rendered-authorized-party",
+        "CLERK_ISSUER": "replace-with-rendered-clerk-issuer",
         "DEPLOYMENT_ENVIRONMENT": "development"
+      },
+      "secrets": {
+        "required": ["CLERK_JWT_KEY"]
       },
       "services": [
         {
@@ -149,7 +161,13 @@
       },
       "vars": {
         "AWS_KMS_REGION": "us-east-1",
+        "CLERK_API_AUDIENCE": "replace-with-rendered-api-audience",
+        "CLERK_AUTHORIZED_PARTY": "replace-with-rendered-authorized-party",
+        "CLERK_ISSUER": "replace-with-rendered-clerk-issuer",
         "DEPLOYMENT_ENVIRONMENT": "preview"
+      },
+      "secrets": {
+        "required": ["CLERK_JWT_KEY"]
       },
       "services": [
         {
@@ -216,7 +234,13 @@
       },
       "vars": {
         "AWS_KMS_REGION": "us-east-1",
+        "CLERK_API_AUDIENCE": "replace-with-rendered-api-audience",
+        "CLERK_AUTHORIZED_PARTY": "replace-with-rendered-authorized-party",
+        "CLERK_ISSUER": "replace-with-rendered-clerk-issuer",
         "DEPLOYMENT_ENVIRONMENT": "production"
+      },
+      "secrets": {
+        "required": ["CLERK_JWT_KEY"]
       },
       "services": [
         {

@@ -1,5 +1,10 @@
 import type { Layer } from "effect";
 import {
+  createPersonalAccountHandler,
+  isPersonalAccountRequest,
+  type PersonalAccountRequirements,
+} from "./personal-account";
+import {
   type BoundaryClock,
   type BoundaryIdentifiers,
   type BoundaryIdentity,
@@ -15,6 +20,9 @@ type BoundaryRequirements =
   | BoundaryIdentity
   | BoundaryProvider
   | BoundaryResource;
+type PublicBoundaryRequirements =
+  | BoundaryRequirements
+  | PersonalAccountRequirements;
 
 export interface PublicBoundaryEnvironment {
   readonly INGESTION_QUEUE: Queue;
@@ -29,7 +37,9 @@ export interface PublicBoundaryWorkerOptions {
     request: Request,
     environment: PublicBoundaryEnvironment,
   ) => Promise<Response>;
-  readonly layerFor: (request: Request) => Layer.Layer<BoundaryRequirements>;
+  readonly layerFor: (
+    request: Request,
+  ) => Layer.Layer<PublicBoundaryRequirements>;
 }
 
 const jsonResponse = (body: unknown, status = 200): Response =>
@@ -79,6 +89,13 @@ export const createPublicBoundaryWorker = (
 
       if (request.method === "GET" && path === "/test/bindings") {
         return bindingResponse(environment);
+      }
+
+      if (isPersonalAccountRequest(request)) {
+        return createPersonalAccountHandler(
+          options.layerFor(request),
+          options.browserOrigin,
+        )(request);
       }
 
       if (

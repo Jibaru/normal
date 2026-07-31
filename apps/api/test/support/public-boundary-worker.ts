@@ -1,5 +1,14 @@
 import { Effect, Layer } from "effect";
+import {
+  HumanIdentity,
+  InvalidHumanIdentity as InvalidHumanIdentityRequest,
+} from "../../src/auth/human-identity";
+import { EnvelopeEncryptionService } from "../../src/encryption/envelope";
 import type { Env } from "../../src/index";
+import {
+  PersonalAccountIdentifiers,
+  PersonalAccountPersistence,
+} from "../../src/personal-account";
 import { createProductionHandler } from "../../src/production";
 import {
   BoundaryClock,
@@ -11,12 +20,14 @@ import {
   InvalidBoundaryIdentity,
 } from "../../src/public-boundary";
 import { createPublicBoundaryWorker } from "../../src/public-boundary-worker";
+import { SafeTelemetry } from "../../src/services";
 
 const TEST_LAYER_SENTINEL = "TEST_LAYER_SENTINEL_DO_NOT_INCLUDE_IN_PRODUCTION";
 const TEST_FAULT_INJECTOR_SENTINEL =
   "TEST_FAULT_INJECTOR_DO_NOT_INCLUDE_IN_PRODUCTION";
 
 const browserOrigin = "http://127.0.0.1:3000";
+const personalAccounts = new Map<string, string>();
 
 type FailureTarget = "identity" | "provider";
 
@@ -43,6 +54,12 @@ const makeTestLayer = (failure: FailureTarget | undefined) => {
           return "user_test_public_boundary";
         }),
     }),
+    Layer.succeed(HumanIdentity, {
+      verify: (request) =>
+        request.headers.get("authorization") === "Bearer signed-test-user"
+          ? Effect.succeed("user_test_public_boundary")
+          : Effect.fail(new InvalidHumanIdentityRequest()),
+    }),
     Layer.succeed(BoundaryProvider, {
       observeConnection: failWhenSelected(failure, "provider").pipe(
         Effect.as("connected" as const),
@@ -57,6 +74,58 @@ const makeTestLayer = (failure: FailureTarget | undefined) => {
     }),
     Layer.succeed(BoundaryResource, {
       read: Effect.succeed(new TextEncoder().encode("protected boundary")),
+    }),
+    Layer.succeed(PersonalAccountIdentifiers, {
+      next: Effect.succeed("10000000-0000-4000-8000-000000000018"),
+    }),
+    Layer.succeed(PersonalAccountPersistence, {
+      create: (input) =>
+        Effect.sync(() => {
+          const existing = personalAccounts.get(input.clerkUserId);
+          if (existing) {
+            return {
+              created: false,
+              personalAccountId: existing,
+              storedMediaLimitBytes: 5_368_709_120,
+              whatsappConnectionLimit: 3,
+            };
+          }
+          personalAccounts.set(input.clerkUserId, input.personalAccountId);
+          return {
+            created: true,
+            personalAccountId: input.personalAccountId,
+            storedMediaLimitBytes: 5_368_709_120,
+            whatsappConnectionLimit: 3,
+          };
+        }),
+      resolve: (clerkUserId) =>
+        Effect.sync(() => {
+          const existing = personalAccounts.get(clerkUserId);
+          return existing
+            ? {
+                keyAvailable: true,
+                personalAccountId: existing,
+                storedMediaLimitBytes: 5_368_709_120,
+                whatsappConnectionLimit: 3,
+              }
+            : null;
+        }),
+    }),
+    Layer.succeed(EnvelopeEncryptionService, {
+      createPersonalAccountKey: ({ accountId, keyVersion }) =>
+        Effect.succeed({
+          ciphertext: "AQID",
+          keyVersion,
+          kmsKeyId: "arn:aws:kms:us-east-1:111122223333:key/test-content-root",
+          personalAccountId: accountId,
+          version: 1 as const,
+        }),
+      createConnectionKey: () => Effect.die("not used"),
+      decrypt: () => Effect.die("not used"),
+      encrypt: () => Effect.die("not used"),
+    }),
+    Layer.succeed(SafeTelemetry, {
+      emit: () => Effect.void,
     }),
   );
 };

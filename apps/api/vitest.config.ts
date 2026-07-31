@@ -9,6 +9,11 @@ export default defineConfig({
           AWS_ACCESS_KEY_ID: "test-temporary-access-key",
           AWS_SECRET_ACCESS_KEY: "test-temporary-secret",
           AWS_SESSION_TOKEN: "test-temporary-session-token",
+          CLERK_API_AUDIENCE: "https://api.example.test",
+          CLERK_AUTHORIZED_PARTY: "https://app.example.test",
+          CLERK_ISSUER: "https://clerk.example.test",
+          CLERK_JWT_KEY:
+            "-----BEGIN PUBLIC KEY-----\ntest-public-key\n-----END PUBLIC KEY-----",
           DELETION_MARKER_HMAC_SECRET:
             "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
           KMS_CONTENT_ROOT_KEY_ARN:

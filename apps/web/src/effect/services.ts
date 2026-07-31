@@ -6,6 +6,8 @@ import { Context, type Effect } from "effect";
 
 export interface ApplicationConfig {
   readonly apiOrigin: URL;
+  readonly clerkJwtTemplate: string;
+  readonly clerkPublishableKey: string;
   readonly environment: DeploymentEnvironment;
   readonly service: DeployableName;
 }

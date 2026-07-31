@@ -1,11 +1,27 @@
 import { isDeploymentEnvironment, parseApiOrigin } from "../effect/api-origin";
+import {
+  isClerkJwtTemplate,
+  isClerkPublishableKey,
+} from "../effect/clerk-config";
 import { PublicBoundaryJourney } from "./public-boundary-journey";
 
 const environment = process.env.DEPLOYMENT_ENVIRONMENT;
 const apiOrigin = parseApiOrigin(process.env.NEXT_PUBLIC_API_ORIGIN);
-const personalAccountEndpoint =
-  apiOrigin !== null && isDeploymentEnvironment(environment)
-    ? new URL("/v1/personal-account", apiOrigin).toString()
+const clerkJwtTemplate = process.env.NEXT_PUBLIC_CLERK_JWT_TEMPLATE;
+const clerkPublishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+const personalAccountConfiguration =
+  apiOrigin !== null &&
+  isDeploymentEnvironment(environment) &&
+  isClerkJwtTemplate(clerkJwtTemplate) &&
+  isClerkPublishableKey(clerkPublishableKey)
+    ? {
+        clerkJwtTemplate,
+        clerkPublishableKey,
+        endpoint: new URL(
+          "/v1/personal-account/bootstrap",
+          apiOrigin,
+        ).toString(),
+      }
     : null;
 
 export default function HomeExperience() {
@@ -22,8 +38,8 @@ export default function HomeExperience() {
           The private beta provides one Personal Account with explicit,
           connection-scoped access for approved MCP Clients.
         </p>
-        {personalAccountEndpoint === null ? null : (
-          <PublicBoundaryJourney endpoint={personalAccountEndpoint} />
+        {personalAccountConfiguration === null ? null : (
+          <PublicBoundaryJourney {...personalAccountConfiguration} />
         )}
       </section>
     </main>

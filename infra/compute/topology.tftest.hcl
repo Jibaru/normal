@@ -15,6 +15,8 @@ run "development_topology" {
     vercel_team_id         = "team_developmentvalidation"
     api_hostname           = "api.dev.example.com"
     web_hostname           = "app.dev.example.com"
+    clerk_issuer           = "https://clerk.dev.example.com"
+    clerk_publishable_key  = "pk_test_Y2xlcmsuZGV2LmV4YW1wbGUuY29tJA"
   }
 
   assert {
@@ -76,7 +78,11 @@ run "development_topology" {
       for binding in cloudflare_worker_version.api.bindings :
       "${binding.type}:${binding.name}"
       ]) == toset([
+      "inherit:CLERK_JWT_KEY",
       "kv_namespace:OAUTH_KV",
+      "plain_text:CLERK_API_AUDIENCE",
+      "plain_text:CLERK_AUTHORIZED_PARTY",
+      "plain_text:CLERK_ISSUER",
       "plain_text:DEPLOYMENT_ENVIRONMENT",
       "queue:INGESTION_QUEUE",
       "r2_bucket:DELETION_CAPSULES",
@@ -86,6 +92,38 @@ run "development_topology" {
       "service:PROVIDER_CONTROL",
     ])
     error_message = "The API Worker must receive exactly its state, queue producer, and provider-control capabilities."
+  }
+
+  assert {
+    condition = (
+      one([
+        for binding in cloudflare_worker_version.api.bindings :
+        binding.text if binding.name == "CLERK_API_AUDIENCE"
+      ]) == "https://api.dev.example.com" &&
+      one([
+        for binding in cloudflare_worker_version.api.bindings :
+        binding.text if binding.name == "CLERK_AUTHORIZED_PARTY"
+      ]) == "https://app.dev.example.com" &&
+      one([
+        for binding in cloudflare_worker_version.api.bindings :
+        binding.text if binding.name == "CLERK_ISSUER"
+      ]) == "https://clerk.dev.example.com"
+    )
+    error_message = "Clerk tokens must be bound to the exact same-environment API, web origin, and issuer."
+  }
+
+  assert {
+    condition = (
+      one([
+        for item in vercel_project.web.environment :
+        item.value if item.key == "NEXT_PUBLIC_CLERK_JWT_TEMPLATE"
+      ]) == "whatsapp-api" &&
+      one([
+        for item in vercel_project.web.environment :
+        item.value if item.key == "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"
+      ]) == "pk_test_Y2xlcmsuZGV2LmV4YW1wbGUuY29tJA"
+    )
+    error_message = "The browser must receive the environment's public Clerk key and exact custom JWT template."
   }
 
   assert {
@@ -115,6 +153,8 @@ run "preview_topology" {
     vercel_team_id         = "team_previewvalidation"
     api_hostname           = "api.preview.example.com"
     web_hostname           = "app.preview.example.com"
+    clerk_issuer           = "https://clerk.preview.example.com"
+    clerk_publishable_key  = "pk_test_Y2xlcmsucHJldmlldy5leGFtcGxlJA"
   }
 
   assert {
@@ -147,6 +187,8 @@ run "production_topology" {
     vercel_team_id         = "team_productionvalidation"
     api_hostname           = "api.example.com"
     web_hostname           = "app.example.com"
+    clerk_issuer           = "https://clerk.example.com"
+    clerk_publishable_key  = "pk_live_Y2xlcmsuZXhhbXBsZS5jb20k"
   }
 
   assert {
@@ -232,6 +274,8 @@ run "reject_same_web_and_api_origin" {
     vercel_team_id         = "team_productionvalidation"
     api_hostname           = "app.example.com"
     web_hostname           = "app.example.com"
+    clerk_issuer           = "https://clerk.example.com"
+    clerk_publishable_key  = "pk_live_Y2xlcmsuZXhhbXBsZS5jb20k"
   }
 
   expect_failures = [vercel_project.web]

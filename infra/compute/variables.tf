@@ -60,3 +60,34 @@ variable "web_hostname" {
     error_message = "web_hostname must be a lowercase DNS hostname."
   }
 }
+
+variable "clerk_issuer" {
+  description = "Exact HTTPS Clerk issuer for this isolated environment."
+  type        = string
+
+  validation {
+    condition     = can(regex("^https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$", var.clerk_issuer))
+    error_message = "clerk_issuer must be an exact HTTPS origin."
+  }
+}
+
+variable "clerk_jwt_template" {
+  description = "Clerk custom JWT template whose audience is the exact API origin."
+  type        = string
+  default     = "whatsapp-api"
+
+  validation {
+    condition     = can(regex("^[A-Za-z][A-Za-z0-9_-]{0,63}$", var.clerk_jwt_template))
+    error_message = "clerk_jwt_template must be a safe Clerk template name."
+  }
+}
+
+variable "clerk_publishable_key" {
+  description = "Public Clerk browser key for this isolated environment."
+  type        = string
+
+  validation {
+    condition     = can(regex("^pk_(test|live)_[A-Za-z0-9_-]{20,}\\$?$", var.clerk_publishable_key))
+    error_message = "clerk_publishable_key must use Clerk's public key format."
+  }
+}

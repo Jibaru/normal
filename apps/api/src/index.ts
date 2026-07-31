@@ -7,6 +7,10 @@ export interface Env {
   readonly AWS_KMS_REGION: string;
   readonly AWS_SECRET_ACCESS_KEY: string;
   readonly AWS_SESSION_TOKEN: string;
+  readonly CLERK_API_AUDIENCE: string;
+  readonly CLERK_AUTHORIZED_PARTY: string;
+  readonly CLERK_ISSUER: string;
+  readonly CLERK_JWT_KEY: string;
   readonly DELETION_CAPSULES: R2Bucket;
   readonly DELETION_MARKER_HMAC_SECRET: string;
   readonly DELETION_MARKERS: R2Bucket;

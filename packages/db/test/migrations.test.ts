@@ -9,6 +9,8 @@ import { assertExpectedSchemaVersion } from "../src/readiness";
 
 const accountA = "10000000-0000-4000-8000-000000000001";
 const accountB = "10000000-0000-4000-8000-000000000002";
+const accountC = "10000000-0000-4000-8000-000000000003";
+const accountD = "10000000-0000-4000-8000-000000000004";
 const connectionA = "20000000-0000-4000-8000-000000000001";
 const connectionB = "20000000-0000-4000-8000-000000000002";
 const ingressA = "30000000-0000-4000-8000-000000000001";
@@ -438,7 +440,12 @@ describe("production migrations", () => {
       JOIN pg_catalog.pg_namespace
         ON pg_namespace.oid = pg_proc.pronamespace
       WHERE pg_namespace.nspname = 'app_private'
-        AND proname LIKE 'bootstrap_%'
+        AND proname IN (
+          'bootstrap_personal_account_for_clerk',
+          'bootstrap_whatsapp_connection_for_ingress',
+          'create_personal_account_for_clerk',
+          'resolve_personal_account_for_clerk'
+        )
       ORDER BY proname
     `);
     expect(functions.rows).toEqual([
@@ -450,6 +457,16 @@ describe("production migrations", () => {
       {
         config: ["search_path=pg_catalog, pg_temp"],
         proname: "bootstrap_whatsapp_connection_for_ingress",
+        prosecdef: true,
+      },
+      {
+        config: ["search_path=pg_catalog, pg_temp"],
+        proname: "create_personal_account_for_clerk",
+        prosecdef: true,
+      },
+      {
+        config: ["search_path=pg_catalog, pg_temp"],
+        proname: "resolve_personal_account_for_clerk",
         prosecdef: true,
       },
     ]);
@@ -490,6 +507,167 @@ describe("production migrations", () => {
         database.query(
           "SELECT app_private.bootstrap_personal_account_for_clerk($1)",
           ["clerk_user_a"],
+        ),
+      ).rejects.toThrow();
+    } finally {
+      await database.exec("RESET ROLE");
+    }
+  });
+
+  test("creates or recovers exactly one active Personal Account and KMS envelope for a Clerk User", async () => {
+    await runMigrations(database);
+
+    await database.exec("SET ROLE whatsapp_api_runtime");
+    try {
+      const attempts = await Promise.all(
+        [
+          [accountC, "a1b2"],
+          [accountD, "c3d4"],
+        ].map(([accountId, ciphertext]) =>
+          database.query<{
+            created: boolean;
+            personal_account_id: string;
+          }>(
+            `SELECT *
+             FROM app_private.create_personal_account_for_clerk(
+               $1, $2, 1, $3, decode($4, 'hex')
+             )`,
+            [
+              "user_bootstrap123",
+              accountId,
+              "arn:aws:kms:us-east-1:111122223333:key/content-root",
+              ciphertext,
+            ],
+          ),
+        ),
+      );
+
+      expect(attempts.map(({ rows }) => rows[0]?.personal_account_id)).toEqual([
+        accountC,
+        accountC,
+      ]);
+      expect(attempts.map(({ rows }) => rows[0]?.created)).toEqual([
+        true,
+        false,
+      ]);
+
+      const lookup = await database.query<{ account_id: string }>(
+        "SELECT app_private.bootstrap_personal_account_for_clerk($1) AS account_id",
+        ["user_bootstrap123"],
+      );
+      expect(lookup.rows).toEqual([{ account_id: accountC }]);
+    } finally {
+      await database.exec("RESET ROLE");
+    }
+
+    const persisted = await database.query<{
+      account_count: number;
+      ciphertext: string;
+      envelope_count: number;
+      identity_count: number;
+      stored_media_limit_bytes: number;
+      whatsapp_connection_limit: number;
+    }>(
+      `SELECT
+         (
+           SELECT count(*)::integer
+           FROM app.personal_accounts
+           WHERE id IN ($1, $2)
+         ) AS account_count,
+         (
+           SELECT encode(ciphertext, 'hex')
+           FROM app.personal_account_key_envelopes
+           WHERE personal_account_id IN ($1, $2)
+         ) AS ciphertext,
+         (
+           SELECT count(*)::integer
+           FROM app.personal_account_key_envelopes
+           WHERE personal_account_id IN ($1, $2)
+         ) AS envelope_count,
+         (
+           SELECT count(*)::integer
+           FROM app_private.clerk_identities
+           WHERE clerk_user_id = 'user_bootstrap123'
+         ) AS identity_count,
+         (
+           SELECT stored_media_limit_bytes
+           FROM app.personal_accounts
+           WHERE id IN ($1, $2)
+         ) AS stored_media_limit_bytes,
+         (
+           SELECT whatsapp_connection_limit
+           FROM app.personal_accounts
+           WHERE id IN ($1, $2)
+         ) AS whatsapp_connection_limit`,
+      [accountC, accountD],
+    );
+    expect(persisted.rows).toEqual([
+      {
+        account_count: 1,
+        ciphertext: "a1b2",
+        envelope_count: 1,
+        identity_count: 1,
+        stored_media_limit_bytes: 5_368_709_120,
+        whatsapp_connection_limit: 3,
+      },
+    ]);
+  });
+
+  test("does not recover or replace a deleting Personal Account", async () => {
+    await runMigrations(database);
+    await seedTenants(database);
+    await database.query(
+      "UPDATE app.personal_accounts SET state = 'deleting' WHERE id = $1",
+      [accountA],
+    );
+
+    await database.exec("SET ROLE whatsapp_api_runtime");
+    try {
+      const lookup = await database.query<{ account_id: string | null }>(
+        "SELECT app_private.bootstrap_personal_account_for_clerk($1) AS account_id",
+        ["clerk_user_a"],
+      );
+      const replacement = await database.query(
+        `SELECT *
+         FROM app_private.create_personal_account_for_clerk(
+           $1, $2, 1, $3, decode('a1b2', 'hex')
+         )`,
+        [
+          "clerk_user_a",
+          accountC,
+          "arn:aws:kms:us-east-1:111122223333:key/content-root",
+        ],
+      );
+
+      expect(lookup.rows).toEqual([{ account_id: null }]);
+      expect(replacement.rows).toEqual([]);
+    } finally {
+      await database.exec("RESET ROLE");
+    }
+
+    const candidate = await database.query(
+      "SELECT id FROM app.personal_accounts WHERE id = $1",
+      [accountC],
+    );
+    expect(candidate.rows).toEqual([]);
+  });
+
+  test("denies Personal Account creation to the webhook runtime role", async () => {
+    await runMigrations(database);
+
+    await database.exec("SET ROLE whatsapp_webhook_runtime");
+    try {
+      await expect(
+        database.query(
+          `SELECT *
+           FROM app_private.create_personal_account_for_clerk(
+             $1, $2, 1, $3, decode('a1b2', 'hex')
+           )`,
+          [
+            "user_bootstrap123",
+            accountC,
+            "arn:aws:kms:us-east-1:111122223333:key/content-root",
+          ],
         ),
       ).rejects.toThrow();
     } finally {

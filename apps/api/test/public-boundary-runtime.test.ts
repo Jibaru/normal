@@ -44,6 +44,30 @@ describe("public-boundary Worker harness", () => {
     });
   });
 
+  test("bootstraps a Personal Account through the public browser/API seam", async () => {
+    const response = await exports.default.fetch(
+      new Request("https://api.example.test/v1/personal-account/bootstrap", {
+        headers: {
+          authorization: "Bearer signed-test-user",
+          origin: "http://127.0.0.1:3000",
+        },
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("access-control-allow-origin")).toBe(
+      "http://127.0.0.1:3000",
+    );
+    expect(await response.json()).toEqual({
+      personal_account: {
+        state: "active",
+        stored_media_limit_bytes: 5_368_709_120,
+        whatsapp_connection_limit: 3,
+      },
+    });
+  });
+
   test("injects deterministic external failures only in the test root", async () => {
     const response = await exports.default.fetch(
       new Request("https://api.example.test/v1/personal-account", {

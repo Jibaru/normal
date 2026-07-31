@@ -1,35 +1,32 @@
 "use client";
 
 import { useState } from "react";
-
-declare global {
-  interface Window {
-    readonly Clerk?: {
-      readonly session?: {
-        readonly getToken: () => Promise<string | null>;
-      };
-    };
-  }
-}
+import { loadBrowserClerk } from "../clerk/browser";
 
 interface PublicBoundaryJourneyProps {
+  readonly clerkJwtTemplate: string;
+  readonly clerkPublishableKey: string;
   readonly endpoint: string;
 }
 
 type JourneyState = "idle" | "loading" | "signed_out" | "unavailable" | "ok";
 
 export function PublicBoundaryJourney({
+  clerkJwtTemplate,
+  clerkPublishableKey,
   endpoint,
 }: PublicBoundaryJourneyProps) {
   const [state, setState] = useState<JourneyState>("idle");
-  const [userId, setUserId] = useState<string | null>(null);
-
   const checkBoundary = async () => {
     setState("loading");
 
     try {
-      const token = await window.Clerk?.session?.getToken();
+      const clerk = await loadBrowserClerk(clerkPublishableKey);
+      const token = await clerk.session?.getToken({
+        template: clerkJwtTemplate,
+      });
       if (token === undefined || token === null) {
+        clerk.openSignIn?.();
         setState("signed_out");
         return;
       }
@@ -38,17 +35,27 @@ export function PublicBoundaryJourney({
         headers: {
           authorization: `Bearer ${token}`,
         },
+        method: "POST",
       });
       if (!response.ok) {
         setState("unavailable");
         return;
       }
-      const body = (await response.json()) as { readonly user_id?: unknown };
-      if (typeof body.user_id !== "string") {
+      const body = (await response.json()) as {
+        readonly personal_account?: {
+          readonly state?: unknown;
+          readonly stored_media_limit_bytes?: unknown;
+          readonly whatsapp_connection_limit?: unknown;
+        };
+      };
+      if (
+        body.personal_account?.state !== "active" ||
+        body.personal_account.whatsapp_connection_limit !== 3 ||
+        body.personal_account.stored_media_limit_bytes !== 5_368_709_120
+      ) {
         setState("unavailable");
         return;
       }
-      setUserId(body.user_id);
       setState("ok");
     } catch {
       setState("unavailable");
@@ -63,10 +70,10 @@ export function PublicBoundaryJourney({
         onClick={checkBoundary}
         type="button"
       >
-        Check signed-in API access
+        Bootstrap Personal Account
       </button>
       <p aria-live="polite" data-testid="api-boundary-status">
-        {state === "ok" ? `Connected as ${userId}` : state}
+        {state === "ok" ? "Personal Account ready" : state}
       </p>
     </section>
   );
