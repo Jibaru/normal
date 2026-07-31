@@ -47,6 +47,17 @@ export interface PersonalAccountBootstrapCompletedEvent {
   readonly service: "api";
 }
 
+export interface ConnectionSetupStartCompletedEvent {
+  readonly event: "connection_setup.start.completed";
+  readonly outcome:
+    | "connection_limit_reached"
+    | "created"
+    | "idempotency_conflict"
+    | "number_unavailable"
+    | "replay";
+  readonly service: "api";
+}
+
 export interface OAuthAuthorizationRequestCompletedEvent {
   readonly clientClass?: string | undefined;
   readonly event: "oauth.authorization.request.completed";
@@ -66,6 +77,7 @@ export interface SafeTelemetry {
 }
 
 export type SafeTelemetryEvent =
+  | ConnectionSetupStartCompletedEvent
   | HttpCompletedEvent
   | OAuthAuthorizationRequestCompletedEvent
   | OAuthProtocolRequestFailedEvent

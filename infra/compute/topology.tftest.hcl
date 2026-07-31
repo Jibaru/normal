@@ -87,6 +87,7 @@ run "development_topology" {
       ]) == toset([
       "inherit:CLERK_JWT_KEY",
       "inherit:OAUTH_PROTOCOL_ENCRYPTION_KEY",
+      "inherit:WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
       "kv_namespace:OAUTH_KV",
       "plain_text:CLERK_API_AUDIENCE",
       "plain_text:CLERK_AUTHORIZED_PARTY",

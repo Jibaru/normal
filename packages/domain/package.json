@@ -4,10 +4,11 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./connection-setup": "./src/connection-setup.ts",
     "./deployment": "./src/deployment.ts"
   },
   "scripts": {
-    "build": "bun build src/deployment.ts --outdir dist --target bun",
+    "build": "bun build src/*.ts --outdir dist --target bun",
     "lint": "biome check .",
     "test": "bun test",
     "typecheck": "tsc --noEmit"

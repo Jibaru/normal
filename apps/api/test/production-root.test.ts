@@ -104,6 +104,7 @@ describe("API production root", () => {
     "OAUTH_ISSUER",
     "OAUTH_PROTOCOL_ENCRYPTION_KEY",
     "OAUTH_RESOURCE",
+    "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
   ] as const)("fails closed when %s is absent", async (configuration) => {
     const { [configuration]: _missing, ...environment } = validEnvironment();
     const response = await createProductionHandler(environment)(
@@ -119,6 +120,15 @@ describe("API production root", () => {
     const response = await createProductionHandler(environment)(
       new Request("https://api.example.test/health"),
     );
+
+    expect(response.status).toBe(503);
+  });
+
+  test("fails closed when the WhatsApp Number reservation secret is malformed", async () => {
+    const response = await createProductionHandler({
+      ...validEnvironment(),
+      WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET: "not-a-32-byte-key",
+    })(new Request("https://api.example.test/health"));
 
     expect(response.status).toBe(503);
   });

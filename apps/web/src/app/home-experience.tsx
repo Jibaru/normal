@@ -17,7 +17,11 @@ const personalAccountConfiguration =
     ? {
         clerkJwtTemplate,
         clerkPublishableKey,
-        endpoint: new URL(
+        connectionSetupEndpoint: new URL(
+          "/v1/connection-setups",
+          apiOrigin,
+        ).toString(),
+        personalAccountEndpoint: new URL(
           "/v1/personal-account/bootstrap",
           apiOrigin,
         ).toString(),

@@ -70,6 +70,14 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 4,
   },
+  {
+    name: "Connection Setups",
+    sql: await readFile(
+      new NodeUrl("../migrations/0005_connection_setups.sql", import.meta.url),
+      "utf8",
+    ),
+    version: 5,
+  },
 ];
 
 const checksum = (sql: string): string =>

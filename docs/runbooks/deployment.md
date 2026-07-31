@@ -348,6 +348,21 @@ This secret is unrelated to KMS, provider-reference, webhook, cursor, and
 idempotency keys. Losing it prevents deterministic creation of a later marker
 for the same opaque identifier; exposing it weakens marker-key privacy.
 
+Generate the WhatsApp Number reservation HMAC independently and store it only
+as the API Worker secret:
+
+```sh
+openssl rand -hex 32 | \
+  wrangler secret put WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET \
+  --cwd apps/api --env production
+```
+
+Do not reuse the deletion-marker, provider-reference, OAuth, webhook, cursor,
+content, or future Directory-index key. Keep this value stable while any
+Connection Setup or WhatsApp Connection reservation exists. Rotation requires
+stopping provisioning and transactionally rebuilding all retained reservation
+tokens before the old key is removed.
+
 AWS KMS records cryptographic operations in CloudTrail. Encryption context is
 non-secret audit data and is limited here to environment, purpose, opaque
 Personal Account or deletion-marker identity, and key version. Alert on denied
@@ -502,6 +517,19 @@ history, query tenant tables with an owner role, or log identifiers to prove
 this check. Safe telemetry may show only
 `personal_account.bootstrap.completed` with `created` on the first request,
 `recovered` on the retry, or `waitlisted` for the exhausted outcome.
+
+Enter an explicitly international smoke-test WhatsApp Number in the signed-in
+product and start one Connection Setup. Confirm the browser sends `POST
+/v1/connection-setups` directly to the API and reports that the Connection
+Setup started. Repeat the submission without changing the input and confirm it
+returns the same setup as a replay. In an isolated non-production database,
+verify that changing the number while retaining the original idempotency key,
+reserving the same number from a second Personal Account, and starting beyond
+three retained Connection/setup slots return their safe conflict states.
+Provider-control must receive no lifecycle call during these creation checks;
+the reconciled provisioning worker is the only provisioning consumer. Inspect
+only allowlisted outcome telemetry—never print the number, idempotency key,
+reservation token, setup identifier, ciphertext, or key metadata.
 
 The readiness response proves a restricted Hyperdrive connection can read the
 exact expected schema version. It emits only an allowlisted request outcome;

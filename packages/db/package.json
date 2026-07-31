@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./connection-setup": "./src/connection-setup.ts",
     "./config": "./src/config.ts",
     "./connectivity": "./src/connectivity.ts",
     "./migrations": "./src/migrations.ts",
@@ -11,7 +12,7 @@
     "./readiness": "./src/readiness.ts"
   },
   "scripts": {
-    "build": "bun build src/config.ts src/connectivity.ts src/migrations.ts src/personal-account.ts src/readiness.ts src/schema-version.ts --outdir dist --target bun",
+    "build": "bun build src/config.ts src/connection-setup.ts src/connectivity.ts src/migrations.ts src/personal-account.ts src/readiness.ts src/schema-version.ts --outdir dist --target bun",
     "db:check": "bun src/check-cli.ts",
     "db:migrate": "bun src/migrate-cli.ts",
     "lint": "biome check .",

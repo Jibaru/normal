@@ -1,5 +1,10 @@
 import type { Layer } from "effect";
 import {
+  type ConnectionSetupRequirements,
+  createConnectionSetupHandler,
+  isConnectionSetupRequest,
+} from "./connection-setup";
+import {
   createPersonalAccountHandler,
   isPersonalAccountRequest,
   type PersonalAccountRequirements,
@@ -22,6 +27,7 @@ type BoundaryRequirements =
   | BoundaryResource;
 type PublicBoundaryRequirements =
   | BoundaryRequirements
+  | ConnectionSetupRequirements
   | PersonalAccountRequirements;
 
 export interface PublicBoundaryEnvironment {
@@ -93,6 +99,13 @@ export const createPublicBoundaryWorker = (
 
       if (isPersonalAccountRequest(request)) {
         return createPersonalAccountHandler(
+          options.layerFor(request),
+          options.browserOrigin,
+        )(request);
+      }
+
+      if (isConnectionSetupRequest(request)) {
+        return createConnectionSetupHandler(
           options.layerFor(request),
           options.browserOrigin,
         )(request);

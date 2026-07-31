@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Schema } from "effect";
 import {
   ConnectionId,
+  ConnectionSetupId,
   ContactId,
   ConversationId,
   GroupId,
@@ -9,9 +10,11 @@ import {
   MediaId,
   MessageId,
   makeConnectionId,
+  makeConnectionSetupId,
   makeContactId,
   makeConversationId,
   makeGroupId,
+  makeIdempotencyKey,
   makeMediaId,
   makeMessageId,
   makeSendId,
@@ -25,6 +28,7 @@ describe("public handles", () => {
     expect(
       [
         Schema.decodeUnknownSync(ConnectionId)(`con_${suffix}`),
+        Schema.decodeUnknownSync(ConnectionSetupId)(`cst_${suffix}`),
         Schema.decodeUnknownSync(ContactId)(`ctc_${suffix}`),
         Schema.decodeUnknownSync(GroupId)(`grp_${suffix}`),
         Schema.decodeUnknownSync(ConversationId)(`cvs_${suffix}`),
@@ -34,6 +38,7 @@ describe("public handles", () => {
       ].map(String),
     ).toEqual([
       `con_${suffix}`,
+      `cst_${suffix}`,
       `ctc_${suffix}`,
       `grp_${suffix}`,
       `cvs_${suffix}`,
@@ -61,6 +66,7 @@ describe("public handles", () => {
   test("generates standard 21-character NanoID handles without an identity input", () => {
     const generated = [
       makeConnectionId(),
+      makeConnectionSetupId(),
       makeContactId(),
       makeGroupId(),
       makeConversationId(),
@@ -72,7 +78,7 @@ describe("public handles", () => {
     expect(generated).toHaveLength(new Set(generated).size);
     for (const handle of generated) {
       expect(handle).toMatch(
-        /^(con|ctc|grp|cvs|msg|med|snd)_[A-Za-z0-9_-]{21}$/,
+        /^(con|cst|ctc|grp|cvs|msg|med|snd)_[A-Za-z0-9_-]{21}$/,
       );
     }
   });
@@ -83,5 +89,6 @@ describe("public handles", () => {
     expect(String(decode(suffix))).toBe(suffix);
     expect(() => decode(`snd_${suffix}`)).toThrow();
     expect(() => decode(suffix.slice(1))).toThrow();
+    expect(String(makeIdempotencyKey())).toMatch(/^[A-Za-z0-9_-]{21}$/);
   });
 });

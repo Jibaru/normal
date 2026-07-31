@@ -31,6 +31,7 @@ request is accepted. Production roots accept only `development`, `preview`, or
 | `KMS_CONTENT_ROOT_KEY_ARN` | Non-secret | API | The environment's `ContentRootKeyArn` CloudFormation output. The production root accepts only a `us-east-1` KMS key ARN. |
 | `KMS_DELETION_COORDINATOR_KEY_ARN` | Non-secret | API Deletion Capsule writer | The environment's distinct `DeletionCoordinatorKeyArn` output. The Content Runtime role may encrypt capsules with it but cannot decrypt them. |
 | `DELETION_MARKER_HMAC_SECRET` | Secret | API deletion-marker writer | Dedicated 32-byte hex HMAC key for restore-external marker object keys. Generate independently with `openssl rand -hex 32`, retain it in the recovery inventory, and never reuse a provider-reference, webhook, cursor, or content key. |
+| `WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET` | Secret | API Connection Setup writer | Dedicated 32-byte hex HMAC key for platform-wide WhatsApp Number reservations. Generate independently with `openssl rand -hex 32`; never reuse Directory index, deletion-marker, provider-reference, webhook, cursor, OAuth, or content keys. Rotation requires rebuilding every retained reservation under a stopped-provisioning migration. |
 | `AWS_ACCESS_KEY_ID` | Secret | API | Short-lived access key from the environment's `ContentRuntimeRole`; rotate before the role session expires. |
 | `AWS_SECRET_ACCESS_KEY` | Secret | API | Short-lived secret paired with `AWS_ACCESS_KEY_ID`; never log or commit it. |
 | `AWS_SESSION_TOKEN` | Secret | API | Required role-session token. Its absence prevents the API composition root from serving requests. |
@@ -184,6 +185,34 @@ API service name, and an allowlisted `created`, `recovered`, or `waitlisted`
 outcome. Never add
 Clerk User IDs, Personal Account IDs, token claims, Origin values, network
 addresses, key identifiers, ciphertext, or profile data to this event.
+
+## Connection Setup creation
+
+The signed-in browser creates a fresh 21-character NanoID idempotency key for
+each WhatsApp Number intent and retains it for exact transport retries. It sends
+the key and explicitly international number directly to `POST
+/v1/connection-setups`; neither value is displayed after submission. The API
+accepts only the configured browser Origin and a valid audience-bound Clerk
+token, removes permitted visual formatting from the number, and validates the
+result as E.164 before persistence.
+
+`WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET` derives a domain-separated,
+platform-wide 32-byte token from the normalized number. This key and token are
+separate from the future connection-scoped Directory phone indexes. Neon
+serializes each Personal Account's setup transaction, binds one browser key to
+one token, enforces the three retained Connection/setup slots, and rejects a
+token already reserved anywhere on the platform. The normalized number is
+encrypted with a setup-scoped data key wrapped by the Personal Account key;
+Neon stores no plaintext number.
+
+The committed row begins in `provisioning_pending` and expires exactly 15
+minutes after creation. It is the durable provisioning intent consumed by the
+reconciled saga; this creation route never invokes provider-control. An exact
+retry returns the original Connection Setup, while a changed number with the
+bound browser key returns `idempotency_conflict`. Telemetry contains only
+`connection_setup.start.completed`, service name, and the allowlisted outcome.
+It never contains the number, token, idempotency key, Connection Setup
+identifier, Personal Account identifier, ciphertext, or key metadata.
 
 ## Wasender media authority
 

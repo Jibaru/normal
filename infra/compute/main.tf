@@ -324,6 +324,10 @@ resource "cloudflare_worker_version" "api" {
       type = "plain_text"
     },
     {
+      name = "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET"
+      type = "inherit"
+    },
+    {
       name         = "OAUTH_KV"
       namespace_id = cloudflare_workers_kv_namespace.oauth.id
       type         = "kv_namespace"

@@ -5,9 +5,16 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   request,
 }) => {
   let apiMethod: string | undefined;
+  const setupBodies: Array<{
+    readonly idempotency_key: string;
+    readonly whatsapp_number: string;
+  }> = [];
   await page.route("https://api.example.test/**", async (route) => {
     const original = route.request();
     apiMethod = original.method();
+    if (new URL(original.url()).pathname === "/v1/connection-setups") {
+      setupBodies.push(original.postDataJSON());
+    }
     const localUrl = new URL(original.url());
     localUrl.protocol = "http:";
     localUrl.hostname = "127.0.0.1";
@@ -68,6 +75,20 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     ),
   ).toEqual({ template: "whatsapp-api" });
   expect(apiMethod).toBe("POST");
+
+  await page.getByLabel("WhatsApp Number").fill("+1 (555) 012-3456");
+  await page.getByRole("button", { name: "Start Connection Setup" }).click();
+  await expect(page.getByTestId("connection-setup-status")).toHaveText(
+    "Connection Setup started. Preparing your QR code.",
+  );
+  await page.getByRole("button", { name: "Start Connection Setup" }).click();
+  await expect(page.getByTestId("connection-setup-status")).toHaveText(
+    "Connection Setup already started. Preparing your QR code.",
+  );
+  expect(setupBodies).toHaveLength(2);
+  expect(setupBodies[0]?.whatsapp_number).toBe("+1 (555) 012-3456");
+  expect(setupBodies[0]?.idempotency_key).toMatch(/^[A-Za-z0-9_-]{21}$/);
+  expect(setupBodies[1]?.idempotency_key).toBe(setupBodies[0]?.idempotency_key);
 });
 
 test("waitlists a signed-in User when private-beta capacity is exhausted", async ({

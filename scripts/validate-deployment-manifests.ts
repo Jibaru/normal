@@ -56,6 +56,7 @@ for (const deployable of deployables) {
     const requiredSecretNames = [
       "CLERK_JWT_KEY",
       "OAUTH_PROTOCOL_ENCRYPTION_KEY",
+      "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
     ];
     const configurations = [
       ["top level", manifest],
@@ -75,7 +76,7 @@ for (const deployable of deployables) {
         JSON.stringify(requiredSecretNames)
       ) {
         throw new Error(
-          `API ${configurationName} configuration must require both identity and OAuth protocol secrets.`,
+          `API ${configurationName} configuration must require identity, OAuth protocol, and WhatsApp Number reservation secrets.`,
         );
       }
     }

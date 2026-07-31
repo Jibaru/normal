@@ -4,6 +4,7 @@ import { nanoid } from "nanoid";
 const nanoIdSuffixPattern = "[A-Za-z0-9_-]{21}(?![\\s\\S])";
 
 const connectionIdPattern = new RegExp(`^con_${nanoIdSuffixPattern}$`);
+const connectionSetupIdPattern = new RegExp(`^cst_${nanoIdSuffixPattern}$`);
 const contactIdPattern = new RegExp(`^ctc_${nanoIdSuffixPattern}$`);
 const groupIdPattern = new RegExp(`^grp_${nanoIdSuffixPattern}$`);
 const conversationIdPattern = new RegExp(`^cvs_${nanoIdSuffixPattern}$`);
@@ -17,6 +18,12 @@ export const ConnectionId = Schema.String.pipe(
   Schema.brand("ConnectionId"),
 );
 export type ConnectionId = typeof ConnectionId.Type;
+
+export const ConnectionSetupId = Schema.String.pipe(
+  Schema.pattern(connectionSetupIdPattern),
+  Schema.brand("ConnectionSetupId"),
+);
+export type ConnectionSetupId = typeof ConnectionSetupId.Type;
 
 export const ContactId = Schema.String.pipe(
   Schema.pattern(contactIdPattern),
@@ -63,6 +70,9 @@ export type IdempotencyKey = typeof IdempotencyKey.Type;
 export const makeConnectionId = (): ConnectionId =>
   ConnectionId.make(`con_${nanoid()}`);
 
+export const makeConnectionSetupId = (): ConnectionSetupId =>
+  ConnectionSetupId.make(`cst_${nanoid()}`);
+
 export const makeContactId = (): ContactId => ContactId.make(`ctc_${nanoid()}`);
 
 export const makeGroupId = (): GroupId => GroupId.make(`grp_${nanoid()}`);
@@ -75,3 +85,6 @@ export const makeMessageId = (): MessageId => MessageId.make(`msg_${nanoid()}`);
 export const makeMediaId = (): MediaId => MediaId.make(`med_${nanoid()}`);
 
 export const makeSendId = (): SendId => SendId.make(`snd_${nanoid()}`);
+
+export const makeIdempotencyKey = (): IdempotencyKey =>
+  IdempotencyKey.make(nanoid());

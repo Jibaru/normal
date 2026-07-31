@@ -69,6 +69,43 @@ describe("public-boundary Worker harness", () => {
     });
   });
 
+  test("starts and replays a Connection Setup through the signed-in HTTP boundary", async () => {
+    const request = () =>
+      new Request("https://api.example.test/v1/connection-setups", {
+        body: JSON.stringify({
+          idempotency_key: "123456789012345678901",
+          whatsapp_number: "+1 (555) 012-3456",
+        }),
+        headers: {
+          authorization: "Bearer signed-test-user",
+          "content-type": "application/json",
+          origin: "http://127.0.0.1:3000",
+        },
+        method: "POST",
+      });
+
+    const first = await exports.default.fetch(request());
+    const replay = await exports.default.fetch(request());
+    const firstBody = (await first.json()) as {
+      readonly connection_setup: Record<string, unknown>;
+    };
+    const replayBody = (await replay.json()) as {
+      readonly connection_setup: Record<string, unknown>;
+    };
+
+    expect(first.status).toBe(201);
+    expect(replay.status).toBe(200);
+    expect(firstBody.connection_setup).toMatchObject({
+      expires_at: "2026-01-02T03:19:05.000Z",
+      idempotent_replay: false,
+      state: "pending",
+    });
+    expect(replayBody.connection_setup).toEqual({
+      ...firstBody.connection_setup,
+      idempotent_replay: true,
+    });
+  });
+
   test("returns the waitlist outcome through the signed-in public boundary", async () => {
     const response = await exports.default.fetch(
       new Request("https://api.example.test/v1/personal-account/bootstrap", {

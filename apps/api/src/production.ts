@@ -1,10 +1,22 @@
 import { KMSClient } from "@aws-sdk/client-kms";
+import { makeConnectionSetupId } from "@whatsapp-mcp/contracts/handles";
+import { makePgConnectionSetupRepository } from "@whatsapp-mcp/db/connection-setup";
 import { checkDatabaseReadiness } from "@whatsapp-mcp/db/connectivity";
 import { makePgPersonalAccountRepository } from "@whatsapp-mcp/db/personal-account";
 import { Config, ConfigProvider, Data, Effect, Layer, Redacted } from "effect";
 import { makeClerkHumanIdentity } from "./auth/clerk";
 import { HumanIdentity } from "./auth/human-identity";
 import { createCanaryHandler } from "./canary";
+import {
+  ConnectionSetupClock,
+  ConnectionSetupIdentifiers,
+  ConnectionSetupNumberTokens,
+  ConnectionSetupPersistence,
+  ConnectionSetupPersistenceError,
+  createConnectionSetupHandler,
+  isConnectionSetupRequest,
+  makeConnectionSetupNumberTokens,
+} from "./connection-setup";
 import {
   type DeletionCapsuleWriteBucket,
   makeDeletionCapsuleWriter,
@@ -72,6 +84,7 @@ export interface ApiEnvironment {
   readonly PROVIDER_CONTROL?: unknown;
   readonly STORED_MEDIA?: unknown;
   readonly WEBHOOK_INGRESS?: unknown;
+  readonly WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET?: string | undefined;
 }
 
 const productionConfig = Config.all({
@@ -206,6 +219,16 @@ const deletionMarkerHmacSecret = Config.redacted(
 ).pipe(
   Config.validate({
     message: "DELETION_MARKER_HMAC_SECRET must be a 32-byte hex secret",
+    validation: (value) => /^[a-f0-9]{64}$/iu.test(Redacted.value(value)),
+  }),
+);
+
+const whatsappNumberReservationHmacSecret = Config.redacted(
+  "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
+).pipe(
+  Config.validate({
+    message:
+      "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET must be a 32-byte hex secret",
     validation: (value) => /^[a-f0-9]{64}$/iu.test(Redacted.value(value)),
   }),
 );
@@ -392,6 +415,61 @@ const personalAccountIdentifiersLayer = Layer.succeed(
   },
 );
 
+const connectionSetupPersistenceLayer = (environment: ApiEnvironment) =>
+  Layer.succeed(ConnectionSetupPersistence, {
+    prepare: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgConnectionSetupRepository(connectionString).prepare(
+            input,
+          );
+        },
+        catch: () => new ConnectionSetupPersistenceError(),
+      }),
+    start: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgConnectionSetupRepository(connectionString).start(input);
+        },
+        catch: () => new ConnectionSetupPersistenceError(),
+      }),
+  });
+
+const connectionSetupIdentifiersLayer = Layer.succeed(
+  ConnectionSetupIdentifiers,
+  {
+    next: Effect.sync(() => makeConnectionSetupId()),
+  },
+);
+
+const connectionSetupClockLayer = Layer.succeed(ConnectionSetupClock, {
+  now: Effect.sync(() => new Date().toISOString()),
+});
+
+const connectionSetupNumberTokensLayer = (environment: ApiEnvironment) =>
+  Layer.effect(
+    ConnectionSetupNumberTokens,
+    whatsappNumberReservationHmacSecret.pipe(
+      Effect.map((secret) =>
+        makeConnectionSetupNumberTokens(
+          Uint8Array.from(
+            Redacted.value(secret).match(/.{2}/gu) ?? [],
+            (value) => Number.parseInt(value, 16),
+          ),
+        ),
+      ),
+      Effect.withConfigProvider(environmentConfigProvider(environment)),
+    ),
+  );
+
 const privateBetaConfigLayer = (environment: ApiEnvironment) =>
   Layer.effect(
     PrivateBetaConfig,
@@ -532,9 +610,17 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     personalAccountPersistenceLayer(environment),
     personalAccountIdentifiersLayer,
     privateBetaConfigLayer(environment),
+    connectionSetupPersistenceLayer(environment),
+    connectionSetupIdentifiersLayer,
+    connectionSetupClockLayer,
+    connectionSetupNumberTokensLayer(environment),
   );
   const handler = createCanaryHandler(layer);
   const personalAccountHandler = createPersonalAccountHandler(
+    layer,
+    environment.CLERK_AUTHORIZED_PARTY ?? "",
+  );
+  const connectionSetupHandler = createConnectionSetupHandler(
     layer,
     environment.CLERK_AUTHORIZED_PARTY ?? "",
   );
@@ -543,6 +629,9 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
   );
 
   const applicationHandler = async (request: Request): Promise<Response> => {
+    if (isConnectionSetupRequest(request)) {
+      return connectionSetupHandler(request);
+    }
     if (isPersonalAccountRequest(request)) {
       return personalAccountHandler(request);
     }
