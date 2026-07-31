@@ -15,12 +15,22 @@ export interface PersonalAccountConnectionProvider {
   ) => Promise<Value>;
 }
 
-export interface ResolvedPersonalAccount {
+export interface ActivePersonalAccount {
+  readonly admissionState: "active";
   readonly keyAvailable: boolean;
+  readonly messageRetentionDays: number;
   readonly personalAccountId: string;
   readonly storedMediaLimitBytes: number;
   readonly whatsappConnectionLimit: number;
 }
+
+export interface WaitlistedPersonalAccount {
+  readonly admissionState: "waitlisted";
+}
+
+export type ResolvedPersonalAccount =
+  | ActivePersonalAccount
+  | WaitlistedPersonalAccount;
 
 export interface CreatePersonalAccountInput {
   readonly clerkUserId: string;
@@ -28,10 +38,13 @@ export interface CreatePersonalAccountInput {
   readonly keyVersion: number;
   readonly kmsKeyId: string;
   readonly personalAccountId: string;
+  readonly providerApprovedSessionCapacity: number;
 }
 
 export interface CreatedPersonalAccount {
+  readonly admissionState: "active";
   readonly created: boolean;
+  readonly messageRetentionDays: number;
   readonly personalAccountId: string;
   readonly storedMediaLimitBytes: number;
   readonly whatsappConnectionLimit: number;
@@ -40,7 +53,7 @@ export interface CreatedPersonalAccount {
 export interface PersonalAccountRepository {
   readonly create: (
     input: CreatePersonalAccountInput,
-  ) => Promise<CreatedPersonalAccount | null>;
+  ) => Promise<CreatedPersonalAccount | WaitlistedPersonalAccount | null>;
   readonly resolve: (
     clerkUserId: string,
   ) => Promise<ResolvedPersonalAccount | null>;
@@ -96,21 +109,34 @@ const quotaValue = (value: unknown): number => {
   return parsed;
 };
 
+interface AdmissionRow extends Record<string, unknown> {
+  readonly admission_state: unknown;
+  readonly created?: unknown;
+  readonly key_available?: unknown;
+  readonly message_retention_days: unknown;
+  readonly personal_account_id: unknown;
+  readonly stored_media_limit_bytes: unknown;
+  readonly whatsapp_connection_limit: unknown;
+}
+
+const admissionState = (
+  row: AdmissionRow | undefined,
+): "active" | "waitlisted" | null => {
+  if (row?.admission_state === "active") return "active";
+  if (row?.admission_state === "waitlisted") return "waitlisted";
+  return null;
+};
+
 export const makePersonalAccountRepository = (
   provider: PersonalAccountConnectionProvider,
 ): PersonalAccountRepository => ({
   create: (input) =>
     provider.withConnection((connection) =>
       withTransaction(connection, async () => {
-        const result = await connection.query<{
-          created: boolean;
-          personal_account_id: string;
-          stored_media_limit_bytes: bigint | number | string;
-          whatsapp_connection_limit: number;
-        }>(
+        const result = await connection.query<AdmissionRow>(
           `SELECT *
-           FROM app_private.create_personal_account_for_clerk(
-             $1, $2, $3, $4, $5
+           FROM app_private.admit_personal_account_for_clerk(
+             $1, $2, $3, $4, $5, $6
            )`,
           [
             input.clerkUserId,
@@ -118,11 +144,17 @@ export const makePersonalAccountRepository = (
             input.keyVersion,
             input.kmsKeyId,
             input.keyCiphertext,
+            input.providerApprovedSessionCapacity,
           ],
         );
         const row = result.rows[0];
+        if (admissionState(row) === "waitlisted") {
+          return { admissionState: "waitlisted" as const };
+        }
         if (
-          !row ||
+          admissionState(row) !== "active" ||
+          typeof row?.personal_account_id !== "string" ||
+          typeof row.created !== "boolean" ||
           !(await enterPersonalAccountContext(
             connection,
             row.personal_account_id,
@@ -131,7 +163,9 @@ export const makePersonalAccountRepository = (
           return null;
         }
         return {
+          admissionState: "active" as const,
           created: row.created,
+          messageRetentionDays: quotaValue(row.message_retention_days),
           personalAccountId: row.personal_account_id,
           storedMediaLimitBytes: quotaValue(row.stored_media_limit_bytes),
           whatsappConnectionLimit: quotaValue(row.whatsapp_connection_limit),
@@ -141,17 +175,18 @@ export const makePersonalAccountRepository = (
   resolve: (clerkUserId) =>
     provider.withConnection((connection) =>
       withTransaction(connection, async () => {
-        const result = await connection.query<{
-          key_available: boolean;
-          personal_account_id: string;
-          stored_media_limit_bytes: bigint | number | string;
-          whatsapp_connection_limit: number;
-        }>("SELECT * FROM app_private.resolve_personal_account_for_clerk($1)", [
-          clerkUserId,
-        ]);
+        const result = await connection.query<AdmissionRow>(
+          "SELECT * FROM app_private.resolve_personal_account_for_clerk($1)",
+          [clerkUserId],
+        );
         const row = result.rows[0];
+        if (admissionState(row) === "waitlisted") {
+          return { admissionState: "waitlisted" as const };
+        }
         if (
-          !row ||
+          admissionState(row) !== "active" ||
+          typeof row?.personal_account_id !== "string" ||
+          typeof row.key_available !== "boolean" ||
           !(await enterPersonalAccountContext(
             connection,
             row.personal_account_id,
@@ -160,7 +195,9 @@ export const makePersonalAccountRepository = (
           return null;
         }
         return {
+          admissionState: "active" as const,
           keyAvailable: row.key_available,
+          messageRetentionDays: quotaValue(row.message_retention_days),
           personalAccountId: row.personal_account_id,
           storedMediaLimitBytes: quotaValue(row.stored_media_limit_bytes),
           whatsappConnectionLimit: quotaValue(row.whatsapp_connection_limit),

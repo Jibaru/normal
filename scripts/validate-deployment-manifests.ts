@@ -85,6 +85,7 @@ for (const deployable of deployables) {
             CLERK_API_AUDIENCE: "https://api.example.test",
             CLERK_AUTHORIZED_PARTY: "https://app.example.test",
             CLERK_ISSUER: "https://clerk.example.test",
+            PROVIDER_APPROVED_SESSION_CAPACITY: "3",
           },
           stderr: "pipe",
           stdout: "pipe",
@@ -164,6 +165,7 @@ for (const deployable of deployables) {
         'env.CLERK_API_AUDIENCE ("https://api.example.test")',
         'env.CLERK_AUTHORIZED_PARTY ("https://app.example.test")',
         'env.CLERK_ISSUER ("https://clerk.example.test")',
+        'env.PROVIDER_APPROVED_SESSION_CAPACITY ("3")',
       ]) {
         if (!output.includes(binding)) {
           throw new Error(

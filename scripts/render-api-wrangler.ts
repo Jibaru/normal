@@ -46,6 +46,22 @@ const requireHttpsOrigin = (name: string): string => {
   throw new Error(`${name} must be an exact HTTPS origin`);
 };
 
+const requireProviderApprovedSessionCapacity = (): string => {
+  const value = process.env.PROVIDER_APPROVED_SESSION_CAPACITY;
+  if (!value || !/^[0-9]+$/.test(value)) {
+    throw new Error(
+      "PROVIDER_APPROVED_SESSION_CAPACITY must be a positive integer",
+    );
+  }
+  const capacity = Number(value);
+  if (!Number.isSafeInteger(capacity) || capacity < 3) {
+    throw new Error(
+      "PROVIDER_APPROVED_SESSION_CAPACITY must reserve at least three sessions",
+    );
+  }
+  return String(capacity);
+};
+
 const sourcePath = resolve(import.meta.dir, "../apps/api/wrangler.jsonc");
 const outputPath = resolve(process.cwd(), outputArgument);
 const config = JSON.parse(await readFile(sourcePath, "utf8")) as Record<
@@ -58,6 +74,7 @@ const clerkVariables = {
   CLERK_API_AUDIENCE: requireHttpsOrigin("CLERK_API_AUDIENCE"),
   CLERK_AUTHORIZED_PARTY: requireHttpsOrigin("CLERK_AUTHORIZED_PARTY"),
   CLERK_ISSUER: requireHttpsOrigin("CLERK_ISSUER"),
+  PROVIDER_APPROVED_SESSION_CAPACITY: requireProviderApprovedSessionCapacity(),
 };
 const renderClerkVariables = (target: Record<string, unknown>): void => {
   const variables = target.vars;

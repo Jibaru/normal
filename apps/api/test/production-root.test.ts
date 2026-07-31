@@ -38,6 +38,7 @@ const validEnvironment = () => ({
     get: async () => null,
     put: async () => undefined,
   },
+  PROVIDER_APPROVED_SESSION_CAPACITY: "3",
   PROVIDER_CONTROL: {
     connectSession: async () => ({
       error: {
@@ -227,6 +228,28 @@ describe("API production root", () => {
 
     expect(response.status).toBe(503);
   });
+
+  test("fails closed when provider-approved capacity is missing", async () => {
+    const { PROVIDER_APPROVED_SESSION_CAPACITY: _missing, ...environment } =
+      validEnvironment();
+    const response = await createProductionHandler(environment)(
+      new Request("https://api.example.test/health"),
+    );
+
+    expect(response.status).toBe(503);
+  });
+
+  test.each(["0", "2", "3.5", "replace-with-approved-capacity"])(
+    "fails closed when provider-approved capacity is %s",
+    async (capacity) => {
+      const response = await createProductionHandler({
+        ...validEnvironment(),
+        PROVIDER_APPROVED_SESSION_CAPACITY: capacity,
+      })(new Request("https://api.example.test/health"));
+
+      expect(response.status).toBe(503);
+    },
+  );
 
   test.each([
     ["CLERK_API_AUDIENCE", "http://api.example.test"],

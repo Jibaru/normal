@@ -61,10 +61,28 @@ describe("public-boundary Worker harness", () => {
     );
     expect(await response.json()).toEqual({
       personal_account: {
+        message_retention_days: 30,
         state: "active",
         stored_media_limit_bytes: 5_368_709_120,
         whatsapp_connection_limit: 3,
       },
+    });
+  });
+
+  test("returns the waitlist outcome through the signed-in public boundary", async () => {
+    const response = await exports.default.fetch(
+      new Request("https://api.example.test/v1/personal-account/bootstrap", {
+        headers: {
+          authorization: "Bearer signed-waitlisted-user",
+          origin: "http://127.0.0.1:3000",
+        },
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      admission: { state: "waitlisted" },
     });
   });
 

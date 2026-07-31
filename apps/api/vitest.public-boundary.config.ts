@@ -22,6 +22,7 @@ export default defineConfig({
             "arn:aws:kms:us-east-1:111122223333:key/00000000-0000-0000-0000-000000000001",
           KMS_DELETION_COORDINATOR_KEY_ARN:
             "arn:aws:kms:us-east-1:111122223333:key/00000000-0000-0000-0000-000000000002",
+          PROVIDER_APPROVED_SESSION_CAPACITY: "3",
         },
         serviceBindings: {
           PROVIDER_CONTROL: () =>

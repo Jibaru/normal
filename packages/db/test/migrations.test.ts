@@ -443,12 +443,17 @@ describe("production migrations", () => {
         AND proname IN (
           'bootstrap_personal_account_for_clerk',
           'bootstrap_whatsapp_connection_for_ingress',
-          'create_personal_account_for_clerk',
+          'admit_personal_account_for_clerk',
           'resolve_personal_account_for_clerk'
         )
       ORDER BY proname
     `);
     expect(functions.rows).toEqual([
+      {
+        config: ["search_path=pg_catalog, pg_temp"],
+        proname: "admit_personal_account_for_clerk",
+        prosecdef: true,
+      },
       {
         config: ["search_path=pg_catalog, pg_temp"],
         proname: "bootstrap_personal_account_for_clerk",
@@ -457,11 +462,6 @@ describe("production migrations", () => {
       {
         config: ["search_path=pg_catalog, pg_temp"],
         proname: "bootstrap_whatsapp_connection_for_ingress",
-        prosecdef: true,
-      },
-      {
-        config: ["search_path=pg_catalog, pg_temp"],
-        proname: "create_personal_account_for_clerk",
         prosecdef: true,
       },
       {
@@ -514,7 +514,7 @@ describe("production migrations", () => {
     }
   });
 
-  test("creates or recovers exactly one active Personal Account and KMS envelope for a Clerk User", async () => {
+  test("creates or recovers exactly one admitted Personal Account with private-beta defaults", async () => {
     await runMigrations(database);
 
     await database.exec("SET ROLE whatsapp_api_runtime");
@@ -529,8 +529,8 @@ describe("production migrations", () => {
             personal_account_id: string;
           }>(
             `SELECT *
-             FROM app_private.create_personal_account_for_clerk(
-               $1, $2, 1, $3, decode($4, 'hex')
+             FROM app_private.admit_personal_account_for_clerk(
+               $1, $2, 1, $3, decode($4, 'hex'), 3
              )`,
             [
               "user_bootstrap123",
@@ -565,6 +565,7 @@ describe("production migrations", () => {
       ciphertext: string;
       envelope_count: number;
       identity_count: number;
+      message_retention_days: number;
       stored_media_limit_bytes: number;
       whatsapp_connection_limit: number;
     }>(
@@ -590,6 +591,11 @@ describe("production migrations", () => {
            WHERE clerk_user_id = 'user_bootstrap123'
          ) AS identity_count,
          (
+           SELECT message_retention_days
+           FROM app.personal_accounts
+           WHERE id IN ($1, $2)
+         ) AS message_retention_days,
+         (
            SELECT stored_media_limit_bytes
            FROM app.personal_accounts
            WHERE id IN ($1, $2)
@@ -607,13 +613,99 @@ describe("production migrations", () => {
         ciphertext: "a1b2",
         envelope_count: 1,
         identity_count: 1,
+        message_retention_days: 30,
         stored_media_limit_bytes: 5_368_709_120,
         whatsapp_connection_limit: 3,
       },
     ]);
   });
 
-  test("does not recover or replace a deleting Personal Account", async () => {
+  test("serializes provider capacity, creates one idempotent waitlist entry, and promotes it when capacity grows", async () => {
+    await runMigrations(database);
+
+    await database.exec("SET ROLE whatsapp_api_runtime");
+    try {
+      const first = await database.query<{
+        admission_state: string;
+        created: boolean;
+      }>(
+        `SELECT *
+         FROM app_private.admit_personal_account_for_clerk(
+           'user_admitted', $1, 1, $2, decode('a1b2', 'hex'), 3
+         )`,
+        [accountC, "arn:aws:kms:us-east-1:111122223333:key/content-root"],
+      );
+      const waitlisted = await Promise.all(
+        [accountD, accountA].map((accountId) =>
+          database.query<{
+            admission_state: string;
+            personal_account_id: string | null;
+          }>(
+            `SELECT *
+             FROM app_private.admit_personal_account_for_clerk(
+               'user_waitlisted', $1, 1, $2, decode('c3d4', 'hex'), 3
+             )`,
+            [accountId, "arn:aws:kms:us-east-1:111122223333:key/content-root"],
+          ),
+        ),
+      );
+
+      expect(first.rows[0]).toMatchObject({
+        admission_state: "active",
+        created: true,
+      });
+      expect(waitlisted.map(({ rows }) => rows[0])).toEqual([
+        expect.objectContaining({
+          admission_state: "waitlisted",
+          personal_account_id: null,
+        }),
+        expect.objectContaining({
+          admission_state: "waitlisted",
+          personal_account_id: null,
+        }),
+      ]);
+
+      const promoted = await database.query<{
+        admission_state: string;
+        created: boolean;
+        personal_account_id: string;
+      }>(
+        `SELECT *
+         FROM app_private.admit_personal_account_for_clerk(
+           'user_waitlisted', $1, 1, $2, decode('e5f6', 'hex'), 6
+         )`,
+        [accountD, "arn:aws:kms:us-east-1:111122223333:key/content-root"],
+      );
+      expect(promoted.rows[0]).toMatchObject({
+        admission_state: "active",
+        created: true,
+        personal_account_id: accountD,
+      });
+    } finally {
+      await database.exec("RESET ROLE");
+    }
+
+    const persisted = await database.query<{
+      account_count: number;
+      waitlist_count: number;
+    }>(`
+      SELECT
+        (SELECT count(*)::integer FROM app.personal_accounts) AS account_count,
+        (
+          SELECT count(*)::integer
+          FROM app_private.private_beta_waitlist
+          WHERE clerk_user_id = 'user_waitlisted'
+        ) AS waitlist_count
+    `);
+    expect(persisted.rows).toEqual([
+      {
+        account_count: 2,
+        waitlist_count: 0,
+      },
+    ]);
+  });
+
+  test("does not recover, waitlist, or replace a deleting Personal Account", async () => {
     await runMigrations(database);
     await seedTenants(database);
     await database.query(
@@ -629,8 +721,8 @@ describe("production migrations", () => {
       );
       const replacement = await database.query(
         `SELECT *
-         FROM app_private.create_personal_account_for_clerk(
-           $1, $2, 1, $3, decode('a1b2', 'hex')
+         FROM app_private.admit_personal_account_for_clerk(
+           $1, $2, 1, $3, decode('a1b2', 'hex'), 3
          )`,
         [
           "clerk_user_a",
@@ -652,7 +744,7 @@ describe("production migrations", () => {
     expect(candidate.rows).toEqual([]);
   });
 
-  test("denies Personal Account creation to the webhook runtime role", async () => {
+  test("denies admission and waitlist data to the webhook runtime role", async () => {
     await runMigrations(database);
 
     await database.exec("SET ROLE whatsapp_webhook_runtime");
@@ -660,8 +752,8 @@ describe("production migrations", () => {
       await expect(
         database.query(
           `SELECT *
-           FROM app_private.create_personal_account_for_clerk(
-             $1, $2, 1, $3, decode('a1b2', 'hex')
+           FROM app_private.admit_personal_account_for_clerk(
+             $1, $2, 1, $3, decode('a1b2', 'hex'), 3
            )`,
           [
             "user_bootstrap123",
@@ -669,6 +761,9 @@ describe("production migrations", () => {
             "arn:aws:kms:us-east-1:111122223333:key/content-root",
           ],
         ),
+      ).rejects.toThrow();
+      await expect(
+        database.query("SELECT * FROM app_private.private_beta_waitlist"),
       ).rejects.toThrow();
     } finally {
       await database.exec("RESET ROLE");

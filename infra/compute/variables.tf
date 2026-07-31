@@ -91,3 +91,13 @@ variable "clerk_publishable_key" {
     error_message = "clerk_publishable_key must use Clerk's public key format."
   }
 }
+
+variable "provider_approved_session_capacity" {
+  description = "Vendor-approved provider session ceiling reserved in three-session Personal Account entitlements."
+  type        = number
+
+  validation {
+    condition     = var.provider_approved_session_capacity >= 3 && floor(var.provider_approved_session_capacity) == var.provider_approved_session_capacity
+    error_message = "provider_approved_session_capacity must be an integer of at least three."
+  }
+}

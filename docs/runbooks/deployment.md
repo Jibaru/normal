@@ -169,7 +169,10 @@ template with a 60-second lifetime and only an `aud` claim whose value is the
 exact `https://<api_hostname>` origin. Record the exact issuer and publishable
 key in the protected `.tfvars` file as `clerk_issuer` and
 `clerk_publishable_key`; retain the default `clerk_jwt_template` unless the
-reviewed browser configuration uses another safe name. Copy the template's PEM
+reviewed browser configuration uses another safe name. Record the written
+vendor-approved session ceiling as the required
+`provider_approved_session_capacity` integer; there is no default, and one
+admitted Personal Account reserves three sessions. Copy the template's PEM
 public key without changing its line breaks, then load it into the API Worker
 shell:
 
@@ -204,7 +207,8 @@ API Worker/custom domain, one private provider-control Worker, disabled
 `workers.dev` and preview URLs for both Workers, and an API-to-provider-control
 service binding. The API version must inherit only `CLERK_JWT_KEY` for Clerk
 verification and receive exact audience, authorized-party, and issuer text
-bindings; provider-control must receive none of them. The Vercel project must
+bindings plus the reviewed `PROVIDER_APPROVED_SESSION_CAPACITY`;
+provider-control must receive none of them. The Vercel project must
 receive only the public Clerk key and JWT template name. It must also contain
 four private R2 buckets with disabled
 managed domains, the seven-day Webhook Event lifecycle, the isolated Deletion
@@ -459,12 +463,18 @@ Sign in through the deployed web application with a designated smoke-test Clerk
 User and bootstrap once. Confirm the browser sends `POST
 /v1/personal-account/bootstrap` directly to `API_ORIGIN`, the UI reports
 `Personal Account ready`, and a retry reports the same state without creating a
-second account. A wrong Origin, expired token, or token from another environment
+second account. Confirm the product states the three-Connection, 5 GB Stored
+Media, and default 30-day Message Retention Policy values returned from Neon.
+In a non-production environment, set capacity to exactly three, admit one
+designated User, and verify a second designated User receives the same
+private-beta waitlist state on retries without any provider-control lifecycle
+telemetry. Restore the approved value before further onboarding. A wrong
+Origin, expired token, or token from another environment
 must produce the same not-found response. Do not copy a token into shell
 history, query tenant tables with an owner role, or log identifiers to prove
 this check. Safe telemetry may show only
-`personal_account.bootstrap.completed` with `created` on the first request and
-`recovered` on the retry.
+`personal_account.bootstrap.completed` with `created` on the first request,
+`recovered` on the retry, or `waitlisted` for the exhausted outcome.
 
 The readiness response proves a restricted Hyperdrive connection can read the
 exact expected schema version. It emits only an allowlisted request outcome;

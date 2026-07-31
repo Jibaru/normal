@@ -18,7 +18,8 @@
     "CLERK_API_AUDIENCE": "replace-with-rendered-api-audience",
     "CLERK_AUTHORIZED_PARTY": "replace-with-rendered-authorized-party",
     "CLERK_ISSUER": "replace-with-rendered-clerk-issuer",
-    "DEPLOYMENT_ENVIRONMENT": "production"
+    "DEPLOYMENT_ENVIRONMENT": "production",
+    "PROVIDER_APPROVED_SESSION_CAPACITY": "replace-with-approved-session-capacity"
   },
   "secrets": {
     "required": ["CLERK_JWT_KEY"]
@@ -91,7 +92,8 @@
         "CLERK_API_AUDIENCE": "replace-with-rendered-api-audience",
         "CLERK_AUTHORIZED_PARTY": "replace-with-rendered-authorized-party",
         "CLERK_ISSUER": "replace-with-rendered-clerk-issuer",
-        "DEPLOYMENT_ENVIRONMENT": "development"
+        "DEPLOYMENT_ENVIRONMENT": "development",
+        "PROVIDER_APPROVED_SESSION_CAPACITY": "replace-with-approved-session-capacity"
       },
       "secrets": {
         "required": ["CLERK_JWT_KEY"]
@@ -164,7 +166,8 @@
         "CLERK_API_AUDIENCE": "replace-with-rendered-api-audience",
         "CLERK_AUTHORIZED_PARTY": "replace-with-rendered-authorized-party",
         "CLERK_ISSUER": "replace-with-rendered-clerk-issuer",
-        "DEPLOYMENT_ENVIRONMENT": "preview"
+        "DEPLOYMENT_ENVIRONMENT": "preview",
+        "PROVIDER_APPROVED_SESSION_CAPACITY": "replace-with-approved-session-capacity"
       },
       "secrets": {
         "required": ["CLERK_JWT_KEY"]
@@ -237,7 +240,8 @@
         "CLERK_API_AUDIENCE": "replace-with-rendered-api-audience",
         "CLERK_AUTHORIZED_PARTY": "replace-with-rendered-authorized-party",
         "CLERK_ISSUER": "replace-with-rendered-clerk-issuer",
-        "DEPLOYMENT_ENVIRONMENT": "production"
+        "DEPLOYMENT_ENVIRONMENT": "production",
+        "PROVIDER_APPROVED_SESSION_CAPACITY": "replace-with-approved-session-capacity"
       },
       "secrets": {
         "required": ["CLERK_JWT_KEY"]

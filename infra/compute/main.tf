@@ -291,6 +291,11 @@ resource "cloudflare_worker_version" "api" {
       type = "inherit"
     },
     {
+      name = "PROVIDER_APPROVED_SESSION_CAPACITY"
+      text = tostring(var.provider_approved_session_capacity)
+      type = "plain_text"
+    },
+    {
       name         = "OAUTH_KV"
       namespace_id = cloudflare_workers_kv_namespace.oauth.id
       type         = "kv_namespace"

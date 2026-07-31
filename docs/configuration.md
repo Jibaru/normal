@@ -14,6 +14,7 @@ request is accepted. Production roots accept only `development`, `preview`, or
 | `CLERK_AUTHORIZED_PARTY` | Non-secret | API | Exact bare HTTPS web origin allowed by both the token `azp` claim and request `Origin`. OpenTofu derives it from `web_hostname`. |
 | `CLERK_ISSUER` | Non-secret | API | Exact HTTPS issuer for the same-environment Clerk instance. |
 | `CLERK_JWT_KEY` | Secret deployment material | API | PEM public key for the custom Clerk JWT template. Store it only as a Cloudflare Worker secret so verification does not depend on a network lookup. Replace it when Clerk rotates the template signing key. |
+| `PROVIDER_APPROVED_SESSION_CAPACITY` | Non-secret operational limit | API | Vendor-approved session ceiling for the environment. Set the reviewed integer through `provider_approved_session_capacity`; missing, placeholder, fractional, or values below three fail closed. Increase only after written provider approval. |
 | `DATABASE_URL` | Secret | Database tooling that consumes `@whatsapp-mcp/db/config` | Issue a restricted Neon role URL, store it in the deployment secret store, and rotate it through Neon plus the deployment platform. API production traffic uses Hyperdrive instead. |
 | `MIGRATION_DATABASE_URL` | Secret | `bun run db:migrate` and `bun run db:check` | Obtain the direct, unpooled owner URL from the sensitive OpenTofu output. It must be a TLS Neon URL and must never be configured on a Worker or web deployable. Rotate it by rotating the Neon migration-owner password. |
 | `NEON_API_KEY` | Secret | OpenTofu Neon provider | Issue an organization-scoped automation key, keep it only in the infrastructure runner, and rotate it in Neon. |
@@ -113,16 +114,32 @@ requires the exact issuer, audience, authorized party, short expiry, and request
 Origin. It then maps the verified Clerk User through narrow fixed-search-path
 database functions, starts a transaction with `SET LOCAL
 app.personal_account_id`, and relies on RLS for the remaining tenant access.
-The first successful request creates exactly one active Personal Account and
-one KMS-wrapped Personal Account data key. Neon stores the fixed private-beta
-three-connection and 5 GB limits on that account and is the value source for
-the bootstrap response; retries and concurrent tabs recover that same account.
+Neon serializes private-beta admission before the first successful request can
+create one active Personal Account and one KMS-wrapped Personal Account data
+key. Each admitted Personal Account reserves its full three-session entitlement
+against `PROVIDER_APPROVED_SESSION_CAPACITY`; active and deleting accounts keep
+that reservation. This conservative reservation ensures the product can state
+the three-Connection limit without allowing later setup provisioning to exceed
+the vendor ceiling. Neon also stores the 5 GB Stored Media limit and the
+default 30-day Message Retention Policy and is the value source for the
+bootstrap response.
+
+When the next three-session entitlement would exceed approved capacity, Neon
+creates or returns one private Clerk-keyed waitlist entry and creates no
+Personal Account. Waitlist rows are inaccessible to ordinary API table queries
+and to the webhook role; the narrow admission functions return only the
+current User's state. If approved capacity increases, the oldest waiting User
+is promoted transactionally on their next bootstrap request. Newer Users
+cannot skip an existing waitlist entry. Admission never invokes
+provider-control, so exhausted capacity cannot create a provider session.
+Retries and concurrent tabs recover the same active account or waitlist state.
 A deleting or deleted mapping, invalid identity, wrong tenant, wrong Origin, or
 unavailable key returns the same public not-found boundary and never discloses
 an identifier.
 
 Bootstrap telemetry is limited to `personal_account.bootstrap.completed`, the
-API service name, and an allowlisted `created` or `recovered` outcome. Never add
+API service name, and an allowlisted `created`, `recovered`, or `waitlisted`
+outcome. Never add
 Clerk User IDs, Personal Account IDs, token claims, Origin values, network
 addresses, key identifiers, ciphertext, or profile data to this event.
 
@@ -197,6 +214,7 @@ repository:
 | `clerk_issuer` | Exact HTTPS issuer for the same-environment Clerk instance. |
 | `clerk_jwt_template` | Safe custom JWT template name; defaults to `whatsapp-api`. |
 | `clerk_publishable_key` | Public browser key for the same-environment Clerk instance. |
+| `provider_approved_session_capacity` | Required reviewed integer ceiling; each admitted Personal Account reserves three sessions. |
 
 Provider and backend credentials are ambient only:
 

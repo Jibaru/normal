@@ -20,6 +20,7 @@ export interface Env {
   readonly KMS_CONTENT_ROOT_KEY_ARN: string;
   readonly KMS_DELETION_COORDINATOR_KEY_ARN: string;
   readonly OAUTH_KV: KVNamespace;
+  readonly PROVIDER_APPROVED_SESSION_CAPACITY: string;
   readonly PROVIDER_CONTROL: Fetcher & ProviderControlService;
   readonly STORED_MEDIA: R2Bucket;
   readonly WEBHOOK_INGRESS: R2Bucket;

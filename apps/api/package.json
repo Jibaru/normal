@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "CLERK_API_AUDIENCE=https://api.example.test CLERK_AUTHORIZED_PARTY=https://app.example.test CLERK_ISSUER=https://clerk.example.test CLOUDFLARE_HYPERDRIVE_ID=00000000000000000000000000000000 CLOUDFLARE_OAUTH_KV_ID=22222222222222222222222222222222 CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID=11111111111111111111111111111111 bun ../../scripts/render-api-wrangler.ts .wrangler/build.jsonc production && CI=true wrangler deploy --dry-run --config .wrangler/build.jsonc --env '' --outdir dist",
+    "build": "CLERK_API_AUDIENCE=https://api.example.test CLERK_AUTHORIZED_PARTY=https://app.example.test CLERK_ISSUER=https://clerk.example.test PROVIDER_APPROVED_SESSION_CAPACITY=3 CLOUDFLARE_HYPERDRIVE_ID=00000000000000000000000000000000 CLOUDFLARE_OAUTH_KV_ID=22222222222222222222222222222222 CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID=11111111111111111111111111111111 bun ../../scripts/render-api-wrangler.ts .wrangler/build.jsonc production && CI=true wrangler deploy --dry-run --config .wrangler/build.jsonc --env '' --outdir dist",
     "dev": "wrangler dev",
     "lint": "biome check .",
     "test": "vitest run --exclude test/public-boundary-runtime.test.ts && vitest run --config vitest.public-boundary.config.ts",
