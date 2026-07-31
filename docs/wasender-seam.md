@@ -11,12 +11,26 @@ Effect capabilities:
 - `WebhookNormalization` turns one authenticated delivery into independently
   processable provider-neutral items.
 
-Production implementations arrive in issues 12 through 16. This contract does
-not add network access, configuration, credentials, or a selectable fake.
-The production lifecycle Layer will close over the account-level Provider API
-Credential, which is never a capability input or output. Newly provisioned
-per-session authority is returned only as a log-safe `Redacted` value so the
-owning Worker can envelope-encrypt it before a per-session Layer uses it.
+Production implementations arrive in issues 12 through 16. The lifecycle
+implementation closes over the account-level Provider API Credential and a
+stable locator HMAC key in provider-control; neither is a capability input or
+output, and no runtime setting can select a fake or alternate provider origin.
+The WhatsApp Number required for creation crosses the seam only as a `Redacted`
+value. Newly provisioned or adopted per-session authority is returned only as a
+log-safe `Redacted` value so the owning Worker can envelope-encrypt it before a
+per-session Layer uses it.
+
+The lifecycle adapter calls the documented account endpoints at the fixed
+`https://www.wasenderapi.com` origin. Creation uses the deterministic Connection
+Setup marker as the provider name and always disables provider message logging
+and automatic incoming-message reads. Provider numeric identifiers become
+domain-separated HMAC locators; resolving a locator therefore performs a
+bounded account list instead of exposing or embedding the raw identifier. A QR
+payload is rendered immediately to SVG bytes and the payload is not retained.
+List and detail reads enforce the safe-read retry and response limits, while
+create, connect, and delete perform one write attempt. Delete reconciles both
+before and after a write and returns `present` until a later reconciled attempt
+observes absence.
 
 ## Boundary values
 

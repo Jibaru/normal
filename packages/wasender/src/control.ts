@@ -24,6 +24,7 @@ export type SetupMarker = string & {
 export type LifecycleSessionLocator =
   AdapterReference<"LifecycleSessionLocator">;
 export type SessionAuthority = ProtectedAdapterValue<"SessionAuthority">;
+export type WhatsAppNumber = ProtectedAdapterValue<"WhatsAppNumber">;
 
 export type LifecycleConnectionState =
   | "connected"
@@ -88,6 +89,7 @@ export interface SessionLifecycle {
     readonly setupMarker: SetupMarker;
   }) => AdapterEffect<ReadonlyArray<LifecycleSession>>;
   readonly createSession: (request: {
+    readonly phoneNumber: WhatsAppNumber;
     readonly setupMarker: SetupMarker;
   }) => AdapterEffect<LifecycleSession>;
   readonly connectSession: (request: {
@@ -117,3 +119,11 @@ export const lifecycleWritePolicy = {
   reconciliation: "required-before-repeat",
   repeatStrategy: "reconcile-before-repeat",
 } as const;
+
+export {
+  makeWasenderSessionLifecycle,
+  makeWasenderSessionLifecycleLayer,
+  type WasenderLifecycleConfig,
+  type WasenderLifecycleDependencies,
+  type WasenderLifecycleTelemetryEvent,
+} from "./control-wasender";

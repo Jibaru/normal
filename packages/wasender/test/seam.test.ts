@@ -6,6 +6,7 @@ import {
   type SessionAuthority,
   SessionLifecycle,
   type SetupMarker,
+  type WhatsAppNumber,
 } from "../src/control";
 import {
   type ContactLocator,
@@ -31,6 +32,7 @@ import {
 } from "../src/webhook";
 
 const setupMarker = "setup-marker" as SetupMarker;
+const phoneNumber = Redacted.make("+15550123456") as WhatsAppNumber;
 const session = "sealed-session" as LifecycleSessionLocator;
 const sessionAuthority = Redacted.make("session-authority") as SessionAuthority;
 const contact = "sealed-contact" as ContactLocator;
@@ -200,7 +202,10 @@ describe("provider-neutral capability seam", () => {
           setupMarker,
         });
         if (reconciliation.outcome === "absent") {
-          return yield* lifecycle.createSession({ setupMarker });
+          return yield* lifecycle.createSession({
+            phoneNumber,
+            setupMarker,
+          });
         }
         return null;
       }).pipe(Effect.provide(layer)),
