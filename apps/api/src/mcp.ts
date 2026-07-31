@@ -313,6 +313,17 @@ export interface McpRequestHandlerOptions {
   readonly resourceUrl: string;
 }
 
+const isToolsListPayload = (payload: unknown): boolean => {
+  const messages = Array.isArray(payload) ? payload : [payload];
+  return messages.some(
+    (message) =>
+      typeof message === "object" &&
+      message !== null &&
+      "method" in message &&
+      message.method === "tools/list",
+  );
+};
+
 export const createMcpRequestHandler =
   (options: McpRequestHandlerOptions) =>
   async (
@@ -324,13 +335,7 @@ export const createMcpRequestHandler =
     const isToolsListRequest = await request
       .clone()
       .json()
-      .then(
-        (payload) =>
-          typeof payload === "object" &&
-          payload !== null &&
-          "method" in payload &&
-          payload.method === "tools/list",
-      )
+      .then(isToolsListPayload)
       .catch(() => false);
     let hasConnectionsRead = true;
     if (isToolsListRequest) {

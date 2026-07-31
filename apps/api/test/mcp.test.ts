@@ -208,6 +208,38 @@ describe("stateless MCP list_connections boundary", () => {
     });
   });
 
+  test("scope-filters discovery in a legacy-stateless JSON-RPC batch", async () => {
+    const harness = makeHarness({ scopes: ["messages:send"] });
+    const request = new Request("https://api.example.test/mcp", {
+      body: JSON.stringify([
+        {
+          id: "request-1",
+          jsonrpc: "2.0",
+          method: "tools/list",
+          params: {},
+        },
+      ]),
+      headers: {
+        accept: "application/json, text/event-stream",
+        "content-type": "application/json",
+        host: "api.example.test",
+        "mcp-protocol-version": "2025-06-18",
+      },
+      method: "POST",
+    });
+    const response = await harness.handler(
+      request,
+      {},
+      executionContext,
+      authorization,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await responseJson(response)).toMatchObject({
+      result: { tools: [] },
+    });
+  });
+
   test("audits before reading and returns structured/text parity without provider data", async () => {
     const harness = makeHarness();
     const response = await harness.handler(
