@@ -21,7 +21,8 @@
     "OAUTH_CLIENT_REGISTRY": "replace-with-rendered-oauth-client-registry",
     "OAUTH_ISSUER": "replace-with-rendered-oauth-issuer",
     "OAUTH_RESOURCE": "replace-with-rendered-oauth-resource",
-    "DEPLOYMENT_ENVIRONMENT": "production"
+    "DEPLOYMENT_ENVIRONMENT": "production",
+    "PROVIDER_APPROVED_SESSION_CAPACITY": "replace-with-approved-session-capacity"
   },
   "secrets": {
     "required": ["CLERK_JWT_KEY", "OAUTH_PROTOCOL_ENCRYPTION_KEY"]
@@ -97,7 +98,8 @@
         "OAUTH_CLIENT_REGISTRY": "replace-with-rendered-oauth-client-registry",
         "OAUTH_ISSUER": "replace-with-rendered-oauth-issuer",
         "OAUTH_RESOURCE": "replace-with-rendered-oauth-resource",
-        "DEPLOYMENT_ENVIRONMENT": "development"
+        "DEPLOYMENT_ENVIRONMENT": "development",
+        "PROVIDER_APPROVED_SESSION_CAPACITY": "replace-with-approved-session-capacity"
       },
       "secrets": {
         "required": ["CLERK_JWT_KEY", "OAUTH_PROTOCOL_ENCRYPTION_KEY"]
@@ -173,7 +175,8 @@
         "OAUTH_CLIENT_REGISTRY": "replace-with-rendered-oauth-client-registry",
         "OAUTH_ISSUER": "replace-with-rendered-oauth-issuer",
         "OAUTH_RESOURCE": "replace-with-rendered-oauth-resource",
-        "DEPLOYMENT_ENVIRONMENT": "preview"
+        "DEPLOYMENT_ENVIRONMENT": "preview",
+        "PROVIDER_APPROVED_SESSION_CAPACITY": "replace-with-approved-session-capacity"
       },
       "secrets": {
         "required": ["CLERK_JWT_KEY", "OAUTH_PROTOCOL_ENCRYPTION_KEY"]
@@ -249,7 +252,8 @@
         "OAUTH_CLIENT_REGISTRY": "replace-with-rendered-oauth-client-registry",
         "OAUTH_ISSUER": "replace-with-rendered-oauth-issuer",
         "OAUTH_RESOURCE": "replace-with-rendered-oauth-resource",
-        "DEPLOYMENT_ENVIRONMENT": "production"
+        "DEPLOYMENT_ENVIRONMENT": "production",
+        "PROVIDER_APPROVED_SESSION_CAPACITY": "replace-with-approved-session-capacity"
       },
       "secrets": {
         "required": ["CLERK_JWT_KEY", "OAUTH_PROTOCOL_ENCRYPTION_KEY"]

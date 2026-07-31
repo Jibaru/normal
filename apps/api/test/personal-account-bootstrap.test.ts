@@ -11,6 +11,7 @@ import {
   PersonalAccountPersistence,
   PersonalAccountPersistenceError,
   type PersonalAccountPersistenceService,
+  PrivateBetaConfig,
 } from "../src/personal-account";
 import { SafeTelemetry, type SafeTelemetryEvent } from "../src/services";
 
@@ -23,6 +24,7 @@ const makeHarness = (
     readonly deleted?: boolean;
     readonly identityValid?: boolean;
     readonly persistenceFailure?: boolean;
+    readonly providerApprovedSessionCapacity?: number;
   } = {},
 ) => {
   const accounts = new Map<
@@ -30,8 +32,11 @@ const makeHarness = (
     { readonly keyAvailable: boolean; readonly personalAccountId: string }
   >();
   const events: Array<SafeTelemetryEvent> = [];
+  const waitlistedUsers = new Set<string>();
   let generatedKeys = 0;
   let nextIdentifier = 0;
+  let providerApprovedSessionCapacity =
+    options.providerApprovedSessionCapacity ?? 3;
 
   const persistence: PersonalAccountPersistenceService = {
     create: (input) =>
@@ -42,18 +47,27 @@ const makeHarness = (
             const existing = accounts.get(input.clerkUserId);
             if (existing) {
               return {
+                admissionState: "active" as const,
                 created: false,
+                messageRetentionDays: 30,
                 personalAccountId: existing.personalAccountId,
                 storedMediaLimitBytes: 5_368_709_120,
                 whatsappConnectionLimit: 3,
               };
             }
+            if (accounts.size * 3 + 3 > input.providerApprovedSessionCapacity) {
+              waitlistedUsers.add(input.clerkUserId);
+              return { admissionState: "waitlisted" as const };
+            }
+            waitlistedUsers.delete(input.clerkUserId);
             accounts.set(input.clerkUserId, {
               keyAvailable: true,
               personalAccountId: input.personalAccountId,
             });
             return {
+              admissionState: "active" as const,
               created: true,
+              messageRetentionDays: 30,
               personalAccountId: input.personalAccountId,
               storedMediaLimitBytes: 5_368_709_120,
               whatsappConnectionLimit: 3,
@@ -64,10 +78,15 @@ const makeHarness = (
         ? Effect.fail(new PersonalAccountPersistenceError())
         : Effect.sync(() => {
             if (options.deleted) return null;
+            if (waitlistedUsers.has(requestedClerkUserId)) {
+              return { admissionState: "waitlisted" as const };
+            }
             const existing = accounts.get(requestedClerkUserId);
             return existing
               ? {
                   ...existing,
+                  admissionState: "active" as const,
+                  messageRetentionDays: 30,
                   storedMediaLimitBytes: 5_368_709_120,
                   whatsappConnectionLimit: 3,
                 }
@@ -84,6 +103,11 @@ const makeHarness = (
           : Effect.succeed(clerkUserId),
     }),
     Layer.succeed(PersonalAccountPersistence, persistence),
+    Layer.succeed(PrivateBetaConfig, {
+      get providerApprovedSessionCapacity() {
+        return providerApprovedSessionCapacity;
+      },
+    }),
     Layer.succeed(PersonalAccountIdentifiers, {
       next: Effect.sync(() => {
         nextIdentifier += 1;
@@ -122,6 +146,10 @@ const makeHarness = (
     events,
     generatedKeys: () => generatedKeys,
     handler: createPersonalAccountHandler(layer, browserOrigin),
+    setProviderApprovedSessionCapacity: (capacity: number) => {
+      providerApprovedSessionCapacity = capacity;
+    },
+    waitlistedUsers,
   };
 };
 
@@ -150,6 +178,7 @@ describe("Personal Account bootstrap HTTP boundary", () => {
     expect(await first.json()).toEqual({
       personal_account: {
         state: "active",
+        message_retention_days: 30,
         stored_media_limit_bytes: 5_368_709_120,
         whatsapp_connection_limit: 3,
       },
@@ -157,6 +186,7 @@ describe("Personal Account bootstrap HTTP boundary", () => {
     expect(await replay.json()).toEqual({
       personal_account: {
         state: "active",
+        message_retention_days: 30,
         stored_media_limit_bytes: 5_368_709_120,
         whatsapp_connection_limit: 3,
       },
@@ -172,6 +202,59 @@ describe("Personal Account bootstrap HTTP boundary", () => {
       {
         event: "personal_account.bootstrap.completed",
         outcome: "recovered",
+        service: "api",
+      },
+    ]);
+  });
+
+  test("returns one idempotent waitlist state and admits it when approved capacity grows", async () => {
+    const waitlistedRequest = new Request(endpoint, {
+      headers: {
+        authorization: "Bearer signed-clerk-token",
+        origin: browserOrigin,
+      },
+      method: "POST",
+    });
+    const waitlistedHarness = makeHarness({
+      providerApprovedSessionCapacity: 0,
+    });
+    const first = await waitlistedHarness.handler(waitlistedRequest);
+    const replay = await waitlistedHarness.handler(bootstrapRequest());
+    waitlistedHarness.setProviderApprovedSessionCapacity(3);
+    const promoted = await waitlistedHarness.handler(bootstrapRequest());
+
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual({
+      admission: { state: "waitlisted" },
+    });
+    expect(await replay.json()).toEqual({
+      admission: { state: "waitlisted" },
+    });
+    expect(await promoted.json()).toEqual({
+      personal_account: {
+        state: "active",
+        message_retention_days: 30,
+        stored_media_limit_bytes: 5_368_709_120,
+        whatsapp_connection_limit: 3,
+      },
+    });
+    expect(waitlistedHarness.accounts).toHaveLength(1);
+    expect(waitlistedHarness.waitlistedUsers).toEqual(new Set());
+    expect(waitlistedHarness.generatedKeys()).toBe(3);
+    expect(waitlistedHarness.events).toEqual([
+      {
+        event: "personal_account.bootstrap.completed",
+        outcome: "waitlisted",
+        service: "api",
+      },
+      {
+        event: "personal_account.bootstrap.completed",
+        outcome: "waitlisted",
+        service: "api",
+      },
+      {
+        event: "personal_account.bootstrap.completed",
+        outcome: "created",
         service: "api",
       },
     ]);

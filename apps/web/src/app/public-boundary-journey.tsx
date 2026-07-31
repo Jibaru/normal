@@ -9,7 +9,13 @@ interface PublicBoundaryJourneyProps {
   readonly endpoint: string;
 }
 
-type JourneyState = "idle" | "loading" | "signed_out" | "unavailable" | "ok";
+type JourneyState =
+  | "idle"
+  | "loading"
+  | "signed_out"
+  | "unavailable"
+  | "waitlisted"
+  | "ok";
 
 export function PublicBoundaryJourney({
   clerkJwtTemplate,
@@ -42,14 +48,23 @@ export function PublicBoundaryJourney({
         return;
       }
       const body = (await response.json()) as {
+        readonly admission?: {
+          readonly state?: unknown;
+        };
         readonly personal_account?: {
+          readonly message_retention_days?: unknown;
           readonly state?: unknown;
           readonly stored_media_limit_bytes?: unknown;
           readonly whatsapp_connection_limit?: unknown;
         };
       };
+      if (body.admission?.state === "waitlisted") {
+        setState("waitlisted");
+        return;
+      }
       if (
         body.personal_account?.state !== "active" ||
+        body.personal_account.message_retention_days !== 30 ||
         body.personal_account.whatsapp_connection_limit !== 3 ||
         body.personal_account.stored_media_limit_bytes !== 5_368_709_120
       ) {
@@ -73,7 +88,11 @@ export function PublicBoundaryJourney({
         Bootstrap Personal Account
       </button>
       <p aria-live="polite" data-testid="api-boundary-status">
-        {state === "ok" ? "Personal Account ready" : state}
+        {state === "ok"
+          ? "Personal Account ready"
+          : state === "waitlisted"
+            ? "You’re on the private-beta waitlist"
+            : state}
       </p>
     </section>
   );

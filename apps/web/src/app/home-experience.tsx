@@ -27,7 +27,7 @@ const personalAccountConfiguration =
 export default function HomeExperience() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-zinc-950 px-6 text-zinc-100">
-      <section className="max-w-xl space-y-6">
+      <section className="w-full max-w-3xl space-y-8">
         <p className="font-mono text-sm uppercase tracking-[0.2em] text-emerald-400">
           WhatsApp MCP
         </p>
@@ -38,6 +38,25 @@ export default function HomeExperience() {
           The private beta provides one Personal Account with explicit,
           connection-scoped access for approved MCP Clients.
         </p>
+        <dl
+          aria-label="Personal Account defaults"
+          className="grid gap-3 sm:grid-cols-3"
+        >
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+            <dt className="text-sm text-zinc-400">Connection limit</dt>
+            <dd className="mt-1 font-medium">Up to 3 WhatsApp Connections</dd>
+          </div>
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+            <dt className="text-sm text-zinc-400">Media limit</dt>
+            <dd className="mt-1 font-medium">5 GB Stored Media</dd>
+          </div>
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+            <dt className="text-sm text-zinc-400">Retention</dt>
+            <dd className="mt-1 font-medium">
+              30-day default Message Retention Policy
+            </dd>
+          </div>
+        </dl>
         {personalAccountConfiguration === null ? null : (
           <PublicBoundaryJourney {...personalAccountConfiguration} />
         )}

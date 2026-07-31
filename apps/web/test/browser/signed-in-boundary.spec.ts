@@ -44,6 +44,12 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   });
   await page.goto("/");
 
+  await expect(page.getByText("Up to 3 WhatsApp Connections")).toBeVisible();
+  await expect(page.getByText("5 GB Stored Media")).toBeVisible();
+  await expect(
+    page.getByText("30-day default Message Retention Policy"),
+  ).toBeVisible();
+
   await page
     .getByRole("button", { name: "Bootstrap Personal Account" })
     .click();
@@ -62,6 +68,51 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     ),
   ).toEqual({ template: "whatsapp-api" });
   expect(apiMethod).toBe("POST");
+});
+
+test("waitlists a signed-in User when private-beta capacity is exhausted", async ({
+  page,
+  request,
+}) => {
+  await page.route("https://api.example.test/**", async (route) => {
+    const original = route.request();
+    const localUrl = new URL(original.url());
+    localUrl.protocol = "http:";
+    localUrl.hostname = "127.0.0.1";
+    localUrl.port = "8787";
+
+    const response = await request.fetch(localUrl.toString(), {
+      data: original.postDataBuffer(),
+      headers: original.headers(),
+      method: original.method(),
+    });
+    await route.fulfill({
+      body: await response.body(),
+      headers: response.headers(),
+      status: response.status(),
+    });
+  });
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "Clerk", {
+      configurable: false,
+      value: {
+        loaded: true,
+        session: {
+          getToken: async () => "signed-waitlisted-user",
+        },
+      },
+      writable: false,
+    });
+  });
+  await page.goto("/");
+
+  await page
+    .getByRole("button", { name: "Bootstrap Personal Account" })
+    .click();
+
+  await expect(page.getByTestId("api-boundary-status")).toHaveText(
+    "You’re on the private-beta waitlist",
+  );
 });
 
 test("recovers when the external identity token lookup fails", async ({

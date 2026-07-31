@@ -43,7 +43,7 @@ export interface HttpCompletedEvent {
 
 export interface PersonalAccountBootstrapCompletedEvent {
   readonly event: "personal_account.bootstrap.completed";
-  readonly outcome: "created" | "recovered";
+  readonly outcome: "created" | "recovered" | "waitlisted";
   readonly service: "api";
 }
 

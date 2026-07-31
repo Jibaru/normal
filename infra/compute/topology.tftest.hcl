@@ -9,14 +9,15 @@ run "development_topology" {
   }
 
   variables {
-    deployment_environment = "development"
-    cloudflare_account_id  = "11111111111111111111111111111111"
-    cloudflare_zone_id     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    vercel_team_id         = "team_developmentvalidation"
-    api_hostname           = "api.dev.example.com"
-    web_hostname           = "app.dev.example.com"
-    clerk_issuer           = "https://clerk.dev.example.com"
-    clerk_publishable_key  = "pk_test_Y2xlcmsuZGV2LmV4YW1wbGUuY29tJA"
+    deployment_environment             = "development"
+    cloudflare_account_id              = "11111111111111111111111111111111"
+    cloudflare_zone_id                 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    vercel_team_id                     = "team_developmentvalidation"
+    api_hostname                       = "api.dev.example.com"
+    web_hostname                       = "app.dev.example.com"
+    clerk_issuer                       = "https://clerk.dev.example.com"
+    clerk_publishable_key              = "pk_test_Y2xlcmsuZGV2LmV4YW1wbGUuY29tJA"
+    provider_approved_session_capacity = 3
     oauth_clients = [{
       client_class  = "approved"
       client_id     = "approved-client"
@@ -94,6 +95,7 @@ run "development_topology" {
       "plain_text:OAUTH_CLIENT_REGISTRY",
       "plain_text:OAUTH_ISSUER",
       "plain_text:OAUTH_RESOURCE",
+      "plain_text:PROVIDER_APPROVED_SESSION_CAPACITY",
       "queue:INGESTION_QUEUE",
       "r2_bucket:DELETION_CAPSULES",
       "r2_bucket:DELETION_MARKERS",
@@ -117,9 +119,13 @@ run "development_topology" {
       one([
         for binding in cloudflare_worker_version.api.bindings :
         binding.text if binding.name == "CLERK_ISSUER"
-      ]) == "https://clerk.dev.example.com"
+      ]) == "https://clerk.dev.example.com" &&
+      one([
+        for binding in cloudflare_worker_version.api.bindings :
+        binding.text if binding.name == "PROVIDER_APPROVED_SESSION_CAPACITY"
+      ]) == "3"
     )
-    error_message = "Clerk tokens must be bound to the exact same-environment API, web origin, and issuer."
+    error_message = "The API must receive exact same-environment identity and provider-capacity configuration."
   }
 
   assert {
@@ -179,14 +185,15 @@ run "preview_topology" {
   }
 
   variables {
-    deployment_environment = "preview"
-    cloudflare_account_id  = "22222222222222222222222222222222"
-    cloudflare_zone_id     = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-    vercel_team_id         = "team_previewvalidation"
-    api_hostname           = "api.preview.example.com"
-    web_hostname           = "app.preview.example.com"
-    clerk_issuer           = "https://clerk.preview.example.com"
-    clerk_publishable_key  = "pk_test_Y2xlcmsucHJldmlldy5leGFtcGxlJA"
+    deployment_environment             = "preview"
+    cloudflare_account_id              = "22222222222222222222222222222222"
+    cloudflare_zone_id                 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    vercel_team_id                     = "team_previewvalidation"
+    api_hostname                       = "api.preview.example.com"
+    web_hostname                       = "app.preview.example.com"
+    clerk_issuer                       = "https://clerk.preview.example.com"
+    clerk_publishable_key              = "pk_test_Y2xlcmsucHJldmlldy5leGFtcGxlJA"
+    provider_approved_session_capacity = 3
     oauth_clients = [{
       client_class  = "approved"
       client_id     = "approved-client"
@@ -219,14 +226,15 @@ run "production_topology" {
   }
 
   variables {
-    deployment_environment = "production"
-    cloudflare_account_id  = "33333333333333333333333333333333"
-    cloudflare_zone_id     = "cccccccccccccccccccccccccccccccc"
-    vercel_team_id         = "team_productionvalidation"
-    api_hostname           = "api.example.com"
-    web_hostname           = "app.example.com"
-    clerk_issuer           = "https://clerk.example.com"
-    clerk_publishable_key  = "pk_live_Y2xlcmsuZXhhbXBsZS5jb20k"
+    deployment_environment             = "production"
+    cloudflare_account_id              = "33333333333333333333333333333333"
+    cloudflare_zone_id                 = "cccccccccccccccccccccccccccccccc"
+    vercel_team_id                     = "team_productionvalidation"
+    api_hostname                       = "api.example.com"
+    web_hostname                       = "app.example.com"
+    clerk_issuer                       = "https://clerk.example.com"
+    clerk_publishable_key              = "pk_live_Y2xlcmsuZXhhbXBsZS5jb20k"
+    provider_approved_session_capacity = 3
     oauth_clients = [{
       client_class  = "approved"
       client_id     = "approved-client"
@@ -312,14 +320,15 @@ run "reject_same_web_and_api_origin" {
   }
 
   variables {
-    deployment_environment = "production"
-    cloudflare_account_id  = "33333333333333333333333333333333"
-    cloudflare_zone_id     = "cccccccccccccccccccccccccccccccc"
-    vercel_team_id         = "team_productionvalidation"
-    api_hostname           = "app.example.com"
-    web_hostname           = "app.example.com"
-    clerk_issuer           = "https://clerk.example.com"
-    clerk_publishable_key  = "pk_live_Y2xlcmsuZXhhbXBsZS5jb20k"
+    deployment_environment             = "production"
+    cloudflare_account_id              = "33333333333333333333333333333333"
+    cloudflare_zone_id                 = "cccccccccccccccccccccccccccccccc"
+    vercel_team_id                     = "team_productionvalidation"
+    api_hostname                       = "app.example.com"
+    web_hostname                       = "app.example.com"
+    clerk_issuer                       = "https://clerk.example.com"
+    clerk_publishable_key              = "pk_live_Y2xlcmsuZXhhbXBsZS5jb20k"
+    provider_approved_session_capacity = 3
     oauth_clients = [{
       client_class  = "approved"
       client_id     = "approved-client"

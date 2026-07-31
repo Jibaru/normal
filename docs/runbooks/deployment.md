@@ -170,6 +170,10 @@ exact `https://<api_hostname>` origin. Record the exact issuer and publishable
 key in the protected `.tfvars` file as `clerk_issuer` and
 `clerk_publishable_key`; retain the default `clerk_jwt_template` unless the
 reviewed browser configuration uses another safe name. Copy the template's PEM
+reviewed browser configuration uses another safe name. Record the written
+vendor-approved session ceiling as the required
+`provider_approved_session_capacity` integer; there is no default, and one
+admitted Personal Account reserves three sessions. Copy the template's PEM
 public key without changing its line breaks. Load it and a separately generated
 32-byte OAuth protocol-encryption key into the API Worker shell:
 
@@ -208,7 +212,8 @@ API Worker/custom domain, one private provider-control Worker, disabled
 `workers.dev` and preview URLs for both Workers, and an API-to-provider-control
 service binding. The API version must inherit `CLERK_JWT_KEY` and the OAuth
 protocol-encryption key, and receive exact Clerk audience, authorized-party,
-OAuth issuer/resource, and reviewed client-registry text bindings;
+OAuth issuer/resource, reviewed client-registry, and
+`PROVIDER_APPROVED_SESSION_CAPACITY` text bindings;
 provider-control must receive none of them. The Vercel project must
 receive only the public Clerk key and JWT template name. It must also contain
 four private R2 buckets with disabled
@@ -403,6 +408,7 @@ export OAUTH_CLIENT_REGISTRY="$(
 )"
 export OAUTH_ISSUER="$CLERK_API_AUDIENCE"
 export OAUTH_RESOURCE="$OAUTH_ISSUER/mcp"
+export PROVIDER_APPROVED_SESSION_CAPACITY="$(sed -n 's/^[[:space:]]*provider_approved_session_capacity[[:space:]]*=[[:space:]]*\\([0-9][0-9]*\\)[[:space:]]*$/\\1/p' "$TFVARS_PATH")"
 bun scripts/render-api-wrangler.ts \
   apps/api/.wrangler/production.jsonc \
   "$DEPLOYMENT_ENVIRONMENT"
@@ -412,7 +418,7 @@ CI=true bun run --cwd apps/api wrangler deploy \
 unset CLOUDFLARE_HYPERDRIVE_ID CLOUDFLARE_OAUTH_KV_ID \
   CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID CLERK_API_AUDIENCE \
   CLERK_AUTHORIZED_PARTY CLERK_ISSUER OAUTH_CLIENT_REGISTRY \
-  OAUTH_ISSUER OAUTH_RESOURCE
+  OAUTH_ISSUER OAUTH_RESOURCE PROVIDER_APPROVED_SESSION_CAPACITY
 export VERCEL_ORG_ID="$(tofu -chdir=infra/compute output -raw vercel_team_id)"
 export VERCEL_PROJECT_ID="$(tofu -chdir=infra/compute output -raw vercel_project_id)"
 vercel deploy --prod --yes --cwd apps/web
@@ -434,7 +440,8 @@ secrets before deployment. `CLERK_JWT_KEY` and
 `OAUTH_PROTOCOL_ENCRYPTION_KEY` must already exist on the selected API Worker
 and are preserved as inherited secret bindings. Rendering fails unless the
 Clerk audience, authorized party, Clerk issuer, OAuth issuer, exact MCP
-resource, and non-empty reviewed client registry are valid.
+resource, non-empty reviewed client registry, and provider-approved session
+capacity are valid.
 
 Provider-control authority is populated during the first-deployment bootstrap
 above, directly in Cloudflare's secret store. The Wrangler manifest declares
@@ -483,12 +490,18 @@ Sign in through the deployed web application with a designated smoke-test Clerk
 User and bootstrap once. Confirm the browser sends `POST
 /v1/personal-account/bootstrap` directly to `API_ORIGIN`, the UI reports
 `Personal Account ready`, and a retry reports the same state without creating a
-second account. A wrong Origin, expired token, or token from another environment
+second account. Confirm the product states the three-Connection, 5 GB Stored
+Media, and default 30-day Message Retention Policy values returned from Neon.
+In a non-production environment, set capacity to exactly three, admit one
+designated User, and verify a second designated User receives the same
+private-beta waitlist state on retries without any provider-control lifecycle
+telemetry. Restore the approved value before further onboarding. A wrong
+Origin, expired token, or token from another environment
 must produce the same not-found response. Do not copy a token into shell
 history, query tenant tables with an owner role, or log identifiers to prove
 this check. Safe telemetry may show only
-`personal_account.bootstrap.completed` with `created` on the first request and
-`recovered` on the retry.
+`personal_account.bootstrap.completed` with `created` on the first request,
+`recovered` on the retry, or `waitlisted` for the exhausted outcome.
 
 The readiness response proves a restricted Hyperdrive connection can read the
 exact expected schema version. It emits only an allowlisted request outcome;

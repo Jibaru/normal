@@ -125,3 +125,13 @@ variable "oauth_clients" {
     error_message = "oauth_clients must contain 1-32 unique reviewed clients with safe classes, IDs, names, and exact HTTPS or loopback redirects."
   }
 }
+
+variable "provider_approved_session_capacity" {
+  description = "Vendor-approved provider session ceiling reserved in three-session Personal Account entitlements."
+  type        = number
+
+  validation {
+    condition     = var.provider_approved_session_capacity >= 3 && floor(var.provider_approved_session_capacity) == var.provider_approved_session_capacity
+    error_message = "provider_approved_session_capacity must be an integer of at least three."
+  }
+}

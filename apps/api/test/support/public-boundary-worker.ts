@@ -8,6 +8,7 @@ import type { Env } from "../../src/index";
 import {
   PersonalAccountIdentifiers,
   PersonalAccountPersistence,
+  PrivateBetaConfig,
 } from "../../src/personal-account";
 import { createProductionHandler } from "../../src/production";
 import {
@@ -55,10 +56,16 @@ const makeTestLayer = (failure: FailureTarget | undefined) => {
         }),
     }),
     Layer.succeed(HumanIdentity, {
-      verify: (request) =>
-        request.headers.get("authorization") === "Bearer signed-test-user"
-          ? Effect.succeed("user_test_public_boundary")
-          : Effect.fail(new InvalidHumanIdentityRequest()),
+      verify: (request) => {
+        const authorization = request.headers.get("authorization");
+        if (authorization === "Bearer signed-test-user") {
+          return Effect.succeed("user_test_public_boundary");
+        }
+        if (authorization === "Bearer signed-waitlisted-user") {
+          return Effect.succeed("user_waitlisted_public_boundary");
+        }
+        return Effect.fail(new InvalidHumanIdentityRequest());
+      },
     }),
     Layer.succeed(BoundaryProvider, {
       observeConnection: failWhenSelected(failure, "provider").pipe(
@@ -78,13 +85,21 @@ const makeTestLayer = (failure: FailureTarget | undefined) => {
     Layer.succeed(PersonalAccountIdentifiers, {
       next: Effect.succeed("10000000-0000-4000-8000-000000000018"),
     }),
+    Layer.succeed(PrivateBetaConfig, {
+      providerApprovedSessionCapacity: 3,
+    }),
     Layer.succeed(PersonalAccountPersistence, {
       create: (input) =>
         Effect.sync(() => {
+          if (input.clerkUserId === "user_waitlisted_public_boundary") {
+            return { admissionState: "waitlisted" as const };
+          }
           const existing = personalAccounts.get(input.clerkUserId);
           if (existing) {
             return {
+              admissionState: "active" as const,
               created: false,
+              messageRetentionDays: 30,
               personalAccountId: existing,
               storedMediaLimitBytes: 5_368_709_120,
               whatsappConnectionLimit: 3,
@@ -92,7 +107,9 @@ const makeTestLayer = (failure: FailureTarget | undefined) => {
           }
           personalAccounts.set(input.clerkUserId, input.personalAccountId);
           return {
+            admissionState: "active" as const,
             created: true,
+            messageRetentionDays: 30,
             personalAccountId: input.personalAccountId,
             storedMediaLimitBytes: 5_368_709_120,
             whatsappConnectionLimit: 3,
@@ -100,10 +117,15 @@ const makeTestLayer = (failure: FailureTarget | undefined) => {
         }),
       resolve: (clerkUserId) =>
         Effect.sync(() => {
+          if (clerkUserId === "user_waitlisted_public_boundary") {
+            return { admissionState: "waitlisted" as const };
+          }
           const existing = personalAccounts.get(clerkUserId);
           return existing
             ? {
+                admissionState: "active" as const,
                 keyAvailable: true,
+                messageRetentionDays: 30,
                 personalAccountId: existing,
                 storedMediaLimitBytes: 5_368_709_120,
                 whatsappConnectionLimit: 3,

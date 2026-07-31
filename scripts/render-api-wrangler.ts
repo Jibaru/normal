@@ -85,6 +85,22 @@ const requireMcpResource = (issuer: string): string => {
   throw new Error("OAUTH_RESOURCE must be the issuer's exact /mcp resource");
 };
 
+const requireProviderApprovedSessionCapacity = (): string => {
+  const value = process.env.PROVIDER_APPROVED_SESSION_CAPACITY;
+  if (!value || !/^[0-9]+$/.test(value)) {
+    throw new Error(
+      "PROVIDER_APPROVED_SESSION_CAPACITY must be a positive integer",
+    );
+  }
+  const capacity = Number(value);
+  if (!Number.isSafeInteger(capacity) || capacity < 3) {
+    throw new Error(
+      "PROVIDER_APPROVED_SESSION_CAPACITY must reserve at least three sessions",
+    );
+  }
+  return String(capacity);
+};
+
 const sourcePath = resolve(import.meta.dir, "../apps/api/wrangler.jsonc");
 const outputPath = resolve(process.cwd(), outputArgument);
 const config = JSON.parse(await readFile(sourcePath, "utf8")) as Record<
@@ -101,6 +117,7 @@ const apiVariables = {
   OAUTH_CLIENT_REGISTRY: requireOAuthClientRegistry(),
   OAUTH_ISSUER: oauthIssuer,
   OAUTH_RESOURCE: requireMcpResource(oauthIssuer),
+  PROVIDER_APPROVED_SESSION_CAPACITY: requireProviderApprovedSessionCapacity(),
 };
 if (apiVariables.CLERK_API_AUDIENCE !== oauthIssuer) {
   throw new Error(

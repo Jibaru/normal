@@ -126,6 +126,7 @@ for (const deployable of deployables) {
               '[{"clientClass":"approved","clientId":"approved-client","clientName":"Approved MCP Client","redirectUris":["https://client.example.test/callback"]}]',
             OAUTH_ISSUER: "https://api.example.test",
             OAUTH_RESOURCE: "https://api.example.test/mcp",
+            PROVIDER_APPROVED_SESSION_CAPACITY: "3",
           },
           stderr: "pipe",
           stdout: "pipe",
@@ -208,10 +209,11 @@ for (const deployable of deployables) {
         'env.OAUTH_CLIENT_REGISTRY ("[{"clientClass":"approved","clientId"...")',
         'env.OAUTH_ISSUER ("https://api.example.test")',
         'env.OAUTH_RESOURCE ("https://api.example.test/mcp")',
+        'env.PROVIDER_APPROVED_SESSION_CAPACITY ("3")',
       ]) {
         if (!output.includes(binding)) {
           throw new Error(
-            `API ${environment} is missing required Clerk binding ${binding}.`,
+            `API ${environment} is missing required binding ${binding}.`,
           );
         }
       }

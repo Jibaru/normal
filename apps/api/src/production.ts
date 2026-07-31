@@ -32,6 +32,7 @@ import {
   PersonalAccountIdentifiers,
   PersonalAccountPersistence,
   PersonalAccountPersistenceError,
+  PrivateBetaConfig,
 } from "./personal-account";
 import {
   ApplicationConfig,
@@ -67,6 +68,7 @@ export interface ApiEnvironment {
   readonly OAUTH_KV?: unknown;
   readonly OAUTH_PROTOCOL_ENCRYPTION_KEY?: string | undefined;
   readonly OAUTH_RESOURCE?: string | undefined;
+  readonly PROVIDER_APPROVED_SESSION_CAPACITY?: string | undefined;
   readonly PROVIDER_CONTROL?: unknown;
   readonly STORED_MEDIA?: unknown;
   readonly WEBHOOK_INGRESS?: unknown;
@@ -79,6 +81,16 @@ const productionConfig = Config.all({
     "production",
   )("DEPLOYMENT_ENVIRONMENT"),
 });
+
+const providerApprovedSessionCapacity = Config.integer(
+  "PROVIDER_APPROVED_SESSION_CAPACITY",
+).pipe(
+  Config.validate({
+    message:
+      "PROVIDER_APPROVED_SESSION_CAPACITY must reserve at least one Personal Account entitlement",
+    validation: (value) => Number.isSafeInteger(value) && value >= 3,
+  }),
+);
 
 const isExactHttpsOrigin = (value: string): boolean => {
   try {
@@ -380,6 +392,17 @@ const personalAccountIdentifiersLayer = Layer.succeed(
   },
 );
 
+const privateBetaConfigLayer = (environment: ApiEnvironment) =>
+  Layer.effect(
+    PrivateBetaConfig,
+    providerApprovedSessionCapacity.pipe(
+      Effect.map((capacity) => ({
+        providerApprovedSessionCapacity: capacity,
+      })),
+      Effect.withConfigProvider(environmentConfigProvider(environment)),
+    ),
+  );
+
 const deletionLayer = (environment: ApiEnvironment) =>
   Layer.effect(
     RestoreSafeDeletion,
@@ -508,6 +531,7 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     humanIdentityLayer(environment),
     personalAccountPersistenceLayer(environment),
     personalAccountIdentifiersLayer,
+    privateBetaConfigLayer(environment),
   );
   const handler = createCanaryHandler(layer);
   const personalAccountHandler = createPersonalAccountHandler(

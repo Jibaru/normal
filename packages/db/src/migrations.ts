@@ -59,6 +59,17 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 3,
   },
+  {
+    name: "private-beta admission",
+    sql: await readFile(
+      new NodeUrl(
+        "../migrations/0004_private_beta_admission.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    version: 4,
+  },
 ];
 
 const checksum = (sql: string): string =>

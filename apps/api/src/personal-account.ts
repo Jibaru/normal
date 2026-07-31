@@ -30,22 +30,31 @@ export interface PersonalAccountPersistenceService {
     readonly keyVersion: number;
     readonly kmsKeyId: string;
     readonly personalAccountId: string;
+    readonly providerApprovedSessionCapacity: number;
   }) => Effect.Effect<
-    {
-      readonly created: boolean;
-      readonly personalAccountId: string;
-      readonly storedMediaLimitBytes: number;
-      readonly whatsappConnectionLimit: number;
-    } | null,
+    | {
+        readonly admissionState: "active";
+        readonly created: boolean;
+        readonly messageRetentionDays: number;
+        readonly personalAccountId: string;
+        readonly storedMediaLimitBytes: number;
+        readonly whatsappConnectionLimit: number;
+      }
+    | { readonly admissionState: "waitlisted" }
+    | null,
     PersonalAccountPersistenceError
   >;
   readonly resolve: (clerkUserId: string) => Effect.Effect<
-    {
-      readonly keyAvailable: boolean;
-      readonly personalAccountId: string;
-      readonly storedMediaLimitBytes: number;
-      readonly whatsappConnectionLimit: number;
-    } | null,
+    | {
+        readonly admissionState: "active";
+        readonly keyAvailable: boolean;
+        readonly messageRetentionDays: number;
+        readonly personalAccountId: string;
+        readonly storedMediaLimitBytes: number;
+        readonly whatsappConnectionLimit: number;
+      }
+    | { readonly admissionState: "waitlisted" }
+    | null,
     PersonalAccountPersistenceError
   >;
 }
@@ -64,18 +73,36 @@ export const PersonalAccountIdentifiers =
     "@whatsapp-mcp/api/PersonalAccountIdentifiers",
   );
 
+export interface PrivateBetaConfigService {
+  readonly providerApprovedSessionCapacity: number;
+}
+
+export const PrivateBetaConfig = Context.GenericTag<PrivateBetaConfigService>(
+  "@whatsapp-mcp/api/PrivateBetaConfig",
+);
+
 export type PersonalAccountRequirements =
   | EnvelopeEncryption
   | HumanIdentityService
   | PersonalAccountIdentifiersService
   | PersonalAccountPersistenceService
+  | PrivateBetaConfigService
   | SafeTelemetryService;
 
-interface BootstrapResult {
+interface ActiveBootstrapResult {
+  readonly admissionState: "active";
+  readonly messageRetentionDays: number;
   readonly outcome: "created" | "recovered";
   readonly storedMediaLimitBytes: number;
   readonly whatsappConnectionLimit: number;
 }
+
+interface WaitlistedBootstrapResult {
+  readonly admissionState: "waitlisted";
+  readonly outcome: "waitlisted";
+}
+
+type BootstrapResult = ActiveBootstrapResult | WaitlistedBootstrapResult;
 
 const decodeBase64 = (value: string): Uint8Array => {
   const decoded = atob(value);
@@ -92,12 +119,15 @@ export const bootstrapPersonalAccount = (
   | EnvelopeEncryption
   | PersonalAccountIdentifiersService
   | PersonalAccountPersistenceService
+  | PrivateBetaConfigService
 > =>
   Effect.gen(function* () {
     const persistence = yield* PersonalAccountPersistence;
     const resolved = yield* persistence.resolve(clerkUserId);
-    if (resolved?.keyAvailable) {
+    if (resolved?.admissionState === "active" && resolved.keyAvailable) {
       return {
+        admissionState: "active",
+        messageRetentionDays: resolved.messageRetentionDays,
         outcome: "recovered",
         storedMediaLimitBytes: resolved.storedMediaLimitBytes,
         whatsappConnectionLimit: resolved.whatsappConnectionLimit,
@@ -106,7 +136,10 @@ export const bootstrapPersonalAccount = (
 
     const identifiers = yield* PersonalAccountIdentifiers;
     const personalAccountId =
-      resolved?.personalAccountId ?? (yield* identifiers.next);
+      resolved?.admissionState === "active"
+        ? resolved.personalAccountId
+        : yield* identifiers.next;
+    const privateBeta = yield* PrivateBetaConfig;
     const encryption = yield* EnvelopeEncryptionService;
     const envelope = yield* encryption.createPersonalAccountKey({
       accountId: personalAccountId,
@@ -118,11 +151,21 @@ export const bootstrapPersonalAccount = (
       keyVersion: envelope.keyVersion,
       kmsKeyId: envelope.kmsKeyId,
       personalAccountId,
+      providerApprovedSessionCapacity:
+        privateBeta.providerApprovedSessionCapacity,
     });
     if (result === null) {
       return yield* Effect.fail(new PersonalAccountNotAccessible());
     }
+    if (result.admissionState === "waitlisted") {
+      return {
+        admissionState: "waitlisted",
+        outcome: "waitlisted",
+      } as const;
+    }
     return {
+      admissionState: "active",
+      messageRetentionDays: result.messageRetentionDays,
       outcome: result.created ? ("created" as const) : ("recovered" as const),
       storedMediaLimitBytes: result.storedMediaLimitBytes,
       whatsappConnectionLimit: result.whatsappConnectionLimit,
@@ -202,17 +245,28 @@ export const createPersonalAccountHandler =
               ? notFound(browserOrigin)
               : jsonResponse({ error: "unavailable" }, 503, browserOrigin),
           onSuccess: (result) =>
-            jsonResponse(
-              {
-                personal_account: {
-                  state: "active",
-                  stored_media_limit_bytes: result.storedMediaLimitBytes,
-                  whatsapp_connection_limit: result.whatsappConnectionLimit,
-                },
-              },
-              200,
-              browserOrigin,
-            ),
+            result.admissionState === "waitlisted"
+              ? jsonResponse(
+                  {
+                    admission: {
+                      state: "waitlisted",
+                    },
+                  },
+                  200,
+                  browserOrigin,
+                )
+              : jsonResponse(
+                  {
+                    personal_account: {
+                      message_retention_days: result.messageRetentionDays,
+                      state: "active",
+                      stored_media_limit_bytes: result.storedMediaLimitBytes,
+                      whatsapp_connection_limit: result.whatsappConnectionLimit,
+                    },
+                  },
+                  200,
+                  browserOrigin,
+                ),
         }),
       ),
     );
