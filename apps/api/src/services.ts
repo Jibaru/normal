@@ -3,6 +3,7 @@ import type {
   DeploymentEnvironment,
 } from "@whatsapp-mcp/domain/deployment";
 import { Context, type Effect } from "effect";
+import type { StoredMediaContainerEvent } from "./encryption/stored-media-container";
 
 export interface ApplicationConfig {
   readonly environment: DeploymentEnvironment;
@@ -30,8 +31,10 @@ export interface HttpCompletedEvent {
 }
 
 export interface SafeTelemetry {
-  readonly emit: (event: HttpCompletedEvent) => Effect.Effect<void>;
+  readonly emit: (event: SafeTelemetryEvent) => Effect.Effect<void>;
 }
+
+export type SafeTelemetryEvent = HttpCompletedEvent | StoredMediaContainerEvent;
 
 export const SafeTelemetry = Context.GenericTag<SafeTelemetry>(
   "@whatsapp-mcp/api/SafeTelemetry",

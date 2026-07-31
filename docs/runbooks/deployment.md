@@ -241,6 +241,32 @@ decrypts, disabled keys, scheduled deletion, policy changes, and rotation being
 disabled. Never copy key plaintext, application plaintext, data-key envelopes,
 or ciphertext into application logs or incident tickets.
 
+The API Stored Media binding must support R2 multipart uploads in addition to
+read, write, and delete. The production root fails closed when this capability,
+the R2 binding, or KMS authority is missing. Before promotion, run the API
+Stored Media container suite and the deployment checks:
+
+```sh
+bun run --cwd apps/api test -- stored-media-container.test.ts
+bun run manifests:validate
+bun run infra:validate
+```
+
+The suite writes through the Workers R2 test binding and proves authenticated
+round trips plus rejection of truncation, reordering, bit changes, trailing
+bytes, wrong Personal Account, wrong WhatsApp Connection, wrong Stored Media
+object, wrong key version, and unsupported container versions. It also verifies
+that R2 HTTP and custom metadata remain empty.
+
+Alert on repeated `stored-media.container.completed` events with
+`authentication-failed` or `storage-failed`. Those events contain only the
+operation, normalized outcome, format version, authenticated chunk count, and
+processed plaintext byte count; do not enrich them with object keys, tenant or
+connection identifiers, media metadata, key material, plaintext, ciphertext,
+or nonces. Treat an authentication failure or missing primary R2 object as
+unavailable Stored Media, never return a verified prefix, and transition the
+authoritative Stored Media record to `failed` through its owning workflow.
+
 ## Deploy
 
 OpenTofu uploads both Worker bundles and orders provider-control before the API
