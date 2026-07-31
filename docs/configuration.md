@@ -20,6 +20,8 @@ request is accepted. Production roots accept only `development`, `preview`, or
 | `AWS_ACCESS_KEY_ID` | Secret | API | Short-lived access key from the environment's `ContentRuntimeRole`; rotate before the role session expires. |
 | `AWS_SECRET_ACCESS_KEY` | Secret | API | Short-lived secret paired with `AWS_ACCESS_KEY_ID`; never log or commit it. |
 | `AWS_SESSION_TOKEN` | Secret | API | Required role-session token. Its absence prevents the API composition root from serving requests. |
+| `WASENDER_API_CREDENTIAL` | Secret | Provider-control | Account-level Wasender Personal Access Token used only for lifecycle endpoints. Store it as a Worker secret and rotate it in Wasender and Cloudflare together. |
+| `WASENDER_REFERENCE_SECRET` | Secret | Provider-control | Stable 32-byte hex HMAC key used to turn raw provider session IDs into opaque adapter locators. Generate with `openssl rand -hex 32`; rotate only through the reconciliation procedure below. |
 
 Wasender Directory reads do not add a platform-wide environment secret. The
 owning API workflow decrypts the selected WhatsApp Connection's envelope-
@@ -39,6 +41,22 @@ compiled schema version. Provider-control has no route or custom domain and has
 both `workers_dev` and preview URLs disabled, so the service binding is its only
 declared ingress. The API also disables generated Cloudflare hostnames and is
 public only on its declared custom domain.
+
+Provider-control startup also validates both Wasender secrets before serving
+even its private health route. Its adapter always calls the fixed
+`https://www.wasenderapi.com` origin with the account-level credential, forces
+provider message logging and automatic incoming-message reads off during
+creation, and emits only operation class, normalized outcome, attempt, duration,
+and bounded response size. No runtime value can select a fake provider or an
+alternate origin.
+
+`WASENDER_REFERENCE_SECRET` must remain stable because persisted adapter
+locators are keyed by it. To rotate it, stop provisioning, retain the old value,
+reconcile every retained Connection Setup and WhatsApp Connection against the
+provider under an audited maintenance workflow, persist locators derived with
+the new value, verify that no old locator remains, deploy the new secret, and
+resume provisioning. A direct replacement without reconciliation makes existing
+provider sessions unresolvable and therefore fails closed.
 
 The web production root requires `NEXT_PUBLIC_API_ORIGIN` to be a bare HTTPS
 origin with no credentials, path, query, or fragment. The Vercel manifest has

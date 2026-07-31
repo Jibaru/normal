@@ -15,16 +15,21 @@
   for each environment
 - Short-lived `NEON_API_KEY`, `CLOUDFLARE_API_TOKEN`, `VERCEL_API_TOKEN`, and
   AWS credentials for exactly the environment being changed
+- A Wasender account with approved session capacity and an account-level
+  Personal Access Token for each environment
 
 No Clerk tenant or Wasender account is required to build and verify the
 source-controlled platform. A real Directory smoke check additionally requires
 one vendor-approved Wasender account and one connected non-production WhatsApp
 Connection whose session API key is stored through the normal envelope-
 encrypted connection-authority path. Exercising the real text-send adapter also
-requires a designated test recipient for that connection. Never substitute a
-PAT, committed key, or production-selectable fake. The API requires its
-environment-specific AWS KMS stack and short-lived `ContentRuntimeRole`
-credentials before it becomes healthy.
+requires a designated test recipient for that connection. Never substitute the
+account-level PAT for per-session authority, commit either credential, or add a
+production-selectable fake. Provider-control requires its environment's
+Wasender Personal Access Token and stable reference secret, while the API
+requires its environment-specific AWS KMS stack and short-lived
+`ContentRuntimeRole` credentials before either production composition root
+becomes healthy.
 
 Production authority must not be available to development or preview jobs.
 Use a separate production Cloudflare account and Vercel team, and a separate
@@ -267,6 +272,27 @@ identifiers are present.
 The Worker manifests set `AWS_KMS_REGION` explicitly. Set
 `KMS_CONTENT_ROOT_KEY_ARN` in the API deployment configuration and populate the
 three AWS credential secrets before deployment.
+
+Populate provider-control authority directly in Cloudflare's secret store; do
+not put either value in Wrangler variables, OpenTofu input, saved plans, or
+state. Generate the locator key once per environment and retain it in the
+environment's recovery inventory:
+
+```sh
+openssl rand -hex 32 | wrangler secret put WASENDER_REFERENCE_SECRET \
+  --cwd apps/provider-control --env production
+wrangler secret put WASENDER_API_CREDENTIAL \
+  --cwd apps/provider-control --env production
+```
+
+The credential must be the account-level Personal Access Token, never a
+WhatsApp Connection's per-session API key. Provider-control has no public route,
+and its Cloudflare deployment identity should be scoped only to that Worker so
+the credential cannot enter the web or API deployments. Repeat with the exact
+target environment during rotation, deploy provider-control, and verify its
+private service-binding health before deploying the API. Never rotate
+`WASENDER_REFERENCE_SECRET` directly; use the reconciliation procedure in
+`docs/configuration.md` so retained provider sessions remain addressable.
 
 ## Smoke check
 

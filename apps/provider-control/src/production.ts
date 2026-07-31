@@ -1,4 +1,9 @@
-import { Config, ConfigProvider, Effect, Layer } from "effect";
+import {
+  makeWasenderSessionLifecycle,
+  SessionLifecycle,
+  type WasenderLifecycleTelemetryEvent,
+} from "@whatsapp-mcp/wasender/control";
+import { Config, ConfigProvider, Effect, Layer, Redacted } from "effect";
 import { createCanaryHandler } from "./canary";
 import {
   ApplicationConfig,
@@ -8,6 +13,8 @@ import {
 
 export interface ProviderControlEnvironment {
   readonly DEPLOYMENT_ENVIRONMENT?: string | undefined;
+  readonly WASENDER_API_CREDENTIAL?: string | undefined;
+  readonly WASENDER_REFERENCE_SECRET?: string | undefined;
 }
 
 const productionConfig = Config.all({
@@ -18,6 +25,35 @@ const productionConfig = Config.all({
   )("DEPLOYMENT_ENVIRONMENT"),
 });
 
+const isProviderApiCredential = (value: string) =>
+  /^[\x21-\x7e]{1,4096}$/u.test(value) &&
+  !/replace|example|placeholder/iu.test(value);
+
+const providerApiCredential = Config.redacted("WASENDER_API_CREDENTIAL").pipe(
+  Config.validate({
+    message: "WASENDER_API_CREDENTIAL must be a non-placeholder credential",
+    validation: (value) => isProviderApiCredential(Redacted.value(value)),
+  }),
+);
+
+const providerReferenceSecret = Config.redacted(
+  "WASENDER_REFERENCE_SECRET",
+).pipe(
+  Config.validate({
+    message: "WASENDER_REFERENCE_SECRET must be a 32-byte hex secret",
+    validation: (value) => /^[0-9a-f]{64}$/iu.test(Redacted.value(value)),
+  }),
+);
+
+const environmentConfigProvider = (environment: ProviderControlEnvironment) =>
+  ConfigProvider.fromMap(
+    new Map(
+      Object.entries(environment).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ),
+    ),
+  );
+
 const configLayer = (environment: ProviderControlEnvironment) =>
   Layer.effect(
     ApplicationConfig,
@@ -26,16 +62,32 @@ const configLayer = (environment: ProviderControlEnvironment) =>
         ...config,
         service: "provider-control" as const,
       })),
-      Effect.withConfigProvider(
-        ConfigProvider.fromMap(
-          new Map(
-            Object.entries(environment).filter(
-              (entry): entry is [string, string] =>
-                typeof entry[1] === "string",
-            ),
-          ),
-        ),
+      Effect.withConfigProvider(environmentConfigProvider(environment)),
+    ),
+  );
+
+const providerTelemetry = (event: WasenderLifecycleTelemetryEvent) =>
+  console.info(
+    JSON.stringify({
+      ...event,
+      event: "provider.call.completed",
+      service: "provider-control",
+    }),
+  );
+
+const sessionLifecycleLayer = (environment: ProviderControlEnvironment) =>
+  Layer.effect(
+    SessionLifecycle,
+    Config.all({
+      credential: providerApiCredential,
+      referenceSecret: providerReferenceSecret,
+    }).pipe(
+      Effect.map((config) =>
+        makeWasenderSessionLifecycle(config, {
+          telemetry: providerTelemetry,
+        }),
       ),
+      Effect.withConfigProvider(environmentConfigProvider(environment)),
     ),
   );
 
@@ -63,7 +115,11 @@ export const createProductionHandler = (
   environment: ProviderControlEnvironment,
 ) => {
   const handler = createCanaryHandler(
-    Layer.merge(configLayer(environment), telemetryLayer),
+    Layer.mergeAll(
+      configLayer(environment),
+      sessionLifecycleLayer(environment),
+      telemetryLayer,
+    ),
   );
 
   return async (request: Request): Promise<Response> => {
