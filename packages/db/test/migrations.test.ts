@@ -42,9 +42,11 @@ describe("production migrations", () => {
       "SELECT version, checksum FROM app_private.schema_migrations ORDER BY version",
     );
 
-    expect(result.rows).toHaveLength(1);
-    expect(result.rows[0]?.version).toBe(EXPECTED_SCHEMA_VERSION);
-    expect(result.rows[0]?.checksum).toMatch(/^[a-f0-9]{64}$/);
+    expect(result.rows).toHaveLength(EXPECTED_SCHEMA_VERSION);
+    expect(result.rows.at(-1)?.version).toBe(EXPECTED_SCHEMA_VERSION);
+    expect(
+      result.rows.every(({ checksum }) => /^[a-f0-9]{64}$/.test(checksum)),
+    ).toBe(true);
   });
 
   test("refuses an applied migration whose checksum has changed", async () => {
@@ -207,6 +209,221 @@ describe("production migrations", () => {
     ).rejects.toThrow();
   });
 
+  test("makes a WhatsApp Connection key durably unavailable and cannot restore it through the runtime role", async () => {
+    await runMigrations(database);
+    await seedTenants(database);
+    await seedKeyEnvelopes(database);
+
+    await database.exec("SET ROLE whatsapp_api_runtime; BEGIN");
+    try {
+      await database.query(
+        "SELECT set_config('app.personal_account_id', $1, true)",
+        [accountA],
+      );
+      const first = await database.query<{ unavailable_at: Date }>(
+        `SELECT app_private.make_whatsapp_connection_key_unavailable(
+          $1, $2, $3::timestamptz
+        ) AS unavailable_at`,
+        [accountA, connectionA, "2026-07-31T12:00:00.000Z"],
+      );
+      const replay = await database.query<{ unavailable_at: Date }>(
+        `SELECT app_private.make_whatsapp_connection_key_unavailable(
+          $1, $2, $3::timestamptz
+        ) AS unavailable_at`,
+        [accountA, connectionA, "2026-07-31T13:00:00.000Z"],
+      );
+      const available = await database.query(
+        `SELECT *
+         FROM app_private.load_available_whatsapp_connection_key($1, $2)`,
+        [accountA, connectionA],
+      );
+
+      expect(first.rows[0]?.unavailable_at).toEqual(
+        new Date("2026-07-31T12:00:00.000Z"),
+      );
+      expect(replay.rows).toEqual(first.rows);
+      expect(available.rows).toEqual([]);
+      await expect(
+        database.query(
+          `UPDATE app.whatsapp_connection_key_envelopes
+           SET ciphertext = decode('ff', 'hex'), unavailable_at = NULL
+           WHERE personal_account_id = $1
+             AND whatsapp_connection_id = $2`,
+          [accountA, connectionA],
+        ),
+      ).rejects.toThrow();
+      await expect(
+        database.query(
+          `DELETE FROM app.whatsapp_connection_key_envelopes
+           WHERE personal_account_id = $1
+             AND whatsapp_connection_id = $2`,
+          [accountA, connectionA],
+        ),
+      ).rejects.toThrow();
+    } finally {
+      await database.exec("ROLLBACK; RESET ROLE");
+    }
+  });
+
+  test("makes a Personal Account key unavailable across ordinary runtime decryption", async () => {
+    await runMigrations(database);
+    await seedTenants(database);
+    await seedKeyEnvelopes(database);
+
+    await database.exec("SET ROLE whatsapp_api_runtime; BEGIN");
+    try {
+      await database.query(
+        "SELECT set_config('app.personal_account_id', $1, true)",
+        [accountA],
+      );
+      await database.query(
+        `SELECT app_private.make_personal_account_key_unavailable(
+          $1, $2::timestamptz
+        )`,
+        [accountA, "2026-07-31T12:00:00.000Z"],
+      );
+      const accountKey = await database.query(
+        "SELECT * FROM app_private.load_available_personal_account_key($1)",
+        [accountA],
+      );
+      const connectionKey = await database.query(
+        `SELECT *
+         FROM app_private.load_available_whatsapp_connection_key($1, $2)`,
+        [accountA, connectionA],
+      );
+
+      expect(accountKey.rows).toEqual([]);
+      expect(connectionKey.rows).toEqual([]);
+    } finally {
+      await database.exec("ROLLBACK; RESET ROLE");
+    }
+  });
+
+  test("leaves an unavailability tombstone when no WhatsApp Connection envelope existed", async () => {
+    await runMigrations(database);
+    await seedTenants(database);
+    await seedKeyEnvelopes(database);
+    await database.query(
+      `DELETE FROM app.whatsapp_connection_key_envelopes
+       WHERE personal_account_id = $1
+         AND whatsapp_connection_id = $2`,
+      [accountA, connectionA],
+    );
+
+    await database.exec("SET ROLE whatsapp_api_runtime; BEGIN");
+    try {
+      await database.query(
+        "SELECT set_config('app.personal_account_id', $1, true)",
+        [accountA],
+      );
+      const unavailable = await database.query<{ unavailable_at: Date }>(
+        `SELECT app_private.make_whatsapp_connection_key_unavailable(
+          $1, $2, $3::timestamptz
+        ) AS unavailable_at`,
+        [accountA, connectionA, "2026-07-31T12:00:00.000Z"],
+      );
+
+      expect(unavailable.rows[0]?.unavailable_at).toEqual(
+        new Date("2026-07-31T12:00:00.000Z"),
+      );
+      await expect(
+        database.query(
+          `INSERT INTO app.whatsapp_connection_key_envelopes
+            (
+              personal_account_id,
+              whatsapp_connection_id,
+              account_key_version,
+              key_version,
+              nonce,
+              ciphertext
+            )
+           VALUES ($1, $2, 1, 1, decode('0102', 'hex'), decode('0304', 'hex'))`,
+          [accountA, connectionA],
+        ),
+      ).rejects.toThrow();
+    } finally {
+      await database.exec("ROLLBACK; RESET ROLE");
+    }
+  });
+
+  test("does not load a WhatsApp Connection envelope bound to another account-key version", async () => {
+    await runMigrations(database);
+    await seedTenants(database);
+    await seedKeyEnvelopes(database);
+    await database.query(
+      `UPDATE app.whatsapp_connection_key_envelopes
+       SET account_key_version = 2
+       WHERE personal_account_id = $1
+         AND whatsapp_connection_id = $2`,
+      [accountA, connectionA],
+    );
+
+    await database.exec("SET ROLE whatsapp_api_runtime; BEGIN");
+    try {
+      await database.query(
+        "SELECT set_config('app.personal_account_id', $1, true)",
+        [accountA],
+      );
+      const available = await database.query(
+        `SELECT *
+         FROM app_private.load_available_whatsapp_connection_key($1, $2)`,
+        [accountA, connectionA],
+      );
+
+      expect(available.rows).toEqual([]);
+    } finally {
+      await database.exec("ROLLBACK; RESET ROLE");
+    }
+  });
+
+  test("restricts key unavailability and loading to the current Personal Account and API role", async () => {
+    await runMigrations(database);
+    await seedTenants(database);
+    await seedKeyEnvelopes(database);
+
+    await database.exec("SET ROLE whatsapp_api_runtime; BEGIN");
+    try {
+      await database.query(
+        "SELECT set_config('app.personal_account_id', $1, true)",
+        [accountA],
+      );
+      await expect(
+        database.query(
+          `SELECT app_private.make_whatsapp_connection_key_unavailable(
+            $1, $2, transaction_timestamp()
+          )`,
+          [accountB, connectionB],
+        ),
+      ).rejects.toThrow();
+    } finally {
+      await database.exec("ROLLBACK; RESET ROLE");
+    }
+
+    await database.exec("SET ROLE whatsapp_webhook_runtime; BEGIN");
+    try {
+      await database.query(
+        "SELECT set_config('app.personal_account_id', $1, true)",
+        [accountA],
+      );
+      await expect(
+        database.query(
+          "SELECT * FROM app_private.load_available_personal_account_key($1)",
+          [accountA],
+        ),
+      ).rejects.toThrow();
+      await expect(
+        database.query(
+          `SELECT app_private.make_whatsapp_connection_key_unavailable(
+            $1, $2, transaction_timestamp()
+          )`,
+          [accountA, connectionA],
+        ),
+      ).rejects.toThrow();
+    } finally {
+      await database.exec("ROLLBACK; RESET ROLE");
+    }
+  });
+
   test("limits fixed-search-path bootstrap functions to their runtime identities", async () => {
     await runMigrations(database);
     await seedTenants(database);
@@ -300,5 +517,31 @@ const seedTenants = async (database: PGlite) => {
       ($1, $2, $3, decode('01', 'hex')),
       ($4, $5, gen_random_uuid(), decode('02', 'hex'))`,
     [accountA, connectionA, ingressA, accountB, connectionB],
+  );
+};
+
+const seedKeyEnvelopes = async (database: PGlite) => {
+  await database.query(
+    `INSERT INTO app.personal_account_key_envelopes
+      (personal_account_id, key_version, kms_key_id, ciphertext)
+     VALUES
+      ($1, 1, 'kms-content-root', decode('0102', 'hex')),
+      ($2, 1, 'kms-content-root', decode('0304', 'hex'))`,
+    [accountA, accountB],
+  );
+  await database.query(
+    `INSERT INTO app.whatsapp_connection_key_envelopes
+      (
+        personal_account_id,
+        whatsapp_connection_id,
+        account_key_version,
+        key_version,
+        nonce,
+        ciphertext
+      )
+     VALUES
+      ($1, $2, 1, 1, decode('010203', 'hex'), decode('0405', 'hex')),
+      ($3, $4, 1, 1, decode('060708', 'hex'), decode('090a', 'hex'))`,
+    [accountA, connectionA, accountB, connectionB],
   );
 };

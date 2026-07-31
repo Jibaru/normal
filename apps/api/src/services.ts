@@ -3,6 +3,8 @@ import type {
   DeploymentEnvironment,
 } from "@whatsapp-mcp/domain/deployment";
 import { Context, type Effect } from "effect";
+import type { DeletionCapsuleWriter } from "./deletion/capsule";
+import type { DeletionMarkerStore } from "./deletion/marker";
 
 export interface ApplicationConfig {
   readonly environment: DeploymentEnvironment;
@@ -19,6 +21,15 @@ export interface DatabaseReadiness {
 
 export const DatabaseReadiness = Context.GenericTag<DatabaseReadiness>(
   "@whatsapp-mcp/api/DatabaseReadiness",
+);
+
+export interface RestoreSafeDeletion {
+  readonly capsules: DeletionCapsuleWriter;
+  readonly markers: DeletionMarkerStore;
+}
+
+export const RestoreSafeDeletion = Context.GenericTag<RestoreSafeDeletion>(
+  "@whatsapp-mcp/api/RestoreSafeDeletion",
 );
 
 export interface HttpCompletedEvent {

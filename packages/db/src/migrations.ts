@@ -37,6 +37,17 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 1,
   },
+  {
+    name: "restore-safe key unavailability",
+    sql: await readFile(
+      new NodeUrl(
+        "../migrations/0002_restore_safe_key_unavailability.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    version: 2,
+  },
 ];
 
 const checksum = (sql: string): string =>

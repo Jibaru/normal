@@ -6,9 +6,15 @@ const validEnvironment = () => ({
   AWS_KMS_REGION: "us-east-1",
   AWS_SECRET_ACCESS_KEY: "temporary-secret",
   AWS_SESSION_TOKEN: "temporary-session-token",
-  DELETION_MARKERS: {
-    delete: async () => undefined,
+  DELETION_CAPSULES: {
     get: async () => null,
+    put: async () => null,
+  },
+  DELETION_MARKER_HMAC_SECRET:
+    "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  DELETION_MARKERS: {
+    get: async () => null,
+    list: async () => ({ objects: [], truncated: false }),
     put: async () => null,
   },
   DEPLOYMENT_ENVIRONMENT: "production",
@@ -20,6 +26,8 @@ const validEnvironment = () => ({
   },
   KMS_CONTENT_ROOT_KEY_ARN:
     "arn:aws:kms:us-east-1:111122223333:key/00000000-0000-0000-0000-000000000001",
+  KMS_DELETION_COORDINATOR_KEY_ARN:
+    "arn:aws:kms:us-east-1:111122223333:key/00000000-0000-0000-0000-000000000002",
   OAUTH_KV: {
     delete: async () => undefined,
     get: async () => null,
@@ -110,6 +118,7 @@ describe("API production root", () => {
   });
 
   test.each([
+    "DELETION_CAPSULES",
     "DELETION_MARKERS",
     "INGESTION_QUEUE",
     "OAUTH_KV",
@@ -184,6 +193,27 @@ describe("API production root", () => {
       ...validEnvironment(),
       KMS_CONTENT_ROOT_KEY_ARN:
         "arn:aws:kms:us-west-2:111122223333:key/00000000-0000-0000-0000-000000000001",
+    })(new Request("https://api.example.test/health"));
+
+    expect(response.status).toBe(503);
+  });
+
+  test("fails closed without the dedicated marker HMAC secret", async () => {
+    const { DELETION_MARKER_HMAC_SECRET: _missing, ...environment } =
+      validEnvironment();
+
+    const response = await createProductionHandler(environment)(
+      new Request("https://api.example.test/health"),
+    );
+
+    expect(response.status).toBe(503);
+  });
+
+  test("fails closed when the Deletion Capsule key is not a separate us-east-1 key", async () => {
+    const environment = validEnvironment();
+    const response = await createProductionHandler({
+      ...environment,
+      KMS_DELETION_COORDINATOR_KEY_ARN: environment.KMS_CONTENT_ROOT_KEY_ARN,
     })(new Request("https://api.example.test/health"));
 
     expect(response.status).toBe(503);

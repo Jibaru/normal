@@ -2,8 +2,12 @@
 DEPLOYMENT_ENVIRONMENT=development
 AWS_KMS_REGION=us-east-1
 KMS_CONTENT_ROOT_KEY_ARN=arn:aws:kms:us-east-1:111122223333:key/replace-with-content-root-key-id
+KMS_DELETION_COORDINATOR_KEY_ARN=arn:aws:kms:us-east-1:111122223333:key/replace-with-deletion-coordinator-key-id
 
 # Short-lived credentials for the ContentRuntimeRole; never commit real values.
 AWS_ACCESS_KEY_ID=replace-with-temporary-access-key-id
 AWS_SECRET_ACCESS_KEY=replace-with-temporary-secret-access-key
 AWS_SESSION_TOKEN=replace-with-temporary-session-token
+
+# Dedicated marker-key HMAC secret; generate independently with openssl rand -hex 32.
+DELETION_MARKER_HMAC_SECRET=replace-with-dedicated-32-byte-hex-secret

@@ -1,12 +1,17 @@
 import {
   DecryptCommand,
+  EncryptCommand,
   GenerateDataKeyCommand,
   type KMSClient,
 } from "@aws-sdk/client-kms";
 import { Data, Effect } from "effect";
+import type {
+  DeletionCapsuleKmsReader,
+  DeletionCapsuleKmsWriter,
+} from "../deletion/capsule";
 import type { KmsKeyService } from "./envelope";
 
-export type AwsKmsOperation = "decrypt" | "generate-data-key";
+export type AwsKmsOperation = "decrypt" | "encrypt" | "generate-data-key";
 
 export class AwsKmsError extends Data.TaggedError("AwsKmsError")<{
   readonly operation: AwsKmsOperation;
@@ -54,6 +59,44 @@ export const makeAwsKmsKeyService = (
           operation: "generate-data-key",
         }),
     }),
+  decrypt: ({ ciphertext, encryptionContext, keyId }) =>
+    Effect.tryPromise({
+      try: async () => {
+        const result = await client.send(
+          new DecryptCommand({
+            CiphertextBlob: ciphertext,
+            EncryptionContext: encryptionContext,
+            KeyId: keyId,
+          }),
+        );
+        return requiredBytes(result.Plaintext, "decrypt");
+      },
+      catch: () => new AwsKmsError({ operation: "decrypt" }),
+    }),
+});
+
+export const makeAwsDeletionCapsuleKmsWriter = (
+  client: Pick<KMSClient, "send">,
+): DeletionCapsuleKmsWriter => ({
+  encrypt: ({ encryptionContext, keyId, plaintext }) =>
+    Effect.tryPromise({
+      try: async () => {
+        const result = await client.send(
+          new EncryptCommand({
+            EncryptionContext: encryptionContext,
+            KeyId: keyId,
+            Plaintext: plaintext,
+          }),
+        );
+        return requiredBytes(result.CiphertextBlob, "encrypt");
+      },
+      catch: () => new AwsKmsError({ operation: "encrypt" }),
+    }),
+});
+
+export const makeAwsDeletionCapsuleKmsReader = (
+  client: Pick<KMSClient, "send">,
+): DeletionCapsuleKmsReader => ({
   decrypt: ({ ciphertext, encryptionContext, keyId }) =>
     Effect.tryPromise({
       try: async () => {

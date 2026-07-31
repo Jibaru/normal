@@ -62,6 +62,7 @@ run "development_topology" {
     condition = (
       cloudflare_r2_bucket.webhook_ingress.name == "whatsapp-mcp-webhook-ingress-development" &&
       cloudflare_r2_bucket.stored_media.name == "whatsapp-mcp-stored-media-development" &&
+      cloudflare_r2_bucket.deletion_capsules.name == "whatsapp-mcp-deletion-capsules-development" &&
       cloudflare_r2_bucket.deletion_markers.name == "whatsapp-mcp-deletion-markers-development" &&
       cloudflare_workers_kv_namespace.oauth.title == "whatsapp-mcp-oauth-development" &&
       cloudflare_queue.ingestion.queue_name == "whatsapp-mcp-ingestion-development" &&
@@ -78,6 +79,7 @@ run "development_topology" {
       "kv_namespace:OAUTH_KV",
       "plain_text:DEPLOYMENT_ENVIRONMENT",
       "queue:INGESTION_QUEUE",
+      "r2_bucket:DELETION_CAPSULES",
       "r2_bucket:DELETION_MARKERS",
       "r2_bucket:STORED_MEDIA",
       "r2_bucket:WEBHOOK_INGRESS",
@@ -166,6 +168,7 @@ run "production_topology" {
     condition = (
       cloudflare_r2_managed_domain.webhook_ingress.enabled == false &&
       cloudflare_r2_managed_domain.stored_media.enabled == false &&
+      cloudflare_r2_managed_domain.deletion_capsules.enabled == false &&
       cloudflare_r2_managed_domain.deletion_markers.enabled == false
     )
     error_message = "Every R2 bucket must explicitly disable its public r2.dev domain."

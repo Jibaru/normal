@@ -1,11 +1,16 @@
 import {
   DecryptCommand,
+  EncryptCommand,
   GenerateDataKeyCommand,
   type KMSClient,
 } from "@aws-sdk/client-kms";
 import { Effect } from "effect";
 import { describe, expect, test } from "vitest";
-import { makeAwsKmsKeyService } from "../src/encryption/aws-kms";
+import {
+  makeAwsDeletionCapsuleKmsReader,
+  makeAwsDeletionCapsuleKmsWriter,
+  makeAwsKmsKeyService,
+} from "../src/encryption/aws-kms";
 
 describe("AWS KMS adapter", () => {
   test("requests an AES-256 Personal Account data key with the complete context", async () => {
@@ -118,5 +123,75 @@ describe("AWS KMS adapter", () => {
       left: { _tag: "AwsKmsError", operation: "generate-data-key" },
     });
     expect(Array.from(plaintext)).toEqual(new Array(32).fill(0));
+  });
+
+  test("keeps Deletion Capsule encrypt and decrypt capabilities explicit", async () => {
+    const commands: Array<unknown> = [];
+    const client = {
+      send: async (command: unknown) => {
+        commands.push(command);
+        return command instanceof EncryptCommand
+          ? { CiphertextBlob: new Uint8Array([7, 8, 9]) }
+          : { Plaintext: new Uint8Array([1, 2, 3]) };
+      },
+    } as unknown as KMSClient;
+    const writer = makeAwsDeletionCapsuleKmsWriter(client);
+    const reader = makeAwsDeletionCapsuleKmsReader(client);
+    const encryptionContext = {
+      deletionMarkerId: "a".repeat(64),
+      environment: "production",
+      keyVersion: "1",
+      purpose: "deletion-capsule",
+    };
+    const keyId = "arn:aws:kms:us-east-1:111122223333:key/deletion-coordinator";
+
+    await Effect.runPromise(
+      writer.encrypt({
+        encryptionContext,
+        keyId,
+        plaintext: new Uint8Array([4, 5, 6]),
+      }),
+    );
+    await Effect.runPromise(
+      reader.decrypt({
+        ciphertext: new Uint8Array([7, 8, 9]),
+        encryptionContext,
+        keyId,
+      }),
+    );
+
+    expect(commands[0]).toBeInstanceOf(EncryptCommand);
+    expect((commands[0] as EncryptCommand).input).toEqual({
+      EncryptionContext: encryptionContext,
+      KeyId: keyId,
+      Plaintext: new Uint8Array([4, 5, 6]),
+    });
+    expect(commands[1]).toBeInstanceOf(DecryptCommand);
+    expect((commands[1] as DecryptCommand).input).toEqual({
+      CiphertextBlob: new Uint8Array([7, 8, 9]),
+      EncryptionContext: encryptionContext,
+      KeyId: keyId,
+    });
+  });
+
+  test("fails closed when KMS omits Deletion Capsule ciphertext", async () => {
+    const writer = makeAwsDeletionCapsuleKmsWriter({
+      send: async () => ({}),
+    } as unknown as KMSClient);
+
+    const result = await Effect.runPromise(
+      Effect.either(
+        writer.encrypt({
+          encryptionContext: {},
+          keyId: "deletion-key",
+          plaintext: new Uint8Array([1]),
+        }),
+      ),
+    );
+
+    expect(result).toMatchObject({
+      _tag: "Left",
+      left: { _tag: "AwsKmsError", operation: "encrypt" },
+    });
   });
 });
