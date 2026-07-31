@@ -118,11 +118,12 @@ tofu -chdir=infra/compute show "$DEPLOYMENT_ENVIRONMENT.tfplan"
 Confirm that the plan contains exactly one Vercel web project/domain, a public
 API Worker/custom domain, one private provider-control Worker, disabled
 `workers.dev` and preview URLs for both Workers, and an API-to-provider-control
-service binding. It must also contain three private R2 buckets with disabled
-managed domains, the seven-day Webhook Event lifecycle, the indefinite deletion
-marker lock, one OAuth KV namespace, an ingestion Queue and active DLQ, the two
-Queue consumers, and the three API schedules. Provider-control must have no R2,
-KV, or Queue binding. Apply the reviewed plan:
+service binding. It must also contain four private R2 buckets with disabled
+managed domains, the seven-day Webhook Event lifecycle, the isolated Deletion
+Capsule bucket, the indefinite deletion-marker lock, one OAuth KV namespace, an
+ingestion Queue and active DLQ, the two Queue consumers, and the three API
+schedules. Provider-control must have no R2, KV, or Queue binding. Apply the
+reviewed plan:
 
 ```sh
 tofu -chdir=infra/compute apply "$DEPLOYMENT_ENVIRONMENT.tfplan"
@@ -219,11 +220,13 @@ tofu -chdir=infra/aws apply kms.tfplan
 Record the `content_root_key_arn`, `content_runtime_role_arn`,
 `deletion_coordinator_key_arn`, and `deletion_coordinator_role_arn` OpenTofu
 outputs in the environment's deployment inventory. Configure
-`KMS_CONTENT_ROOT_KEY_ARN` from `content_root_key_arn`. The content key and
-Deletion Capsule key are retained if a stack is deleted or replaced; never
-schedule their deletion as part of ordinary rollback. The owning AWS account
-principal retains key-policy recovery authority for lifecycle and policy
-operations only; that statement grants no cryptographic operation.
+`KMS_CONTENT_ROOT_KEY_ARN` from `content_root_key_arn` and
+`KMS_DELETION_COORDINATOR_KEY_ARN` from `deletion_coordinator_key_arn`; the API
+root rejects equal values. The content key and Deletion Capsule key are retained
+if a stack is deleted or replaced; never schedule their deletion as part of
+ordinary rollback. The owning AWS account principal retains key-policy recovery
+authority for lifecycle and policy operations only; that statement grants no
+cryptographic operation.
 
 The API credential broker must assume only `ContentRuntimeRole` and continuously
 rotate its short-lived access key, secret, and session token in the Cloudflare
@@ -233,6 +236,19 @@ provider-control, or ordinary operator credentials. The trusted bootstrap
 principal also needs a narrowly scoped `sts:AssumeRole` identity policy for
 that one role because the template deliberately declares only each role's trust
 side.
+
+Generate the deletion-marker HMAC once per environment, store it only as the
+`DELETION_MARKER_HMAC_SECRET` Worker secret and in the encrypted recovery
+inventory, and do not rotate it without a marker-rekey recovery design:
+
+```sh
+openssl rand -hex 32 | wrangler secret put DELETION_MARKER_HMAC_SECRET \
+  --cwd apps/api --env production
+```
+
+This secret is unrelated to KMS, provider-reference, webhook, cursor, and
+idempotency keys. Losing it prevents deterministic creation of a later marker
+for the same opaque identifier; exposing it weakens marker-key privacy.
 
 AWS KMS records cryptographic operations in CloudTrail. Encryption context is
 non-secret audit data and is limited here to environment, purpose, opaque
@@ -280,11 +296,12 @@ before the build and points to the same-environment Worker. There is no Vercel
 rewrite or server-side API proxy. The rendered API config is mode `0600`,
 ignored by Git, and fails generation unless both real 32-character Hyperdrive
 identifiers and the current environment's real 32-character OAuth KV identifier
-are present. The selected environment receives the same three R2 buckets, Queue
-producer and consumers, DLQ, and schedules as the reviewed OpenTofu plan.
-The Worker manifests set `AWS_KMS_REGION` explicitly. Set
-`KMS_CONTENT_ROOT_KEY_ARN` in the API deployment configuration and populate the
-three AWS credential secrets before deployment.
+are present. The selected environment receives the same four R2 buckets, Queue
+producer and consumers, DLQ, and schedules as the reviewed OpenTofu plan. The
+Worker manifests set `AWS_KMS_REGION` explicitly. Set
+`KMS_CONTENT_ROOT_KEY_ARN` and `KMS_DELETION_COORDINATOR_KEY_ARN` in the API
+deployment configuration and populate the marker HMAC plus three AWS credential
+secrets before deployment.
 
 Populate provider-control authority directly in Cloudflare's secret store; do
 not put either value in Wrangler variables, OpenTofu input, saved plans, or

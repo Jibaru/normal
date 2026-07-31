@@ -117,6 +117,7 @@ for (const deployable of deployables) {
         `env.INGESTION_QUEUE (whatsapp-mcp-ingestion${workerSuffix})`,
         `env.WEBHOOK_INGRESS (whatsapp-mcp-webhook-ingress${workerSuffix})`,
         `env.STORED_MEDIA (whatsapp-mcp-stored-media${workerSuffix})`,
+        `env.DELETION_CAPSULES (whatsapp-mcp-deletion-capsules${workerSuffix})`,
         `env.DELETION_MARKERS (whatsapp-mcp-deletion-markers${workerSuffix})`,
       ];
       for (const binding of requiredBindings) {

@@ -39,6 +39,10 @@
       "bucket_name": "whatsapp-mcp-stored-media"
     },
     {
+      "binding": "DELETION_CAPSULES",
+      "bucket_name": "whatsapp-mcp-deletion-capsules"
+    },
+    {
       "binding": "DELETION_MARKERS",
       "bucket_name": "whatsapp-mcp-deletion-markers"
     }
@@ -100,6 +104,10 @@
         {
           "binding": "STORED_MEDIA",
           "bucket_name": "whatsapp-mcp-stored-media-development"
+        },
+        {
+          "binding": "DELETION_CAPSULES",
+          "bucket_name": "whatsapp-mcp-deletion-capsules-development"
         },
         {
           "binding": "DELETION_MARKERS",
@@ -165,6 +173,10 @@
           "bucket_name": "whatsapp-mcp-stored-media-preview"
         },
         {
+          "binding": "DELETION_CAPSULES",
+          "bucket_name": "whatsapp-mcp-deletion-capsules-preview"
+        },
+        {
           "binding": "DELETION_MARKERS",
           "bucket_name": "whatsapp-mcp-deletion-markers-preview"
         }
@@ -226,6 +238,10 @@
         {
           "binding": "STORED_MEDIA",
           "bucket_name": "whatsapp-mcp-stored-media"
+        },
+        {
+          "binding": "DELETION_CAPSULES",
+          "bucket_name": "whatsapp-mcp-deletion-capsules"
         },
         {
           "binding": "DELETION_MARKERS",

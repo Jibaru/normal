@@ -18,6 +18,8 @@ request is accepted. Production roots accept only `development`, `preview`, or
 | `CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID` | Sensitive identifier | API Wrangler config renderer | Set from OpenTofu output `webhook_hyperdrive_id`; it is rendered into a mode-0600 generated config, not committed. |
 | `AWS_KMS_REGION` | Non-secret | API | Must be exactly `us-east-1`, matching ADR 0013 and the KMS stack region. |
 | `KMS_CONTENT_ROOT_KEY_ARN` | Non-secret | API | The environment's `ContentRootKeyArn` CloudFormation output. The production root accepts only a `us-east-1` KMS key ARN. |
+| `KMS_DELETION_COORDINATOR_KEY_ARN` | Non-secret | API Deletion Capsule writer | The environment's distinct `DeletionCoordinatorKeyArn` output. The Content Runtime role may encrypt capsules with it but cannot decrypt them. |
+| `DELETION_MARKER_HMAC_SECRET` | Secret | API deletion-marker writer | Dedicated 32-byte hex HMAC key for restore-external marker object keys. Generate independently with `openssl rand -hex 32`, retain it in the recovery inventory, and never reuse a provider-reference, webhook, cursor, or content key. |
 | `AWS_ACCESS_KEY_ID` | Secret | API | Short-lived access key from the environment's `ContentRuntimeRole`; rotate before the role session expires. |
 | `AWS_SECRET_ACCESS_KEY` | Secret | API | Short-lived secret paired with `AWS_ACCESS_KEY_ID`; never log or commit it. |
 | `AWS_SESSION_TOKEN` | Secret | API | Required role-session token. Its absence prevents the API composition root from serving requests. |
@@ -35,13 +37,13 @@ host or select a fake implementation.
 
 The API Worker receives `PROVIDER_CONTROL`, `HYPERDRIVE`,
 `WEBHOOK_HYPERDRIVE`, `OAUTH_KV`, `WEBHOOK_INGRESS`, `STORED_MEDIA`,
-`DELETION_MARKERS`, and the `INGESTION_QUEUE` producer binding. These are not
-string environment values and cannot be supplied by a public request. The
-production composition root fails closed when any required binding is absent
-or has the wrong runtime capability. `/health` remains a non-sensitive liveness
-endpoint; every other API route passes the database readiness gate, and
-`/ready` returns unavailable unless `HYPERDRIVE` can report exactly the compiled
-schema version.
+`DELETION_CAPSULES`, `DELETION_MARKERS`, and the `INGESTION_QUEUE` producer
+binding. These are not string environment values and cannot be supplied by a
+public request. The production composition root fails closed when any required
+binding is absent or has the wrong runtime capability. `/health` remains a
+non-sensitive liveness endpoint; every other API route passes the database
+readiness gate, and `/ready` returns unavailable unless `HYPERDRIVE` can report
+exactly the compiled schema version.
 
 The API Worker is also the declared consumer for the ingestion Queue and its
 dead-letter Queue. It receives no DLQ producer binding. Provider-control has no
@@ -138,15 +140,18 @@ by the compute topology are non-secret. Secret bindings must be populated
 through the platform secret stores, not through OpenTofu resource arguments
 that would serialize them into state.
 
-Each environment declares three separate R2 buckets. Encrypted Webhook Events
+Each environment declares four separate R2 buckets. Encrypted Webhook Events
 expire after seven days and incomplete multipart uploads abort after one day.
 Stored Media has no blanket object-expiry rule because Message Retention Policy
 can be shorter or explicitly retain content until deletion; application
 retention jobs own object deletion, while incomplete multipart uploads still
-abort after one day. Deletion markers cover every object path with an
-indefinite bucket lock and the bucket is protected from OpenTofu destroy. All
-three explicitly disable the public `r2.dev` managed domain, declare no custom
-domain or CORS exposure, and are reachable only through the API Worker binding.
+abort after one day. Encrypted Deletion Capsules have no age-based deletion
+rule: only confirmed provider absence permits the deletion coordinator to
+destroy one, and an overdue capsule must alert rather than silently lose the
+cleanup identifier. Deletion markers cover every object path with an indefinite
+bucket lock and the bucket is protected from OpenTofu destroy. All four buckets
+explicitly disable the public `r2.dev` managed domain and declare no custom
+domain or CORS exposure.
 
 The ingestion Queue retains unconsumed messages for seven days. Its consumer
 allows exactly seven retries and uses a three-hour default delay, giving the
@@ -166,11 +171,13 @@ use the encrypted, access-controlled S3-compatible backend configured during
 `tofu init`; never store a local production state file.
 
 The API production root also fails closed before serving requests when its KMS
-region, key ARN, or any short-lived role credential is absent or invalid.
-`KMS_CONTENT_ROOT_KEY_ARN` is safe to place in deployment configuration, while
-all three credential values belong in the platform secret store. The SDK
-receives redacted Effect configuration values and no credential, plaintext key,
-plaintext content, or ciphertext is included in application telemetry.
+region, either key ARN, the dedicated marker HMAC secret, or any short-lived
+role credential is absent or invalid. The two configured KMS key ARNs must be
+different. Both ARNs are safe to place in deployment configuration, while the
+marker HMAC and all three credential values belong in the platform secret
+store. The SDK receives redacted Effect configuration values and no credential,
+plaintext key, plaintext content, provider cleanup identifier, or ciphertext is
+included in application telemetry.
 
 Example files contain placeholders only. Add secrets with the platform secret
 command; never commit a populated environment file or `.dev.vars`.

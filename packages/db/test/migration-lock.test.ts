@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { type MigrationConnection, runMigrations } from "../src/migrations";
+import {
+  EXPECTED_SCHEMA_VERSION,
+  type MigrationConnection,
+  runMigrations,
+} from "../src/migrations";
 
 describe("migration advisory lock", () => {
   test("serializes concurrent runners before executing migration SQL", async () => {
@@ -62,7 +66,7 @@ describe("migration advisory lock", () => {
     ]);
 
     expect(maxConcurrentScripts).toBe(1);
-    expect(applied.size).toBe(1);
+    expect(applied.size).toBe(EXPECTED_SCHEMA_VERSION);
     expect(lockHeld).toBe(false);
   });
 });
