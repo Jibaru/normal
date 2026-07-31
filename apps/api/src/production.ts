@@ -1629,10 +1629,7 @@ interface ConnectionSetupScheduledRepository {
 }
 
 interface ConnectionHealthScheduledRepository
-  extends Pick<
-    ConnectionHealthRepository,
-    "claim" | "finish" | "recordEvidence"
-  > {}
+  extends Pick<ConnectionHealthRepository, "claim" | "finish"> {}
 
 export const createProductionScheduledHandler =
   (

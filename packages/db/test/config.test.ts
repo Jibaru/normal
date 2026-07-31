@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { ConfigProvider, Effect, Redacted } from "effect";
-import { databaseConfig, migrationConfig } from "../src/config";
+import {
+  databaseConfig,
+  migrationConfig,
+  restrictedApiRuntimeConnectionString,
+} from "../src/config";
 
 describe("databaseConfig", () => {
   test("keeps the Neon connection string redacted", async () => {
@@ -28,6 +32,32 @@ describe("databaseConfig", () => {
         ),
       ),
     ).rejects.toBeDefined();
+  });
+});
+
+describe("restrictedApiRuntimeConnectionString", () => {
+  test("accepts only the restricted role over TLS to Neon", () => {
+    const value = Redacted.make(
+      "postgresql://whatsapp_api_runtime:secret@ep-example-pooler.us-east-1.aws.neon.tech/database?sslmode=require",
+    );
+
+    expect(restrictedApiRuntimeConnectionString(value)).toContain(
+      "sslmode=require",
+    );
+  });
+
+  test.each([
+    "http://example.neon.tech/database?sslmode=require",
+    "postgresql://whatsapp_api_runtime:secret@example.neon.tech/database",
+    "postgresql://owner:secret@example.neon.tech/database?sslmode=require",
+    "postgresql://whatsapp_api_runtime@example.neon.tech/database?sslmode=require",
+    "postgresql://whatsapp_api_runtime:secret@localhost/database?sslmode=require",
+    "postgresql://whatsapp_api_runtime:secret@example.neon.tech/database?sslmode=require&sslmode=disable",
+    "postgresql://whatsapp_api_runtime:secret@example.neon.tech/database?host=attacker.example&sslmode=require",
+  ])("rejects unsafe API runtime URL %s", (connectionString) => {
+    expect(() =>
+      restrictedApiRuntimeConnectionString(Redacted.make(connectionString)),
+    ).toThrow("database URL is not the restricted TLS API runtime");
   });
 });
 

@@ -51,6 +51,7 @@ export interface ConnectionHealthRepository {
     readonly gapEvidence: ConnectionHealthGapEvidence;
     readonly startedAt: string;
     readonly state: ReconciledConnectionHealthState;
+    readonly webhookConfigurationHealthy: boolean;
   }) => Promise<boolean>;
   readonly recordEvidence: (input: {
     readonly active: boolean;
@@ -115,13 +116,14 @@ export const makeConnectionHealthRepository = (
     provider.withConnection(async (connection) => {
       const result = await connection.query<{ finished: unknown }>(
         `SELECT app_private.finish_whatsapp_connection_health(
-           $1, $2, $3, $4, $5, $6
+           $1, $2, $3, $4, $5, $6, $7
          ) AS finished`,
         [
           input.connectionId,
           input.claimId,
           input.state,
           input.gapEvidence,
+          input.webhookConfigurationHealthy,
           input.startedAt,
           input.checkedAt,
         ],

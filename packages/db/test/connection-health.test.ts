@@ -165,17 +165,18 @@ describe("connection health and Ingestion Gap repository", () => {
         gapEvidence: "healthy",
         startedAt: "2026-07-31T12:05:00.000Z",
         state: "connected",
+        webhookConfigurationHealthy: true,
       }),
     ).toBe(true);
     await expect(
       repository.claim({
-        claimedAt: "2026-07-31T12:10:29.000Z",
+        claimedAt: "2026-07-31T12:09:59.000Z",
         limit: 100,
       }),
     ).resolves.toEqual([]);
 
     const disconnectedClaim = await repository.claim({
-      claimedAt: "2026-07-31T12:10:30.000Z",
+      claimedAt: "2026-07-31T12:10:00.000Z",
       limit: 100,
     });
     expect(
@@ -184,13 +185,14 @@ describe("connection health and Ingestion Gap repository", () => {
         claimId: disconnectedClaim[0]?.claimId ?? "missing",
         connectionId,
         gapEvidence: "connection_unavailable",
-        startedAt: "2026-07-31T12:10:30.000Z",
+        startedAt: "2026-07-31T12:10:00.000Z",
         state: "disconnected",
+        webhookConfigurationHealthy: true,
       }),
     ).toBe(true);
 
     const recoveryClaim = await repository.claim({
-      claimedAt: "2026-07-31T12:15:45.000Z",
+      claimedAt: "2026-07-31T12:15:00.000Z",
       limit: 100,
     });
     await repository.finish({
@@ -198,8 +200,9 @@ describe("connection health and Ingestion Gap repository", () => {
       claimId: recoveryClaim[0]?.claimId ?? "missing",
       connectionId,
       gapEvidence: "healthy",
-      startedAt: "2026-07-31T12:15:45.000Z",
+      startedAt: "2026-07-31T12:15:00.000Z",
       state: "connected",
+      webhookConfigurationHealthy: true,
     });
 
     const gaps = await database.query<{
@@ -236,6 +239,7 @@ describe("connection health and Ingestion Gap repository", () => {
       gapEvidence: "healthy",
       startedAt: "2026-07-31T12:05:00.000Z",
       state: "connected",
+      webhookConfigurationHealthy: true,
     });
 
     expect(
@@ -283,6 +287,7 @@ describe("connection health and Ingestion Gap repository", () => {
       gapEvidence: "unknown",
       startedAt: "2026-07-31T12:25:30.000Z",
       state: "degraded",
+      webhookConfigurationHealthy: false,
     });
 
     const gaps = await database.query<{
@@ -323,6 +328,7 @@ describe("connection health and Ingestion Gap repository", () => {
       gapEvidence: "healthy",
       startedAt: "2026-07-31T12:05:00.000Z",
       state: "connected",
+      webhookConfigurationHealthy: true,
     });
     const drift = await repository.claim({
       claimedAt: "2026-07-31T12:10:30.000Z",
@@ -335,6 +341,7 @@ describe("connection health and Ingestion Gap repository", () => {
       gapEvidence: "webhook_configuration",
       startedAt: "2026-07-31T12:10:30.000Z",
       state: "degraded",
+      webhookConfigurationHealthy: false,
     });
     const unknown = await repository.claim({
       claimedAt: "2026-07-31T12:16:00.000Z",
@@ -347,6 +354,7 @@ describe("connection health and Ingestion Gap repository", () => {
       gapEvidence: "unknown",
       startedAt: "2026-07-31T12:16:00.000Z",
       state: "degraded",
+      webhookConfigurationHealthy: false,
     });
     const open = await database.query<{ ends_at: Date | null }>(
       `SELECT ends_at
@@ -357,17 +365,41 @@ describe("connection health and Ingestion Gap repository", () => {
     );
     expect(open.rows).toEqual([{ ends_at: null }]);
 
-    const recovered = await repository.claim({
+    const absent = await repository.claim({
       claimedAt: "2026-07-31T12:21:30.000Z",
       limit: 1,
     });
     await repository.finish({
       checkedAt: "2026-07-31T12:22:00.000Z",
+      claimId: absent[0]?.claimId ?? "missing",
+      connectionId,
+      gapEvidence: "connection_unavailable",
+      startedAt: "2026-07-31T12:21:30.000Z",
+      state: "reconnect_required",
+      webhookConfigurationHealthy: false,
+    });
+    await expect(
+      database.query<{ ends_at: Date | null }>(
+        `SELECT ends_at
+         FROM app.ingestion_gaps
+         WHERE whatsapp_connection_id = $1
+           AND cause = 'webhook_configuration'`,
+        [connectionId],
+      ),
+    ).resolves.toMatchObject({ rows: [{ ends_at: null }] });
+
+    const recovered = await repository.claim({
+      claimedAt: "2026-07-31T12:26:30.000Z",
+      limit: 1,
+    });
+    await repository.finish({
+      checkedAt: "2026-07-31T12:27:00.000Z",
       claimId: recovered[0]?.claimId ?? "missing",
       connectionId,
       gapEvidence: "healthy",
-      startedAt: "2026-07-31T12:21:30.000Z",
+      startedAt: "2026-07-31T12:26:30.000Z",
       state: "connected",
+      webhookConfigurationHealthy: true,
     });
     const closed = await database.query<{ ends_at: Date | null }>(
       `SELECT ends_at
@@ -377,7 +409,7 @@ describe("connection health and Ingestion Gap repository", () => {
       [connectionId],
     );
     expect(closed.rows).toEqual([
-      { ends_at: new Date("2026-07-31T12:22:00.000Z") },
+      { ends_at: new Date("2026-07-31T12:27:00.000Z") },
     ]);
   });
 
@@ -401,6 +433,7 @@ describe("connection health and Ingestion Gap repository", () => {
         gapEvidence: "connection_unavailable",
         startedAt: "2026-07-31T12:09:00.000Z",
         state: "disconnected",
+        webhookConfigurationHealthy: true,
       }),
     ).toBe(false);
     expect(
@@ -411,6 +444,7 @@ describe("connection health and Ingestion Gap repository", () => {
         gapEvidence: "healthy",
         startedAt: "2026-07-31T12:09:00.000Z",
         state: "connected",
+        webhookConfigurationHealthy: true,
       }),
     ).toBe(true);
   });
@@ -425,8 +459,8 @@ describe("connection health and Ingestion Gap repository", () => {
       `UPDATE app.whatsapp_connections
        SET
          state = 'disconnected',
-         state_changed_at = '2026-07-31T12:05:10.000Z',
-         state_received_at = '2026-07-31T12:05:10.000Z'
+         state_changed_at = '2026-07-31T12:05:00.000Z',
+         state_received_at = '2026-07-31T12:05:00.000Z'
        WHERE id = $1`,
       [connectionId],
     );
@@ -439,6 +473,7 @@ describe("connection health and Ingestion Gap repository", () => {
         gapEvidence: "healthy",
         startedAt: "2026-07-31T12:05:00.000Z",
         state: "connected",
+        webhookConfigurationHealthy: true,
       }),
     ).toBe(false);
 

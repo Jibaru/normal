@@ -25,6 +25,7 @@ export interface ConnectionHealthPersistenceService {
     readonly gapEvidence: ConnectionHealthGapEvidence;
     readonly startedAt: string;
     readonly state: ReconciledConnectionHealthState;
+    readonly webhookConfigurationHealthy: boolean;
   }) => Effect.Effect<boolean, ConnectionHealthPersistenceError>;
 }
 
@@ -63,6 +64,7 @@ type ConnectionHealthRequirements =
 interface NormalizedHealthObservation {
   readonly gapEvidence: ConnectionHealthGapEvidence;
   readonly state: ReconciledConnectionHealthState;
+  readonly webhookConfigurationHealthy: boolean;
 }
 
 const normalize = (
@@ -70,34 +72,57 @@ const normalize = (
 ): NormalizedHealthObservation => {
   if (!result.ok) {
     return result.error.code === "integrity_failed"
-      ? { gapEvidence: "webhook_configuration", state: "degraded" }
-      : { gapEvidence: "unknown", state: "degraded" };
+      ? {
+          gapEvidence: "webhook_configuration",
+          state: "degraded",
+          webhookConfigurationHealthy: false,
+        }
+      : {
+          gapEvidence: "unknown",
+          state: "degraded",
+          webhookConfigurationHealthy: false,
+        };
   }
   if (result.value.outcome === "absent") {
     return {
       gapEvidence: "connection_unavailable",
       state: "reconnect_required",
+      webhookConfigurationHealthy: false,
     };
   }
   if (result.value.outcome === "duplicates") {
-    return { gapEvidence: "connection_unavailable", state: "degraded" };
+    return {
+      gapEvidence: "connection_unavailable",
+      state: "degraded",
+      webhookConfigurationHealthy: false,
+    };
   }
   switch (result.value.session.connectionState) {
     case "connected":
-      return { gapEvidence: "healthy", state: "connected" };
+      return {
+        gapEvidence: "healthy",
+        state: "connected",
+        webhookConfigurationHealthy: true,
+      };
     case "disconnected":
       return {
         gapEvidence: "connection_unavailable",
         state: "disconnected",
+        webhookConfigurationHealthy: true,
       };
     case "reconnect_required":
       return {
         gapEvidence: "connection_unavailable",
         state: "reconnect_required",
+        webhookConfigurationHealthy: true,
       };
     case "connecting":
     case "degraded":
-      return { gapEvidence: "connection_unavailable", state: "degraded" };
+      return {
+        gapEvidence: "connection_unavailable",
+        state: "degraded",
+        webhookConfigurationHealthy: true,
+      };
   }
 };
 
@@ -143,7 +168,9 @@ export const reconcileConnectionHealth = (
       claimId: candidate.claimId,
       connectionId: candidate.connectionId,
       startedAt,
-      ...observation,
+      gapEvidence: observation.gapEvidence,
+      state: observation.state,
+      webhookConfigurationHealthy: observation.webhookConfigurationHealthy,
     });
     const outcome = applied ? "applied" : "superseded";
     yield* telemetry.emit({

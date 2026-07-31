@@ -1,5 +1,5 @@
-import { ConfigProvider, Effect, Redacted } from "effect";
-import { databaseConfig } from "./config";
+import { ConfigProvider, Effect } from "effect";
+import { databaseConfig, restrictedApiRuntimeConnectionString } from "./config";
 import { makePgConnectionHealthRepository } from "./connection-health";
 
 const connectionIdPattern =
@@ -13,17 +13,6 @@ type EvidenceCause = "ingress_failure" | "processing_failure" | "restore_loss";
 
 const isEvidenceCause = (value: string | undefined): value is EvidenceCause =>
   value !== undefined && causes.has(value as EvidenceCause);
-
-const apiRuntimeConnectionString = (
-  value: Redacted.Redacted<string>,
-): string => {
-  const connectionString = Redacted.value(value);
-  const url = new URL(connectionString);
-  if (url.username !== "whatsapp_api_runtime") {
-    throw new Error("database role is not the restricted API runtime");
-  }
-  return connectionString;
-};
 
 const [connectionId, cause, action, observedAt] = process.argv.slice(2);
 const observedDate = observedAt === undefined ? null : new Date(observedAt);
@@ -46,7 +35,7 @@ if (
       Effect.tryPromise({
         try: () =>
           makePgConnectionHealthRepository(
-            apiRuntimeConnectionString(config.databaseUrl),
+            restrictedApiRuntimeConnectionString(config.databaseUrl),
           ).recordEvidence({
             active: action === "open",
             cause,

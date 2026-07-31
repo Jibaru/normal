@@ -166,7 +166,11 @@ BEGIN
       AND (
         connections.health_last_checked_at IS NULL
         OR connections.health_last_checked_at
-          <= requested_claimed_at - interval '5 minutes'
+          < date_bin(
+            interval '5 minutes',
+            requested_claimed_at,
+            timestamptz '2000-01-01 00:00:00+00'
+          )
       )
     ORDER BY
       connections.health_last_checked_at NULLS FIRST,
@@ -204,6 +208,7 @@ CREATE FUNCTION app_private.finish_whatsapp_connection_health(
   requested_claim_id uuid,
   observed_state text,
   gap_evidence text,
+  webhook_configuration_healthy boolean,
   started_at timestamptz,
   checked_at timestamptz
 )
@@ -228,6 +233,11 @@ BEGIN
     'webhook_configuration',
     'unknown'
   ) OR (gap_evidence = 'healthy' AND observed_state <> 'connected')
+    OR (gap_evidence = 'healthy' AND NOT webhook_configuration_healthy)
+    OR (
+      gap_evidence IN ('webhook_configuration', 'unknown')
+      AND webhook_configuration_healthy
+    )
     OR started_at > checked_at
   THEN
     RAISE invalid_parameter_value
@@ -249,7 +259,7 @@ BEGIN
     RETURN false;
   END IF;
 
-  IF started_at < connection.state_received_at
+  IF started_at <= connection.state_received_at
     OR (
       connection.health_last_checked_at IS NOT NULL
       AND checked_at < connection.health_last_checked_at
@@ -297,7 +307,7 @@ BEGIN
     updated_at = greatest(connections.updated_at, checked_at)
   WHERE connections.id = connection.id;
 
-  IF gap_evidence IN ('healthy', 'connection_unavailable') THEN
+  IF webhook_configuration_healthy THEN
     UPDATE app.ingestion_gaps AS gaps
     SET
       ends_at = greatest(gaps.starts_at, checked_at),
@@ -454,6 +464,7 @@ REVOKE ALL
     uuid,
     text,
     text,
+    boolean,
     timestamptz,
     timestamptz
   )
@@ -479,6 +490,7 @@ GRANT EXECUTE
     uuid,
     text,
     text,
+    boolean,
     timestamptz,
     timestamptz
   )

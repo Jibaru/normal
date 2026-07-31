@@ -101,7 +101,11 @@ const makeHarness = (
 describe("five-minute connection health reconciliation", () => {
   test.each([
     {
-      expected: { gapEvidence: "healthy", state: "connected" },
+      expected: {
+        gapEvidence: "healthy",
+        state: "connected",
+        webhookConfigurationHealthy: true,
+      },
       name: "confirmed healthy provider and webhook configuration",
       observation: success({
         outcome: "present" as const,
@@ -112,6 +116,7 @@ describe("five-minute connection health reconciliation", () => {
       expected: {
         gapEvidence: "connection_unavailable",
         state: "disconnected",
+        webhookConfigurationHealthy: true,
       },
       name: "confirmed provider disconnection",
       observation: success({
@@ -123,6 +128,7 @@ describe("five-minute connection health reconciliation", () => {
       expected: {
         gapEvidence: "connection_unavailable",
         state: "reconnect_required",
+        webhookConfigurationHealthy: false,
       },
       name: "confirmed absent provider session",
       observation: success({ outcome: "absent" as const }),
@@ -131,6 +137,7 @@ describe("five-minute connection health reconciliation", () => {
       expected: {
         gapEvidence: "connection_unavailable",
         state: "reconnect_required",
+        webhookConfigurationHealthy: true,
       },
       name: "provider reconnect requirement",
       observation: success({
@@ -142,6 +149,7 @@ describe("five-minute connection health reconciliation", () => {
       expected: {
         gapEvidence: "connection_unavailable",
         state: "degraded",
+        webhookConfigurationHealthy: true,
       },
       name: "provider degraded state",
       observation: success({
@@ -153,6 +161,7 @@ describe("five-minute connection health reconciliation", () => {
       expected: {
         gapEvidence: "connection_unavailable",
         state: "degraded",
+        webhookConfigurationHealthy: true,
       },
       name: "provider state still connecting at reconciliation",
       observation: success({
@@ -164,6 +173,7 @@ describe("five-minute connection health reconciliation", () => {
       expected: {
         gapEvidence: "connection_unavailable",
         state: "degraded",
+        webhookConfigurationHealthy: false,
       },
       name: "duplicate provider sessions",
       observation: success({
@@ -178,12 +188,17 @@ describe("five-minute connection health reconciliation", () => {
       expected: {
         gapEvidence: "webhook_configuration",
         state: "degraded",
+        webhookConfigurationHealthy: false,
       },
       name: "confirmed webhook configuration drift",
       observation: failure("integrity_failed"),
     },
     {
-      expected: { gapEvidence: "unknown", state: "degraded" },
+      expected: {
+        gapEvidence: "unknown",
+        state: "degraded",
+        webhookConfigurationHealthy: false,
+      },
       name: "unavailable safe read",
       observation: failure("unavailable"),
     },
@@ -317,7 +332,6 @@ describe("five-minute connection health reconciliation", () => {
             finishes.push(input);
             return true;
           },
-          recordEvidence: async () => true,
         }),
         now: () => checkedAt,
       },
@@ -338,6 +352,7 @@ describe("five-minute connection health reconciliation", () => {
         gapEvidence: "healthy",
         startedAt: checkedAt,
         state: "connected",
+        webhookConfigurationHealthy: true,
       },
     ]);
   });

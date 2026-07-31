@@ -608,10 +608,12 @@ incident measurement or restore report may invoke it; inactivity is not an
 input. Operators invoke the same production repository through
 `bun run db:record-gap -- <internal-connection-uuid> <cause> <open|close>
 <utc-timestamp>` with a restricted API-runtime `DATABASE_URL`; the command
-never prints the Connection identifier. `connection_health.reconciliation.completed` telemetry contains only
-the normalized state, gap evidence class, applied-or-superseded outcome, and
-service name. It must never contain a User, Personal Account, Connection,
-Connection Setup, webhook URL, provider identifier, authority, or payload.
+requires the exact `whatsapp_api_runtime` role on a TLS Neon URL, rejects
+authority query overrides, and never prints the Connection identifier.
+`connection_health.reconciliation.completed` telemetry contains only the
+normalized state, gap evidence class, applied-or-superseded outcome, and service
+name. It must never contain a User, Personal Account, Connection, Connection
+Setup, webhook URL, provider identifier, authority, or payload.
 
 OpenTofu variables `cloudflare_account_id` and `neon_org_id` for
 `infra/production` are supplied through an uncommitted variable file or
