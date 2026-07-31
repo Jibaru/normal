@@ -252,10 +252,8 @@ const classifyResponse = async (
     data.msgId > 0 &&
     data.jid === providerRecipient &&
     data.status === "in_progress";
-  const documentedMessageAcknowledgement =
-    typeof parsed.message === "string" && parsed.message.length > 0;
 
-  return documentedDataAcknowledgement || documentedMessageAcknowledgement
+  return documentedDataAcknowledgement
     ? { outcome: "provider_acknowledgement", status: "accepted" }
     : { outcome: "ambiguous", reason: "invalid_response" };
 };

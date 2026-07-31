@@ -247,6 +247,22 @@ describe("real Wasender text-send adapter", () => {
     expect(harness.attempts).toHaveLength(1);
   });
 
+  test("rejects an undocumented message-only success response", async () => {
+    const harness = makeHarness({
+      fetch: () =>
+        Response.json({
+          message: "Message sent successfully",
+          success: true,
+        }),
+    });
+
+    await expect(send(harness.sending)).resolves.toEqual({
+      outcome: "ambiguous",
+      reason: "invalid_response",
+    });
+    expect(harness.attempts).toHaveLength(1);
+  });
+
   test("rejects a structurally incomplete success response", async () => {
     const harness = makeHarness({
       fetch: () =>
