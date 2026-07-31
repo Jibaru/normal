@@ -220,6 +220,7 @@ for (const deployable of deployables) {
       }
       const requiredBindings = [
         `env.OAUTH_KV (${oauthKvValidationId})`,
+        `env.CONNECTION_SETUP_PROVISIONING_QUEUE (whatsapp-mcp-connection-setup-provisioning${workerSuffix})`,
         `env.INGESTION_QUEUE (whatsapp-mcp-ingestion${workerSuffix})`,
         `env.WEBHOOK_INGRESS (whatsapp-mcp-webhook-ingress${workerSuffix})`,
         `env.STORED_MEDIA (whatsapp-mcp-stored-media${workerSuffix})`,

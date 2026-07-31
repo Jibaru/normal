@@ -23,6 +23,9 @@ type SetupState =
   | "idle"
   | "loading"
   | "pending"
+  | "provisioned"
+  | "provisioning_failed"
+  | "provisioning_quarantined"
   | "replayed"
   | "invalid"
   | "number_unavailable"
@@ -144,19 +147,28 @@ export function PublicBoundaryJourney({
         };
         readonly error?: unknown;
       };
-      if (
-        response.ok &&
-        body.connection_setup?.state === "pending" &&
-        typeof body.connection_setup.expires_at === "string" &&
-        typeof body.connection_setup.id === "string" &&
-        /^cst_[A-Za-z0-9_-]{21}$/u.test(body.connection_setup.id)
-      ) {
-        setSetupState(
-          body.connection_setup.idempotent_replay === true
-            ? "replayed"
-            : "pending",
-        );
-        return;
+      if (response.ok && body.connection_setup !== undefined) {
+        const setup = body.connection_setup;
+        if (
+          typeof setup.expires_at === "string" &&
+          typeof setup.id === "string" &&
+          /^cst_[A-Za-z0-9_-]{21}$/u.test(setup.id)
+        ) {
+          if (setup.state === "pending") {
+            setSetupState(
+              setup.idempotent_replay === true ? "replayed" : "pending",
+            );
+            return;
+          }
+          if (
+            setup.state === "provisioned" ||
+            setup.state === "provisioning_failed" ||
+            setup.state === "provisioning_quarantined"
+          ) {
+            setSetupState(setup.state);
+            return;
+          }
+        }
       }
       if (body.error === "invalid_request") {
         setSetupState("invalid");
@@ -239,13 +251,19 @@ export function PublicBoundaryJourney({
               ? "Connection Setup started. Preparing your QR code."
               : setupState === "replayed"
                 ? "Connection Setup already started. Preparing your QR code."
-                : setupState === "number_unavailable"
-                  ? "That WhatsApp Number is already in use."
-                  : setupState === "connection_limit_reached"
-                    ? "Your Personal Account already has three active setup or Connection slots."
-                    : setupState === "invalid"
-                      ? "Enter a valid international WhatsApp Number."
-                      : setupState}
+                : setupState === "provisioned"
+                  ? "Connection Setup is ready."
+                  : setupState === "provisioning_failed"
+                    ? "Connection Setup could not be prepared."
+                    : setupState === "provisioning_quarantined"
+                      ? "Connection Setup needs support review."
+                      : setupState === "number_unavailable"
+                        ? "That WhatsApp Number is already in use."
+                        : setupState === "connection_limit_reached"
+                          ? "Your Personal Account already has three active setup or Connection slots."
+                          : setupState === "invalid"
+                            ? "Enter a valid international WhatsApp Number."
+                            : setupState}
           </p>
         </form>
       ) : null}

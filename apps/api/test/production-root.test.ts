@@ -12,6 +12,7 @@ describe("API production root", () => {
   });
 
   test.each([
+    "CONNECTION_SETUP_PROVISIONING_QUEUE",
     "DELETION_CAPSULES",
     "DELETION_MARKERS",
     "INGESTION_QUEUE",

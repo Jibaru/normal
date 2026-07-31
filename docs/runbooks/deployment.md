@@ -532,9 +532,25 @@ verify that changing the number while retaining the original idempotency key,
 reserving the same number from a second Personal Account, and starting beyond
 three retained Connection/setup slots return their safe conflict states.
 Provider-control must receive no lifecycle call during these creation checks;
-the reconciled provisioning worker is the only provisioning consumer. Inspect
-only allowlisted outcome telemetry—never print the number, idempotency key,
-reservation token, setup identifier, ciphertext, or key metadata.
+the committed Queue message and reconciled provisioning worker are the only
+provisioning path. Confirm the worker reports one `provisioned` outcome after
+reconciling absence and creating, or after adopting the one matching
+non-production provider session. Replaying the Queue message must reconcile and
+ack without another create. Inspect only allowlisted outcome telemetry—never
+print the number, idempotency key, reservation token, setup identifier,
+ciphertext, provider locator, session authority, or key metadata.
+
+Exercise the reviewed provider-control test fixture for an ambiguous create
+timeout and confirm the next Queue delivery reconciles before any create
+decision. Exercise its duplicate fixture and confirm Neon exposes only the
+safe setup state `provisioning_quarantined` and duplicate count while no session
+becomes usable. A production quarantine is an incident: pause new onboarding,
+retain every reservation and encrypted provider reference, and do not manually
+repeat create or release the number. Use audited restricted diagnostics for
+state/counts only, preserve provider evidence, and follow the provider cleanup
+procedure once the cleanup workflow is deployed. A growing recovery candidate
+count, repeated normalized failure code, or setup approaching its 15-minute
+expiry requires paging the on-call operator.
 
 In the same non-production environment, start authorization from one reviewed
 allowlisted MCP Client. Confirm the consent page names that client and starts

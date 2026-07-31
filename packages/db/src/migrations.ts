@@ -97,6 +97,17 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 7,
   },
+  {
+    name: "reconciled Connection Setup provisioning",
+    sql: await readFile(
+      new NodeUrl(
+        "../migrations/0008_connection_setup_provisioning.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    version: 8,
+  },
 ];
 
 const checksum = (sql: string): string =>

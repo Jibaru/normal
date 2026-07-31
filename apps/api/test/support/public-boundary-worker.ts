@@ -9,6 +9,13 @@ import {
   ConnectionSetupNumberTokens,
   ConnectionSetupPersistence,
 } from "../../src/connection-setup";
+import {
+  ConnectionSetupProvisioningClock,
+  ConnectionSetupProvisioningIdentifiers,
+  ConnectionSetupProvisioningPersistence,
+  ConnectionSetupProvisioningProvider,
+  ConnectionSetupProvisioningQueue,
+} from "../../src/connection-setup-provisioning";
 import { EnvelopeEncryptionService } from "../../src/encryption/envelope";
 import type { Env } from "../../src/index";
 import {
@@ -48,6 +55,8 @@ const connectionSetups = new Map<
   }
 >();
 let nextConnectionSetupId = 0;
+const provisioningLeases = new Map<string, string>();
+const provisionedSetups = new Set<string>();
 
 const tokenKey = (value: Uint8Array) => Array.from(value).join(",");
 
@@ -172,6 +181,98 @@ const makeTestLayer = (failure: FailureTarget | undefined) => {
           ),
         ),
     }),
+    Layer.succeed(ConnectionSetupProvisioningQueue, {
+      enqueue: () => Effect.void,
+    }),
+    Layer.succeed(ConnectionSetupProvisioningClock, {
+      now: Effect.succeed("2026-01-02T03:05:00.000Z"),
+    }),
+    Layer.succeed(ConnectionSetupProvisioningIdentifiers, {
+      nextWorkerId: Effect.succeed(
+        "cspw_0000000000000000000000000000000000000000000",
+      ),
+    }),
+    Layer.succeed(ConnectionSetupProvisioningPersistence, {
+      claim: ({ setupId, workerId }) =>
+        Effect.sync(() => {
+          if (provisionedSetups.has(setupId)) {
+            return { outcome: "not_pending" as const };
+          }
+          if (provisioningLeases.has(setupId)) {
+            return { outcome: "leased" as const };
+          }
+          provisioningLeases.set(setupId, workerId);
+          return {
+            outcome: "claimed" as const,
+            setup: {
+              accountKey: {
+                ciphertext: "AQID",
+                keyVersion: 1,
+                kmsKeyId:
+                  "arn:aws:kms:us-east-1:111122223333:key/test-content-root",
+                personalAccountId: "10000000-0000-4000-8000-000000000018",
+                version: 1 as const,
+              },
+              connectionKey: {
+                accountKeyVersion: 1,
+                ciphertext: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcY",
+                connectionId: setupId,
+                keyVersion: 1,
+                nonce: "AQIDBAUGBwgJCgsM",
+                personalAccountId: "10000000-0000-4000-8000-000000000018",
+                version: 1 as const,
+              },
+              numberCiphertext: {
+                ciphertext: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcY",
+                keyVersion: 1,
+                nonce: "AQIDBAUGBwgJCgsM",
+                version: 1 as const,
+              },
+              personalAccountId: "10000000-0000-4000-8000-000000000018",
+              setupId,
+            },
+          };
+        }),
+      finish: ({ setupId, workerId }) =>
+        Effect.sync(() => {
+          if (provisioningLeases.get(setupId) !== workerId) return false;
+          provisioningLeases.delete(setupId);
+          provisionedSetups.add(setupId);
+          return true;
+        }),
+      fail: ({ setupId, workerId }) =>
+        Effect.sync(() => {
+          if (provisioningLeases.get(setupId) !== workerId) return false;
+          provisioningLeases.delete(setupId);
+          provisionedSetups.add(setupId);
+          return true;
+        }),
+      listCandidates: () => Effect.succeed([]),
+      release: ({ setupId, workerId }) =>
+        Effect.sync(() => {
+          if (provisioningLeases.get(setupId) !== workerId) return false;
+          provisioningLeases.delete(setupId);
+          return true;
+        }),
+      renew: ({ setupId, workerId }) =>
+        Effect.sync(() => provisioningLeases.get(setupId) === workerId),
+    }),
+    Layer.succeed(ConnectionSetupProvisioningProvider, {
+      create: () =>
+        Effect.succeed({
+          ok: true as const,
+          value: {
+            authority: "test-session-authority",
+            connectionState: "disconnected" as const,
+            session: "wsl_0000000000000000000000000000000000000000000",
+          },
+        }),
+      reconcile: () =>
+        Effect.succeed({
+          ok: true as const,
+          value: { outcome: "absent" as const },
+        }),
+    }),
     Layer.succeed(ConnectionSetupPersistence, {
       prepare: ({ idempotencyKey, numberToken }) =>
         Effect.sync(() => {
@@ -234,7 +335,10 @@ const makeTestLayer = (failure: FailureTarget | undefined) => {
           personalAccountId: accountId,
           version: 1 as const,
         }),
-      decrypt: () => Effect.die("not used"),
+      decrypt: ({ context }) =>
+        context.fieldOrObjectPurpose === "whatsapp-number"
+          ? Effect.succeed(new TextEncoder().encode("+15550123456"))
+          : Effect.die("not used"),
       encrypt: () =>
         Effect.succeed({
           ciphertext: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcY",
@@ -259,6 +363,7 @@ const worker = createPublicBoundaryWorker({
   fallback: (request, environment) =>
     createProductionHandler(environment as Env)(request),
   layerFor: (request) => makeTestLayer(selectedFailure(request)),
+  provisioningLayer: makeTestLayer(undefined),
 });
 
 export default worker;

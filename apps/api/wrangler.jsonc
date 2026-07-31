@@ -64,11 +64,23 @@
   "queues": {
     "producers": [
       {
+        "binding": "CONNECTION_SETUP_PROVISIONING_QUEUE",
+        "queue": "whatsapp-mcp-connection-setup-provisioning"
+      },
+      {
         "binding": "INGESTION_QUEUE",
         "queue": "whatsapp-mcp-ingestion"
       }
     ],
     "consumers": [
+      {
+        "queue": "whatsapp-mcp-connection-setup-provisioning",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 10,
+        "retry_delay": 30,
+        "visibility_timeout_ms": 180000
+      },
       {
         "queue": "whatsapp-mcp-ingestion",
         "dead_letter_queue": "whatsapp-mcp-ingestion-dlq",
@@ -145,11 +157,23 @@
       "queues": {
         "producers": [
           {
+            "binding": "CONNECTION_SETUP_PROVISIONING_QUEUE",
+            "queue": "whatsapp-mcp-connection-setup-provisioning-development"
+          },
+          {
             "binding": "INGESTION_QUEUE",
             "queue": "whatsapp-mcp-ingestion-development"
           }
         ],
         "consumers": [
+          {
+            "queue": "whatsapp-mcp-connection-setup-provisioning-development",
+            "max_batch_size": 1,
+            "max_batch_timeout": 1,
+            "max_retries": 10,
+            "retry_delay": 30,
+            "visibility_timeout_ms": 180000
+          },
           {
             "queue": "whatsapp-mcp-ingestion-development",
             "dead_letter_queue": "whatsapp-mcp-ingestion-dlq-development",
@@ -226,11 +250,23 @@
       "queues": {
         "producers": [
           {
+            "binding": "CONNECTION_SETUP_PROVISIONING_QUEUE",
+            "queue": "whatsapp-mcp-connection-setup-provisioning-preview"
+          },
+          {
             "binding": "INGESTION_QUEUE",
             "queue": "whatsapp-mcp-ingestion-preview"
           }
         ],
         "consumers": [
+          {
+            "queue": "whatsapp-mcp-connection-setup-provisioning-preview",
+            "max_batch_size": 1,
+            "max_batch_timeout": 1,
+            "max_retries": 10,
+            "retry_delay": 30,
+            "visibility_timeout_ms": 180000
+          },
           {
             "queue": "whatsapp-mcp-ingestion-preview",
             "dead_letter_queue": "whatsapp-mcp-ingestion-dlq-preview",
@@ -307,11 +343,23 @@
       "queues": {
         "producers": [
           {
+            "binding": "CONNECTION_SETUP_PROVISIONING_QUEUE",
+            "queue": "whatsapp-mcp-connection-setup-provisioning"
+          },
+          {
             "binding": "INGESTION_QUEUE",
             "queue": "whatsapp-mcp-ingestion"
           }
         ],
         "consumers": [
+          {
+            "queue": "whatsapp-mcp-connection-setup-provisioning",
+            "max_batch_size": 1,
+            "max_batch_timeout": 1,
+            "max_retries": 10,
+            "retry_delay": 30,
+            "visibility_timeout_ms": 180000
+          },
           {
             "queue": "whatsapp-mcp-ingestion",
             "dead_letter_queue": "whatsapp-mcp-ingestion-dlq",

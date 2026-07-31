@@ -233,4 +233,213 @@ describe("Connection Setup repository", () => {
       await database.exec("ROLLBACK; RESET ROLE");
     }
   });
+
+  test("leases provisioning once and atomically quarantines encrypted duplicate sessions", async () => {
+    const repository = makeConnectionSetupRepository(provider);
+    await repository.start(
+      startInput(
+        accountA,
+        "cst_000000000000000000001",
+        "123456789012345678901",
+        1,
+      ),
+    );
+
+    const claimed = await repository.claimProvisioning({
+      claimedAt: "2026-07-31T12:01:00.000Z",
+      setupId: "cst_000000000000000000001",
+      workerId: "cspw_0000000000000000000000000000000000000000000",
+    });
+    const concurrent = await repository.claimProvisioning({
+      claimedAt: "2026-07-31T12:01:01.000Z",
+      setupId: "cst_000000000000000000001",
+      workerId: "cspw_1111111111111111111111111111111111111111111",
+    });
+
+    expect(claimed).toMatchObject({
+      outcome: "claimed",
+      setup: {
+        accountKey: {
+          keyVersion: 1,
+          personalAccountId: accountA,
+          version: 1,
+        },
+        connectionKey: {
+          connectionId: "cst_000000000000000000001",
+          keyVersion: 1,
+          personalAccountId: accountA,
+          version: 1,
+        },
+        personalAccountId: accountA,
+        setupId: "cst_000000000000000000001",
+      },
+    });
+    expect(concurrent).toEqual({ outcome: "leased" });
+    await expect(
+      repository.renewProvisioningLease({
+        observedAt: "2026-07-31T12:01:30.000Z",
+        setupId: "cst_000000000000000000001",
+        workerId: "cspw_0000000000000000000000000000000000000000000",
+      }),
+    ).resolves.toBe(true);
+
+    const finished = await repository.finishProvisioning({
+      observedAt: "2026-07-31T12:01:31.000Z",
+      outcome: "quarantined",
+      sessions: [1, 2].map((fill, ordinal) => ({
+        authorityCiphertext: new Uint8Array(32).fill(fill),
+        authorityCiphertextVersion: 1,
+        authorityKeyVersion: 1,
+        authorityNonce: new Uint8Array(12).fill(fill),
+        locatorCiphertext: new Uint8Array(32).fill(fill + 2),
+        locatorCiphertextVersion: 1,
+        locatorKeyVersion: 1,
+        locatorNonce: new Uint8Array(12).fill(fill + 2),
+        ordinal,
+      })),
+      setupId: "cst_000000000000000000001",
+      workerId: "cspw_0000000000000000000000000000000000000000000",
+    });
+
+    expect(finished).toBe(true);
+    const persisted = await database.query<{
+      provider_session_count: number;
+      state: string;
+    }>(`
+      SELECT
+        setups.state,
+        count(provider_sessions.ordinal)::integer AS provider_session_count
+      FROM app.connection_setups AS setups
+      LEFT JOIN app.connection_setup_provider_sessions AS provider_sessions
+        ON provider_sessions.personal_account_id = setups.personal_account_id
+       AND provider_sessions.connection_setup_id = setups.id
+      WHERE setups.id = 'cst_000000000000000000001'
+      GROUP BY setups.state
+    `);
+    expect(persisted.rows).toEqual([
+      {
+        provider_session_count: 2,
+        state: "provisioning_quarantined",
+      },
+    ]);
+    await expect(
+      repository.prepare({
+        clerkUserId: "user_setupa",
+        idempotencyKey: "123456789012345678901",
+        numberToken: new Uint8Array(32).fill(1),
+      }),
+    ).resolves.toMatchObject({
+      outcome: "replay",
+      setup: { state: "provisioning_quarantined" },
+    });
+    await database.exec("SET ROLE whatsapp_api_runtime; BEGIN");
+    try {
+      await database.query(
+        "SELECT set_config('app.personal_account_id', $1, true)",
+        [accountB],
+      );
+      const crossTenant = await database.query(
+        "SELECT ordinal FROM app.connection_setup_provider_sessions",
+      );
+      expect(crossTenant.rows).toEqual([]);
+      await database.exec("ROLLBACK; SET ROLE whatsapp_api_runtime; BEGIN");
+      await database.query(
+        "SELECT set_config('app.personal_account_id', $1, true)",
+        [accountA],
+      );
+      const owningTenant = await database.query<{ ordinal: number }>(
+        `SELECT ordinal
+         FROM app.connection_setup_provider_sessions
+         ORDER BY ordinal`,
+      );
+      expect(owningTenant.rows).toEqual([{ ordinal: 0 }, { ordinal: 1 }]);
+    } finally {
+      await database.exec("ROLLBACK; RESET ROLE");
+    }
+    await expect(
+      repository.claimProvisioning({
+        claimedAt: "2026-07-31T12:02:00.000Z",
+        setupId: "cst_000000000000000000001",
+        workerId: "cspw_2222222222222222222222222222222222222222222",
+      }),
+    ).resolves.toEqual({ outcome: "not_pending" });
+  });
+
+  test("releases an ambiguous attempt for reconcile-first retry and recovers unleased intents", async () => {
+    const repository = makeConnectionSetupRepository(provider);
+    await repository.start(
+      startInput(
+        accountA,
+        "cst_000000000000000000001",
+        "123456789012345678901",
+        1,
+      ),
+    );
+    await repository.claimProvisioning({
+      claimedAt: "2026-07-31T12:01:00.000Z",
+      setupId: "cst_000000000000000000001",
+      workerId: "cspw_0000000000000000000000000000000000000000000",
+    });
+
+    await expect(
+      repository.releaseProvisioningLease({
+        failureCode: "timed_out",
+        observedAt: "2026-07-31T12:01:15.000Z",
+        setupId: "cst_000000000000000000001",
+        workerId: "cspw_0000000000000000000000000000000000000000000",
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      repository.listProvisioningCandidates({
+        limit: 100,
+        observedAt: "2026-07-31T12:01:16.000Z",
+      }),
+    ).resolves.toEqual(["cst_000000000000000000001"]);
+
+    const retry = await repository.claimProvisioning({
+      claimedAt: "2026-07-31T12:01:16.000Z",
+      setupId: "cst_000000000000000000001",
+      workerId: "cspw_1111111111111111111111111111111111111111111",
+    });
+    expect(retry).toMatchObject({ outcome: "claimed" });
+  });
+
+  test("makes a definitive lifecycle rejection terminal and ineligible for recovery", async () => {
+    const repository = makeConnectionSetupRepository(provider);
+    await repository.start(
+      startInput(
+        accountA,
+        "cst_000000000000000000001",
+        "123456789012345678901",
+        1,
+      ),
+    );
+    await repository.claimProvisioning({
+      claimedAt: "2026-07-31T12:01:00.000Z",
+      setupId: "cst_000000000000000000001",
+      workerId: "cspw_0000000000000000000000000000000000000000000",
+    });
+
+    await expect(
+      repository.failProvisioning({
+        failureCode: "source_rejected",
+        observedAt: "2026-07-31T12:01:15.000Z",
+        setupId: "cst_000000000000000000001",
+        workerId: "cspw_0000000000000000000000000000000000000000000",
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      repository.listProvisioningCandidates({
+        limit: 100,
+        observedAt: "2026-07-31T12:01:16.000Z",
+      }),
+    ).resolves.toEqual([]);
+    await expect(
+      repository.claimProvisioning({
+        claimedAt: "2026-07-31T12:01:16.000Z",
+        setupId: "cst_000000000000000000001",
+        workerId: "cspw_1111111111111111111111111111111111111111111",
+      }),
+    ).resolves.toEqual({ outcome: "not_pending" });
+  });
 });

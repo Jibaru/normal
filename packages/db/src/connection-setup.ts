@@ -19,7 +19,11 @@ export interface ConnectionSetupRecord {
   readonly createdAt: string;
   readonly expiresAt: string;
   readonly setupId: string;
-  readonly state: "provisioning_pending";
+  readonly state:
+    | "provisioned"
+    | "provisioning_failed"
+    | "provisioning_pending"
+    | "provisioning_quarantined";
 }
 
 export type PreparedConnectionSetup =
@@ -74,10 +78,104 @@ export type StartedConnectionSetup =
         | "number_unavailable";
     };
 
+export interface ConnectionSetupProvisioningClaimInput {
+  readonly claimedAt: string;
+  readonly setupId: string;
+  readonly workerId: string;
+}
+
+export type ConnectionSetupProvisioningClaim =
+  | {
+      readonly outcome: "claimed";
+      readonly setup: {
+        readonly accountKey: {
+          readonly ciphertext: string;
+          readonly keyVersion: number;
+          readonly kmsKeyId: string;
+          readonly personalAccountId: string;
+          readonly version: 1;
+        };
+        readonly connectionKey: {
+          readonly accountKeyVersion: number;
+          readonly ciphertext: string;
+          readonly connectionId: string;
+          readonly keyVersion: number;
+          readonly nonce: string;
+          readonly personalAccountId: string;
+          readonly version: 1;
+        };
+        readonly numberCiphertext: {
+          readonly ciphertext: string;
+          readonly keyVersion: number;
+          readonly nonce: string;
+          readonly version: 1;
+        };
+        readonly personalAccountId: string;
+        readonly setupId: string;
+      };
+    }
+  | {
+      readonly outcome: "expired" | "leased" | "not_found" | "not_pending";
+    };
+
+export interface EncryptedConnectionSetupProviderSession {
+  readonly authorityCiphertext: Uint8Array;
+  readonly authorityCiphertextVersion: number;
+  readonly authorityKeyVersion: number;
+  readonly authorityNonce: Uint8Array;
+  readonly locatorCiphertext: Uint8Array;
+  readonly locatorCiphertextVersion: number;
+  readonly locatorKeyVersion: number;
+  readonly locatorNonce: Uint8Array;
+  readonly ordinal: number;
+}
+
+export interface FinishConnectionSetupProvisioningInput {
+  readonly observedAt: string;
+  readonly outcome: "provisioned" | "quarantined";
+  readonly sessions: ReadonlyArray<EncryptedConnectionSetupProviderSession>;
+  readonly setupId: string;
+  readonly workerId: string;
+}
+
+export interface RenewConnectionSetupProvisioningLeaseInput {
+  readonly observedAt: string;
+  readonly setupId: string;
+  readonly workerId: string;
+}
+
+export interface ReleaseConnectionSetupProvisioningLeaseInput
+  extends RenewConnectionSetupProvisioningLeaseInput {
+  readonly failureCode: string;
+}
+
+export interface ListConnectionSetupProvisioningCandidatesInput {
+  readonly limit: number;
+  readonly observedAt: string;
+}
+
 export interface ConnectionSetupRepository {
+  readonly claimProvisioning: (
+    input: ConnectionSetupProvisioningClaimInput,
+  ) => Promise<ConnectionSetupProvisioningClaim>;
+  readonly finishProvisioning: (
+    input: FinishConnectionSetupProvisioningInput,
+  ) => Promise<boolean>;
+  readonly failProvisioning: (
+    input: ReleaseConnectionSetupProvisioningLeaseInput,
+  ) => Promise<boolean>;
+  readonly listProvisioningCandidates: (
+    input: ListConnectionSetupProvisioningCandidatesInput,
+  ) => Promise<ReadonlyArray<string>>;
   readonly prepare: (
     input: PrepareConnectionSetupInput,
   ) => Promise<PreparedConnectionSetup | null>;
+  readonly releaseProvisioningLease: (
+    input: ReleaseConnectionSetupProvisioningLeaseInput,
+  ) => Promise<boolean>;
+  readonly renewProvisioningLease: (
+    input: RenewConnectionSetupProvisioningLeaseInput,
+  ) => Promise<boolean>;
   readonly start: (
     input: StartConnectionSetupInput,
   ) => Promise<StartedConnectionSetup>;
@@ -179,7 +277,10 @@ const setupRecord = (
   const expiresAt = timestamp(row?.[`${prefix}expires_at`]);
   if (
     typeof setupId !== "string" ||
-    state !== "provisioning_pending" ||
+    (state !== "provisioned" &&
+      state !== "provisioning_failed" &&
+      state !== "provisioning_pending" &&
+      state !== "provisioning_quarantined") ||
     createdAt === null ||
     expiresAt === null
   ) {
@@ -200,9 +301,173 @@ interface StartRow extends SetupRow {
   readonly outcome: unknown;
 }
 
+interface ProvisioningClaimRow extends Record<string, unknown> {
+  readonly account_key_ciphertext: unknown;
+  readonly account_key_version: unknown;
+  readonly account_kms_key_id: unknown;
+  readonly connection_key_account_version: unknown;
+  readonly connection_key_ciphertext: unknown;
+  readonly connection_key_nonce: unknown;
+  readonly connection_key_version: unknown;
+  readonly number_ciphertext: unknown;
+  readonly number_ciphertext_version: unknown;
+  readonly number_key_version: unknown;
+  readonly number_nonce: unknown;
+  readonly outcome: unknown;
+  readonly personal_account_id: unknown;
+}
+
+const provisioningClaim = (
+  setupId: string,
+  row: ProvisioningClaimRow | undefined,
+): ConnectionSetupProvisioningClaim => {
+  if (
+    row?.outcome === "expired" ||
+    row?.outcome === "leased" ||
+    row?.outcome === "not_found" ||
+    row?.outcome === "not_pending"
+  ) {
+    return { outcome: row.outcome };
+  }
+  const accountKeyCiphertext = bytes(row?.account_key_ciphertext);
+  const accountKeyVersion = positiveInteger(row?.account_key_version);
+  const connectionKeyAccountVersion = positiveInteger(
+    row?.connection_key_account_version,
+  );
+  const connectionKeyCiphertext = bytes(row?.connection_key_ciphertext);
+  const connectionKeyNonce = bytes(row?.connection_key_nonce);
+  const connectionKeyVersion = positiveInteger(row?.connection_key_version);
+  const numberCiphertext = bytes(row?.number_ciphertext);
+  const numberCiphertextVersion = positiveInteger(
+    row?.number_ciphertext_version,
+  );
+  const numberKeyVersion = positiveInteger(row?.number_key_version);
+  const numberNonce = bytes(row?.number_nonce);
+  if (
+    row?.outcome !== "claimed" ||
+    typeof row.personal_account_id !== "string" ||
+    typeof row.account_kms_key_id !== "string" ||
+    accountKeyCiphertext === null ||
+    accountKeyVersion === null ||
+    connectionKeyAccountVersion === null ||
+    connectionKeyCiphertext === null ||
+    connectionKeyNonce === null ||
+    connectionKeyVersion === null ||
+    numberCiphertext === null ||
+    numberCiphertextVersion !== 1 ||
+    numberKeyVersion === null ||
+    numberNonce === null
+  ) {
+    throw new Error("invalid Connection Setup provisioning claim");
+  }
+  return {
+    outcome: "claimed",
+    setup: {
+      accountKey: {
+        ciphertext: encodeBase64(accountKeyCiphertext),
+        keyVersion: accountKeyVersion,
+        kmsKeyId: row.account_kms_key_id,
+        personalAccountId: row.personal_account_id,
+        version: 1,
+      },
+      connectionKey: {
+        accountKeyVersion: connectionKeyAccountVersion,
+        ciphertext: encodeBase64(connectionKeyCiphertext),
+        connectionId: setupId,
+        keyVersion: connectionKeyVersion,
+        nonce: encodeBase64(connectionKeyNonce),
+        personalAccountId: row.personal_account_id,
+        version: 1,
+      },
+      numberCiphertext: {
+        ciphertext: encodeBase64(numberCiphertext),
+        keyVersion: numberKeyVersion,
+        nonce: encodeBase64(numberNonce),
+        version: numberCiphertextVersion,
+      },
+      personalAccountId: row.personal_account_id,
+      setupId,
+    },
+  };
+};
+
+const serializedProviderSessions = (
+  sessions: ReadonlyArray<EncryptedConnectionSetupProviderSession>,
+) =>
+  JSON.stringify(
+    sessions.map((session) => ({
+      authorityCiphertext: encodeBase64(session.authorityCiphertext),
+      authorityCiphertextVersion: session.authorityCiphertextVersion,
+      authorityKeyVersion: session.authorityKeyVersion,
+      authorityNonce: encodeBase64(session.authorityNonce),
+      locatorCiphertext: encodeBase64(session.locatorCiphertext),
+      locatorCiphertextVersion: session.locatorCiphertextVersion,
+      locatorKeyVersion: session.locatorKeyVersion,
+      locatorNonce: encodeBase64(session.locatorNonce),
+      ordinal: session.ordinal,
+    })),
+  );
+
 export const makeConnectionSetupRepository = (
   provider: ConnectionSetupConnectionProvider,
 ): ConnectionSetupRepository => ({
+  claimProvisioning: (input) =>
+    provider.withConnection(async (connection) => {
+      const result = await connection.query<ProvisioningClaimRow>(
+        `SELECT *
+         FROM app_private.claim_connection_setup_provisioning($1, $2, $3)`,
+        [input.setupId, input.workerId, input.claimedAt],
+      );
+      return provisioningClaim(input.setupId, result.rows[0]);
+    }),
+  finishProvisioning: (input) =>
+    provider.withConnection(async (connection) => {
+      const result = await connection.query<{ finished: unknown }>(
+        `SELECT app_private.finish_connection_setup_provisioning(
+           $1, $2, $3, $4, $5::jsonb
+         ) AS finished`,
+        [
+          input.setupId,
+          input.workerId,
+          input.observedAt,
+          input.outcome,
+          serializedProviderSessions(input.sessions),
+        ],
+      );
+      if (typeof result.rows[0]?.finished !== "boolean") {
+        throw new Error("invalid Connection Setup provisioning result");
+      }
+      return result.rows[0].finished;
+    }),
+  failProvisioning: (input) =>
+    provider.withConnection(async (connection) => {
+      const result = await connection.query<{ failed: unknown }>(
+        `SELECT app_private.fail_connection_setup_provisioning(
+           $1, $2, $3, $4
+         ) AS failed`,
+        [input.setupId, input.workerId, input.observedAt, input.failureCode],
+      );
+      if (typeof result.rows[0]?.failed !== "boolean") {
+        throw new Error("invalid Connection Setup provisioning failure");
+      }
+      return result.rows[0].failed;
+    }),
+  listProvisioningCandidates: (input) =>
+    provider.withConnection(async (connection) => {
+      const result = await connection.query<{ setup_id: unknown }>(
+        `SELECT setup_id
+         FROM app_private.list_connection_setup_provisioning_candidates(
+           $1, $2
+         )`,
+        [input.observedAt, input.limit],
+      );
+      return result.rows.map((row) => {
+        if (typeof row.setup_id !== "string") {
+          throw new Error("invalid Connection Setup provisioning candidate");
+        }
+        return row.setup_id;
+      });
+    }),
   prepare: (input) =>
     provider.withConnection((connection) =>
       withTransaction(connection, async () => {
@@ -265,6 +530,32 @@ export const makeConnectionSetupRepository = (
         };
       }),
     ),
+  releaseProvisioningLease: (input) =>
+    provider.withConnection(async (connection) => {
+      const result = await connection.query<{ released: unknown }>(
+        `SELECT app_private.release_connection_setup_provisioning_lease(
+           $1, $2, $3, $4
+         ) AS released`,
+        [input.setupId, input.workerId, input.observedAt, input.failureCode],
+      );
+      if (typeof result.rows[0]?.released !== "boolean") {
+        throw new Error("invalid Connection Setup provisioning release");
+      }
+      return result.rows[0].released;
+    }),
+  renewProvisioningLease: (input) =>
+    provider.withConnection(async (connection) => {
+      const result = await connection.query<{ renewed: unknown }>(
+        `SELECT app_private.renew_connection_setup_provisioning_lease(
+           $1, $2, $3
+         ) AS renewed`,
+        [input.setupId, input.workerId, input.observedAt],
+      );
+      if (typeof result.rows[0]?.renewed !== "boolean") {
+        throw new Error("invalid Connection Setup provisioning renewal");
+      }
+      return result.rows[0].renewed;
+    }),
   start: (input) =>
     provider.withConnection((connection) =>
       withTransaction(connection, async () => {

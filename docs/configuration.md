@@ -49,13 +49,14 @@ host or select a fake implementation.
 
 The API Worker receives `PROVIDER_CONTROL`, `HYPERDRIVE`,
 `WEBHOOK_HYPERDRIVE`, `OAUTH_KV`, `WEBHOOK_INGRESS`, `STORED_MEDIA`,
-`DELETION_CAPSULES`, `DELETION_MARKERS`, and the `INGESTION_QUEUE` producer
-binding. These are not string environment values and cannot be supplied by a
-public request. The production composition root fails closed when any required
-binding is absent or has the wrong runtime capability. `/health` remains a
-non-sensitive liveness endpoint; every other API route passes the database
-readiness gate, and `/ready` returns unavailable unless `HYPERDRIVE` can report
-exactly the compiled schema version.
+`DELETION_CAPSULES`, `DELETION_MARKERS`, the `INGESTION_QUEUE` producer
+binding, and the dedicated `CONNECTION_SETUP_PROVISIONING_QUEUE` producer and
+consumer binding. These are not string environment values and cannot be
+supplied by a public request. The production composition root fails closed
+when any required binding is absent or has the wrong runtime capability.
+`/health` remains a non-sensitive liveness endpoint; every other API route
+passes the database readiness gate, and `/ready` returns unavailable unless
+`HYPERDRIVE` can report exactly the compiled schema version.
 
 `PROVIDER_CONTROL` is a Cloudflare RPC service binding with the closed
 `listSessions`, `createSession`, `connectSession`, `getQrCode`,
@@ -271,6 +272,40 @@ bound browser key returns `idempotency_conflict`. Telemetry contains only
 It never contains the number, token, idempotency key, Connection Setup
 identifier, Personal Account identifier, ciphertext, or key metadata.
 
+## Connection Setup provisioning
+
+After the setup transaction commits, the API publishes only the opaque setup
+identifier and a fixed message version to
+`CONNECTION_SETUP_PROVISIONING_QUEUE`. A failed publication makes the HTTP
+request unavailable but does not roll back durable intent; an exact browser
+retry republishes the same setup, and the minute recovery scan republishes up
+to 100 unleased, unexpired intents. Duplicate Queue deliveries are expected.
+
+One restricted worker claims a two-minute Neon lease, asks provider-control to
+reconcile the setup identifier as the deterministic provider marker, and only
+permits create after confirmed absence. It renews the lease immediately before
+that write. One match is adopted without create. Two or more matches are
+stored as encrypted duplicate records and move the setup to
+`provisioning_quarantined`; no matching session is selected as usable.
+Successful create or adoption encrypts both the opaque provider locator and
+per-session authority under the setup key in one Neon transition to
+`provisioned`. Plaintext WhatsApp Number, provider locator, and session
+authority exist only in worker memory for the bounded attempt.
+
+Lifecycle write failure, timeout, or a crash never authorizes a repeated
+create. The lease is released with only an allowlisted failure code when
+possible, and every later attempt begins with reconciliation. A definitive
+`do_not_retry` lifecycle rejection enters visible `provisioning_failed` state
+and is not selected by recovery; it cannot become a repeated create loop.
+Queue delivery
+uses batches of one, a three-minute visibility timeout, ten 30-second delivery
+retries, and seven-day retention. The durable setup and minute recovery scan
+remain authoritative if Cloudflare exhausts a delivery. Telemetry contains
+only `connection_setup.provision.completed`, service, allowlisted outcome and
+optional normalized failure code, plus recovery candidate counts; it never
+contains setup/account identifiers, number material, provider values, or
+ciphertext.
+
 ## Wasender media authority
 
 The Wasender media adapter has no hostname, endpoint, redirect, timeout, or
@@ -373,13 +408,15 @@ marker bucket is also protected from OpenTofu destroy. All four buckets
 explicitly disable the public `r2.dev` managed domain and declare no custom
 domain or CORS exposure.
 
-The ingestion Queue retains unconsumed messages for seven days. Its consumer
-allows exactly seven retries and uses a three-hour default delay, giving the
-roughly 21-hour bound required by ADR 0005; ingestion code may select a jittered
-per-message delay inside that cap. Exhausted items move to the actively consumed
-DLQ, whose unconsumed retention is four days. API cron triggers run durable
-maintenance each minute, connection and webhook health reconciliation every
-five minutes, and retention/deletion cleanup hourly. Resource names use the
+The provisioning and ingestion Queues retain unconsumed messages for seven
+days. Provisioning uses the bounded reconcile-first retry policy above.
+Ingestion allows exactly seven retries and uses a three-hour default delay,
+giving the roughly 21-hour bound required by ADR 0005; ingestion code may
+select a jittered per-message delay inside that cap. Exhausted ingestion items
+move to the actively consumed DLQ, whose unconsumed retention is four days.
+API cron triggers run durable provisioning recovery and other maintenance each
+minute, connection and webhook health reconciliation every five minutes, and
+retention/deletion cleanup hourly. Resource names use the
 deployment-environment suffix outside production so development, preview, and
 production never share state by name.
 

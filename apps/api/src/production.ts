@@ -1,5 +1,9 @@
 import { KMSClient } from "@aws-sdk/client-kms";
 import { makeConnectionSetupId } from "@whatsapp-mcp/contracts/handles";
+import type {
+  ProviderControlFailure,
+  ProviderControlService,
+} from "@whatsapp-mcp/contracts/provider-control";
 import { makePgConnectionSetupRepository } from "@whatsapp-mcp/db/connection-setup";
 import { checkDatabaseReadiness } from "@whatsapp-mcp/db/connectivity";
 import { makePgMcpAuthorizationRepository } from "@whatsapp-mcp/db/mcp-authorization";
@@ -18,6 +22,17 @@ import {
   isConnectionSetupRequest,
   makeConnectionSetupNumberTokens,
 } from "./connection-setup";
+import {
+  ConnectionSetupProvisioningClock,
+  ConnectionSetupProvisioningIdentifiers,
+  ConnectionSetupProvisioningPersistence,
+  ConnectionSetupProvisioningPersistenceError,
+  ConnectionSetupProvisioningProvider,
+  ConnectionSetupProvisioningQueue,
+  ConnectionSetupProvisioningQueueError,
+  connectionSetupProvisioningMessage,
+  handleConnectionSetupProvisioningBatch,
+} from "./connection-setup-provisioning";
 import {
   type DeletionCapsuleWriteBucket,
   makeDeletionCapsuleWriter,
@@ -81,6 +96,7 @@ export interface ApiEnvironment {
         readonly connectionString: string;
       }
     | undefined;
+  readonly CONNECTION_SETUP_PROVISIONING_QUEUE?: unknown;
   readonly KMS_CONTENT_ROOT_KEY_ARN?: string | undefined;
   readonly KMS_DELETION_COORDINATOR_KEY_ARN?: string | undefined;
   readonly INGESTION_QUEUE?: unknown;
@@ -283,6 +299,11 @@ const validateCloudflareBindings = (
   environment: ApiEnvironment,
 ): Effect.Effect<void, MissingCloudflareBinding> => {
   const bindings = [
+    [
+      "CONNECTION_SETUP_PROVISIONING_QUEUE",
+      environment.CONNECTION_SETUP_PROVISIONING_QUEUE,
+      ["send", "sendBatch"],
+    ],
     ["DELETION_CAPSULES", environment.DELETION_CAPSULES, ["get", "put"]],
     ["DELETION_MARKERS", environment.DELETION_MARKERS, ["get", "list", "put"]],
     ["INGESTION_QUEUE", environment.INGESTION_QUEUE, ["send"]],
@@ -452,6 +473,148 @@ const connectionSetupPersistenceLayer = (environment: ApiEnvironment) =>
       }),
   });
 
+const connectionSetupProvisioningPersistenceLayer = (
+  environment: ApiEnvironment,
+) =>
+  Layer.succeed(ConnectionSetupProvisioningPersistence, {
+    claim: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgConnectionSetupRepository(
+            connectionString,
+          ).claimProvisioning(input);
+        },
+        catch: () => new ConnectionSetupProvisioningPersistenceError(),
+      }),
+    finish: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgConnectionSetupRepository(
+            connectionString,
+          ).finishProvisioning(input);
+        },
+        catch: () => new ConnectionSetupProvisioningPersistenceError(),
+      }),
+    fail: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgConnectionSetupRepository(
+            connectionString,
+          ).failProvisioning(input);
+        },
+        catch: () => new ConnectionSetupProvisioningPersistenceError(),
+      }),
+    listCandidates: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgConnectionSetupRepository(
+            connectionString,
+          ).listProvisioningCandidates(input);
+        },
+        catch: () => new ConnectionSetupProvisioningPersistenceError(),
+      }),
+    release: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgConnectionSetupRepository(
+            connectionString,
+          ).releaseProvisioningLease(input);
+        },
+        catch: () => new ConnectionSetupProvisioningPersistenceError(),
+      }),
+    renew: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgConnectionSetupRepository(
+            connectionString,
+          ).renewProvisioningLease(input);
+        },
+        catch: () => new ConnectionSetupProvisioningPersistenceError(),
+      }),
+  });
+
+const unavailableProviderResult = (
+  operation: "lifecycle-write" | "safe-read",
+): {
+  readonly error: ProviderControlFailure;
+  readonly ok: false;
+} => ({
+  error: {
+    _tag: "ProviderControlFailure",
+    code: "unavailable",
+    operation,
+    retryAfterMs: null,
+    retryDecision:
+      operation === "lifecycle-write"
+        ? "reconcile_before_repeat"
+        : "retry_within_safe_read_budget",
+  },
+  ok: false,
+});
+
+const connectionSetupProvisioningProviderLayer = (
+  environment: ApiEnvironment,
+) =>
+  Layer.succeed(ConnectionSetupProvisioningProvider, {
+    create: (input) =>
+      Effect.tryPromise({
+        try: () =>
+          (
+            environment.PROVIDER_CONTROL as ProviderControlService
+          ).createSession(input),
+        catch: () => unavailableProviderResult("lifecycle-write"),
+      }).pipe(Effect.catchAll((failure) => Effect.succeed(failure))),
+    reconcile: (input) =>
+      Effect.tryPromise({
+        try: () =>
+          (
+            environment.PROVIDER_CONTROL as ProviderControlService
+          ).reconcileSession(input),
+        catch: () => unavailableProviderResult("safe-read"),
+      }).pipe(Effect.catchAll((failure) => Effect.succeed(failure))),
+  });
+
+const connectionSetupProvisioningQueueLayer = (environment: ApiEnvironment) =>
+  Layer.succeed(ConnectionSetupProvisioningQueue, {
+    enqueue: (setupId) =>
+      Effect.tryPromise({
+        try: async () => {
+          const queue = environment.CONNECTION_SETUP_PROVISIONING_QUEUE;
+          if (!hasMethods(queue, ["send"])) {
+            throw new Error("Connection Setup provisioning Queue unavailable");
+          }
+          await (queue as Pick<Queue, "send">).send(
+            connectionSetupProvisioningMessage(setupId),
+          );
+        },
+        catch: () => new ConnectionSetupProvisioningQueueError(),
+      }),
+  });
+
 const connectionSetupIdentifiersLayer = Layer.succeed(
   ConnectionSetupIdentifiers,
   {
@@ -556,6 +719,15 @@ const randomBase64Url = (): string => {
     .replaceAll("/", "_")
     .replace(/=+$/u, "");
 };
+
+const connectionSetupProvisioningRuntimeLayer = Layer.mergeAll(
+  Layer.succeed(ConnectionSetupProvisioningClock, {
+    now: Effect.sync(() => new Date().toISOString()),
+  }),
+  Layer.succeed(ConnectionSetupProvisioningIdentifiers, {
+    nextWorkerId: Effect.sync(() => `cspw_${randomBase64Url()}`),
+  }),
+);
 
 const mcpAuthorizationRuntimeLayer = Layer.mergeAll(
   Layer.succeed(McpAuthorizationClock, {
@@ -708,6 +880,10 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     personalAccountIdentifiersLayer,
     privateBetaConfigLayer(environment),
     connectionSetupPersistenceLayer(environment),
+    connectionSetupProvisioningPersistenceLayer(environment),
+    connectionSetupProvisioningProviderLayer(environment),
+    connectionSetupProvisioningQueueLayer(environment),
+    connectionSetupProvisioningRuntimeLayer,
     connectionSetupIdentifiersLayer,
     connectionSetupClockLayer,
     connectionSetupNumberTokensLayer(environment),
@@ -825,3 +1001,70 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     }
   };
 };
+
+const provisioningQueueName = (environment: ApiEnvironment): string | null => {
+  const deploymentEnvironment = environment.DEPLOYMENT_ENVIRONMENT;
+  if (
+    deploymentEnvironment !== "development" &&
+    deploymentEnvironment !== "preview" &&
+    deploymentEnvironment !== "production"
+  ) {
+    return null;
+  }
+  const suffix =
+    deploymentEnvironment === "production" ? "" : `-${deploymentEnvironment}`;
+  return `whatsapp-mcp-connection-setup-provisioning${suffix}`;
+};
+
+export const createProductionQueueHandler =
+  (environment: ApiEnvironment) =>
+  async (batch: MessageBatch): Promise<void> => {
+    if (batch.queue !== provisioningQueueName(environment)) {
+      for (const message of batch.messages) {
+        message.retry({ delaySeconds: 30 });
+      }
+      return;
+    }
+    const layer = Layer.mergeAll(
+      encryptionLayer(environment),
+      telemetryLayer,
+      connectionSetupProvisioningPersistenceLayer(environment),
+      connectionSetupProvisioningProviderLayer(environment),
+      connectionSetupProvisioningRuntimeLayer,
+    );
+    await handleConnectionSetupProvisioningBatch(batch, layer);
+  };
+
+export const createProductionScheduledHandler =
+  (environment: ApiEnvironment) =>
+  async (controller: ScheduledController): Promise<void> => {
+    if (controller.cron !== "* * * * *") return;
+    const connectionString = environment.HYPERDRIVE?.connectionString;
+    const queue = environment.CONNECTION_SETUP_PROVISIONING_QUEUE;
+    if (
+      typeof connectionString !== "string" ||
+      !hasMethods(queue, ["sendBatch"])
+    ) {
+      throw new Error("Connection Setup provisioning recovery unavailable");
+    }
+    const candidates = await makePgConnectionSetupRepository(
+      connectionString,
+    ).listProvisioningCandidates({
+      limit: 100,
+      observedAt: new Date(controller.scheduledTime).toISOString(),
+    });
+    if (candidates.length > 0) {
+      await (queue as Pick<Queue, "sendBatch">).sendBatch(
+        candidates.map((setupId) => ({
+          body: connectionSetupProvisioningMessage(setupId),
+        })),
+      );
+    }
+    Effect.runSync(
+      safeTelemetry.emit({
+        candidateCount: candidates.length,
+        event: "connection_setup.provision.recovery_enqueued",
+        service: "api",
+      }),
+    );
+  };

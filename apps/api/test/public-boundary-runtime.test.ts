@@ -7,6 +7,7 @@ import {
 } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, test } from "vitest";
+import { connectionSetupProvisioningMessage } from "../src/connection-setup-provisioning";
 import worker from "./support/public-boundary-worker";
 
 describe("public-boundary Worker harness", () => {
@@ -103,6 +104,48 @@ describe("public-boundary Worker harness", () => {
     expect(replayBody.connection_setup).toEqual({
       ...firstBody.connection_setup,
       idempotent_replay: true,
+    });
+  });
+
+  test("provisions a Connection Setup through the actual Queue boundary", async () => {
+    const response = await exports.default.fetch(
+      new Request("https://api.example.test/v1/connection-setups", {
+        body: JSON.stringify({
+          idempotency_key: "223456789012345678901",
+          whatsapp_number: "+1 (555) 012-3457",
+        }),
+        headers: {
+          authorization: "Bearer signed-test-user",
+          "content-type": "application/json",
+          origin: "http://127.0.0.1:3000",
+        },
+        method: "POST",
+      }),
+    );
+    const body = (await response.json()) as {
+      readonly connection_setup: { readonly id: string };
+    };
+    const batch = createMessageBatch(
+      "whatsapp-mcp-connection-setup-provisioning",
+      [
+        {
+          attempts: 1,
+          body: connectionSetupProvisioningMessage(body.connection_setup.id),
+          id: "connection-setup-provisioning-1",
+          timestamp: new Date("2026-01-02T03:05:00.000Z"),
+        },
+      ],
+    );
+    const context = createExecutionContext();
+
+    await worker.queue?.(batch, env, context);
+    const result = await getQueueResult(batch, context);
+
+    expect(response.status).toBe(201);
+    expect(result).toMatchObject({
+      ackAll: false,
+      explicitAcks: ["connection-setup-provisioning-1"],
+      outcome: "ok",
     });
   });
 

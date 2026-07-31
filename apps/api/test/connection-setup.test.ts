@@ -14,6 +14,7 @@ import {
   createConnectionSetupHandler,
   makeConnectionSetupNumberTokens,
 } from "../src/connection-setup";
+import { ConnectionSetupProvisioningQueue } from "../src/connection-setup-provisioning";
 import { EnvelopeEncryptionService } from "../src/encryption/envelope";
 import { SafeTelemetry, type SafeTelemetryEvent } from "../src/services";
 
@@ -27,6 +28,11 @@ const accountKey = {
   personalAccountId: "10000000-0000-4000-8000-000000000021",
   version: 1 as const,
 };
+type PersistedSetupState =
+  | "provisioned"
+  | "provisioning_failed"
+  | "provisioning_pending"
+  | "provisioning_quarantined";
 
 const makeHarness = (
   options: {
@@ -42,13 +48,14 @@ const makeHarness = (
         readonly createdAt: string;
         readonly expiresAt: string;
         readonly setupId: string;
-        readonly state: "provisioning_pending";
+        readonly state: PersistedSetupState;
       };
     }
   >();
   const reservations = new Map<string, string>();
   const events: Array<SafeTelemetryEvent> = [];
   const encryptedNumbers: Array<string> = [];
+  const enqueuedSetups: Array<string> = [];
   let generated = 0;
   let retainedConnections = 0;
 
@@ -124,6 +131,12 @@ const makeHarness = (
       derive: (number) =>
         Effect.succeed(new TextEncoder().encode(`reservation:${number}`)),
     }),
+    Layer.succeed(ConnectionSetupProvisioningQueue, {
+      enqueue: (setupId) =>
+        Effect.sync(() => {
+          enqueuedSetups.push(setupId);
+        }),
+    }),
     Layer.succeed(EnvelopeEncryptionService, {
       createConnectionKey: ({ accountId, connectionId, keyVersion }) =>
         Effect.succeed({
@@ -158,10 +171,21 @@ const makeHarness = (
 
   return {
     bindings,
+    enqueuedSetups,
     encryptedNumbers,
     events,
     handler: createConnectionSetupHandler(layer, browserOrigin),
     reservations,
+    setSetupState: (state: PersistedSetupState) => {
+      const binding = bindings.get(idempotencyKey);
+      if (binding === undefined) {
+        throw new Error("Connection Setup has not been started");
+      }
+      bindings.set(idempotencyKey, {
+        ...binding,
+        setup: { ...binding.setup, state },
+      });
+    },
     setRetainedConnections: (count: number) => {
       retainedConnections = count;
     },
@@ -229,9 +253,36 @@ describe("Connection Setup HTTP boundary", () => {
     });
     expect(harness.bindings).toHaveLength(1);
     expect(harness.encryptedNumbers).toEqual(["+15550123456"]);
+    expect(harness.enqueuedSetups).toEqual([
+      "cst_000000000000000000001",
+      "cst_000000000000000000001",
+    ]);
     expect(JSON.stringify(harness.events)).not.toContain("+1555");
     expect(JSON.stringify(harness.events)).not.toContain("cst_");
   });
+
+  test.each([
+    "provisioned",
+    "provisioning_failed",
+    "provisioning_quarantined",
+  ] as const)(
+    "returns the visible %s state on an exact replay",
+    async (state) => {
+      const harness = makeHarness();
+      await harness.handler(setupRequest("+15550123456"));
+      harness.setSetupState(state);
+
+      const replay = await harness.handler(setupRequest("+15550123456"));
+
+      expect(replay.status).toBe(200);
+      await expect(replay.json()).resolves.toMatchObject({
+        connection_setup: {
+          idempotent_replay: true,
+          state,
+        },
+      });
+    },
+  );
 
   test("fails safely when a bound idempotency key is reused with changed input", async () => {
     const harness = makeHarness();

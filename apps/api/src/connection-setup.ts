@@ -14,6 +14,11 @@ import {
   type HumanIdentityService,
 } from "./auth/human-identity";
 import {
+  ConnectionSetupProvisioningQueue,
+  type ConnectionSetupProvisioningQueueError,
+  type ConnectionSetupProvisioningQueueService,
+} from "./connection-setup-provisioning";
+import {
   type EncryptionError,
   type EnvelopeEncryption,
   EnvelopeEncryptionService,
@@ -90,6 +95,7 @@ export type ConnectionSetupRequirements =
   | ConnectionSetupIdentifiersService
   | ConnectionSetupNumberTokensService
   | ConnectionSetupPersistenceService
+  | ConnectionSetupProvisioningQueueService
   | EnvelopeEncryption
   | HumanIdentityService
   | SafeTelemetryService;
@@ -141,7 +147,11 @@ type ConnectionSetupOutcome =
         readonly createdAt: string;
         readonly expiresAt: string;
         readonly setupId: string;
-        readonly state: "provisioning_pending";
+        readonly state:
+          | "provisioned"
+          | "provisioning_failed"
+          | "provisioning_pending"
+          | "provisioning_quarantined";
       };
     }
   | {
@@ -160,11 +170,13 @@ export const startConnectionSetup = (
   | ConnectionSetupNotAccessible
   | ConnectionSetupPersistenceError
   | ConnectionSetupTokenError
+  | ConnectionSetupProvisioningQueueError
   | EncryptionError,
   | ConnectionSetupClockService
   | ConnectionSetupIdentifiersService
   | ConnectionSetupNumberTokensService
   | ConnectionSetupPersistenceService
+  | ConnectionSetupProvisioningQueueService
   | EnvelopeEncryption
 > =>
   Effect.gen(function* () {
@@ -179,53 +191,59 @@ export const startConnectionSetup = (
     if (prepared === null) {
       return yield* Effect.fail(new ConnectionSetupNotAccessible());
     }
-    if (prepared.outcome !== "unbound") {
-      return prepared;
+    const result =
+      prepared.outcome !== "unbound"
+        ? prepared
+        : yield* Effect.gen(function* () {
+            const identifiers = yield* ConnectionSetupIdentifiers;
+            const setupId = yield* identifiers.next;
+            const clock = yield* ConnectionSetupClock;
+            const createdAt = yield* clock.now;
+            if (connectionSetupExpiresAt(createdAt) === null) {
+              return yield* Effect.fail(new ConnectionSetupPersistenceError());
+            }
+
+            const encryption = yield* EnvelopeEncryptionService;
+            const connectionKey = yield* encryption.createConnectionKey({
+              accountId: prepared.accountKey.personalAccountId,
+              accountKey: prepared.accountKey,
+              connectionId: setupId,
+              keyVersion: 1,
+            });
+            const numberCiphertext = yield* encryption.encrypt({
+              accountKey: prepared.accountKey,
+              connectionKey,
+              context: {
+                accountId: prepared.accountKey.personalAccountId,
+                connectionId: setupId,
+                entity: "connection-setup",
+                fieldOrObjectPurpose: "whatsapp-number",
+                recordId: setupId,
+              },
+              plaintext: new TextEncoder().encode(normalizedWhatsAppNumber),
+            });
+
+            return yield* persistence.start({
+              accountKeyVersion: connectionKey.accountKeyVersion,
+              connectionKeyCiphertext: decodeBase64(connectionKey.ciphertext),
+              connectionKeyNonce: decodeBase64(connectionKey.nonce),
+              connectionKeyVersion: connectionKey.keyVersion,
+              createdAt,
+              idempotencyKey,
+              numberCiphertext: decodeBase64(numberCiphertext.ciphertext),
+              numberCiphertextNonce: decodeBase64(numberCiphertext.nonce),
+              numberCiphertextVersion: numberCiphertext.version,
+              numberKeyVersion: numberCiphertext.keyVersion,
+              numberToken,
+              personalAccountId: prepared.accountKey.personalAccountId,
+              setupId,
+            });
+          });
+    if ("setup" in result) {
+      const queue = yield* ConnectionSetupProvisioningQueue;
+      yield* queue.enqueue(result.setup.setupId);
     }
-
-    const identifiers = yield* ConnectionSetupIdentifiers;
-    const setupId = yield* identifiers.next;
-    const clock = yield* ConnectionSetupClock;
-    const createdAt = yield* clock.now;
-    if (connectionSetupExpiresAt(createdAt) === null) {
-      return yield* Effect.fail(new ConnectionSetupPersistenceError());
-    }
-
-    const encryption = yield* EnvelopeEncryptionService;
-    const connectionKey = yield* encryption.createConnectionKey({
-      accountId: prepared.accountKey.personalAccountId,
-      accountKey: prepared.accountKey,
-      connectionId: setupId,
-      keyVersion: 1,
-    });
-    const numberCiphertext = yield* encryption.encrypt({
-      accountKey: prepared.accountKey,
-      connectionKey,
-      context: {
-        accountId: prepared.accountKey.personalAccountId,
-        connectionId: setupId,
-        entity: "connection-setup",
-        fieldOrObjectPurpose: "whatsapp-number",
-        recordId: setupId,
-      },
-      plaintext: new TextEncoder().encode(normalizedWhatsAppNumber),
-    });
-
-    return yield* persistence.start({
-      accountKeyVersion: connectionKey.accountKeyVersion,
-      connectionKeyCiphertext: decodeBase64(connectionKey.ciphertext),
-      connectionKeyNonce: decodeBase64(connectionKey.nonce),
-      connectionKeyVersion: connectionKey.keyVersion,
-      createdAt,
-      idempotencyKey,
-      numberCiphertext: decodeBase64(numberCiphertext.ciphertext),
-      numberCiphertextNonce: decodeBase64(numberCiphertext.nonce),
-      numberCiphertextVersion: numberCiphertext.version,
-      numberKeyVersion: numberCiphertext.keyVersion,
-      numberToken,
-      personalAccountId: prepared.accountKey.personalAccountId,
-      setupId,
-    });
+    return result;
   });
 
 const corsHeaders = (browserOrigin: string): HeadersInit => ({
@@ -304,7 +322,10 @@ const successResponse = (
         expires_at: result.setup.expiresAt,
         id: result.setup.setupId,
         idempotent_replay: result.outcome === "replay",
-        state: "pending",
+        state:
+          result.setup.state === "provisioning_pending"
+            ? "pending"
+            : result.setup.state,
       },
     },
     result.outcome === "created" ? 201 : 200,
