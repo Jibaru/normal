@@ -655,3 +655,36 @@ one of `accepted`, `authentication_failed`, `invalid_payload`, `not_found`,
 `too_large`, or `unavailable`. Never add an ingress ID, object ID, Personal
 Account, WhatsApp Connection, network address, header, session identity,
 payload, ciphertext, hash, key metadata, or object path.
+
+## Webhook Event normalization and connection-state projection
+
+The API Worker consumes the environment-specific `whatsapp-mcp-ingestion`
+Queue with the existing `WEBHOOK_INGRESS` R2 binding and
+`WEBHOOK_HYPERDRIVE`. It validates the complete opaque Queue envelope against
+the R2 object's safe metadata and ciphertext hash before loading any key
+material. The restricted `whatsapp_webhook_runtime` bootstrap returns only the
+matching Personal Account key envelope, WhatsApp Connection key envelope, and
+encrypted per-connection webhook identity key. Missing bindings, objects,
+metadata, compatible keys, or database access fail closed and leave the Queue
+message unacknowledged for the configured bounded retry policy.
+
+One authenticated delivery becomes one `webhook_events` row pointing to its
+encrypted R2 source. The decrypted delivery is normalized into logical items;
+each connection-state item claims its opaque connection-scoped identity in the
+same Neon transaction that locks and updates the WhatsApp Connection. Provider
+occurrence/version evidence is compared before verified receive order. An
+older item, an item without evidence after stronger evidence, and an exact
+duplicate cannot regress the current projection. The signed-in WhatsApp
+Connection inventory reads that same authoritative row.
+
+Malformed items, adapter-unsupported items, and normalized kinds whose
+projector is not yet deployed are recorded as safe quarantine references with
+no provider payload or identifier. Valid siblings continue independently.
+Only after every item is applied, deduplicated, superseded, or quarantined does
+the consumer mark the Webhook Event complete and explicitly acknowledge the
+Queue message. Safe telemetry is limited to
+`webhook_event.processing.completed`, normalized outcome, and aggregate item
+counts; it must never include tenant, connection, event, item, provider,
+payload, ciphertext, hash, or key values. The existing seven-day R2 lifecycle
+remains the encrypted-source retention authority, so no new deployment secret
+or public binding is introduced.

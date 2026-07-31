@@ -163,6 +163,17 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 13,
   },
+  {
+    name: "Webhook Event normalization and connection-state projection",
+    sql: await readFile(
+      new NodeUrl(
+        "../migrations/0014_webhook_event_projection.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    version: 14,
+  },
 ];
 
 const checksum = (sql: string): string =>

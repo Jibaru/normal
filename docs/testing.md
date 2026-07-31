@@ -51,6 +51,9 @@ The Worker runtime suite proves:
 - controlled external failure behavior;
 - KV and R2 persistence through real local bindings;
 - Queue publication and explicit consumer acknowledgement;
+- authenticated R2-to-Queue Webhook Event normalization, permanent sibling
+  quarantine, deduplication, evidence-ordered connection-state projection, and
+  visibility through the signed-in WhatsApp Connection inventory;
 - provider-control service-binding calls;
 - scheduled-handler effects through the supported runtime helpers;
 - an OAuth authorization redirect over signed-in HTTP;

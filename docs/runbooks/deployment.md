@@ -593,6 +593,27 @@ provider configuration in that order. Telemetry containing any ingress,
 connection, object, network, header, session, payload, ciphertext, hash, or key
 value is a credential-handling incident.
 
+Confirm the accepted Queue message is explicitly acknowledged only after one
+restricted `webhook_events` row is present and every logical item has a
+terminal processing outcome. Deliver a reviewed non-production
+`session.status` event with a later provider occurrence time and verify the
+signed-in WhatsApp Connection inventory shows the normalized state and
+state-change time. Redeliver the same item in a new authenticated delivery,
+then deliver an older conflicting state; the inventory must remain unchanged.
+In an isolated test environment, include one permanently malformed or
+unsupported sibling and confirm it creates only a safe quarantine reference
+while valid siblings still commit.
+
+`webhook_event.processing.completed` may contain only `completed`, `retry`, or
+`invalid_message` plus aggregate applied, duplicate, superseded, and
+quarantined counts. A growing `retry` rate requires checking R2 object
+availability and metadata integrity, KMS, `WEBHOOK_HYPERDRIVE`, schema version,
+and restricted-role grants in that order. Do not inspect or edit the encrypted
+source, manually synthesize a deduplication identity, update connection state,
+or acknowledge the Queue message. Permanent item quarantine is handled and
+acknowledged; transport or dependency failures remain eligible for the
+configured seven Queue retries and active DLQ path.
+
 From the retained non-production WhatsApp Connection, choose **Disconnect**.
 Confirm the product reports `disconnected`, retained history remains described
 as available under Message Retention Policy, and the same `con_` handle and

@@ -41,6 +41,14 @@ import {
 import { createPublicBoundaryWorker } from "../../src/public-boundary-worker";
 import { SafeTelemetry } from "../../src/services";
 import {
+  WebhookEventClock,
+  WebhookEventObjectStore,
+  WebhookEventObjectStoreError,
+  WebhookEventPersistence,
+  WebhookEventPersistenceError,
+  wasenderWebhookEventNormalizationLayer,
+} from "../../src/webhook-event";
+import {
   WebhookIngressClock,
   WebhookIngressIdentifiers,
   WebhookIngressObjectStore,
@@ -103,6 +111,10 @@ const whatsAppConnections: Array<{
   stateChangedAt: string;
 }> = [];
 const publishedWebhookMessages: WebhookIngressQueueMessage[] = [];
+const encryptedWebhookPayloads = new Map<string, Uint8Array>();
+const claimedWebhookItems = new Set<string>();
+let projectedConnectionStateVersion: string | null = null;
+let projectedConnectionStateReceivedAt: string | null = null;
 let nextWebhookObjectId = 0;
 
 const tokenKey = (value: Uint8Array) => Array.from(value).join(",");
@@ -133,6 +145,7 @@ const makeTestLayer = (
   void TEST_FAULT_INJECTOR_SENTINEL;
 
   return Layer.mergeAll(
+    wasenderWebhookEventNormalizationLayer,
     Layer.succeed(BoundaryIdentity, {
       verify: (authorization) =>
         Effect.gen(function* () {
@@ -684,13 +697,33 @@ const makeTestLayer = (
                   }),
                 ),
               )
-            : Effect.die("not used"),
-      encrypt: () =>
-        Effect.succeed({
-          ciphertext: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcY",
-          keyVersion: 1,
-          nonce: "AQIDBAUGBwgJCgsM",
-          version: 1 as const,
+            : context.fieldOrObjectPurpose === "webhook-identity-key"
+              ? Effect.succeed(new Uint8Array(32).fill(18))
+              : context.fieldOrObjectPurpose === "original-request"
+                ? Effect.sync(() => {
+                    const payload = encryptedWebhookPayloads.get(
+                      context.recordId,
+                    );
+                    if (payload === undefined) {
+                      throw new Error("missing encrypted test payload");
+                    }
+                    return payload.slice();
+                  })
+                : Effect.die("not used"),
+      encrypt: ({ context, plaintext }) =>
+        Effect.sync(() => {
+          if (
+            context.entity === "webhook-event" &&
+            context.fieldOrObjectPurpose === "original-request"
+          ) {
+            encryptedWebhookPayloads.set(context.recordId, plaintext.slice());
+          }
+          return {
+            ciphertext: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcY",
+            keyVersion: 1,
+            nonce: "AQIDBAUGBwgJCgsM",
+            version: 1 as const,
+          };
         }),
     }),
     Layer.succeed(SafeTelemetry, {
@@ -769,6 +802,103 @@ const makeTestLayer = (
               catch: () => new WebhookIngressQueueError(),
             }),
     }),
+    Layer.succeed(WebhookEventClock, {
+      now: Effect.succeed("2026-01-02T03:07:01.000Z"),
+    }),
+    Layer.succeed(WebhookEventObjectStore, {
+      load: (objectId) =>
+        environment === undefined
+          ? Effect.fail(new WebhookEventObjectStoreError())
+          : Effect.tryPromise({
+              try: async () => {
+                const object = await environment.WEBHOOK_INGRESS.get(
+                  `webhook-events/${objectId}`,
+                );
+                if (object === null) return null;
+                return {
+                  body: new Uint8Array(await object.arrayBuffer()),
+                  customMetadata: { ...(object.customMetadata ?? {}) },
+                };
+              },
+              catch: () => new WebhookEventObjectStoreError(),
+            }),
+    }),
+    Layer.succeed(WebhookEventPersistence, {
+      complete: () => Effect.void,
+      prepare: (input) =>
+        Effect.succeed(
+          input.personalAccountId === "10000000-0000-4000-8000-000000000018" &&
+            input.whatsappConnectionId ===
+              "20000000-0000-4000-8000-000000000018"
+            ? {
+                accountKey: {
+                  ciphertext: "AQID",
+                  keyVersion: 1,
+                  kmsKeyId:
+                    "arn:aws:kms:us-east-1:111122223333:key/test-content-root",
+                  personalAccountId: input.personalAccountId,
+                  version: 1 as const,
+                },
+                connectionKey: {
+                  accountKeyVersion: 1,
+                  ciphertext: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcY",
+                  connectionId: input.whatsappConnectionId,
+                  keyVersion: 1,
+                  nonce: "AQIDBAUGBwgJCgsM",
+                  personalAccountId: input.personalAccountId,
+                  version: 1 as const,
+                },
+                identityKey: {
+                  ciphertext: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcY",
+                  keyVersion: 1,
+                  nonce: "AQIDBAUGBwgJCgsM",
+                  version: 1 as const,
+                },
+              }
+            : null,
+        ),
+      projectConnectionState: (input, compareVersions) =>
+        Effect.tryPromise({
+          try: async () => {
+            if (claimedWebhookItems.has(input.itemIdentity)) {
+              return "duplicate" as const;
+            }
+            claimedWebhookItems.add(input.itemIdentity);
+            let apply = projectedConnectionStateVersion === null;
+            if (
+              input.evidence.version !== null &&
+              projectedConnectionStateVersion !== null
+            ) {
+              const comparison = await compareVersions(
+                input.evidence.version,
+                projectedConnectionStateVersion,
+              );
+              apply =
+                comparison === "after" ||
+                (comparison === "equal" &&
+                  input.receivedAt >
+                    (projectedConnectionStateReceivedAt ?? ""));
+            } else if (input.evidence.version === null) {
+              apply = projectedConnectionStateVersion === null;
+            }
+            if (!apply) return "superseded" as const;
+            const connection = whatsAppConnections[0];
+            if (connection === undefined) {
+              throw new Error("missing test WhatsApp Connection");
+            }
+            if (connection.state !== input.state) {
+              connection.state = input.state;
+              connection.stateChangedAt =
+                input.evidence.occurredAt ?? input.receivedAt;
+            }
+            projectedConnectionStateVersion = input.evidence.version;
+            projectedConnectionStateReceivedAt = input.receivedAt;
+            return "applied" as const;
+          },
+          catch: () => new WebhookEventPersistenceError(),
+        }),
+      quarantine: () => Effect.void,
+    }),
   );
 };
 
@@ -814,6 +944,7 @@ const worker = createPublicBoundaryWorker({
   layerFor: (request, environment) =>
     makeTestLayer(selectedFailure(request), environment),
   provisioningLayer: makeTestLayer(undefined),
+  webhookEventLayer: (environment) => makeTestLayer(undefined, environment),
 });
 
 export default worker;

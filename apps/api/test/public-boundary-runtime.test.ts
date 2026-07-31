@@ -585,6 +585,93 @@ describe("public-boundary Worker harness", () => {
     });
   });
 
+  test("projects authenticated connection-state items into the signed-in inventory", async () => {
+    const endpoint =
+      "https://api.example.test/webhooks/wasender/30000000-0000-4000-8000-000000000018";
+    const deliver = (status: string, timestamp: number) =>
+      exports.default.fetch(
+        new Request(endpoint, {
+          body: JSON.stringify({
+            data: { status },
+            event: "session.status",
+            sessionId: "test-session-credential",
+            timestamp,
+          }),
+          headers: {
+            "content-type": "application/json",
+            "x-webhook-signature": "test-webhook-secret",
+          },
+          method: "POST",
+        }),
+      );
+    const published = async () =>
+      (await (
+        await exports.default.fetch(
+          "https://api.example.test/test/webhook-queue",
+        )
+      ).json()) as ReadonlyArray<Record<string, unknown>>;
+    const consume = async (body: Record<string, unknown>, id: string) => {
+      const batch = createMessageBatch("whatsapp-mcp-ingestion", [
+        {
+          attempts: 1,
+          body,
+          id,
+          timestamp: new Date("2026-01-02T03:08:01.000Z"),
+        },
+      ]);
+      const context = createExecutionContext();
+      await worker.queue?.(batch, env, context);
+      return getQueueResult(batch, context);
+    };
+
+    const connectedEvidence = await deliver("degraded", 1_767_323_280_000);
+    const firstMessage = (await published()).at(-1);
+    if (firstMessage === undefined) {
+      throw new Error("connection-state Queue message was not published");
+    }
+    const firstResult = await consume(firstMessage, "connection-state-1");
+
+    const olderEvidence = await deliver("connecting", 1_767_323_250_000);
+    const olderMessage = (await published()).at(-1);
+    if (olderMessage === undefined) {
+      throw new Error("older connection-state Queue message was not published");
+    }
+    const olderResult = await consume(olderMessage, "connection-state-2");
+    const duplicateResult = await consume(firstMessage, "connection-state-3");
+    const listed = await exports.default.fetch(
+      new Request("https://api.example.test/v1/whatsapp-connections", {
+        headers: {
+          authorization: "Bearer signed-test-user",
+          origin: "http://127.0.0.1:3000",
+        },
+      }),
+    );
+
+    expect(connectedEvidence.status).toBe(200);
+    expect(olderEvidence.status).toBe(200);
+    expect(firstResult).toMatchObject({
+      explicitAcks: ["connection-state-1"],
+      outcome: "ok",
+    });
+    expect(olderResult).toMatchObject({
+      explicitAcks: ["connection-state-2"],
+      outcome: "ok",
+    });
+    expect(duplicateResult).toMatchObject({
+      explicitAcks: ["connection-state-3"],
+      outcome: "ok",
+    });
+    expect(await listed.json()).toMatchObject({
+      whatsapp_connections: [
+        {
+          id: "con_000000000000000000018",
+          state: "degraded",
+          state_changed_at: "2026-01-02T03:08:00.000Z",
+        },
+      ],
+    });
+  });
+
   test("runs Queue handlers with explicit acknowledgement against real bindings", async () => {
     const batch = createMessageBatch("whatsapp-mcp-ingestion", [
       {

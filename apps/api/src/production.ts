@@ -11,6 +11,7 @@ import { makePgConnectionSetupRepository } from "@whatsapp-mcp/db/connection-set
 import { checkDatabaseReadiness } from "@whatsapp-mcp/db/connectivity";
 import { makePgMcpAuthorizationRepository } from "@whatsapp-mcp/db/mcp-authorization";
 import { makePgPersonalAccountRepository } from "@whatsapp-mcp/db/personal-account";
+import { makePgWebhookEventRepository } from "@whatsapp-mcp/db/webhook-event";
 import { makePgWebhookIngressRepository } from "@whatsapp-mcp/db/webhook-ingress";
 import { makePgWhatsAppConnectionRepository } from "@whatsapp-mcp/db/whatsapp-connection";
 import { Config, ConfigProvider, Data, Effect, Layer, Redacted } from "effect";
@@ -95,6 +96,15 @@ import {
   SafeTelemetry,
   type SafeTelemetryEvent,
 } from "./services";
+import {
+  handleWebhookEventBatch,
+  WebhookEventClock,
+  WebhookEventObjectStore,
+  WebhookEventObjectStoreError,
+  WebhookEventPersistence,
+  WebhookEventPersistenceError,
+  wasenderWebhookEventNormalizationLayer,
+} from "./webhook-event";
 import {
   createWebhookIngressHandler,
   isWebhookIngressRequest,
@@ -925,6 +935,94 @@ const webhookIngressCloudflareLayer = (environment: ApiEnvironment) =>
     }),
   );
 
+const webhookEventPersistenceLayer = (environment: ApiEnvironment) =>
+  Layer.succeed(WebhookEventPersistence, {
+    complete: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString =
+            environment.WEBHOOK_HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("Webhook Hyperdrive unavailable");
+          }
+          return makePgWebhookEventRepository(connectionString).complete(input);
+        },
+        catch: () => new WebhookEventPersistenceError(),
+      }),
+    prepare: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString =
+            environment.WEBHOOK_HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("Webhook Hyperdrive unavailable");
+          }
+          return makePgWebhookEventRepository(connectionString).prepare(input);
+        },
+        catch: () => new WebhookEventPersistenceError(),
+      }),
+    projectConnectionState: (input, compareVersions) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString =
+            environment.WEBHOOK_HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("Webhook Hyperdrive unavailable");
+          }
+          return makePgWebhookEventRepository(
+            connectionString,
+          ).projectConnectionState(input, compareVersions);
+        },
+        catch: () => new WebhookEventPersistenceError(),
+      }),
+    quarantine: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString =
+            environment.WEBHOOK_HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("Webhook Hyperdrive unavailable");
+          }
+          return makePgWebhookEventRepository(connectionString).quarantine(
+            input,
+          );
+        },
+        catch: () => new WebhookEventPersistenceError(),
+      }),
+  });
+
+const webhookEventRuntimeLayer = (environment: ApiEnvironment) =>
+  Layer.mergeAll(
+    webhookEventPersistenceLayer(environment),
+    wasenderWebhookEventNormalizationLayer,
+    Layer.succeed(WebhookEventClock, {
+      now: Effect.sync(() => new Date().toISOString()),
+    }),
+    Layer.succeed(WebhookEventObjectStore, {
+      load: (objectId) =>
+        Effect.tryPromise({
+          try: async () => {
+            const bucket = environment.WEBHOOK_INGRESS;
+            if (!hasMethods(bucket, ["get"])) {
+              throw new Error("Webhook ingress bucket unavailable");
+            }
+            const object = await (bucket as Pick<R2Bucket, "get">).get(
+              `webhook-events/${objectId}`,
+            );
+            if (object === null) return null;
+            if (object.size > 1_400_000) {
+              throw new Error("Webhook Event ciphertext exceeds its bound");
+            }
+            return {
+              body: new Uint8Array(await object.arrayBuffer()),
+              customMetadata: { ...(object.customMetadata ?? {}) },
+            };
+          },
+          catch: () => new WebhookEventObjectStoreError(),
+        }),
+    }),
+  );
+
 const connectionSetupProvisioningQueueLayer = (environment: ApiEnvironment) =>
   Layer.succeed(ConnectionSetupProvisioningQueue, {
     enqueue: (setupId) =>
@@ -1444,9 +1542,32 @@ const provisioningQueueName = (environment: ApiEnvironment): string | null => {
   return `whatsapp-mcp-connection-setup-provisioning${suffix}`;
 };
 
+const ingestionQueueName = (environment: ApiEnvironment): string | null => {
+  const deploymentEnvironment = environment.DEPLOYMENT_ENVIRONMENT;
+  if (
+    deploymentEnvironment !== "development" &&
+    deploymentEnvironment !== "preview" &&
+    deploymentEnvironment !== "production"
+  ) {
+    return null;
+  }
+  const suffix =
+    deploymentEnvironment === "production" ? "" : `-${deploymentEnvironment}`;
+  return `whatsapp-mcp-ingestion${suffix}`;
+};
+
 export const createProductionQueueHandler =
   (environment: ApiEnvironment) =>
   async (batch: MessageBatch): Promise<void> => {
+    if (batch.queue === ingestionQueueName(environment)) {
+      const layer = Layer.mergeAll(
+        encryptionLayer(environment),
+        telemetryLayer,
+        webhookEventRuntimeLayer(environment),
+      );
+      await handleWebhookEventBatch(batch, layer);
+      return;
+    }
     if (batch.queue !== provisioningQueueName(environment)) {
       for (const message of batch.messages) {
         message.retry({ delaySeconds: 30 });

@@ -11,11 +11,12 @@
     "./mcp-authorization": "./src/mcp-authorization.ts",
     "./personal-account": "./src/personal-account.ts",
     "./readiness": "./src/readiness.ts",
+    "./webhook-event": "./src/webhook-event.ts",
     "./webhook-ingress": "./src/webhook-ingress.ts",
     "./whatsapp-connection": "./src/whatsapp-connection.ts"
   },
   "scripts": {
-    "build": "bun build src/config.ts src/connection-setup.ts src/connectivity.ts src/mcp-authorization.ts src/migrations.ts src/personal-account.ts src/readiness.ts src/schema-version.ts src/webhook-ingress.ts src/whatsapp-connection.ts --outdir dist --target bun",
+    "build": "bun build src/config.ts src/connection-setup.ts src/connectivity.ts src/mcp-authorization.ts src/migrations.ts src/personal-account.ts src/readiness.ts src/schema-version.ts src/webhook-event.ts src/webhook-ingress.ts src/whatsapp-connection.ts --outdir dist --target bun",
     "db:check": "bun src/check-cli.ts",
     "db:migrate": "bun src/migrate-cli.ts",
     "lint": "biome check .",

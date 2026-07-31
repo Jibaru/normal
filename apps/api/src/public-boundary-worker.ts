@@ -29,6 +29,11 @@ import {
   createPublicBoundaryHandler,
 } from "./public-boundary";
 import {
+  handleWebhookEventBatch,
+  isWebhookEventQueueMessage,
+  type WebhookEventRequirements,
+} from "./webhook-event";
+import {
   createWebhookIngressHandler,
   isWebhookIngressRequest,
   type WebhookIngressRequirements,
@@ -73,6 +78,9 @@ export interface PublicBoundaryWorkerOptions {
     environment: PublicBoundaryEnvironment,
   ) => Layer.Layer<PublicBoundaryRequirements>;
   readonly provisioningLayer: Layer.Layer<ConnectionSetupProvisioningRequirements>;
+  readonly webhookEventLayer: (
+    environment: PublicBoundaryEnvironment,
+  ) => Layer.Layer<WebhookEventRequirements>;
 }
 
 const jsonResponse = (body: unknown, status = 200): Response =>
@@ -181,6 +189,20 @@ export const createPublicBoundaryWorker = (
       environment: PublicBoundaryEnvironment,
       _context: ExecutionContext,
     ): Promise<void> {
+      if (
+        /^whatsapp-mcp-ingestion(?:-(?:development|preview))?$/u.test(
+          batch.queue,
+        ) &&
+        batch.messages.length > 0 &&
+        batch.messages.every((message) =>
+          isWebhookEventQueueMessage(message.body),
+        )
+      ) {
+        return handleWebhookEventBatch(
+          batch,
+          options.webhookEventLayer(environment),
+        );
+      }
       if (
         batch.messages.length > 0 &&
         batch.messages.every((message) =>
