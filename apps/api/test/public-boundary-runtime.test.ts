@@ -672,7 +672,7 @@ describe("public-boundary Worker harness", () => {
     });
   });
 
-  test("runs Queue handlers with explicit acknowledgement against real bindings", async () => {
+  test("routes an invalid ingestion message through the Webhook Event consumer", async () => {
     const batch = createMessageBatch("whatsapp-mcp-ingestion", [
       {
         attempts: 1,
@@ -691,9 +691,7 @@ describe("public-boundary Worker harness", () => {
       explicitAcks: ["queue-message-1"],
       outcome: "ok",
     });
-    expect(await env.OAUTH_KV.get("queue:queue-message-1")).toBe(
-      '{"object_id":"evt_public_boundary"}',
-    );
+    expect(await env.OAUTH_KV.get("queue:queue-message-1")).toBeNull();
   });
 
   test("runs scheduled handlers against real KV and service bindings", async () => {

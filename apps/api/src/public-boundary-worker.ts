@@ -30,7 +30,6 @@ import {
 } from "./public-boundary";
 import {
   handleWebhookEventBatch,
-  isWebhookEventQueueMessage,
   type WebhookEventRequirements,
 } from "./webhook-event";
 import {
@@ -192,10 +191,6 @@ export const createPublicBoundaryWorker = (
       if (
         /^whatsapp-mcp-ingestion(?:-(?:development|preview))?$/u.test(
           batch.queue,
-        ) &&
-        batch.messages.length > 0 &&
-        batch.messages.every((message) =>
-          isWebhookEventQueueMessage(message.body),
         )
       ) {
         return handleWebhookEventBatch(
