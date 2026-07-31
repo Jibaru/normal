@@ -5,6 +5,11 @@ import {
   isConnectionSetupRequest,
 } from "./connection-setup";
 import {
+  type ConnectionSetupProvisioningRequirements,
+  handleConnectionSetupProvisioningBatch,
+  isConnectionSetupProvisioningMessage,
+} from "./connection-setup-provisioning";
+import {
   createPersonalAccountHandler,
   isPersonalAccountRequest,
   type PersonalAccountRequirements,
@@ -46,6 +51,7 @@ export interface PublicBoundaryWorkerOptions {
   readonly layerFor: (
     request: Request,
   ) => Layer.Layer<PublicBoundaryRequirements>;
+  readonly provisioningLayer: Layer.Layer<ConnectionSetupProvisioningRequirements>;
 }
 
 const jsonResponse = (body: unknown, status = 200): Response =>
@@ -134,6 +140,17 @@ export const createPublicBoundaryWorker = (
       environment: PublicBoundaryEnvironment,
       _context: ExecutionContext,
     ): Promise<void> {
+      if (
+        batch.messages.length > 0 &&
+        batch.messages.every((message) =>
+          isConnectionSetupProvisioningMessage(message.body),
+        )
+      ) {
+        return handleConnectionSetupProvisioningBatch(
+          batch,
+          options.provisioningLayer,
+        );
+      }
       for (const message of batch.messages) {
         await environment.OAUTH_KV.put(
           `queue:${message.id}`,

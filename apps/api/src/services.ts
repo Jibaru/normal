@@ -58,6 +58,24 @@ export interface ConnectionSetupStartCompletedEvent {
   readonly service: "api";
 }
 
+export interface ConnectionSetupProvisionCompletedEvent {
+  readonly event: "connection_setup.provision.completed";
+  readonly failureCode?: string | undefined;
+  readonly outcome:
+    | "failed"
+    | "ignored"
+    | "provisioned"
+    | "quarantined"
+    | "retry";
+  readonly service: "api";
+}
+
+export interface ConnectionSetupProvisionRecoveryEnqueuedEvent {
+  readonly candidateCount: number;
+  readonly event: "connection_setup.provision.recovery_enqueued";
+  readonly service: "api";
+}
+
 export interface OAuthAuthorizationRequestCompletedEvent {
   readonly clientClass?: string | undefined;
   readonly event: "oauth.authorization.request.completed";
@@ -84,6 +102,8 @@ export interface SafeTelemetry {
 }
 
 export type SafeTelemetryEvent =
+  | ConnectionSetupProvisionCompletedEvent
+  | ConnectionSetupProvisionRecoveryEnqueuedEvent
   | ConnectionSetupStartCompletedEvent
   | HttpCompletedEvent
   | OAuthAuthorizationDecisionCompletedEvent

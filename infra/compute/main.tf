@@ -16,10 +16,11 @@ locals {
       redirectUris = client.redirect_uris
     }
   ])
-  ingestion_queue_name         = "whatsapp-mcp-ingestion${local.environment_suffix}"
-  dead_letter_queue_name       = "whatsapp-mcp-ingestion-dlq${local.environment_suffix}"
-  api_bundle_path              = abspath("${path.root}/../../apps/api/dist/index.js")
-  provider_control_bundle_path = abspath("${path.root}/../../apps/provider-control/dist/index.js")
+  ingestion_queue_name                     = "whatsapp-mcp-ingestion${local.environment_suffix}"
+  dead_letter_queue_name                   = "whatsapp-mcp-ingestion-dlq${local.environment_suffix}"
+  connection_setup_provisioning_queue_name = "whatsapp-mcp-connection-setup-provisioning${local.environment_suffix}"
+  api_bundle_path                          = abspath("${path.root}/../../apps/api/dist/index.js")
+  provider_control_bundle_path             = abspath("${path.root}/../../apps/provider-control/dist/index.js")
 }
 
 resource "cloudflare_r2_bucket" "webhook_ingress" {
@@ -160,6 +161,17 @@ resource "cloudflare_queue" "dead_letter" {
     delivery_delay           = 0
     delivery_paused          = false
     message_retention_period = 345600
+  }
+}
+
+resource "cloudflare_queue" "connection_setup_provisioning" {
+  account_id = var.cloudflare_account_id
+  queue_name = local.connection_setup_provisioning_queue_name
+
+  settings = {
+    delivery_delay           = 0
+    delivery_paused          = false
+    message_retention_period = 604800
   }
 }
 
@@ -353,6 +365,11 @@ resource "cloudflare_worker_version" "api" {
       type        = "r2_bucket"
     },
     {
+      name       = "CONNECTION_SETUP_PROVISIONING_QUEUE"
+      queue_name = cloudflare_queue.connection_setup_provisioning.queue_name
+      type       = "queue"
+    },
+    {
       name       = "INGESTION_QUEUE"
       queue_name = cloudflare_queue.ingestion.queue_name
       type       = "queue"
@@ -393,6 +410,23 @@ resource "cloudflare_queue_consumer" "ingestion" {
     max_wait_time_ms      = 5000
     retry_delay           = 10800
     visibility_timeout_ms = 900000
+  }
+
+  depends_on = [cloudflare_workers_deployment.api]
+}
+
+resource "cloudflare_queue_consumer" "connection_setup_provisioning" {
+  account_id  = var.cloudflare_account_id
+  queue_id    = cloudflare_queue.connection_setup_provisioning.queue_id
+  script_name = cloudflare_worker.api.name
+  type        = "worker"
+
+  settings = {
+    batch_size            = 1
+    max_retries           = 10
+    max_wait_time_ms      = 1000
+    retry_delay           = 30
+    visibility_timeout_ms = 180000
   }
 
   depends_on = [cloudflare_workers_deployment.api]

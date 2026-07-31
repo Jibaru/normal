@@ -9,6 +9,10 @@ export const validEnvironment = () => ({
   CLERK_AUTHORIZED_PARTY: "https://app.example.test",
   CLERK_ISSUER: "https://clerk.example.test",
   CLERK_JWT_KEY: TEST_CLERK_JWT_PUBLIC_KEY,
+  CONNECTION_SETUP_PROVISIONING_QUEUE: {
+    send: async () => undefined,
+    sendBatch: async () => undefined,
+  },
   DELETION_CAPSULES: {
     get: async () => null,
     put: async () => null,

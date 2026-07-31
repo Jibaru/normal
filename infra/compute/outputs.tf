@@ -40,10 +40,11 @@ output "r2_bucket_names" {
 }
 
 output "queue_names" {
-  description = "Ingestion Queue and its actively consumed dead-letter Queue."
+  description = "Provisioning, ingestion, and actively consumed dead-letter Queues."
   value = {
-    dead_letter = cloudflare_queue.dead_letter.queue_name
-    ingestion   = cloudflare_queue.ingestion.queue_name
+    connection_setup_provisioning = cloudflare_queue.connection_setup_provisioning.queue_name
+    dead_letter                   = cloudflare_queue.dead_letter.queue_name
+    ingestion                     = cloudflare_queue.ingestion.queue_name
   }
 }
 

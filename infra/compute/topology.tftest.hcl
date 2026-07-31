@@ -74,6 +74,7 @@ run "development_topology" {
       cloudflare_r2_bucket.deletion_capsules.name == "whatsapp-mcp-deletion-capsules-development" &&
       cloudflare_r2_bucket.deletion_markers.name == "whatsapp-mcp-deletion-markers-development" &&
       cloudflare_workers_kv_namespace.oauth.title == "whatsapp-mcp-oauth-development" &&
+      cloudflare_queue.connection_setup_provisioning.queue_name == "whatsapp-mcp-connection-setup-provisioning-development" &&
       cloudflare_queue.ingestion.queue_name == "whatsapp-mcp-ingestion-development" &&
       cloudflare_queue.dead_letter.queue_name == "whatsapp-mcp-ingestion-dlq-development"
     )
@@ -97,6 +98,7 @@ run "development_topology" {
       "plain_text:OAUTH_ISSUER",
       "plain_text:OAUTH_RESOURCE",
       "plain_text:PROVIDER_APPROVED_SESSION_CAPACITY",
+      "queue:CONNECTION_SETUP_PROVISIONING_QUEUE",
       "queue:INGESTION_QUEUE",
       "r2_bucket:DELETION_CAPSULES",
       "r2_bucket:DELETION_MARKERS",
@@ -289,6 +291,10 @@ run "production_topology" {
 
   assert {
     condition = (
+      cloudflare_queue_consumer.connection_setup_provisioning.settings.batch_size == 1 &&
+      cloudflare_queue_consumer.connection_setup_provisioning.settings.max_retries == 10 &&
+      cloudflare_queue_consumer.connection_setup_provisioning.settings.retry_delay == 30 &&
+      cloudflare_queue_consumer.connection_setup_provisioning.settings.visibility_timeout_ms == 180000 &&
       cloudflare_queue_consumer.ingestion.dead_letter_queue == cloudflare_queue.dead_letter.queue_name &&
       cloudflare_queue_consumer.ingestion.settings.max_retries == 7 &&
       cloudflare_queue_consumer.ingestion.settings.retry_delay == 10800 &&

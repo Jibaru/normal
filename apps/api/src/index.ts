@@ -1,5 +1,9 @@
 import type { ProviderControlService } from "@whatsapp-mcp/contracts/provider-control";
-import { createProductionHandler } from "./production";
+import {
+  createProductionHandler,
+  createProductionQueueHandler,
+  createProductionScheduledHandler,
+} from "./production";
 import { createWorker } from "./worker";
 
 export interface Env {
@@ -11,6 +15,7 @@ export interface Env {
   readonly CLERK_AUTHORIZED_PARTY: string;
   readonly CLERK_ISSUER: string;
   readonly CLERK_JWT_KEY: string;
+  readonly CONNECTION_SETUP_PROVISIONING_QUEUE: Queue;
   readonly DELETION_CAPSULES: R2Bucket;
   readonly DELETION_MARKER_HMAC_SECRET: string;
   readonly DELETION_MARKERS: R2Bucket;
@@ -34,4 +39,7 @@ export interface Env {
 export default createWorker<Env>({
   fetch: (request, env, context) =>
     createProductionHandler(env)(request, context),
+  queue: (batch, env) => createProductionQueueHandler(env)(batch),
+  scheduled: (controller, env) =>
+    createProductionScheduledHandler(env)(controller),
 });

@@ -14,6 +14,7 @@ import {
   createConnectionSetupHandler,
   makeConnectionSetupNumberTokens,
 } from "../src/connection-setup";
+import { ConnectionSetupProvisioningQueue } from "../src/connection-setup-provisioning";
 import { EnvelopeEncryptionService } from "../src/encryption/envelope";
 import { SafeTelemetry, type SafeTelemetryEvent } from "../src/services";
 
@@ -49,6 +50,7 @@ const makeHarness = (
   const reservations = new Map<string, string>();
   const events: Array<SafeTelemetryEvent> = [];
   const encryptedNumbers: Array<string> = [];
+  const enqueuedSetups: Array<string> = [];
   let generated = 0;
   let retainedConnections = 0;
 
@@ -124,6 +126,12 @@ const makeHarness = (
       derive: (number) =>
         Effect.succeed(new TextEncoder().encode(`reservation:${number}`)),
     }),
+    Layer.succeed(ConnectionSetupProvisioningQueue, {
+      enqueue: (setupId) =>
+        Effect.sync(() => {
+          enqueuedSetups.push(setupId);
+        }),
+    }),
     Layer.succeed(EnvelopeEncryptionService, {
       createConnectionKey: ({ accountId, connectionId, keyVersion }) =>
         Effect.succeed({
@@ -158,6 +166,7 @@ const makeHarness = (
 
   return {
     bindings,
+    enqueuedSetups,
     encryptedNumbers,
     events,
     handler: createConnectionSetupHandler(layer, browserOrigin),
@@ -229,6 +238,10 @@ describe("Connection Setup HTTP boundary", () => {
     });
     expect(harness.bindings).toHaveLength(1);
     expect(harness.encryptedNumbers).toEqual(["+15550123456"]);
+    expect(harness.enqueuedSetups).toEqual([
+      "cst_000000000000000000001",
+      "cst_000000000000000000001",
+    ]);
     expect(JSON.stringify(harness.events)).not.toContain("+1555");
     expect(JSON.stringify(harness.events)).not.toContain("cst_");
   });
