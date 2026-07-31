@@ -49,6 +49,20 @@ export interface WhatsAppConnectionRecord {
   readonly stateChangedAt: string;
 }
 
+export type WhatsAppConnectionLifecycleAction = "disconnect" | "reconnect";
+
+export type WhatsAppConnectionLifecycleClaim =
+  | {
+      readonly connection: WhatsAppConnectionRecord;
+      readonly outcome: "complete" | "in_progress";
+    }
+  | {
+      readonly action: WhatsAppConnectionLifecycleAction;
+      readonly connection: WhatsAppConnectionRecord;
+      readonly outcome: "claimed";
+      readonly setupMarker: string;
+    };
+
 export type ConnectionSetupActivation =
   | {
       readonly outcome:
@@ -104,6 +118,20 @@ export interface WhatsAppConnectionRepository {
   readonly listForUser: (
     clerkUserId: string,
   ) => Promise<ReadonlyArray<WhatsAppConnectionRecord>>;
+  readonly claimLifecycle: (input: {
+    readonly action: WhatsAppConnectionLifecycleAction;
+    readonly claimId: string;
+    readonly clerkUserId: string;
+    readonly publicId: string;
+    readonly requestedAt: string;
+  }) => Promise<WhatsAppConnectionLifecycleClaim | null>;
+  readonly finishLifecycle: (input: {
+    readonly claimId: string;
+    readonly clerkUserId: string;
+    readonly observedAt: string;
+    readonly publicId: string;
+    readonly state: Exclude<WhatsAppConnectionState, "deleting">;
+  }) => Promise<WhatsAppConnectionRecord | null>;
   readonly loadSetupForActivation: (input: {
     readonly clerkUserId: string;
     readonly observedAt: string;
@@ -195,6 +223,12 @@ interface ConnectionRow extends Record<string, unknown> {
   readonly state_changed_at?: unknown;
 }
 
+interface LifecycleClaimRow extends ConnectionRow {
+  readonly lifecycle_action: unknown;
+  readonly outcome: unknown;
+  readonly setup_marker: unknown;
+}
+
 const connectionRecord = (
   row: ConnectionRow | undefined,
   prefix = "",
@@ -222,6 +256,34 @@ const connectionRecord = (
     publicId,
     state: state as WhatsAppConnectionState,
     stateChangedAt,
+  };
+};
+
+const lifecycleClaim = (
+  row: LifecycleClaimRow | undefined,
+): WhatsAppConnectionLifecycleClaim | null => {
+  if (row === undefined) return null;
+  const connection = connectionRecord(row, "connection_");
+  if (connection === null) {
+    throw new Error("invalid WhatsApp Connection lifecycle claim");
+  }
+  if (row.outcome === "complete" || row.outcome === "in_progress") {
+    return { connection, outcome: row.outcome };
+  }
+  if (
+    row.outcome !== "claimed" ||
+    (row.lifecycle_action !== "disconnect" &&
+      row.lifecycle_action !== "reconnect") ||
+    typeof row.setup_marker !== "string" ||
+    !/^cst_[A-Za-z0-9_-]{21}$/u.test(row.setup_marker)
+  ) {
+    throw new Error("invalid WhatsApp Connection lifecycle claim");
+  }
+  return {
+    action: row.lifecycle_action,
+    connection,
+    outcome: "claimed",
+    setupMarker: row.setup_marker,
   };
 };
 
@@ -382,6 +444,42 @@ export const makeWhatsAppConnectionRepository = (
         return record;
       }),
     ),
+  claimLifecycle: (input) =>
+    provider.withConnection(async (connection) => {
+      const result = await connection.query<LifecycleClaimRow>(
+        `SELECT *
+         FROM app_private.claim_whatsapp_connection_lifecycle(
+           $1, $2, $3, $4, $5
+         )`,
+        [
+          input.clerkUserId,
+          input.publicId,
+          input.action,
+          input.claimId,
+          input.requestedAt,
+        ],
+      );
+      return lifecycleClaim(result.rows[0]);
+    }),
+  finishLifecycle: (input) =>
+    provider.withConnection(async (connection) => {
+      const result = await connection.query<ConnectionRow>(
+        `SELECT *
+         FROM app_private.finish_whatsapp_connection_lifecycle(
+           $1, $2, $3, $4, $5
+         )`,
+        [
+          input.clerkUserId,
+          input.publicId,
+          input.claimId,
+          input.state,
+          input.observedAt,
+        ],
+      );
+      return result.rows[0] === undefined
+        ? null
+        : connectionRecord(result.rows[0]);
+    }),
   listForUser: (clerkUserId) =>
     provider.withConnection((connection) =>
       withTransaction(connection, async () => {

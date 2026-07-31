@@ -570,6 +570,27 @@ credential-handling incident. No infrastructure apply should add a new public
 provider-control route or binding for this flow: the existing API-only closed
 service binding is the complete lifecycle authority delta.
 
+From the retained non-production WhatsApp Connection, choose **Disconnect**.
+Confirm the product reports `disconnected`, retained history remains described
+as available under Message Retention Policy, and the same `con_` handle and
+number suffix remain listed. Repeat the request and confirm it completes
+without a second provider write. Through the restricted API role, verify that
+the WhatsApp Connection, Connection Setup, key envelopes, and WhatsApp Number
+reservation still exist; do not inspect content or ciphertext.
+
+Choose **Reconnect** on that same Connection. If linking is required, scan the
+ephemeral QR without saving it and confirm the product progresses through
+`connecting` to `connected` on the same handle. Exercise the reviewed
+ambiguous-disconnect fixture: it must make one write, reconcile, and converge
+to `disconnected` when the provider confirms that state, or `degraded` when
+the target remains unresolved. Two concurrent requests must expose one active
+claim, and a stale claim completion must not change the newer state. During
+`connecting`, `disconnected`, `reconnect_required`, or `degraded`, verify a new
+side-effect availability decision is blocked. Telemetry may contain only
+`whatsapp_connection.lifecycle.completed`, the normalized operation and
+outcome, and the API service name. Any handle, setup marker, provider value,
+number, QR data, or credential in that event is an incident.
+
 Exercise the reviewed provider-control test fixture for an ambiguous create
 timeout and confirm the next Queue delivery reconciles before any create
 decision. Exercise its duplicate fixture and confirm Neon exposes only the

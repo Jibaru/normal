@@ -222,6 +222,38 @@ describe("public-boundary Worker harness", () => {
         },
       }),
     );
+    const connectionId = "con_000000000000000000018";
+    const lifecycleRequest = (action: "disconnect" | "reconnect") =>
+      new Request(
+        `https://api.example.test/v1/whatsapp-connections/${connectionId}/${action}`,
+        {
+          headers: {
+            authorization: "Bearer signed-test-user",
+            origin: "http://127.0.0.1:3000",
+          },
+          method: "POST",
+        },
+      );
+    const disconnected = await exports.default.fetch(
+      lifecycleRequest("disconnect"),
+    );
+    const disconnectReplay = await exports.default.fetch(
+      lifecycleRequest("disconnect"),
+    );
+    const reconnectQr = await exports.default.fetch(
+      lifecycleRequest("reconnect"),
+    );
+    const reconnected = await exports.default.fetch(
+      lifecycleRequest("reconnect"),
+    );
+    const listedAgain = await exports.default.fetch(
+      new Request("https://api.example.test/v1/whatsapp-connections", {
+        headers: {
+          authorization: "Bearer signed-test-user",
+          origin: "http://127.0.0.1:3000",
+        },
+      }),
+    );
 
     expect(qr.status).toBe(200);
     expect(qr.headers.get("content-type")).toBe("image/svg+xml");
@@ -235,6 +267,37 @@ describe("public-boundary Worker harness", () => {
           number_suffix: "3456",
           state: "connected",
           state_changed_at: "2026-01-02T03:06:00.000Z",
+        },
+      ],
+    });
+    expect(disconnected.status).toBe(200);
+    expect(await disconnected.json()).toMatchObject({
+      lifecycle: { action: "disconnect", outcome: "complete" },
+      whatsapp_connection: {
+        id: connectionId,
+        state: "disconnected",
+      },
+    });
+    expect(disconnectReplay.status).toBe(200);
+    expect(reconnectQr.status).toBe(200);
+    expect(reconnectQr.headers.get("content-type")).toBe("image/svg+xml");
+    expect(reconnectQr.headers.get("x-whatsapp-connection-state")).toBe(
+      "connecting",
+    );
+    expect(reconnected.status).toBe(200);
+    expect(await reconnected.json()).toMatchObject({
+      lifecycle: { action: "reconnect", outcome: "complete" },
+      whatsapp_connection: {
+        id: connectionId,
+        state: "connected",
+      },
+    });
+    expect(await listedAgain.json()).toMatchObject({
+      whatsapp_connections: [
+        {
+          id: connectionId,
+          number_suffix: "3456",
+          state: "connected",
         },
       ],
     });

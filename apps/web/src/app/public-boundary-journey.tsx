@@ -170,6 +170,35 @@ interface SafeWhatsAppConnection {
   readonly stateChangedAt: string;
 }
 
+const decodeSafeWhatsAppConnection = (
+  connection: Record<string, unknown>,
+): SafeWhatsAppConnection | null => {
+  if (
+    (connection.display_name !== null &&
+      typeof connection.display_name !== "string") ||
+    typeof connection.id !== "string" ||
+    !/^con_[A-Za-z0-9_-]{21}$/u.test(connection.id) ||
+    typeof connection.number_suffix !== "string" ||
+    !/^[0-9]{4}$/u.test(connection.number_suffix) ||
+    (connection.state !== "connected" &&
+      connection.state !== "connecting" &&
+      connection.state !== "degraded" &&
+      connection.state !== "deleting" &&
+      connection.state !== "disconnected" &&
+      connection.state !== "reconnect_required") ||
+    typeof connection.state_changed_at !== "string"
+  ) {
+    return null;
+  }
+  return {
+    displayName: connection.display_name,
+    id: connection.id,
+    numberSuffix: connection.number_suffix,
+    state: connection.state,
+    stateChangedAt: connection.state_changed_at,
+  };
+};
+
 export function PublicBoundaryJourney({
   clerkJwtTemplate,
   clerkPublishableKey,
@@ -194,6 +223,16 @@ export function PublicBoundaryJourney({
   const [connections, setConnections] = useState<
     ReadonlyArray<SafeWhatsAppConnection>
   >([]);
+  const [connectionLifecycleAction, setConnectionLifecycleAction] = useState<
+    string | null
+  >(null);
+  const [connectionLifecycleStatus, setConnectionLifecycleStatus] = useState<
+    Readonly<Record<string, string>>
+  >({});
+  const [reconnectQr, setReconnectQr] = useState<{
+    readonly connectionId: string;
+    readonly url: string;
+  } | null>(null);
   const [qrImageUrl, setQrImageUrl] = useState<string | null>(null);
   const [whatsappNumber, setWhatsappNumber] = useState("");
   const setupIntent = useRef<{
@@ -201,6 +240,9 @@ export function PublicBoundaryJourney({
     readonly whatsappNumber: string;
   } | null>(null);
   const activeQrImageUrl = useRef<string | null>(null);
+  const activeReconnectQrUrl = useRef<string | null>(null);
+  const lifecycleGeneration = useRef(0);
+  const lifecycleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const observationGeneration = useRef(0);
   const observationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -212,6 +254,12 @@ export function PublicBoundaryJourney({
       }
       if (activeQrImageUrl.current !== null) {
         URL.revokeObjectURL(activeQrImageUrl.current);
+      }
+      if (lifecycleTimer.current !== null) {
+        clearTimeout(lifecycleTimer.current);
+      }
+      if (activeReconnectQrUrl.current !== null) {
+        URL.revokeObjectURL(activeReconnectQrUrl.current);
       }
     },
     [],
@@ -235,6 +283,16 @@ export function PublicBoundaryJourney({
     }
     activeQrImageUrl.current = next;
     setQrImageUrl(next);
+  };
+
+  const replaceReconnectQr = (
+    next: { readonly connectionId: string; readonly url: string } | null,
+  ) => {
+    if (activeReconnectQrUrl.current !== null) {
+      URL.revokeObjectURL(activeReconnectQrUrl.current);
+    }
+    activeReconnectQrUrl.current = next?.url ?? null;
+    setReconnectQr(next);
   };
 
   const stopObserving = () => {
@@ -263,33 +321,144 @@ export function PublicBoundaryJourney({
     if (!Array.isArray(body.whatsapp_connections)) return false;
     const parsed: SafeWhatsAppConnection[] = [];
     for (const connection of body.whatsapp_connections) {
-      if (
-        (connection.display_name !== null &&
-          typeof connection.display_name !== "string") ||
-        typeof connection.id !== "string" ||
-        !/^con_[A-Za-z0-9_-]{21}$/u.test(connection.id) ||
-        typeof connection.number_suffix !== "string" ||
-        !/^[0-9]{4}$/u.test(connection.number_suffix) ||
-        (connection.state !== "connected" &&
-          connection.state !== "connecting" &&
-          connection.state !== "degraded" &&
-          connection.state !== "deleting" &&
-          connection.state !== "disconnected" &&
-          connection.state !== "reconnect_required") ||
-        typeof connection.state_changed_at !== "string"
-      ) {
-        return false;
-      }
-      parsed.push({
-        displayName: connection.display_name,
-        id: connection.id,
-        numberSuffix: connection.number_suffix,
-        state: connection.state,
-        stateChangedAt: connection.state_changed_at,
-      });
+      const decoded = decodeSafeWhatsAppConnection(connection);
+      if (decoded === null) return false;
+      parsed.push(decoded);
     }
     setConnections(parsed);
     return true;
+  };
+
+  const reconcileConnectionLifecycle = async (
+    connectionId: string,
+    action: "disconnect" | "reconnect",
+    generation: number,
+  ): Promise<void> => {
+    const isCurrent = () => lifecycleGeneration.current === generation;
+    const observeAgain = () => {
+      lifecycleTimer.current = setTimeout(() => {
+        lifecycleTimer.current = null;
+        void reconcileConnectionLifecycle(connectionId, action, generation);
+      }, 750);
+    };
+
+    try {
+      const token = await getToken();
+      if (!isCurrent()) return;
+      if (token === null) {
+        setConnectionLifecycleStatus((current) => ({
+          ...current,
+          [connectionId]: "Connection lifecycle is temporarily unavailable.",
+        }));
+        setConnectionLifecycleAction(null);
+        return;
+      }
+      const response = await fetch(
+        `${connectionsEndpoint}/${encodeURIComponent(connectionId)}/${action}`,
+        {
+          headers: { authorization: `Bearer ${token}` },
+          method: "POST",
+        },
+      );
+      if (!isCurrent()) return;
+      if (
+        response.ok &&
+        response.headers.get("content-type")?.startsWith("image/svg+xml")
+      ) {
+        const image = await response.blob();
+        if (!isCurrent()) return;
+        replaceReconnectQr({
+          connectionId,
+          url: URL.createObjectURL(image),
+        });
+        setConnectionLifecycleStatus((current) => ({
+          ...current,
+          [connectionId]: "Scan the QR code to reconnect.",
+        }));
+        observeAgain();
+        return;
+      }
+
+      const body = (await response.json()) as {
+        readonly lifecycle?: {
+          readonly action?: unknown;
+          readonly outcome?: unknown;
+        };
+        readonly whatsapp_connection?: Record<string, unknown>;
+      };
+      const connection =
+        body.whatsapp_connection === undefined
+          ? null
+          : decodeSafeWhatsAppConnection(body.whatsapp_connection);
+      if (
+        connection === null ||
+        body.lifecycle?.action !== action ||
+        (body.lifecycle.outcome !== "complete" &&
+          body.lifecycle.outcome !== "in_progress" &&
+          body.lifecycle.outcome !== "recovery_required")
+      ) {
+        throw new Error("invalid lifecycle response");
+      }
+      setConnections((current) =>
+        current.map((candidate) =>
+          candidate.id === connectionId ? connection : candidate,
+        ),
+      );
+      if (body.lifecycle.outcome === "in_progress") {
+        setConnectionLifecycleStatus((current) => ({
+          ...current,
+          [connectionId]:
+            action === "disconnect"
+              ? "Disconnecting WhatsApp Connection."
+              : "Reconnecting WhatsApp Connection.",
+        }));
+        observeAgain();
+        return;
+      }
+
+      replaceReconnectQr(null);
+      setConnectionLifecycleAction(null);
+      setConnectionLifecycleStatus((current) => ({
+        ...current,
+        [connectionId]:
+          body.lifecycle?.outcome === "complete"
+            ? action === "disconnect"
+              ? "WhatsApp Connection disconnected."
+              : "WhatsApp Connection reconnected."
+            : "WhatsApp Connection needs recovery before new side effects.",
+      }));
+    } catch {
+      if (isCurrent()) {
+        replaceReconnectQr(null);
+        setConnectionLifecycleAction(null);
+        setConnectionLifecycleStatus((current) => ({
+          ...current,
+          [connectionId]: "Connection lifecycle is temporarily unavailable.",
+        }));
+      }
+    }
+  };
+
+  const startConnectionLifecycle = (
+    connection: SafeWhatsAppConnection,
+    action: "disconnect" | "reconnect",
+  ) => {
+    lifecycleGeneration.current += 1;
+    if (lifecycleTimer.current !== null) {
+      clearTimeout(lifecycleTimer.current);
+      lifecycleTimer.current = null;
+    }
+    replaceReconnectQr(null);
+    const generation = lifecycleGeneration.current;
+    setConnectionLifecycleAction(`${connection.id}:${action}`);
+    setConnectionLifecycleStatus((current) => ({
+      ...current,
+      [connection.id]:
+        action === "disconnect"
+          ? "Disconnecting WhatsApp Connection."
+          : "Reconnecting WhatsApp Connection.",
+    }));
+    void reconcileConnectionLifecycle(connection.id, action, generation);
   };
 
   const observeSetup = async (
@@ -907,6 +1076,64 @@ export function PublicBoundaryJourney({
                   >
                     State changed {connection.stateChangedAt}
                   </time>
+                  {connection.state === "disconnected" ? (
+                    <p className="mt-2 text-sm text-zinc-400">
+                      Retained history remains available under your Message
+                      Retention Policy.
+                    </p>
+                  ) : connection.state === "degraded" ||
+                    connection.state === "reconnect_required" ? (
+                    <p className="mt-2 text-sm text-amber-300">
+                      New side effects are blocked until this WhatsApp
+                      Connection recovers.
+                    </p>
+                  ) : null}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {connection.state === "connected" ? (
+                      <button
+                        aria-label={`Disconnect WhatsApp Connection ending ${connection.numberSuffix}`}
+                        className="rounded border border-red-500 px-3 py-2 text-sm text-red-300 disabled:opacity-50"
+                        disabled={connectionLifecycleAction !== null}
+                        onClick={() =>
+                          startConnectionLifecycle(connection, "disconnect")
+                        }
+                        type="button"
+                      >
+                        Disconnect
+                      </button>
+                    ) : connection.state === "disconnected" ||
+                      connection.state === "degraded" ||
+                      connection.state === "reconnect_required" ? (
+                      <button
+                        aria-label={`Reconnect WhatsApp Connection ending ${connection.numberSuffix}`}
+                        className="rounded border border-emerald-500 px-3 py-2 text-sm text-emerald-300 disabled:opacity-50"
+                        disabled={connectionLifecycleAction !== null}
+                        onClick={() =>
+                          startConnectionLifecycle(connection, "reconnect")
+                        }
+                        type="button"
+                      >
+                        Reconnect
+                      </button>
+                    ) : null}
+                  </div>
+                  <p
+                    aria-live="polite"
+                    className="mt-2 text-sm text-zinc-400"
+                    data-testid="connection-lifecycle-status"
+                  >
+                    {connectionLifecycleStatus[connection.id] ?? ""}
+                  </p>
+                  {reconnectQr?.connectionId === connection.id ? (
+                    // The object URL contains only the authenticated ephemeral
+                    // provider QR response and is revoked after reconciliation.
+                    // biome-ignore lint/performance/noImgElement: QR bytes are already a complete generated SVG.
+                    <img
+                      alt="Reconnect this WhatsApp Connection QR code"
+                      className="mt-3 h-64 w-64 rounded bg-white p-3"
+                      src={reconnectQr.url}
+                    />
+                  ) : null}
                 </li>
               ))}
             </ul>

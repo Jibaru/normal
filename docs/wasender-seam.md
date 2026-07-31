@@ -44,7 +44,11 @@ domain-separated HMAC locators; resolving a locator therefore performs a
 bounded account list instead of exposing or embedding the raw identifier. A QR
 payload is rendered immediately to SVG bytes and the payload is not retained.
 List and detail reads enforce the safe-read retry and response limits, while
-create, connect, and delete perform one write attempt. Delete reconciles both
+create, connect, disconnect, and delete perform one write attempt. Disconnect
+uses the provider's distinct lifecycle endpoint and retains the provider
+session; it never delegates to delete. The owning lifecycle workflow reconciles
+the deterministic Connection Setup marker before every connect or disconnect
+write and reconciles again after an ambiguous result. Delete reconciles both
 before and after a write and returns `present` until a later reconciled attempt
 observes absence.
 

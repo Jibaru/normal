@@ -735,6 +735,14 @@ const whatsAppConnectionProviderLayer = (environment: ApiEnvironment) =>
           ).connectSession(input),
         catch: () => unavailableProviderResult("lifecycle-write"),
       }).pipe(Effect.catchAll((failure) => Effect.succeed(failure))),
+    disconnect: (input) =>
+      Effect.tryPromise({
+        try: () =>
+          (
+            environment.PROVIDER_CONTROL as ProviderControlService
+          ).disconnectSession(input),
+        catch: () => unavailableProviderResult("lifecycle-write"),
+      }).pipe(Effect.catchAll((failure) => Effect.succeed(failure))),
     getQrCode: (input) =>
       Effect.tryPromise({
         try: () =>
@@ -765,6 +773,32 @@ const whatsAppConnectionPersistenceLayer = (environment: ApiEnvironment) =>
           return makePgWhatsAppConnectionRepository(connectionString).activate(
             input,
           );
+        },
+        catch: () => new WhatsAppConnectionPersistenceError(),
+      }),
+    claimLifecycle: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgWhatsAppConnectionRepository(
+            connectionString,
+          ).claimLifecycle(input);
+        },
+        catch: () => new WhatsAppConnectionPersistenceError(),
+      }),
+    finishLifecycle: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgWhatsAppConnectionRepository(
+            connectionString,
+          ).finishLifecycle(input);
         },
         catch: () => new WhatsAppConnectionPersistenceError(),
       }),
@@ -843,6 +877,7 @@ const whatsAppConnectionRuntimeLayer = Layer.mergeAll(
   }),
   Layer.succeed(WhatsAppConnectionIdentifiers, {
     nextConnectionId: Effect.sync(() => crypto.randomUUID()),
+    nextLifecycleClaimId: Effect.sync(() => crypto.randomUUID()),
     nextPublicId: Effect.sync(() => makeConnectionId()),
     nextWebhookIngressId: Effect.sync(() => crypto.randomUUID()),
     nextWebhookSecret: Effect.sync(() =>

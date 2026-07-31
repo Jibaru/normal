@@ -20,6 +20,9 @@ const browserOrigin = "https://app.example.test";
 const setupId = "cst_000000000000000000041";
 const qrEndpoint = `https://api.example.test/v1/connection-setups/${setupId}/qr`;
 const listEndpoint = "https://api.example.test/v1/whatsapp-connections";
+const connectionId = "con_000000000000000000041";
+const disconnectEndpoint = `${listEndpoint}/${connectionId}/disconnect`;
+const reconnectEndpoint = `${listEndpoint}/${connectionId}/reconnect`;
 const accountKey = {
   ciphertext: "AQID",
   keyVersion: 1,
@@ -53,6 +56,7 @@ const qrBytes = new TextEncoder().encode(
 
 const makeHarness = (
   options: {
+    readonly disconnectFailureState?: "connected" | "degraded" | "disconnected";
     readonly identityValid?: boolean;
     readonly initialSetupState?:
       | "activated"
@@ -66,13 +70,20 @@ const makeHarness = (
   const providerCalls: string[] = [];
   const encryptedPurposes: string[] = [];
   const connections: Array<{
-    readonly displayName: null;
-    readonly numberSuffix: string;
-    readonly publicId: string;
-    readonly state: "connected";
-    readonly stateChangedAt: string;
+    displayName: null;
+    numberSuffix: string;
+    publicId: string;
+    state:
+      | "connected"
+      | "connecting"
+      | "degraded"
+      | "disconnected"
+      | "reconnect_required";
+    stateChangedAt: string;
   }> = [];
   let providerConnected = false;
+  let disconnectFailed = false;
+  let lifecycleClaimId: string | null = null;
   let setupState = options.initialSetupState ?? "provisioned";
 
   const persistence: WhatsAppConnectionPersistenceService = {
@@ -90,6 +101,58 @@ const makeHarness = (
         connections.push(connection);
         setupState = "activated";
         return connection;
+      }),
+    claimLifecycle: ({ action, claimId, clerkUserId, publicId, requestedAt }) =>
+      Effect.sync(() => {
+        const connection = connections.find(
+          (candidate) =>
+            clerkUserId === "user_connectionowner" &&
+            candidate.publicId === publicId,
+        );
+        if (connection === undefined) return null;
+        const target = action === "disconnect" ? "disconnected" : "connected";
+        if (connection.state === target) {
+          return {
+            connection: { ...connection },
+            outcome: "complete" as const,
+          };
+        }
+        if (lifecycleClaimId !== null) {
+          return {
+            connection: { ...connection },
+            outcome: "in_progress" as const,
+          };
+        }
+        lifecycleClaimId = claimId;
+        connection.state = action === "disconnect" ? "degraded" : "connecting";
+        connection.stateChangedAt = requestedAt;
+        return {
+          action,
+          connection: { ...connection },
+          outcome: "claimed" as const,
+          setupMarker: setupId,
+        };
+      }),
+    finishLifecycle: ({ claimId, clerkUserId, observedAt, publicId, state }) =>
+      Effect.sync(() => {
+        const connection = connections.find(
+          (candidate) =>
+            clerkUserId === "user_connectionowner" &&
+            candidate.publicId === publicId,
+        );
+        if (
+          connection === undefined ||
+          lifecycleClaimId === null ||
+          lifecycleClaimId !== claimId
+        ) {
+          return null;
+        }
+        lifecycleClaimId = null;
+        if (connection.state !== state) {
+          connection.state = state;
+          connection.stateChangedAt = observedAt;
+        }
+        return { ...connection };
       }),
     list: () => Effect.succeed(connections),
     loadSetup: ({ clerkUserId }) =>
@@ -131,6 +194,31 @@ const makeHarness = (
           value: lifecycleSession,
         };
       }),
+    disconnect: () =>
+      Effect.sync(() => {
+        providerCalls.push("disconnectSession");
+        if (options.disconnectFailureState !== undefined) {
+          disconnectFailed = true;
+          return {
+            error: {
+              _tag: "ProviderControlFailure" as const,
+              code: "timed_out" as const,
+              operation: "lifecycle-write" as const,
+              retryAfterMs: null,
+              retryDecision: "reconcile_before_repeat" as const,
+            },
+            ok: false as const,
+          };
+        }
+        providerConnected = false;
+        return {
+          ok: true as const,
+          value: {
+            ...lifecycleSession,
+            connectionState: "disconnected" as const,
+          },
+        };
+      }),
     getQrCode: () =>
       Effect.sync(() => {
         providerCalls.push("getQrCode");
@@ -153,7 +241,9 @@ const makeHarness = (
             session: {
               ...lifecycleSession,
               connectionState: providerConnected
-                ? ("connected" as const)
+                ? disconnectFailed
+                  ? (options.disconnectFailureState ?? "degraded")
+                  : ("connected" as const)
                 : ("disconnected" as const),
             },
           },
@@ -176,6 +266,9 @@ const makeHarness = (
     }),
     Layer.succeed(WhatsAppConnectionIdentifiers, {
       nextConnectionId: Effect.succeed("20000000-0000-4000-8000-000000000041"),
+      nextLifecycleClaimId: Effect.succeed(
+        "40000000-0000-4000-8000-000000000041",
+      ),
       nextPublicId: Effect.succeed("con_000000000000000000041"),
       nextWebhookIngressId: Effect.succeed(
         "30000000-0000-4000-8000-000000000041",
@@ -299,6 +392,159 @@ describe("WhatsApp Connection HTTP boundary", () => {
     expect(response.status).toBe(202);
     expect(response.headers.get("x-connection-setup-state")).toBe("pending");
     expect(harness.providerCalls).toEqual([]);
+  });
+
+  test("disconnects and reconnects the retained Connection through reconciled lifecycle writes", async () => {
+    const harness = makeHarness();
+    harness.scanQr();
+    await harness.handler(request(qrEndpoint));
+    harness.providerCalls.length = 0;
+
+    const disconnected = await harness.handler(
+      request(disconnectEndpoint, "POST"),
+    );
+    const disconnectReplay = await harness.handler(
+      request(disconnectEndpoint, "POST"),
+    );
+    const reconnectQr = await harness.handler(
+      request(reconnectEndpoint, "POST"),
+    );
+    harness.scanQr();
+    const reconnected = await harness.handler(
+      request(reconnectEndpoint, "POST"),
+    );
+
+    expect(disconnected.status).toBe(200);
+    expect(await disconnected.json()).toMatchObject({
+      lifecycle: { action: "disconnect", outcome: "complete" },
+      whatsapp_connection: {
+        id: connectionId,
+        number_suffix: "3456",
+        state: "disconnected",
+      },
+    });
+    expect(disconnectReplay.status).toBe(200);
+    expect(reconnectQr.status).toBe(200);
+    expect(reconnectQr.headers.get("content-type")).toBe("image/svg+xml");
+    expect(reconnectQr.headers.get("x-whatsapp-connection-state")).toBe(
+      "connecting",
+    );
+    expect(reconnected.status).toBe(200);
+    expect(await reconnected.json()).toMatchObject({
+      lifecycle: { action: "reconnect", outcome: "complete" },
+      whatsapp_connection: {
+        id: connectionId,
+        state: "connected",
+      },
+    });
+    expect(harness.connections).toEqual([
+      expect.objectContaining({
+        numberSuffix: "3456",
+        publicId: connectionId,
+        state: "connected",
+      }),
+    ]);
+    expect(harness.providerCalls).toEqual([
+      "reconcileSession",
+      "disconnectSession",
+      "reconcileSession",
+      "connectSession",
+      "getQrCode",
+      "reconcileSession",
+    ]);
+    expect(JSON.stringify(harness.events)).not.toContain(setupId);
+    expect(JSON.stringify(harness.events)).not.toContain("session-authority");
+  });
+
+  test("fails lifecycle requests closed for another User and unknown Connection", async () => {
+    const invalidIdentity = makeHarness({ identityValid: false });
+    const owner = makeHarness();
+
+    const responses = await Promise.all([
+      invalidIdentity.handler(request(disconnectEndpoint, "POST")),
+      owner.handler(
+        request(`${listEndpoint}/con_999999999999999999999/disconnect`, "POST"),
+      ),
+    ]);
+
+    expect(responses.map(({ status }) => status)).toEqual([404, 404]);
+    expect(invalidIdentity.providerCalls).toEqual([]);
+    expect(owner.providerCalls).toEqual([]);
+  });
+
+  test("reconciles one ambiguous disconnect without repeating the provider write", async () => {
+    const harness = makeHarness({
+      disconnectFailureState: "disconnected",
+    });
+    harness.scanQr();
+    await harness.handler(request(qrEndpoint));
+    harness.providerCalls.length = 0;
+
+    const response = await harness.handler(request(disconnectEndpoint, "POST"));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      lifecycle: { action: "disconnect", outcome: "complete" },
+      whatsapp_connection: {
+        id: connectionId,
+        state: "disconnected",
+      },
+    });
+    expect(harness.providerCalls).toEqual([
+      "reconcileSession",
+      "disconnectSession",
+      "reconcileSession",
+    ]);
+  });
+
+  test("blocks side effects as degraded when ambiguous disconnect reconciliation still observes connected", async () => {
+    const harness = makeHarness({
+      disconnectFailureState: "connected",
+    });
+    harness.scanQr();
+    await harness.handler(request(qrEndpoint));
+    harness.providerCalls.length = 0;
+
+    const response = await harness.handler(request(disconnectEndpoint, "POST"));
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      lifecycle: { action: "disconnect", outcome: "recovery_required" },
+      whatsapp_connection: {
+        id: connectionId,
+        state: "degraded",
+      },
+    });
+    expect(
+      harness.providerCalls.filter((call) => call === "disconnectSession"),
+    ).toHaveLength(1);
+  });
+
+  test("does not repeat an ambiguous disconnect when reconciliation remains degraded", async () => {
+    const harness = makeHarness({
+      disconnectFailureState: "degraded",
+    });
+    harness.scanQr();
+    await harness.handler(request(qrEndpoint));
+    harness.providerCalls.length = 0;
+
+    const first = await harness.handler(request(disconnectEndpoint, "POST"));
+    const reconciledAgain = await harness.handler(
+      request(disconnectEndpoint, "POST"),
+    );
+
+    expect(first.status).toBe(409);
+    expect(reconciledAgain.status).toBe(409);
+    expect(await reconciledAgain.json()).toMatchObject({
+      lifecycle: { action: "disconnect", outcome: "recovery_required" },
+      whatsapp_connection: {
+        id: connectionId,
+        state: "degraded",
+      },
+    });
+    expect(
+      harness.providerCalls.filter((call) => call === "disconnectSession"),
+    ).toHaveLength(1);
   });
 
   test("fails closed for another User, invalid Origin, and invalid setup handle", async () => {

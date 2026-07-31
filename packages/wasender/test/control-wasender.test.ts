@@ -362,6 +362,114 @@ describe("real Wasender lifecycle adapter", () => {
     expect(await requests[4]?.json()).toEqual({ linkMethod: "qr" });
   });
 
+  test("disconnects by opaque locator with one lifecycle write", async () => {
+    const responses = [
+      json({
+        success: true,
+        data: [providerSession({ api_key: undefined, status: "connected" })],
+      }),
+      json({
+        success: true,
+        data: providerSession({ status: "connected" }),
+      }),
+      json({
+        success: true,
+        data: [providerSession({ api_key: undefined, status: "connected" })],
+      }),
+      json({
+        success: true,
+        data: providerSession({ status: "connected" }),
+      }),
+      json({
+        success: true,
+        data: { status: "disconnected" },
+      }),
+    ];
+    const requests: Request[] = [];
+    let calls = 0;
+    const lifecycle = makeWasenderSessionLifecycle(
+      { credential, referenceSecret },
+      {
+        fetch: async (request) => {
+          requests.push(request);
+          return responses[calls++] ?? json({}, { status: 500 });
+        },
+      },
+    );
+    const sessions = await Effect.runPromise(
+      lifecycle.listSessions({ setupMarker }),
+    );
+    const session = sessions[0];
+    if (!session) throw new Error("missing session fixture");
+
+    const disconnected = await Effect.runPromise(
+      lifecycle.disconnectSession({ session: session.session }),
+    );
+
+    expect(disconnected.connectionState).toBe("disconnected");
+    expect(requests.map(({ method }) => method)).toEqual([
+      "GET",
+      "GET",
+      "GET",
+      "GET",
+      "POST",
+    ]);
+    expect(requests[4]?.url).toBe(
+      "https://www.wasenderapi.com/api/whatsapp-sessions/41/disconnect",
+    );
+  });
+
+  test("does not repeat an ambiguous disconnect timeout", async () => {
+    let calls = 0;
+    const lifecycle = makeWasenderSessionLifecycle(
+      { credential, referenceSecret },
+      {
+        fetch: async () => {
+          calls += 1;
+          if (calls === 1) {
+            return json({
+              success: true,
+              data: [
+                providerSession({ api_key: undefined, status: "connected" }),
+              ],
+            });
+          }
+          if (calls === 2 || calls === 4) {
+            return json({
+              success: true,
+              data: providerSession({ status: "connected" }),
+            });
+          }
+          if (calls === 3) {
+            return json({
+              success: true,
+              data: [
+                providerSession({ api_key: undefined, status: "connected" }),
+              ],
+            });
+          }
+          throw new DOMException("timed out", "AbortError");
+        },
+      },
+    );
+    const sessions = await Effect.runPromise(
+      lifecycle.listSessions({ setupMarker }),
+    );
+    const session = sessions[0];
+    if (!session) throw new Error("missing session fixture");
+
+    const failure = await runFailure(
+      lifecycle.disconnectSession({ session: session.session }),
+    );
+
+    expect(calls).toBe(5);
+    expect(failure).toMatchObject({
+      code: "timed_out",
+      operation: "lifecycle-write",
+      retryDecision: "reconcile_before_repeat",
+    });
+  });
+
   test("rejects oversized provider JSON before parsing or retrying", async () => {
     let calls = 0;
     const lifecycle = makeWasenderSessionLifecycle(

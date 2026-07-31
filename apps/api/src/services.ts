@@ -114,6 +114,17 @@ export interface WhatsAppConnectionListCompletedEvent {
   readonly service: "api";
 }
 
+export interface WhatsAppConnectionLifecycleCompletedEvent {
+  readonly event: "whatsapp_connection.lifecycle.completed";
+  readonly operation: "disconnect" | "reconnect";
+  readonly outcome:
+    | "complete"
+    | "in_progress"
+    | "qr_available"
+    | "recovery_required";
+  readonly service: "api";
+}
+
 export interface OAuthAuthorizationRequestCompletedEvent {
   readonly clientClass?: string | undefined;
   readonly event: "oauth.authorization.request.completed";
@@ -169,6 +180,7 @@ export type SafeTelemetryEvent =
   | OAuthRefreshCompletedEvent
   | PersonalAccountBootstrapCompletedEvent
   | StoredMediaContainerEvent
+  | WhatsAppConnectionLifecycleCompletedEvent
   | WhatsAppConnectionListCompletedEvent;
 
 export const SafeTelemetry = Context.GenericTag<SafeTelemetry>(

@@ -2,6 +2,7 @@ import {
   decodeConnectSessionRequest,
   decodeCreateSessionRequest,
   decodeDeleteSessionRequest,
+  decodeDisconnectSessionRequest,
   decodeGetQrCodeRequest,
   decodeListSessionsRequest,
   decodeReconcileSessionRequest,
@@ -375,6 +376,18 @@ export const makeProviderControlRpc = (
             session: request.session as never,
           }),
         deletionObservation,
+      ),
+    disconnectSession: (input) =>
+      invoke(
+        "disconnectSession",
+        input,
+        decodeDisconnectSessionRequest,
+        "lifecycle-write",
+        (lifecycle, request) =>
+          lifecycle.disconnectSession({
+            session: request.session as never,
+          }),
+        (value) => lifecycleSession(value, "lifecycle-write"),
       ),
     getQrCode: (input) =>
       invoke(

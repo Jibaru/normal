@@ -30,6 +30,10 @@ export default class ProviderControl extends WorkerEntrypoint<Env> {
     return createProductionRpc(this.env).deleteSession(request);
   }
 
+  disconnectSession(request: SessionRequest) {
+    return createProductionRpc(this.env).disconnectSession(request);
+  }
+
   getQrCode(request: SessionRequest) {
     return createProductionRpc(this.env).getQrCode(request);
   }

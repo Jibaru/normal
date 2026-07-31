@@ -16,6 +16,10 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   const firstSetupCanContinue = new Promise<void>((resolve) => {
     releaseFirstSetup = resolve;
   });
+  let releaseFirstQr: (() => void) | undefined;
+  const firstQrCanContinue = new Promise<void>((resolve) => {
+    releaseFirstQr = resolve;
+  });
   await page.route("https://api.example.test/**", async (route) => {
     const original = route.request();
     const requestPath = new URL(original.url()).pathname;
@@ -30,6 +34,14 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
       if (setupBodies.length === 1) {
         await firstSetupCanContinue;
       }
+    }
+    if (
+      /^\/v1\/connection-setups\/cst_[A-Za-z0-9_-]{21}\/qr$/u.test(
+        requestPath,
+      ) &&
+      original.method() === "GET"
+    ) {
+      await firstQrCanContinue;
     }
     const localUrl = new URL(original.url());
     localUrl.protocol = "http:";
@@ -127,6 +139,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(page.getByTestId("connection-setup-status")).toHaveText(
     "Connection Setup started. Preparing your QR code.",
   );
+  releaseFirstQr?.();
   await expect(
     page.getByRole("img", { name: "Scan this WhatsApp QR code" }),
   ).toBeVisible();
@@ -148,6 +161,33 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(page.getByTestId("whatsapp-connection")).not.toContainText(
     "session-authority",
   );
+  const connection = page.getByTestId("whatsapp-connection");
+  await connection
+    .getByRole("button", {
+      name: "Disconnect WhatsApp Connection ending 3456",
+    })
+    .click();
+  await expect(connection).toContainText("disconnected");
+  await expect(connection).toContainText(
+    "Retained history remains available under your Message Retention Policy.",
+  );
+  await connection
+    .getByRole("button", {
+      name: "Reconnect WhatsApp Connection ending 3456",
+    })
+    .click();
+  await expect(
+    connection.getByRole("img", {
+      name: "Reconnect this WhatsApp Connection QR code",
+    }),
+  ).toBeVisible();
+  await expect(connection).toContainText("connected");
+  await expect(
+    connection.getByRole("img", {
+      name: "Reconnect this WhatsApp Connection QR code",
+    }),
+  ).toHaveCount(0);
+  await expect(connection).toContainText("Number ending 3456");
   expect(setupBodies).toHaveLength(1);
   expect(setupBodies[0]?.whatsapp_number).toBe("+1 (555) 012-3456");
   expect(setupBodies[0]?.idempotency_key).toMatch(/^[A-Za-z0-9_-]{21}$/);
@@ -155,6 +195,12 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     "http://127.0.0.1:8787/test/provider-observations",
   );
   expect(await providerObservations.json()).toEqual([
+    "reconcileSession",
+    "connectSession",
+    "getQrCode",
+    "reconcileSession",
+    "reconcileSession",
+    "disconnectSession",
     "reconcileSession",
     "connectSession",
     "getQrCode",

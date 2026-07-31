@@ -612,6 +612,23 @@ export const makeWasenderSessionLifecycle = (
           return toLifecycleSession({ ...detail, status: data.status });
         });
       }),
+    disconnectSession: ({ session }) =>
+      effect(async () => {
+        const summary = await resolveProviderSession(session);
+        if (!summary) throw writeFailure("invalid_response", false);
+        const detail = await loadDetail(summary.id);
+        const body = await writeJson(
+          `/api/whatsapp-sessions/${summary.id}/disconnect`,
+          { method: "POST" },
+        );
+        return completeLifecycleWrite(async () => {
+          const data = parseData(body.value);
+          if (!isRecord(data) || typeof data.status !== "string") {
+            throw writeFailure("invalid_response", true);
+          }
+          return toLifecycleSession({ ...detail, status: data.status });
+        });
+      }),
     createSession: ({ phoneNumber, setupMarker }) =>
       effect(async () => {
         const number = Redacted.value(phoneNumber);

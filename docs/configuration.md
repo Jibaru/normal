@@ -420,6 +420,43 @@ Personal Account, Connection Setup, WhatsApp Connection, number, QR byte,
 provider value, credential, ingress identity, secret, ciphertext, or key
 reference.
 
+## WhatsApp Connection disconnect and reconnect
+
+The signed-in product sends `POST
+/v1/whatsapp-connections/{connection_id}/disconnect` or `/reconnect` directly
+to the API. These lifecycle commands are separate from Connection Deletion:
+disconnect retains the WhatsApp Connection row, encrypted keys, Message
+Retention Policy data, MCP selection, provider session, and platform-wide
+WhatsApp Number reservation. Reconnect operates on that same `con_` identity.
+
+Migration 0012 adds a narrow durable lifecycle claim to each WhatsApp
+Connection. The restricted API function serializes the command, records the
+desired connected or disconnected availability, and gives one caller a
+two-minute opaque lease. A disconnect claim changes local state to `degraded`
+before provider access, and a reconnect claim changes it to `connecting`, so
+new side effects fail closed throughout reconciliation. A later claim can
+replace an expired lease; its opaque claim UUID prevents a slow earlier result
+from regressing the newer state.
+
+The claim holder reconciles the deterministic retained setup marker before any
+lifecycle write. An already-satisfied provider state completes without a
+write. Otherwise provider-control performs exactly one connect or disconnect
+attempt. An ambiguous result is never repeated: the API reconciles provider
+state again and persists the normalized observation. Confirmed absence during
+disconnect converges to `disconnected`; absence during reconnect converges to
+`reconnect_required`; duplicate sessions or unresolved evidence converge to
+`degraded`. A reconnect that needs user linking streams the current SVG QR
+with the same no-store, no-persistence controls as initial activation and
+continues reconciliation after scanning.
+
+This behavior adds no environment value, public provider-control route, Queue,
+storage binding, or infrastructure permission. It reuses the restricted Neon
+API role and the existing same-environment API-to-provider-control service
+binding. Safe telemetry is limited to
+`whatsapp_connection.lifecycle.completed`, `disconnect` or `reconnect`, and
+the normalized outcome `complete`, `in_progress`, `qr_available`, or
+`recovery_required`; identifiers and provider values are prohibited.
+
 ## Wasender media authority
 
 The Wasender media adapter has no hostname, endpoint, redirect, timeout, or

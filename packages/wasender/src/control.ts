@@ -95,6 +95,9 @@ export interface SessionLifecycle {
   readonly connectSession: (request: {
     readonly session: LifecycleSessionLocator;
   }) => AdapterEffect<LifecycleSession>;
+  readonly disconnectSession: (request: {
+    readonly session: LifecycleSessionLocator;
+  }) => AdapterEffect<LifecycleSession>;
   readonly getQrCode: (request: {
     readonly session: LifecycleSessionLocator;
   }) => AdapterEffect<QrCodeObservation>;

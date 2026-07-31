@@ -141,6 +141,17 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 11,
   },
+  {
+    name: "WhatsApp Connection lifecycle reconciliation",
+    sql: await readFile(
+      new NodeUrl(
+        "../migrations/0012_whatsapp_connection_lifecycle.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    version: 12,
+  },
 ];
 
 const checksum = (sql: string): string =>

@@ -33,6 +33,8 @@ const makeLifecycle = (
   connectSession: () => Effect.succeed(lifecycleSession),
   createSession: () => Effect.succeed(lifecycleSession),
   deleteSession: () => Effect.succeed({ state: "absent" }),
+  disconnectSession: () =>
+    Effect.succeed({ ...lifecycleSession, connectionState: "disconnected" }),
   getQrCode: () => Effect.succeed({ state: "not_available" }),
   listSessions: () => Effect.succeed([lifecycleSession]),
   reconcileSession: () =>
@@ -275,15 +277,21 @@ describe("provider-control RPC authority", () => {
       loadLifecycle: async () => makeLifecycle(),
     });
 
-    const [connected, listed, qr, reconciled, deleted] = await Promise.all([
-      rpc.connectSession({ session: lifecycleSession.session }),
-      rpc.listSessions({ setupMarker }),
-      rpc.getQrCode({ session: lifecycleSession.session }),
-      rpc.reconcileSession({ setupMarker }),
-      rpc.deleteSession({ session: lifecycleSession.session }),
-    ]);
+    const [connected, disconnected, listed, qr, reconciled, deleted] =
+      await Promise.all([
+        rpc.connectSession({ session: lifecycleSession.session }),
+        rpc.disconnectSession({ session: lifecycleSession.session }),
+        rpc.listSessions({ setupMarker }),
+        rpc.getQrCode({ session: lifecycleSession.session }),
+        rpc.reconcileSession({ setupMarker }),
+        rpc.deleteSession({ session: lifecycleSession.session }),
+      ]);
 
     expect(connected.ok).toBe(true);
+    expect(disconnected).toMatchObject({
+      ok: true,
+      value: { connectionState: "disconnected" },
+    });
     expect(listed).toEqual({
       ok: true,
       value: [
