@@ -1,8 +1,14 @@
-import type { BeginToolCallResult } from "@whatsapp-mcp/db/mcp-tool";
+import { importCursorSigningKey } from "@whatsapp-mcp/contracts/cursor";
+import type {
+  BeginToolCallResult,
+  McpToolGroupPage,
+} from "@whatsapp-mcp/db/mcp-tool";
 import { Effect, Layer } from "effect";
 import { describe, expect, test } from "vitest";
+import { EnvelopeEncryptionService } from "../src/encryption/envelope";
 import {
   createMcpRequestHandler,
+  McpCursorSigning,
   McpToolClock,
   McpToolIdentifiers,
   McpToolPersistence,
@@ -102,6 +108,8 @@ const makeHarness = (
     readonly scopes?: ReadonlyArray<
       "connections:read" | "directory:read" | "messages:read" | "messages:send"
     >;
+    readonly groupPage?: McpToolGroupPage | null;
+    readonly cursorKey?: CryptoKey;
   } = {},
 ) => {
   const observations: Array<string> = [];
@@ -114,7 +122,7 @@ const makeHarness = (
       nextAuditLogId: Effect.succeed("50000000-0000-4000-8000-000000000030"),
     }),
     Layer.succeed(McpToolPersistence, {
-      beginToolCall: () => {
+      beginToolCall: (input) => {
         observations.push("begin");
         if (overrides.failBegin) {
           return Effect.fail(new McpToolPersistenceError());
@@ -124,7 +132,11 @@ const makeHarness = (
         }
         if (
           overrides.scopes !== undefined &&
-          !overrides.scopes.includes("connections:read")
+          !overrides.scopes.includes(
+            input.toolName === "list_groups"
+              ? "directory:read"
+              : "connections:read",
+          )
         ) {
           return Effect.succeed({
             auditLogId: "50000000-0000-4000-8000-000000000030",
@@ -160,6 +172,71 @@ const makeHarness = (
           },
         ]);
       },
+      listGroups: () => {
+        observations.push("list-groups");
+        return Effect.succeed(
+          overrides.groupPage === undefined
+            ? {
+                accountKey: {
+                  ciphertext: "AQID",
+                  keyVersion: 1,
+                  kmsKeyId:
+                    "arn:aws:kms:us-east-1:111122223333:key/test-content-root",
+                  personalAccountId: "10000000-0000-4000-8000-000000000039",
+                  version: 1 as const,
+                },
+                asOf: "2026-07-31T11:59:00.000Z",
+                connectionKey: {
+                  accountKeyVersion: 1,
+                  ciphertext: "AQID",
+                  connectionId: "20000000-0000-4000-8000-000000000039",
+                  keyVersion: 1,
+                  nonce: "AQIDBAUGBwgJCgsM",
+                  personalAccountId: "10000000-0000-4000-8000-000000000039",
+                  version: 1 as const,
+                },
+                groups: [
+                  {
+                    displayName: {
+                      ciphertext: btoa("Family"),
+                      keyVersion: 1,
+                      nonce: "AQIDBAUGBwgJCgsM",
+                      version: 1 as const,
+                    },
+                    id: "30000000-0000-4000-8000-000000000039",
+                    publicId: "grp_AAAAAAAAAAAAAAAAAAAAA",
+                  },
+                  {
+                    displayName: {
+                      ciphertext: btoa("Family"),
+                      keyVersion: 1,
+                      nonce: "AQIDBAUGBwgJCgsM",
+                      version: 1 as const,
+                    },
+                    id: "30000000-0000-4000-8000-000000000040",
+                    publicId: "grp_aaaaaaaaaaaaaaaaaaaaa",
+                  },
+                ],
+                partial: false,
+                stale: false,
+              }
+            : overrides.groupPage,
+        );
+      },
+    }),
+    Layer.succeed(McpCursorSigning, {
+      key: overrides.cursorKey ?? ({} as CryptoKey),
+    }),
+    Layer.succeed(EnvelopeEncryptionService, {
+      createConnectionKey: () => Effect.die("not used"),
+      createPersonalAccountKey: () => Effect.die("not used"),
+      decrypt: ({ ciphertext }) =>
+        Effect.succeed(
+          Uint8Array.from(atob(ciphertext.ciphertext), (character) =>
+            character.charCodeAt(0),
+          ),
+        ),
+      encrypt: () => Effect.die("not used"),
     }),
     Layer.succeed(SafeTelemetry, {
       emit: (event) =>
@@ -515,6 +592,147 @@ describe("stateless MCP list_connections boundary", () => {
     expect(await responseJson(response)).toMatchObject({
       result: {
         tools: [{ name: "list_connections" }],
+      },
+    });
+  });
+});
+
+describe("stateless MCP list_groups boundary", () => {
+  test("scope-filters discovery to directory tools", async () => {
+    const harness = makeHarness({ scopes: ["directory:read"] });
+    const response = await harness.handler(
+      jsonRpcRequest("tools/list"),
+      {},
+      executionContext,
+      authorization,
+    );
+    const body = (await response.json()) as {
+      result: { tools: Array<{ name: string }> };
+    };
+
+    expect(body.result.tools.map(({ name }) => name)).toEqual(["list_groups"]);
+  });
+
+  test("audits before decrypting and returns normalized prefix results without provider data", async () => {
+    const harness = makeHarness({ scopes: ["directory:read"] });
+    const response = await harness.handler(
+      jsonRpcRequest("tools/call", {
+        arguments: {
+          connection_id: "con_123456789012345678939",
+          search: "fam",
+        },
+        name: "list_groups",
+      }),
+      {},
+      executionContext,
+      authorization,
+    );
+    const body = (await response.json()) as {
+      result: {
+        content: Array<{ text: string; type: string }>;
+        structuredContent: unknown;
+      };
+    };
+
+    expect(harness.observations).toEqual(["begin", "list-groups", "complete"]);
+    expect(body.result.structuredContent).toEqual({
+      groups: [
+        {
+          display_name: "Family",
+          group_id: "grp_AAAAAAAAAAAAAAAAAAAAA",
+        },
+        {
+          display_name: "Family",
+          group_id: "grp_aaaaaaaaaaaaaaaaaaaaa",
+        },
+      ],
+      has_more: false,
+      next_cursor: null,
+      as_of: "2026-07-31T11:59:00.000Z",
+      stale: false,
+      partial: false,
+    });
+    expect(body.result.content[0]?.text).toBe(
+      JSON.stringify(body.result.structuredContent),
+    );
+    expect(JSON.stringify(body)).not.toContain("provider");
+  });
+
+  test("returns authorization-bound keyset pages and rejects changed filters", async () => {
+    const key = await Effect.runPromise(
+      importCursorSigningKey(new Uint8Array(32).fill(39)),
+    );
+    const harness = makeHarness({
+      cursorKey: key,
+      scopes: ["directory:read"],
+    });
+    const first = await harness.handler(
+      jsonRpcRequest("tools/call", {
+        arguments: {
+          connection_id: "con_123456789012345678939",
+          limit: 1,
+        },
+        name: "list_groups",
+      }),
+      {},
+      executionContext,
+      authorization,
+    );
+    const firstBody = (await first.json()) as {
+      result: {
+        structuredContent: {
+          groups: Array<{ group_id: string }>;
+          has_more: boolean;
+          next_cursor: string;
+        };
+      };
+    };
+    expect(firstBody.result.structuredContent).toMatchObject({
+      groups: [{ group_id: "grp_AAAAAAAAAAAAAAAAAAAAA" }],
+      has_more: true,
+    });
+
+    const second = await harness.handler(
+      jsonRpcRequest("tools/call", {
+        arguments: {
+          connection_id: "con_123456789012345678939",
+          cursor: firstBody.result.structuredContent.next_cursor,
+          limit: 1,
+        },
+        name: "list_groups",
+      }),
+      {},
+      executionContext,
+      authorization,
+    );
+    expect(await second.json()).toMatchObject({
+      result: {
+        structuredContent: {
+          groups: [{ group_id: "grp_aaaaaaaaaaaaaaaaaaaaa" }],
+          has_more: false,
+          next_cursor: null,
+        },
+      },
+    });
+
+    const mismatch = await harness.handler(
+      jsonRpcRequest("tools/call", {
+        arguments: {
+          connection_id: "con_123456789012345678939",
+          cursor: firstBody.result.structuredContent.next_cursor,
+          limit: 1,
+          search: "wor",
+        },
+        name: "list_groups",
+      }),
+      {},
+      executionContext,
+      authorization,
+    );
+    expect(await mismatch.json()).toMatchObject({
+      result: {
+        isError: true,
+        structuredContent: { error_code: "invalid_cursor" },
       },
     });
   });

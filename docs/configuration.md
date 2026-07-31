@@ -20,6 +20,7 @@ request is accepted. Production roots accept only `development`, `preview`, or
 | `OAUTH_PROTOCOL_ENCRYPTION_KEY` | Secret | API OAuth provider | Dedicated 32-byte hex AES key for short-lived consent handoff records. Generate with `openssl rand -hex 32`; never reuse another platform key. |
 | `MCP_REQUESTS_PER_MINUTE` | Non-secret approved quota | API MCP resource server | Authoritative per-Personal-Account request reservations allowed in an exact rolling minute. Set the reviewed positive integer through `mcp_requests_per_minute`; there is no production default. |
 | `MCP_REQUESTS_PER_HOUR` | Non-secret approved quota | API MCP resource server | Authoritative per-Personal-Account request reservations allowed in an exact rolling hour. Set the reviewed integer through `mcp_requests_per_hour`; it must be at least the minute value and has no production default. |
+| `MCP_CURSOR_HMAC_SECRET` | Secret | API MCP resource server | Dedicated 32-byte hex HMAC key for authorization-bound pagination cursors. Generate independently with `openssl rand -hex 32`; never reuse OAuth, content, provider-reference, webhook, reservation, or deletion keys. Rotation invalidates outstanding short-lived cursors. |
 | `PROVIDER_APPROVED_SESSION_CAPACITY` | Non-secret operational limit | API | Vendor-approved session ceiling for the environment. Set the reviewed integer through `provider_approved_session_capacity`; missing, placeholder, fractional, or values below three fail closed. Increase only after written provider approval. |
 | `DATABASE_URL` | Secret | Database tooling that consumes `@whatsapp-mcp/db/config` | Issue a restricted Neon role URL, store it in the deployment secret store, and rotate it through Neon plus the deployment platform. API production traffic uses Hyperdrive instead. |
 | `MIGRATION_DATABASE_URL` | Secret | `bun run db:migrate` and `bun run db:check` | Obtain the direct, unpooled owner URL from the sensitive OpenTofu output. It must be a TLS Neon URL and must never be configured on a Worker or web deployable. Rotate it by rotating the Neon migration-owner password. |
@@ -187,11 +188,12 @@ Authorization-management telemetry contains only
 authorization handle or internal ID, MCP Client, Connection, scope set,
 timestamp, token, credential hash, or request path.
 
-Migration 0012 adds the RLS-protected, metadata-only Tool Call Log and the
-stateless MCP `list_connections` boundary. Each invocation first locks its
-Personal Account quota subject, rechecks the current MCP Authorization and
-`connections:read` scope, and atomically persists the audit row with one request
-reservation. Exact rolling minute and hour counts use only committed
+Migration 0017 adds the RLS-protected, metadata-only Tool Call Log and the
+stateless MCP `list_connections` boundary. Migration 0018 adds encrypted group
+projections and `list_groups`. Each invocation first locks its Personal Account
+quota subject, rechecks the current MCP Authorization and the tool's
+`connections:read` or `directory:read` scope, and atomically persists the audit
+row with one request reservation. Exact rolling minute and hour counts use only committed
 `quota_reserved` rows. Authorization failures and pre-reservation audit failures
 do not consume quota. When either window is exhausted, the API returns the
 binding window's safe retry and reset values without reading Connection state.
@@ -204,7 +206,7 @@ latency, and whether request quota was reserved. They never contain OAuth
 credentials, Connection handles, display names, phone suffixes, provider
 identifiers, scope sets, request or response content, or raw payloads. MCP tool
 telemetry is limited to `mcp.tool_call.completed`, the fixed
-`list_connections` tool name, an allowlisted outcome, the API service name, and
+`list_connections` or `list_groups` tool name, an allowlisted outcome, the API service name, and
 the bounded result count on success. Do not enrich it with tenant,
 authorization, client, Connection, quota, credential, request, or response
 fields.

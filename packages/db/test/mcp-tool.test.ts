@@ -339,4 +339,135 @@ describe("MCP tool repository", () => {
       }),
     ).resolves.toEqual([]);
   });
+
+  test("rechecks directory scope, selected connection, and joined state for encrypted groups", async () => {
+    await database.query(
+      `UPDATE app.mcp_authorizations
+       SET scopes = ARRAY['directory:read']::text[]
+       WHERE id = $1`,
+      [authorizationId],
+    );
+    await database.query(
+      `INSERT INTO app.whatsapp_connection_key_envelopes (
+         personal_account_id, whatsapp_connection_id, account_key_version,
+         key_version, nonce, ciphertext
+       ) VALUES ($1, '20000000-0000-4000-8000-000000000030', 1, 1,
+         decode(repeat('01', 12), 'hex'), decode(repeat('02', 32), 'hex'))`,
+      [accountId],
+    );
+    await database.query(
+      `INSERT INTO app.whatsapp_group_directory_states (
+         personal_account_id, whatsapp_connection_id, as_of,
+         stale, partial, updated_at
+       ) VALUES ($1, '20000000-0000-4000-8000-000000000030', $2,
+         false, false, $2)`,
+      [accountId, observedAt],
+    );
+    await database.query(
+      `INSERT INTO app.whatsapp_groups (
+         id, personal_account_id, whatsapp_connection_id, public_id,
+         provider_locator, display_name_ciphertext_version,
+         display_name_key_version, display_name_nonce,
+         display_name_ciphertext, provider_identity_ciphertext_version,
+         provider_identity_key_version, provider_identity_nonce,
+         provider_identity_ciphertext, joined, last_observed_at,
+         created_at, updated_at
+       ) VALUES (
+         '30000000-0000-4000-8000-000000000039', $1,
+         '20000000-0000-4000-8000-000000000030',
+         'grp_123456789012345678939', $2, 1, 1,
+         decode(repeat('03', 12), 'hex'), decode(repeat('04', 20), 'hex'),
+         1, 1, decode(repeat('05', 12), 'hex'),
+         decode(repeat('06', 20), 'hex'), true, $3, $3, $3
+       )`,
+      [accountId, `wi1_${"A".repeat(43)}`, observedAt],
+    );
+
+    await expect(
+      repository.beginToolCall({
+        ...authorization,
+        auditLogId: "50000000-0000-4000-8000-000000000039",
+        hourLimit: 10,
+        minuteLimit: 10,
+        observedAt,
+        toolName: "list_groups",
+      }),
+    ).resolves.toMatchObject({ outcome: "started" });
+    const page = await repository.listGroups({
+      ...authorization,
+      connectionPublicId: connectionA,
+      observedAt,
+    });
+    expect(page).toMatchObject({
+      asOf: "2026-07-31T12:00:00.000Z",
+      groups: [
+        {
+          id: "30000000-0000-4000-8000-000000000039",
+          publicId: "grp_123456789012345678939",
+        },
+      ],
+      partial: false,
+      stale: false,
+    });
+    expect(page?.groups[0]?.displayName?.ciphertext).not.toContain("Family");
+
+    await database.query(
+      `UPDATE app.whatsapp_groups SET joined = false
+       WHERE public_id = 'grp_123456789012345678939'`,
+    );
+    await expect(
+      repository.listGroups({
+        ...authorization,
+        connectionPublicId: connectionA,
+        observedAt,
+      }),
+    ).resolves.toMatchObject({ groups: [] });
+    await expect(
+      repository.listGroups({
+        ...authorization,
+        connectionPublicId: connectionLater,
+        observedAt,
+      }),
+    ).resolves.toBeNull();
+
+    await database.query(
+      `UPDATE app.whatsapp_groups SET joined = true
+       WHERE public_id = 'grp_123456789012345678939'`,
+    );
+    await database.query(
+      `UPDATE app.mcp_authorizations
+       SET state = 'revoked', revoked_at = $2
+       WHERE id = $1`,
+      [authorizationId, observedAt],
+    );
+    await expect(
+      repository.listGroups({
+        ...authorization,
+        connectionPublicId: connectionA,
+        observedAt,
+      }),
+    ).resolves.toBeNull();
+    await database.exec("SET ROLE whatsapp_api_runtime; BEGIN");
+    try {
+      await database.query(
+        "SELECT set_config('app.personal_account_id', $1, true)",
+        [accountId],
+      );
+      const protectedBoundary = await database.query(
+        `SELECT * FROM app_private.load_mcp_group_projection_material(
+          $1, $2, $3, $4, $5
+        )`,
+        [
+          authorizationId,
+          authorization.oauthSubject,
+          authorization.clientId,
+          observedAt,
+          connectionA,
+        ],
+      );
+      expect(protectedBoundary.rows).toEqual([]);
+    } finally {
+      await database.exec("ROLLBACK; RESET ROLE");
+    }
+  });
 });

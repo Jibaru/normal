@@ -1,4 +1,5 @@
 import { KMSClient } from "@aws-sdk/client-kms";
+import { importCursorSigningKey } from "@whatsapp-mcp/contracts/cursor";
 import {
   makeConnectionId,
   makeConnectionSetupId,
@@ -13,12 +14,19 @@ import {
 } from "@whatsapp-mcp/db/connection-health";
 import { makePgConnectionSetupRepository } from "@whatsapp-mcp/db/connection-setup";
 import { checkDatabaseReadiness } from "@whatsapp-mcp/db/connectivity";
+import { makePgGroupRepository } from "@whatsapp-mcp/db/group";
 import { makePgMcpAuthorizationRepository } from "@whatsapp-mcp/db/mcp-authorization";
 import { makePgMcpToolRepository } from "@whatsapp-mcp/db/mcp-tool";
 import { makePgPersonalAccountRepository } from "@whatsapp-mcp/db/personal-account";
 import { makePgWebhookEventRepository } from "@whatsapp-mcp/db/webhook-event";
 import { makePgWebhookIngressRepository } from "@whatsapp-mcp/db/webhook-ingress";
 import { makePgWhatsAppConnectionRepository } from "@whatsapp-mcp/db/whatsapp-connection";
+import {
+  type DirectorySessionAuthority,
+  makeWasenderSessionDirectory,
+  type ProviderNeutralFailure,
+  type WasenderIdentityProtectionKey,
+} from "@whatsapp-mcp/wasender/session";
 import { Config, ConfigProvider, Data, Effect, Layer, Redacted } from "effect";
 import { makeClerkHumanIdentity } from "./auth/clerk";
 import { HumanIdentity } from "./auth/human-identity";
@@ -83,7 +91,16 @@ import {
   StoredMediaContainerService,
 } from "./encryption/stored-media-container";
 import {
+  GroupDirectoryIdentifiers,
+  GroupDirectoryPersistence,
+  GroupDirectoryPersistenceError,
+  GroupDirectoryProvider,
+  makeGroupDirectoryId,
+  reconcileGroupDirectory,
+} from "./group-directory";
+import {
   createMcpRequestHandler,
+  McpCursorSigning,
   McpToolClock,
   McpToolIdentifiers,
   McpToolPersistence,
@@ -185,6 +202,7 @@ export interface ApiEnvironment {
   readonly KMS_DELETION_COORDINATOR_KEY_ARN?: string | undefined;
   readonly MCP_REQUESTS_PER_HOUR?: string | undefined;
   readonly MCP_REQUESTS_PER_MINUTE?: string | undefined;
+  readonly MCP_CURSOR_HMAC_SECRET?: string | undefined;
   readonly INGESTION_QUEUE?: unknown;
   readonly OAUTH_CLIENT_REGISTRY?: string | undefined;
   readonly OAUTH_ISSUER?: string | undefined;
@@ -223,12 +241,20 @@ const mcpRequestQuotaConfig = Config.all({
   }),
 );
 
+const mcpCursorHmacSecret = Config.redacted("MCP_CURSOR_HMAC_SECRET").pipe(
+  Config.validate({
+    message: "MCP_CURSOR_HMAC_SECRET must be a 32-byte hex secret",
+    validation: (value) => /^[a-f0-9]{64}$/iu.test(Redacted.value(value)),
+  }),
+);
+
 const productionConfig = Config.all({
   environment: Config.literal(
     "development",
     "preview",
     "production",
   )("DEPLOYMENT_ENVIRONMENT"),
+  mcpCursorHmacSecret,
   mcpRequestQuota: mcpRequestQuotaConfig,
 });
 
@@ -1051,6 +1077,22 @@ const webhookEventPersistenceLayer = (environment: ApiEnvironment) =>
         },
         catch: () => new WebhookEventPersistenceError(),
       }),
+    projectGroup: (input, protect, compareVersions) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString =
+            environment.WEBHOOK_HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgWebhookEventRepository(connectionString).projectGroup(
+            input,
+            protect,
+            compareVersions,
+          );
+        },
+        catch: () => new WebhookEventPersistenceError(),
+      }),
     quarantine: (input) =>
       Effect.tryPromise({
         try: () => {
@@ -1445,6 +1487,17 @@ const mcpToolPersistenceLayer = (environment: ApiEnvironment) =>
         },
         catch: () => new McpToolPersistenceError(),
       }),
+    listGroups: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgMcpToolRepository(connectionString).listGroups(input);
+        },
+        catch: () => new McpToolPersistenceError(),
+      }),
   });
 
 const mcpToolRuntimeLayer = Layer.mergeAll(
@@ -1455,6 +1508,23 @@ const mcpToolRuntimeLayer = Layer.mergeAll(
     nextAuditLogId: Effect.sync(() => crypto.randomUUID()),
   }),
 );
+
+const mcpCursorSigningLayer = (environment: ApiEnvironment) =>
+  Layer.effect(
+    McpCursorSigning,
+    mcpCursorHmacSecret.pipe(
+      Effect.withConfigProvider(environmentConfigProvider(environment)),
+      Effect.flatMap((secret) =>
+        importCursorSigningKey(
+          Uint8Array.from(
+            Redacted.value(secret).match(/.{2}/gu) ?? [],
+            (value) => Number.parseInt(value, 16),
+          ),
+        ),
+      ),
+      Effect.map((key) => ({ key })),
+    ),
+  );
 
 const randomBase64Url = (): string => {
   const value = new Uint8Array(32);
@@ -1664,6 +1734,7 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     webhookIngressCloudflareLayer(environment),
     mcpToolPersistenceLayer(environment),
     mcpToolRuntimeLayer,
+    mcpCursorSigningLayer(environment),
   );
   const handler = createCanaryHandler(layer);
   const personalAccountHandler = createPersonalAccountHandler(
@@ -1943,6 +2014,85 @@ interface ConnectionSetupScheduledRepository {
 interface ConnectionHealthScheduledRepository
   extends Pick<ConnectionHealthRepository, "claim" | "finish"> {}
 
+const unavailableDirectoryFailure = (): ProviderNeutralFailure => ({
+  _tag: "ProviderNeutralFailure",
+  code: "invalid_response",
+  operation: "safe-read",
+  retryAfterMs: null,
+  retryDecision: "do_not_retry",
+});
+
+const sessionDirectoryAuthority = (
+  authority: Redacted.Redacted<string>,
+): DirectorySessionAuthority => {
+  const parsed = JSON.parse(Redacted.value(authority)) as unknown;
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    !("sessionCredential" in parsed) ||
+    typeof parsed.sessionCredential !== "string" ||
+    !/^[\x21-\x7e]{1,4096}$/u.test(parsed.sessionCredential)
+  ) {
+    throw new Error("invalid Wasender Directory authority");
+  }
+  return Redacted.make(parsed.sessionCredential) as DirectorySessionAuthority;
+};
+
+const groupDirectoryLayer = (environment: ApiEnvironment) =>
+  Layer.mergeAll(
+    Layer.succeed(GroupDirectoryIdentifiers, {
+      nextGroup: Effect.sync(makeGroupDirectoryId),
+    }),
+    Layer.succeed(GroupDirectoryPersistence, {
+      fail: (input) =>
+        Effect.tryPromise({
+          try: () => {
+            const connectionString = environment.HYPERDRIVE?.connectionString;
+            if (typeof connectionString !== "string") {
+              throw new Error("database unavailable");
+            }
+            return makePgGroupRepository(connectionString).fail(input);
+          },
+          catch: () => new GroupDirectoryPersistenceError(),
+        }),
+      reconcile: (input) =>
+        Effect.tryPromise({
+          try: () => {
+            const connectionString = environment.HYPERDRIVE?.connectionString;
+            if (typeof connectionString !== "string") {
+              throw new Error("database unavailable");
+            }
+            return makePgGroupRepository(connectionString).reconcile(input);
+          },
+          catch: () => new GroupDirectoryPersistenceError(),
+        }),
+    }),
+    Layer.succeed(GroupDirectoryProvider, {
+      read: ({ authority, identityKey }) =>
+        Effect.try({
+          try: () =>
+            makeWasenderSessionDirectory({
+              authority: sessionDirectoryAuthority(authority),
+              identityKey: identityKey as WasenderIdentityProtectionKey,
+              emitTelemetry: (event) => {
+                Effect.runSync(
+                  safeTelemetry.emit({
+                    attemptCount: event.attempts,
+                    durationMs: event.durationMs,
+                    event: "provider.directory.completed",
+                    operation: event.operation,
+                    outcome: event.outcome,
+                    responseBytes: event.responseBytes,
+                    service: "api",
+                  }),
+                );
+              },
+            }),
+          catch: unavailableDirectoryFailure,
+        }).pipe(Effect.flatMap((directory) => directory.readGroups())),
+    }),
+  );
+
 export const createProductionScheduledHandler =
   (
     environment: ApiEnvironment,
@@ -1958,6 +2108,36 @@ export const createProductionScheduledHandler =
     } = {},
   ) =>
   async (controller: ScheduledController): Promise<void> => {
+    if (controller.cron === "0 * * * *") {
+      const connectionString = environment.HYPERDRIVE?.connectionString;
+      if (typeof connectionString !== "string") {
+        throw new Error("group Directory reconciliation unavailable");
+      }
+      const repository = makePgGroupRepository(connectionString);
+      const claimedAt = new Date(controller.scheduledTime).toISOString();
+      const layer = Layer.mergeAll(
+        encryptionLayer(environment),
+        telemetryLayer,
+        groupDirectoryLayer(environment),
+      );
+      while (true) {
+        const candidates = await repository.claim({
+          claimedAt,
+          limit: 100,
+        });
+        await Promise.all(
+          candidates.map((candidate) =>
+            Effect.runPromise(
+              reconcileGroupDirectory(candidate, claimedAt).pipe(
+                Effect.provide(layer),
+              ),
+            ),
+          ),
+        );
+        if (candidates.length < 100) break;
+      }
+      return;
+    }
     if (controller.cron === "*/5 * * * *") {
       const connectionString = environment.HYPERDRIVE?.connectionString;
       if (

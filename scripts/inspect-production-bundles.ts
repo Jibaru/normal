@@ -65,6 +65,7 @@ await Promise.all([
     "WASENDER_REFERENCE_SECRET",
   ]),
   inspectForForbiddenAuthority("apps/web/.next/server", [
+    "MCP_CURSOR_HMAC_SECRET",
     "WASENDER_API_CREDENTIAL",
     "WASENDER_REFERENCE_SECRET",
     "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
@@ -76,6 +77,7 @@ await Promise.all([
     "DATABASE_URL",
     "HYPERDRIVE",
     "KMS_CONTENT_ROOT_KEY_ARN",
+    "MCP_CURSOR_HMAC_SECRET",
     "STORED_MEDIA",
     "WEBHOOK_INGRESS",
     "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",

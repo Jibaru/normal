@@ -100,6 +100,7 @@ interface HarnessOptions {
   readonly permanentlyInvalidSource?: boolean;
   readonly objectStoreUnavailable?: boolean;
   readonly persistenceUnavailable?: boolean;
+  readonly delivery?: NormalizedWebhookDelivery;
 }
 
 const makeHarness = (options: HarnessOptions = {}) => {
@@ -151,6 +152,17 @@ const makeHarness = (options: HarnessOptions = {}) => {
           ).toBe("equal");
           return "applied" as const;
         }),
+      projectGroup: (input, protect) =>
+        Effect.promise(async () => {
+          const protectedFields = await protect(
+            "60000000-0000-4000-8000-000000000039",
+          );
+          expect(
+            protectedFields.displayName?.ciphertext.byteLength,
+          ).toBeGreaterThan(0);
+          calls.push(`project-group:${input.displayName ?? "null"}`);
+          return "applied" as const;
+        }),
       quarantine: (input) =>
         Effect.sync(() => {
           calls.push(`quarantine:${input.classification}`);
@@ -174,7 +186,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
               expect(key).toEqual(identityKey);
               return {
                 compareVersions: () => Effect.succeed("equal" as const),
-                normalize: () => Effect.succeed(delivery),
+                normalize: () => Effect.succeed(options.delivery ?? delivery),
               };
             }),
     }),
@@ -187,7 +199,15 @@ const makeHarness = (options: HarnessOptions = {}) => {
           : context.fieldOrObjectPurpose === "webhook-identity-key"
             ? Effect.succeed(identityKey.slice())
             : Effect.succeed(new Uint8Array(message.payload_bytes)),
-      encrypt: () => Effect.die("not used"),
+      encrypt: ({ plaintext }) =>
+        Effect.succeed({
+          ciphertext: btoa(
+            String.fromCharCode(...plaintext, ...new Uint8Array(16)),
+          ),
+          keyVersion: 1,
+          nonce: "AQIDBAUGBwgJCgsM",
+          version: 1,
+        }),
     }),
     Layer.succeed(SafeTelemetry, {
       emit: (event) =>
@@ -248,6 +268,47 @@ describe("Webhook Event processing", () => {
       service: "api",
       supersededCount: 0,
     });
+  });
+
+  test("encrypts and projects authenticated group items", async () => {
+    const recipient = `wi1_${"group".padEnd(43, "0")}` as never;
+    const harness = makeHarness({
+      delivery: {
+        items: [
+          {
+            evidence: {
+              occurredAt: "2026-07-31T12:09:00.000Z",
+              version: "wv1.test.signature" as never,
+            },
+            group: {
+              displayName: "Family",
+              identity: recipient,
+              joined: true,
+              recipient,
+            },
+            itemIdentity: `wi1_${"group-item".padEnd(43, "0")}` as never,
+            itemIndex: 0,
+            kind: "directory_group",
+          },
+        ],
+      },
+    });
+    const queued = queueMessage(message);
+
+    await handleWebhookEventBatch(
+      {
+        messages: [queued.message],
+        queue: "whatsapp-mcp-ingestion",
+      } as unknown as MessageBatch,
+      harness.layer,
+    );
+
+    expect(harness.calls).toEqual([
+      "prepare",
+      "project-group:Family",
+      "complete",
+    ]);
+    expect(queued.acknowledgements).toEqual(["ack"]);
   });
 
   test("retries transient processing failures without acknowledging", async () => {

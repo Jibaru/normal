@@ -48,6 +48,8 @@ export type WasenderIdentityProtectionKey = Redacted.Redacted<
 export interface DirectoryContact {
   readonly active: boolean;
   readonly displayName: string | null;
+  /** Connection-keyed equality token shared with authenticated webhook items. */
+  readonly identity: ContactLocator;
   readonly phoneNumber: string | null;
   /**
    * An adapter-produced routing token, never a raw provider contact identifier.
@@ -57,6 +59,8 @@ export interface DirectoryContact {
 
 export interface DirectoryGroup {
   readonly displayName: string | null;
+  /** Connection-keyed equality token shared with authenticated webhook items. */
+  readonly identity: GroupLocator;
   readonly joined: boolean;
   /**
    * An adapter-produced routing token, never a raw provider group identifier.

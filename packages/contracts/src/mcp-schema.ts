@@ -1,5 +1,5 @@
 import { JSONSchema, Schema } from "effect";
-import { ConnectionId } from "./handles";
+import { ConnectionId, GroupId } from "./handles";
 
 const utcTimestampPattern =
   /^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?Z(?![\s\S])/;
@@ -73,3 +73,18 @@ export const ListConnectionsOutputContract = makePublicObjectContract({
 });
 export type ListConnectionsOutput =
   typeof ListConnectionsOutputContract.schema.Type;
+
+export const ListGroupsOutputContract = makePublicObjectContract({
+  groups: Schema.Array(
+    Schema.Struct({
+      group_id: GroupId,
+      display_name: Schema.NullOr(Schema.String),
+    }),
+  ).pipe(Schema.maxItems(50)),
+  has_more: Schema.Boolean,
+  next_cursor: Schema.NullOr(Schema.String),
+  as_of: UtcTimestamp,
+  stale: Schema.Boolean,
+  partial: Schema.Boolean,
+});
+export type ListGroupsOutput = typeof ListGroupsOutputContract.schema.Type;

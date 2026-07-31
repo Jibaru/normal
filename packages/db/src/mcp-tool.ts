@@ -35,6 +35,42 @@ export interface McpToolConnectionRecord {
   readonly stateChangedAt: string;
 }
 
+export type McpToolName = "list_connections" | "list_groups";
+
+export interface McpToolGroupRecord {
+  readonly displayName: {
+    readonly ciphertext: string;
+    readonly keyVersion: number;
+    readonly nonce: string;
+    readonly version: 1;
+  } | null;
+  readonly id: string;
+  readonly publicId: string;
+}
+
+export interface McpToolGroupPage {
+  readonly accountKey: {
+    readonly ciphertext: string;
+    readonly keyVersion: number;
+    readonly kmsKeyId: string;
+    readonly personalAccountId: string;
+    readonly version: 1;
+  };
+  readonly asOf: string;
+  readonly connectionKey: {
+    readonly accountKeyVersion: number;
+    readonly ciphertext: string;
+    readonly connectionId: string;
+    readonly keyVersion: number;
+    readonly nonce: string;
+    readonly personalAccountId: string;
+    readonly version: 1;
+  };
+  readonly groups: ReadonlyArray<McpToolGroupRecord>;
+  readonly partial: boolean;
+  readonly stale: boolean;
+}
+
 export type BeginToolCallResult =
   | {
       readonly auditLogId: string;
@@ -54,7 +90,7 @@ export interface McpToolRepository {
       readonly hourLimit: number;
       readonly minuteLimit: number;
       readonly observedAt: Date;
-      readonly toolName: "list_connections";
+      readonly toolName: McpToolName;
     },
   ) => Promise<BeginToolCallResult>;
   readonly completeToolCall: (input: {
@@ -72,6 +108,12 @@ export interface McpToolRepository {
   readonly listConnections: (
     input: McpAccessAuthorization & { readonly observedAt: Date },
   ) => Promise<ReadonlyArray<McpToolConnectionRecord> | null>;
+  readonly listGroups: (
+    input: McpAccessAuthorization & {
+      readonly connectionPublicId: string;
+      readonly observedAt: Date;
+    },
+  ) => Promise<McpToolGroupPage | null>;
 }
 
 const withTransaction = async <Value>(
@@ -101,6 +143,22 @@ const timestamp = (value: unknown): Date | null => {
 
 const timestampString = (value: unknown): string | null =>
   timestamp(value)?.toISOString() ?? null;
+
+const bytes = (value: unknown): Uint8Array | null => {
+  if (value instanceof Uint8Array) return value;
+  if (typeof Buffer !== "undefined" && Buffer.isBuffer(value)) {
+    return new Uint8Array(value);
+  }
+  return null;
+};
+
+const base64 = (value: Uint8Array): string =>
+  Buffer.from(value).toString("base64");
+
+const positiveInteger = (value: unknown): number | null =>
+  typeof value === "number" && Number.isSafeInteger(value) && value > 0
+    ? value
+    : null;
 
 const enterAuthorizationContext = async (
   connection: McpToolConnection,
@@ -251,7 +309,11 @@ export const makeMcpToolRepository = (
           [personalAccountId],
         );
         const scopes = await loadAuthorizationScopes(connection, input);
-        if (scopes === null || !scopes.includes("connections:read")) {
+        const requiredScope =
+          input.toolName === "list_groups"
+            ? "directory:read"
+            : "connections:read";
+        if (scopes === null || !scopes.includes(requiredScope)) {
           await insertToolCallLog(connection, {
             auditLogId: input.auditLogId,
             authorizationId: input.authorizationId,
@@ -410,6 +472,136 @@ export const makeMcpToolRepository = (
             stateChangedAt,
           };
         });
+      }),
+    ),
+  listGroups: (input) =>
+    provider.withConnection((connection) =>
+      withTransaction(connection, async () => {
+        if ((await enterAuthorizationContext(connection, input)) === null) {
+          return null;
+        }
+        const scopes = await loadAuthorizationScopes(connection, input);
+        if (scopes === null || !scopes.includes("directory:read")) {
+          return null;
+        }
+        const material = await connection.query<Record<string, unknown>>(
+          `SELECT *
+           FROM app_private.load_mcp_group_projection_material(
+             $1, $2, $3, $4, $5
+           )`,
+          [
+            input.authorizationId,
+            input.oauthSubject,
+            input.clientId ?? null,
+            input.observedAt,
+            input.connectionPublicId,
+          ],
+        );
+        const row = material.rows[0];
+        if (row === undefined) return null;
+        const personalAccountId = row.personal_account_id;
+        const connectionId = row.connection_id;
+        const accountVersion = positiveInteger(row.account_key_version);
+        const accountCiphertext = bytes(row.account_key_ciphertext);
+        const connectionAccountVersion = positiveInteger(
+          row.connection_key_account_version,
+        );
+        const connectionVersion = positiveInteger(row.connection_key_version);
+        const connectionNonce = bytes(row.connection_key_nonce);
+        const connectionCiphertext = bytes(row.connection_key_ciphertext);
+        const asOf = timestampString(row.as_of ?? row.connection_created_at);
+        if (
+          typeof personalAccountId !== "string" ||
+          typeof connectionId !== "string" ||
+          typeof row.account_kms_key_id !== "string" ||
+          accountVersion === null ||
+          accountCiphertext === null ||
+          connectionAccountVersion === null ||
+          connectionVersion === null ||
+          connectionNonce === null ||
+          connectionCiphertext === null ||
+          asOf === null ||
+          typeof row.stale !== "boolean" ||
+          typeof row.partial !== "boolean"
+        ) {
+          throw new Error("invalid MCP group projection material");
+        }
+        const persistedGroups = await connection.query<Record<string, unknown>>(
+          `SELECT
+             id, public_id, display_name_ciphertext_version,
+             display_name_key_version, display_name_nonce,
+             display_name_ciphertext
+           FROM app.whatsapp_groups
+           WHERE personal_account_id = $1
+             AND whatsapp_connection_id = $2
+             AND joined`,
+          [personalAccountId, connectionId],
+        );
+        const groups = persistedGroups.rows.map((group) => {
+          const id = group.id;
+          const publicId = group.public_id;
+          const ciphertext = bytes(group.display_name_ciphertext);
+          const nonce = bytes(group.display_name_nonce);
+          const version = positiveInteger(
+            group.display_name_ciphertext_version,
+          );
+          const keyVersion = positiveInteger(group.display_name_key_version);
+          if (
+            typeof id !== "string" ||
+            typeof publicId !== "string" ||
+            !/^grp_[A-Za-z0-9_-]{21}$/u.test(publicId)
+          ) {
+            throw new Error("invalid persisted WhatsApp group");
+          }
+          if (
+            ciphertext === null &&
+            nonce === null &&
+            version === null &&
+            keyVersion === null
+          ) {
+            return { displayName: null, id, publicId };
+          }
+          if (
+            ciphertext === null ||
+            nonce === null ||
+            version !== 1 ||
+            keyVersion === null
+          ) {
+            throw new Error("invalid encrypted WhatsApp group display name");
+          }
+          return {
+            displayName: {
+              ciphertext: base64(ciphertext),
+              keyVersion,
+              nonce: base64(nonce),
+              version: 1 as const,
+            },
+            id,
+            publicId,
+          };
+        });
+        return {
+          accountKey: {
+            ciphertext: base64(accountCiphertext),
+            keyVersion: accountVersion,
+            kmsKeyId: row.account_kms_key_id,
+            personalAccountId,
+            version: 1,
+          },
+          asOf,
+          connectionKey: {
+            accountKeyVersion: connectionAccountVersion,
+            ciphertext: base64(connectionCiphertext),
+            connectionId,
+            keyVersion: connectionVersion,
+            nonce: base64(connectionNonce),
+            personalAccountId,
+            version: 1,
+          },
+          groups,
+          partial: row.partial,
+          stale: row.stale,
+        };
       }),
     ),
   completeToolCall: (input) =>

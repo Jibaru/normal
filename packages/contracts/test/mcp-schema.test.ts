@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Schema } from "effect";
 import {
   ListConnectionsOutputContract,
+  ListGroupsOutputContract,
   makePublicObjectContract,
 } from "../src/mcp-schema";
 
@@ -74,6 +75,40 @@ describe("makePublicObjectContract", () => {
           {
             ...output.connections[0],
             state: "deleting",
+          },
+        ],
+      }),
+    ).toThrow();
+  });
+
+  test("validates the exact paginated list_groups result without provider data", () => {
+    const output = {
+      groups: [
+        {
+          group_id: "grp_123456789012345678901",
+          display_name: "Family",
+        },
+      ],
+      has_more: false,
+      next_cursor: null,
+      as_of: "2026-07-30T12:00:00.000Z",
+      stale: false,
+      partial: false,
+    };
+
+    expect(ListGroupsOutputContract.decodeUnknown(output) as unknown).toEqual(
+      output,
+    );
+    expect(ListGroupsOutputContract.jsonSchema).toMatchObject({
+      additionalProperties: false,
+    });
+    expect(() =>
+      ListGroupsOutputContract.decodeUnknown({
+        ...output,
+        groups: [
+          {
+            ...output.groups[0],
+            roster: ["provider-participant"],
           },
         ],
       }),

@@ -1,6 +1,8 @@
+import { makeGroupId } from "@whatsapp-mcp/contracts/handles";
 import type {
   DeadLetterWebhookEventOutcome,
   ProjectConnectionStateInput,
+  ProjectGroupInput,
   QuarantineWebhookItemInput,
   WebhookEventProcessingMaterial,
   WebhookItemProjectionOutcome,
@@ -74,6 +76,19 @@ export interface WebhookEventPersistenceService {
   >;
   readonly projectConnectionState: (
     input: ProjectConnectionStateInput,
+    compareVersions: (
+      left: string,
+      right: string,
+    ) => Promise<WebhookVersionComparison>,
+  ) => Effect.Effect<
+    WebhookItemProjectionOutcome,
+    WebhookEventPersistenceError
+  >;
+  readonly projectGroup: (
+    input: ProjectGroupInput,
+    protect: (
+      recordId: string,
+    ) => Promise<import("@whatsapp-mcp/db/group").ProtectedGroupFields>,
     compareVersions: (
       left: string,
       right: string,
@@ -337,16 +352,103 @@ const increment = (
 
 const processItems = (
   message: WebhookEventQueueMessage,
+  material: WebhookEventProcessingMaterial,
   normalizer: WebhookNormalization,
   items: ReadonlyArray<NormalizedWebhookItem>,
 ) =>
   Effect.gen(function* () {
     const persistence = yield* WebhookEventPersistence;
+    const encryption = yield* EnvelopeEncryptionService;
     let counts = emptyCounts();
     for (const item of items) {
       if (item.kind === "malformed" || item.kind === "unsupported") {
         yield* quarantine(message, item, item.classification);
         counts = increment(counts, "quarantinedCount");
+        continue;
+      }
+      if (item.kind === "directory_group") {
+        const outcome = yield* persistence.projectGroup(
+          {
+            displayName: item.group.displayName,
+            eventId: message.object_id,
+            evidence: {
+              occurredAt: item.evidence.occurredAt,
+              version: item.evidence.version,
+            },
+            groupId: crypto.randomUUID(),
+            itemIdentity: item.itemIdentity,
+            itemIndex: item.itemIndex,
+            joined: item.group.joined,
+            locator: item.group.identity,
+            personalAccountId: message.personal_account_id,
+            providerIdentity: item.group.recipient,
+            publicId: makeGroupId(),
+            receivedAt: message.received_at,
+            whatsappConnectionId: message.whatsapp_connection_id,
+          },
+          (recordId) =>
+            Effect.runPromise(
+              Effect.gen(function* () {
+                const protect = (purpose: string, plaintext: string) =>
+                  encryption.encrypt({
+                    accountKey: material.accountKey,
+                    connectionKey: material.connectionKey,
+                    context: {
+                      accountId: message.personal_account_id,
+                      connectionId: message.whatsapp_connection_id,
+                      entity: "whatsapp-group",
+                      fieldOrObjectPurpose: purpose,
+                      recordId,
+                    },
+                    plaintext: new TextEncoder().encode(plaintext),
+                  });
+                const displayName =
+                  item.group.displayName === null
+                    ? null
+                    : yield* protect("display-name", item.group.displayName);
+                const providerIdentity = yield* protect(
+                  "provider-identity",
+                  item.group.recipient,
+                );
+                return {
+                  displayName:
+                    displayName === null
+                      ? null
+                      : {
+                          ciphertext: decodeBase64(
+                            displayName.ciphertext,
+                          ) as Uint8Array,
+                          keyVersion: displayName.keyVersion,
+                          nonce: decodeBase64(displayName.nonce) as Uint8Array,
+                          version: displayName.version,
+                        },
+                  providerIdentity: {
+                    ciphertext: decodeBase64(
+                      providerIdentity.ciphertext,
+                    ) as Uint8Array,
+                    keyVersion: providerIdentity.keyVersion,
+                    nonce: decodeBase64(providerIdentity.nonce) as Uint8Array,
+                    version: providerIdentity.version,
+                  },
+                };
+              }),
+            ),
+          (left, right) =>
+            Effect.runPromise(
+              normalizer.compareVersions({
+                left: left as ConvergenceVersion,
+                right: right as ConvergenceVersion,
+              }),
+            ),
+        );
+        counts = increment(
+          counts,
+          outcome === "applied"
+            ? "appliedCount"
+            : outcome === "duplicate"
+              ? "duplicateCount"
+              : "supersededCount",
+        );
         continue;
       }
       if (item.kind !== "connection_state") {
@@ -448,6 +550,7 @@ const processMessage = (message: WebhookEventQueueMessage) =>
             });
             const counts = yield* processItems(
               message,
+              material,
               normalizer,
               delivery.items,
             );

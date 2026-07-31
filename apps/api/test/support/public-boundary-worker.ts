@@ -975,6 +975,7 @@ const makeTestLayer = (
           },
           catch: () => new WebhookEventPersistenceError(),
         }),
+      projectGroup: () => Effect.succeed("applied" as const),
       quarantine: () => Effect.void,
     }),
   );

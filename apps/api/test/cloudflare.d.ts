@@ -4,6 +4,7 @@ declare namespace Cloudflare {
     readonly INGESTION_QUEUE: Queue;
     readonly MCP_REQUESTS_PER_HOUR: string;
     readonly MCP_REQUESTS_PER_MINUTE: string;
+    readonly MCP_CURSOR_HMAC_SECRET: string;
     readonly WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET: string;
     readonly OAUTH_KV: KVNamespace;
     readonly PROVIDER_CONTROL: Fetcher;

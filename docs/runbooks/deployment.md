@@ -376,6 +376,18 @@ Connection Setup or WhatsApp Connection reservation exists. Rotation requires
 stopping provisioning and transactionally rebuilding all retained reservation
 tokens before the old key is removed.
 
+Generate the MCP pagination cursor HMAC independently and store it only as the
+API Worker secret:
+
+```sh
+openssl rand -hex 32 | wrangler secret put MCP_CURSOR_HMAC_SECRET \
+  --cwd apps/api --env production
+```
+
+Do not reuse any OAuth, content, provider-reference, webhook, reservation, or
+deletion key. Rotation is safe but invalidates every outstanding cursor; MCP
+Clients restart the affected listing from its first page.
+
 AWS KMS records cryptographic operations in CloudTrail. Encryption context is
 non-secret audit data and is limited here to environment, purpose, opaque
 Personal Account or deletion-marker identity, and key version. Alert on denied
@@ -529,6 +541,14 @@ role, confirm each attempted invocation has one metadata-only Tool Call Log and
 that successful invocations reserve request quota. Do not print or retain the
 access token, OAuth subject, internal IDs, Connection fields, or log rows as
 deployment evidence; retain only normalized counts and outcomes.
+
+Repeat with `directory:read` for the same disposable Connection. Confirm
+`tools/list` advertises `list_groups`, a three-character normalized prefix
+search returns only currently joined groups in display-name/handle order, and
+following `next_cursor` preserves that order. Reusing the cursor with another
+authorization, Connection, search, or limit must return `invalid_cursor`.
+Confirm the response contains freshness fields and no roster, description,
+profile URL, provider identity, or routing value.
 
 Sign in through the deployed web application with a designated smoke-test Clerk
 User and bootstrap once. Confirm the browser sends `POST
@@ -888,6 +908,14 @@ attempt count, duration, and bounded byte counts, and no session credential,
 JID, full phone number, name, response body, or URL appears in Worker logs.
 Remove the disposable connection through the normal Connection Deletion flow;
 do not print or pass its session API key on a command line.
+
+The hourly API schedule reconciles joined groups through that per-connection
+authority. A complete observation marks omitted groups unjoined; a partial or
+failed observation never does. Confirm `group_directory.reconciliation.completed`
+reports only outcome and bounded counts. Repeated failures intentionally make
+`list_groups` freshness `stale` and `partial`; investigate provider health and
+the connection-specific credential without logging group names, routing
+identities, roster data, or ciphertext.
 
 ## Rollback
 

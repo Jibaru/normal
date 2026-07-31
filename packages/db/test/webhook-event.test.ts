@@ -558,6 +558,91 @@ describe("Webhook Event repository", () => {
     ]);
   });
 
+  test("atomically deduplicates encrypted group joins and applies a later unjoin", async () => {
+    const repository = makeWebhookEventRepository(webhookProvider);
+    await repository.prepare(eventInput(firstEventId));
+    const protect = async () => ({
+      displayName: {
+        ciphertext: new Uint8Array(20).fill(7),
+        keyVersion: 1,
+        nonce: new Uint8Array(12).fill(8),
+        version: 1 as const,
+      },
+      providerIdentity: {
+        ciphertext: new Uint8Array(20).fill(9),
+        keyVersion: 1,
+        nonce: new Uint8Array(12).fill(10),
+        version: 1 as const,
+      },
+    });
+    const locator = itemIdentity("group-locator");
+    const joinInput = {
+      displayName: "Family",
+      eventId: firstEventId,
+      evidence: {
+        occurredAt: "2026-07-31T12:05:00.000Z",
+        version: version("2026-07-31T12:05:00.000Z"),
+      },
+      groupId: "60000000-0000-4000-8000-000000000039",
+      itemIdentity: itemIdentity("group-join"),
+      itemIndex: 0,
+      joined: true,
+      locator,
+      personalAccountId: accountId,
+      providerIdentity: "sealed-provider-group",
+      publicId: "grp_123456789012345678939",
+      receivedAt,
+      whatsappConnectionId: connectionId,
+    } as const;
+
+    await expect(
+      repository.projectGroup(joinInput, protect, compareVersions),
+    ).resolves.toBe("applied");
+    await expect(
+      repository.projectGroup(joinInput, protect, compareVersions),
+    ).resolves.toBe("duplicate");
+    await expect(
+      repository.projectGroup(
+        {
+          ...joinInput,
+          displayName: "Family renamed",
+          evidence: {
+            occurredAt: "2026-07-31T12:06:00.000Z",
+            version: version("2026-07-31T12:06:00.000Z"),
+          },
+          itemIdentity: itemIdentity("group-unjoin"),
+          itemIndex: 1,
+          joined: false,
+          receivedAt: "2026-07-31T12:11:00.000Z",
+        },
+        protect,
+        compareVersions,
+      ),
+    ).resolves.toBe("applied");
+
+    const groups = await database.query<{
+      count: number;
+      joined: boolean;
+      plaintext_matches: boolean;
+    }>(
+      `SELECT
+         count(*)::integer AS count,
+         bool_and(NOT convert_from(display_name_ciphertext, 'UTF8') LIKE '%Family%')
+           AS plaintext_matches,
+         bool_and(joined) AS joined
+       FROM app.whatsapp_groups`,
+    );
+    expect(groups.rows).toEqual([
+      { count: 1, joined: false, plaintext_matches: true },
+    ]);
+    const items = await database.query<{ count: number }>(
+      `SELECT count(*)::integer AS count
+       FROM app.webhook_items
+       WHERE item_kind = 'directory_group'`,
+    );
+    expect(items.rows).toEqual([{ count: 2 }]);
+  });
+
   test("orders provider occurrence evidence even when no version is available", async () => {
     const repository = makeWebhookEventRepository(webhookProvider);
     await repository.prepare(eventInput(firstEventId));

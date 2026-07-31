@@ -57,6 +57,7 @@ const lifecycleSession: LifecycleSession = {
 const contactEntry: DirectoryContact = {
   active: true,
   displayName: "Ada",
+  identity: contact,
   phoneNumber: "+15550199",
   recipient: contact,
 };
@@ -153,6 +154,7 @@ const normalizedItemKinds = [
     evidence,
     group: {
       displayName: "Family",
+      identity: group,
       joined: true,
       recipient: group,
     } satisfies DirectoryGroup,

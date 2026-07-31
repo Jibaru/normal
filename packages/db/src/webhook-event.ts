@@ -1,5 +1,6 @@
 import type { WhatsAppConnectionState } from "@whatsapp-mcp/domain/whatsapp-connection";
 import type { Client as PgClient } from "pg";
+import type { ProtectedGroupFields } from "./group";
 
 export interface WebhookEventConnection {
   readonly query: <
@@ -100,6 +101,20 @@ export interface ProjectConnectionStateInput extends WebhookItemBase {
   readonly state: Exclude<WhatsAppConnectionState, "deleting">;
 }
 
+export interface ProjectGroupInput extends WebhookItemBase {
+  readonly displayName: string | null;
+  readonly evidence: {
+    readonly occurredAt: string | null;
+    readonly version: string | null;
+  };
+  readonly groupId: string;
+  readonly itemIdentity: string;
+  readonly joined: boolean;
+  readonly locator: string;
+  readonly providerIdentity: string;
+  readonly publicId: string;
+}
+
 export interface QuarantineWebhookItemInput extends WebhookItemBase {
   readonly classification: WebhookItemQuarantineClassification;
   readonly itemIdentity: string | null;
@@ -124,6 +139,14 @@ export interface WebhookEventRepository {
   ) => Promise<WebhookEventProcessingMaterial | null>;
   readonly projectConnectionState: (
     input: ProjectConnectionStateInput,
+    compareVersions: (
+      left: string,
+      right: string,
+    ) => Promise<WebhookVersionComparison>,
+  ) => Promise<WebhookItemProjectionOutcome>;
+  readonly projectGroup: (
+    input: ProjectGroupInput,
+    protect: (recordId: string) => Promise<ProtectedGroupFields>,
     compareVersions: (
       left: string,
       right: string,
@@ -371,6 +394,78 @@ const shouldApply = async (
   }
   const currentEventId = current.state_webhook_event_id;
   return typeof currentEventId !== "string" || input.eventId > currentEventId;
+};
+
+interface GroupEvidenceRow extends Record<string, unknown> {
+  readonly id: unknown;
+  readonly last_observed_at: unknown;
+  readonly provider_occurred_at: unknown;
+  readonly provider_version: unknown;
+  readonly received_at: unknown;
+}
+
+const shouldApplyGroup = async (
+  input: ProjectGroupInput,
+  current: GroupEvidenceRow | undefined,
+  compareVersions: (
+    left: string,
+    right: string,
+  ) => Promise<WebhookVersionComparison>,
+): Promise<boolean> => {
+  if (current === undefined) return true;
+  const lastObservedAt = timestamp(current.last_observed_at);
+  const receivedAt = timestamp(input.receivedAt);
+  const occurredAt =
+    input.evidence.occurredAt === null
+      ? null
+      : timestamp(input.evidence.occurredAt);
+  if (
+    receivedAt === null ||
+    (input.evidence.occurredAt !== null && occurredAt === null) ||
+    lastObservedAt === null
+  ) {
+    throw new Error("invalid group projection evidence");
+  }
+  const currentVersion = current.provider_version;
+  if (currentVersion !== null && typeof currentVersion !== "string") {
+    throw new Error("invalid group provider version");
+  }
+  if (input.evidence.version !== null && currentVersion !== null) {
+    const comparison = await compareVersions(
+      input.evidence.version,
+      currentVersion,
+    );
+    if (comparison === "after") return true;
+    if (comparison === "before" || comparison === "equal") return false;
+    throw new Error("incomparable group provider version");
+  }
+  const effective = occurredAt ?? receivedAt;
+  return effective > lastObservedAt;
+};
+
+const protectedGroupValues = (value: ProtectedGroupFields) => {
+  const valid = (field: NonNullable<ProtectedGroupFields["displayName"]>) =>
+    field.version === 1 &&
+    Number.isSafeInteger(field.keyVersion) &&
+    field.keyVersion > 0 &&
+    field.nonce.byteLength === 12 &&
+    field.ciphertext.byteLength > 16;
+  if (
+    !valid(value.providerIdentity) ||
+    (value.displayName !== null && !valid(value.displayName))
+  ) {
+    throw new Error("invalid protected group projection");
+  }
+  return [
+    value.displayName?.version ?? null,
+    value.displayName?.keyVersion ?? null,
+    value.displayName?.nonce ?? null,
+    value.displayName?.ciphertext ?? null,
+    value.providerIdentity.version,
+    value.providerIdentity.keyVersion,
+    value.providerIdentity.nonce,
+    value.providerIdentity.ciphertext,
+  ] as const;
 };
 
 export const makeWebhookEventRepository = (
@@ -699,6 +794,155 @@ export const makeWebhookEventRepository = (
       }),
     );
   },
+
+  projectGroup: (input, protect, compareVersions) =>
+    provider.withConnection((connection) =>
+      withTransaction(connection, async () => {
+        await enterPersonalAccountContext(connection, input.personalAccountId);
+        const target = await connection.query(
+          `SELECT connections.id
+           FROM app.whatsapp_connections AS connections
+           WHERE connections.personal_account_id = $1
+             AND connections.id = $2
+             AND connections.state <> 'deleting'
+             AND EXISTS (
+               SELECT 1 FROM app.webhook_events AS events
+               WHERE events.personal_account_id = $1
+                 AND events.whatsapp_connection_id = $2
+                 AND events.id = $3
+             )
+           FOR UPDATE`,
+          [input.personalAccountId, input.whatsappConnectionId, input.eventId],
+        );
+        if (target.rows.length !== 1) {
+          throw new Error("group projection target unavailable");
+        }
+        const claimed = await connection.query(
+          `INSERT INTO app.webhook_items (
+             personal_account_id, whatsapp_connection_id,
+             deduplication_identity, first_webhook_event_id, item_index,
+             item_kind, outcome, provider_occurred_at, provider_version,
+             received_at
+           ) VALUES ($1, $2, $3, $4, $5, 'directory_group',
+             'superseded', $6, $7, $8)
+           ON CONFLICT (
+             personal_account_id, whatsapp_connection_id,
+             deduplication_identity
+           ) DO NOTHING
+           RETURNING deduplication_identity`,
+          [
+            input.personalAccountId,
+            input.whatsappConnectionId,
+            input.itemIdentity,
+            input.eventId,
+            input.itemIndex,
+            input.evidence.occurredAt,
+            input.evidence.version,
+            input.receivedAt,
+          ],
+        );
+        if (claimed.rows.length === 0) return "duplicate" as const;
+
+        const current = await connection.query<GroupEvidenceRow>(
+          `SELECT id, last_observed_at, provider_occurred_at,
+             provider_version, received_at
+           FROM app.whatsapp_groups
+           WHERE personal_account_id = $1
+             AND whatsapp_connection_id = $2
+             AND provider_locator = $3
+           FOR UPDATE`,
+          [input.personalAccountId, input.whatsappConnectionId, input.locator],
+        );
+        if (
+          !(await shouldApplyGroup(input, current.rows[0], compareVersions))
+        ) {
+          return "superseded" as const;
+        }
+        const currentId = current.rows[0]?.id;
+        const recordId =
+          typeof currentId === "string" ? currentId : input.groupId;
+        const fields = protectedGroupValues(await protect(recordId));
+        const effectiveObservedAt =
+          input.evidence.occurredAt ?? input.receivedAt;
+        await connection.query(
+          `INSERT INTO app.whatsapp_groups (
+             id, personal_account_id, whatsapp_connection_id, public_id,
+             provider_locator, display_name_ciphertext_version,
+             display_name_key_version, display_name_nonce,
+             display_name_ciphertext, provider_identity_ciphertext_version,
+             provider_identity_key_version, provider_identity_nonce,
+             provider_identity_ciphertext, joined, last_observed_at,
+             provider_occurred_at, provider_version, received_at,
+             webhook_event_id, webhook_item_identity, created_at, updated_at
+           ) VALUES (
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+             $13, $14, $15, $16, $17, $18, $19, $20, $18, $18
+           )
+           ON CONFLICT (personal_account_id, whatsapp_connection_id, provider_locator)
+           DO UPDATE SET
+             display_name_ciphertext_version = EXCLUDED.display_name_ciphertext_version,
+             display_name_key_version = EXCLUDED.display_name_key_version,
+             display_name_nonce = EXCLUDED.display_name_nonce,
+             display_name_ciphertext = EXCLUDED.display_name_ciphertext,
+             provider_identity_ciphertext_version = EXCLUDED.provider_identity_ciphertext_version,
+             provider_identity_key_version = EXCLUDED.provider_identity_key_version,
+             provider_identity_nonce = EXCLUDED.provider_identity_nonce,
+             provider_identity_ciphertext = EXCLUDED.provider_identity_ciphertext,
+             joined = EXCLUDED.joined,
+             last_observed_at = EXCLUDED.last_observed_at,
+             provider_occurred_at = EXCLUDED.provider_occurred_at,
+             provider_version = EXCLUDED.provider_version,
+             received_at = EXCLUDED.received_at,
+             webhook_event_id = EXCLUDED.webhook_event_id,
+             webhook_item_identity = EXCLUDED.webhook_item_identity,
+             updated_at = EXCLUDED.updated_at`,
+          [
+            recordId,
+            input.personalAccountId,
+            input.whatsappConnectionId,
+            input.publicId,
+            input.locator,
+            ...fields,
+            input.joined,
+            effectiveObservedAt,
+            input.evidence.occurredAt,
+            input.evidence.version,
+            input.receivedAt,
+            input.eventId,
+            input.itemIdentity,
+          ],
+        );
+        await connection.query(
+          `INSERT INTO app.whatsapp_group_directory_states (
+             personal_account_id, whatsapp_connection_id, as_of,
+             stale, partial, updated_at
+           ) VALUES ($1, $2, $3, false, true, $3)
+           ON CONFLICT (personal_account_id, whatsapp_connection_id)
+           DO UPDATE SET
+             as_of = greatest(app.whatsapp_group_directory_states.as_of, EXCLUDED.as_of),
+             stale = app.whatsapp_group_directory_states.stale,
+             partial = app.whatsapp_group_directory_states.partial,
+             updated_at = greatest(app.whatsapp_group_directory_states.updated_at, EXCLUDED.updated_at)`,
+          [
+            input.personalAccountId,
+            input.whatsappConnectionId,
+            input.receivedAt,
+          ],
+        );
+        await connection.query(
+          `UPDATE app.webhook_items SET outcome = 'applied'
+           WHERE personal_account_id = $1
+             AND whatsapp_connection_id = $2
+             AND deduplication_identity = $3`,
+          [
+            input.personalAccountId,
+            input.whatsappConnectionId,
+            input.itemIdentity,
+          ],
+        );
+        return "applied" as const;
+      }),
+    ),
 
   quarantine: (input) =>
     provider.withConnection((connection) =>

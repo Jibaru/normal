@@ -226,7 +226,25 @@ export interface McpToolCallCompletedEvent {
     | "success";
   readonly resultCount?: number | undefined;
   readonly service: "api";
-  readonly tool: "list_connections";
+  readonly tool: "list_connections" | "list_groups";
+}
+
+export interface GroupDirectoryReconciliationCompletedEvent {
+  readonly appliedCount?: number | undefined;
+  readonly event: "group_directory.reconciliation.completed";
+  readonly outcome: "failed" | "success";
+  readonly service: "api";
+  readonly unjoinedCount?: number | undefined;
+}
+
+export interface ProviderDirectoryCompletedEvent {
+  readonly attemptCount: number;
+  readonly durationMs: number;
+  readonly event: "provider.directory.completed";
+  readonly operation: "safe-read";
+  readonly outcome: "complete" | "failed" | "partial";
+  readonly responseBytes: number;
+  readonly service: "api";
 }
 
 export interface SafeTelemetry {
@@ -242,6 +260,7 @@ export type SafeTelemetryEvent =
   | ConnectionSetupProvisionRecoveryEnqueuedEvent
   | ConnectionSetupQrCompletedEvent
   | ConnectionSetupStartCompletedEvent
+  | GroupDirectoryReconciliationCompletedEvent
   | HttpCompletedEvent
   | McpAuthorizationManagementCompletedEvent
   | McpToolCallCompletedEvent
@@ -250,6 +269,7 @@ export type SafeTelemetryEvent =
   | OAuthProtocolRequestFailedEvent
   | OAuthRefreshCompletedEvent
   | PersonalAccountBootstrapCompletedEvent
+  | ProviderDirectoryCompletedEvent
   | StoredMediaContainerEvent
   | WebhookEventDeadLetterCompletedEvent
   | WebhookEventProcessingCompletedEvent

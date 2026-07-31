@@ -201,6 +201,17 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 17,
   },
+  {
+    name: "encrypted WhatsApp group projections",
+    sql: await readFile(
+      new NodeUrl(
+        "../migrations/0018_whatsapp_group_projection.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    version: 18,
+  },
 ];
 
 const checksum = (sql: string): string =>

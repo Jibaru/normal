@@ -55,6 +55,7 @@ for (const deployable of deployables) {
   } else {
     const requiredSecretNames = [
       "CLERK_JWT_KEY",
+      "MCP_CURSOR_HMAC_SECRET",
       "OAUTH_PROTOCOL_ENCRYPTION_KEY",
       "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
     ];

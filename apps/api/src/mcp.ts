@@ -1,18 +1,32 @@
 import { type CallToolResult, McpServer } from "@modelcontextprotocol/server";
+import {
+  type CursorBoundary,
+  type CursorContext,
+  signCursor,
+  verifyCursor,
+} from "@whatsapp-mcp/contracts/cursor";
 import { makeExecutionErrorResult } from "@whatsapp-mcp/contracts/mcp-error";
 import { makeSuccessResultBuilder } from "@whatsapp-mcp/contracts/mcp-result";
 import {
   type ListConnectionsOutput,
   ListConnectionsOutputContract,
+  type ListGroupsOutput,
+  ListGroupsOutputContract,
 } from "@whatsapp-mcp/contracts/mcp-schema";
 import type {
   BeginToolCallResult,
   McpAccessAuthorization,
   McpToolConnectionRecord,
+  McpToolGroupPage,
+  McpToolName,
 } from "@whatsapp-mcp/db/mcp-tool";
 import { createMcpHandler } from "agents/mcp/server";
 import { Context, Data, Effect, type Layer } from "effect";
 import { z } from "zod";
+import {
+  type EnvelopeEncryption,
+  EnvelopeEncryptionService,
+} from "./encryption/envelope";
 import {
   SafeTelemetry,
   type SafeTelemetry as SafeTelemetryService,
@@ -29,7 +43,7 @@ export interface McpToolPersistenceService {
       readonly hourLimit: number;
       readonly minuteLimit: number;
       readonly observedAt: Date;
-      readonly toolName: "list_connections";
+      readonly toolName: McpToolName;
     },
   ) => Effect.Effect<BeginToolCallResult, McpToolPersistenceError>;
   readonly completeToolCall: (input: {
@@ -58,6 +72,12 @@ export interface McpToolPersistenceService {
     ReadonlyArray<McpToolConnectionRecord> | null,
     McpToolPersistenceError
   >;
+  readonly listGroups: (
+    input: McpAccessAuthorization & {
+      readonly connectionPublicId: string;
+      readonly observedAt: Date;
+    },
+  ) => Effect.Effect<McpToolGroupPage | null, McpToolPersistenceError>;
 }
 
 export const McpToolPersistence = Context.GenericTag<McpToolPersistenceService>(
@@ -80,11 +100,21 @@ export const McpToolIdentifiers = Context.GenericTag<McpToolIdentifiersService>(
   "@whatsapp-mcp/api/McpToolIdentifiers",
 );
 
+export interface McpCursorSigningService {
+  readonly key: CryptoKey;
+}
+
+export const McpCursorSigning = Context.GenericTag<McpCursorSigningService>(
+  "@whatsapp-mcp/api/McpCursorSigning",
+);
+
 export type McpToolRequirements =
   | McpToolClockService
   | McpToolIdentifiersService
   | McpToolPersistenceService
-  | SafeTelemetryService;
+  | SafeTelemetryService
+  | EnvelopeEncryption
+  | McpCursorSigningService;
 
 const ListConnectionsInput = z.object({}).strict();
 const ListConnectionsOutputSchema = z
@@ -114,8 +144,46 @@ const ListConnectionsOutputSchema = z
   })
   .strict();
 
+const codePointLength = (value: string): number => Array.from(value).length;
+const ListGroupsInput = z
+  .object({
+    connection_id: z.string().regex(/^con_[A-Za-z0-9_-]{21}$/u),
+    search: z
+      .string()
+      .refine((value) => {
+        const length = codePointLength(value);
+        return length >= 3 && length <= 64;
+      }, "search must contain 3 to 64 characters")
+      .optional(),
+    limit: z.number().int().min(1).max(50).default(20),
+    cursor: z.string().max(4_096).optional(),
+  })
+  .strict();
+const ListGroupsOutputSchema = z
+  .object({
+    groups: z
+      .array(
+        z
+          .object({
+            group_id: z.string().regex(/^grp_[A-Za-z0-9_-]{21}$/u),
+            display_name: z.string().nullable(),
+          })
+          .strict(),
+      )
+      .max(50),
+    has_more: z.boolean(),
+    next_cursor: z.string().nullable(),
+    as_of: z.iso.datetime(),
+    stale: z.boolean(),
+    partial: z.boolean(),
+  })
+  .strict();
+
 const buildListConnectionsResult = makeSuccessResultBuilder(
   ListConnectionsOutputContract,
+);
+const buildListGroupsResult = makeSuccessResultBuilder(
+  ListGroupsOutputContract,
 );
 
 const auditUnavailable = () =>
@@ -139,6 +207,13 @@ const serviceUnavailable = () =>
     retryable: true,
   });
 
+const invalidCursor = () =>
+  makeExecutionErrorResult({
+    error_code: "invalid_cursor",
+    message: "The pagination cursor is invalid or expired.",
+    retryable: false,
+  });
+
 const rateLimited = (retryAfterSeconds: number, resetsAt: Date) =>
   makeExecutionErrorResult({
     error_code: "rate_limited",
@@ -156,6 +231,7 @@ type McpToolOutcome =
   | "success";
 
 const emitToolCompletion = (
+  tool: McpToolName,
   outcome: McpToolOutcome,
   resultCount?: number,
 ): Effect.Effect<void, never, SafeTelemetryService> =>
@@ -166,7 +242,7 @@ const emitToolCompletion = (
       outcome,
       ...(resultCount === undefined ? {} : { resultCount }),
       service: "api",
-      tool: "list_connections",
+      tool,
     });
   });
 
@@ -198,15 +274,15 @@ const listConnections = (
       .pipe(Effect.either);
 
     if (started._tag === "Left") {
-      yield* emitToolCompletion("audit_unavailable");
+      yield* emitToolCompletion("list_connections", "audit_unavailable");
       return auditUnavailable();
     }
     if (started.right.outcome === "authorization_denied") {
-      yield* emitToolCompletion("authorization_denied");
+      yield* emitToolCompletion("list_connections", "authorization_denied");
       return authorizationDenied();
     }
     if (started.right.outcome === "rate_limited") {
-      yield* emitToolCompletion("rate_limited");
+      yield* emitToolCompletion("list_connections", "rate_limited");
       return rateLimited(
         started.right.retryAfterSeconds,
         started.right.resetsAt,
@@ -232,7 +308,7 @@ const listConnections = (
         completed._tag === "Left"
           ? ("audit_unavailable" as const)
           : ("service_unavailable" as const);
-      yield* emitToolCompletion(outcome);
+      yield* emitToolCompletion("list_connections", outcome);
       return completed._tag === "Left"
         ? auditUnavailable()
         : serviceUnavailable();
@@ -252,7 +328,7 @@ const listConnections = (
         completed._tag === "Left"
           ? ("audit_unavailable" as const)
           : ("authorization_denied" as const);
-      yield* emitToolCompletion(outcome);
+      yield* emitToolCompletion("list_connections", outcome);
       return completed._tag === "Left"
         ? auditUnavailable()
         : authorizationDenied();
@@ -280,8 +356,246 @@ const listConnections = (
       })
       .pipe(Effect.either);
     yield* emitToolCompletion(
+      "list_connections",
       completed._tag === "Left" ? "audit_unavailable" : "success",
       completed._tag === "Left" ? undefined : output.connections.length,
+    );
+    return completed._tag === "Left" ? auditUnavailable() : result;
+  }).pipe(Effect.catchAll(() => Effect.succeed(auditUnavailable())));
+
+const normalizeDisplayName = (value: string | null): string =>
+  (value ?? "").normalize("NFKC").toLocaleLowerCase("und");
+
+const compareText = (left: string, right: string): number =>
+  left < right ? -1 : left > right ? 1 : 0;
+
+const listGroups = (
+  authorization: McpAccessAuthorization,
+  input: z.infer<typeof ListGroupsInput>,
+  hourLimit: number,
+  minuteLimit: number,
+) =>
+  Effect.gen(function* () {
+    const clock = yield* McpToolClock;
+    const identifiers = yield* McpToolIdentifiers;
+    const persistence = yield* McpToolPersistence;
+    const cursorSigning = yield* McpCursorSigning;
+    const encryption = yield* EnvelopeEncryptionService;
+    const startedAt = yield* clock.now;
+
+    const normalizedSearch =
+      input.search === undefined ? null : normalizeDisplayName(input.search);
+    const cursorContext: CursorContext = {
+      authorizationId: authorization.authorizationId,
+      connectionId: input.connection_id as CursorContext["connectionId"],
+      filters: { search: normalizedSearch },
+      pageSize: input.limit,
+      sortVersion: "groups-normalized-name-v1",
+      tool: "list_groups",
+    };
+    let boundary: CursorBoundary | null = null;
+    if (input.cursor !== undefined) {
+      const verified = yield* verifyCursor(
+        cursorSigning.key,
+        input.cursor,
+        cursorContext,
+        Math.floor(startedAt.valueOf() / 1_000),
+      ).pipe(Effect.either);
+      if (verified._tag === "Left") {
+        return invalidCursor();
+      }
+      boundary = verified.right;
+      if (
+        boundary.length !== 2 ||
+        typeof boundary[0] !== "string" ||
+        typeof boundary[1] !== "string"
+      ) {
+        return invalidCursor();
+      }
+    }
+
+    const auditLogId = yield* identifiers.nextAuditLogId;
+    const started = yield* persistence
+      .beginToolCall({
+        ...authorization,
+        auditLogId,
+        hourLimit,
+        minuteLimit,
+        observedAt: startedAt,
+        toolName: "list_groups",
+      })
+      .pipe(Effect.either);
+    if (started._tag === "Left") {
+      yield* emitToolCompletion("list_groups", "audit_unavailable");
+      return auditUnavailable();
+    }
+    if (started.right.outcome === "authorization_denied") {
+      yield* emitToolCompletion("list_groups", "authorization_denied");
+      return authorizationDenied();
+    }
+    if (started.right.outcome === "rate_limited") {
+      yield* emitToolCompletion("list_groups", "rate_limited");
+      return rateLimited(
+        started.right.retryAfterSeconds,
+        started.right.resetsAt,
+      );
+    }
+
+    const readAt = yield* clock.now;
+    const loaded = yield* persistence
+      .listGroups({
+        ...authorization,
+        connectionPublicId: input.connection_id,
+        observedAt: readAt,
+      })
+      .pipe(Effect.either);
+    if (loaded._tag === "Left" || loaded.right === null) {
+      const denied = loaded._tag === "Right";
+      const completed = yield* persistence
+        .completeToolCall({
+          auditLogId,
+          completedAt: yield* clock.now,
+          errorCode: denied ? "authorization_denied" : "service_unavailable",
+          outcome: denied ? "authorization_denied" : "execution_error",
+          resultCount: null,
+        })
+        .pipe(Effect.either);
+      const outcome =
+        completed._tag === "Left"
+          ? "audit_unavailable"
+          : denied
+            ? "authorization_denied"
+            : "service_unavailable";
+      yield* emitToolCompletion("list_groups", outcome);
+      return completed._tag === "Left"
+        ? auditUnavailable()
+        : denied
+          ? authorizationDenied()
+          : serviceUnavailable();
+    }
+
+    const page = loaded.right;
+    const decrypted = yield* Effect.forEach(page.groups, (group) =>
+      group.displayName === null
+        ? Effect.succeed({
+            displayName: null as string | null,
+            normalizedName: "",
+            publicId: group.publicId,
+          })
+        : encryption
+            .decrypt({
+              accountKey: page.accountKey,
+              ciphertext: group.displayName,
+              connectionKey: page.connectionKey,
+              context: {
+                accountId: page.accountKey.personalAccountId,
+                connectionId: page.connectionKey.connectionId,
+                entity: "whatsapp-group",
+                fieldOrObjectPurpose: "display-name",
+                recordId: group.id,
+              },
+            })
+            .pipe(
+              Effect.flatMap((bytes) =>
+                Effect.acquireUseRelease(
+                  Effect.succeed(bytes),
+                  (value) =>
+                    Effect.try({
+                      try: () =>
+                        new TextDecoder("utf-8", {
+                          fatal: true,
+                          ignoreBOM: false,
+                        }).decode(value),
+                      catch: () => new McpToolPersistenceError(),
+                    }),
+                  (value) => Effect.sync(() => value.fill(0)),
+                ),
+              ),
+              Effect.map((displayName) => ({
+                displayName,
+                normalizedName: normalizeDisplayName(displayName),
+                publicId: group.publicId,
+              })),
+            ),
+    ).pipe(Effect.either);
+    if (decrypted._tag === "Left") {
+      const completed = yield* persistence
+        .completeToolCall({
+          auditLogId,
+          completedAt: yield* clock.now,
+          errorCode: "service_unavailable",
+          outcome: "execution_error",
+          resultCount: null,
+        })
+        .pipe(Effect.either);
+      yield* emitToolCompletion(
+        "list_groups",
+        completed._tag === "Left" ? "audit_unavailable" : "service_unavailable",
+      );
+      return completed._tag === "Left"
+        ? auditUnavailable()
+        : serviceUnavailable();
+    }
+
+    const ordered = decrypted.right
+      .filter(
+        (group) =>
+          normalizedSearch === null ||
+          group.normalizedName.startsWith(normalizedSearch),
+      )
+      .sort(
+        (left, right) =>
+          compareText(left.normalizedName, right.normalizedName) ||
+          compareText(left.publicId, right.publicId),
+      )
+      .filter((group) => {
+        if (boundary === null) return true;
+        const [name, publicId] = boundary as readonly [string, string];
+        return (
+          compareText(group.normalizedName, name) > 0 ||
+          (group.normalizedName === name &&
+            compareText(group.publicId, publicId) > 0)
+        );
+      });
+    const selected = ordered.slice(0, input.limit);
+    const hasMore = ordered.length > input.limit;
+    let nextCursor: string | null = null;
+    if (hasMore) {
+      const last = selected.at(-1);
+      if (last === undefined) return serviceUnavailable();
+      nextCursor = yield* signCursor(cursorSigning.key, {
+        boundary: [last.normalizedName, last.publicId],
+        context: cursorContext,
+        expiresAtEpochSeconds: Math.floor(startedAt.valueOf() / 1_000) + 900,
+      });
+    }
+    const asOf = new Date(page.asOf);
+    const output: ListGroupsOutput = ListGroupsOutputContract.decodeUnknown({
+      groups: selected.map((group) => ({
+        display_name: group.displayName,
+        group_id: group.publicId,
+      })),
+      has_more: hasMore,
+      next_cursor: nextCursor,
+      as_of: page.asOf,
+      stale:
+        page.stale || readAt.valueOf() - asOf.valueOf() > 2 * 60 * 60 * 1_000,
+      partial: page.partial,
+    });
+    const result = buildListGroupsResult(output);
+    const completed = yield* persistence
+      .completeToolCall({
+        auditLogId,
+        completedAt: yield* clock.now,
+        errorCode: null,
+        outcome: "success",
+        resultCount: output.groups.length,
+      })
+      .pipe(Effect.either);
+    yield* emitToolCompletion(
+      "list_groups",
+      completed._tag === "Left" ? "audit_unavailable" : "success",
+      completed._tag === "Left" ? undefined : output.groups.length,
     );
     return completed._tag === "Left" ? auditUnavailable() : result;
   }).pipe(Effect.catchAll(() => Effect.succeed(auditUnavailable())));
@@ -338,6 +652,7 @@ export const createMcpRequestHandler =
       .then(isToolsListPayload)
       .catch(() => false);
     let hasConnectionsRead = true;
+    let hasDirectoryRead = true;
     if (isToolsListRequest) {
       try {
         const inspected = await Effect.runPromise(
@@ -352,6 +667,8 @@ export const createMcpRequestHandler =
         );
         hasConnectionsRead =
           inspected?.scopes.includes("connections:read") === true;
+        hasDirectoryRead =
+          inspected?.scopes.includes("directory:read") === true;
       } catch {
         return unavailable();
       }
@@ -385,8 +702,63 @@ export const createMcpRequestHandler =
           } as CallToolResult;
         },
       );
-      if (!hasConnectionsRead) {
-        server.server.setRequestHandler("tools/list", () => ({ tools: [] }));
+      server.registerTool(
+        "list_groups",
+        {
+          description:
+            "List currently joined groups in one selected WhatsApp Connection without roster or provider metadata.",
+          inputSchema: ListGroupsInput,
+          outputSchema: ListGroupsOutputSchema,
+          title: "List WhatsApp Groups",
+        },
+        async (input) => {
+          const result = await Effect.runPromise(
+            listGroups(
+              authorization,
+              input,
+              options.hourLimit,
+              options.minuteLimit,
+            ).pipe(Effect.provide(options.layer)),
+          );
+          return {
+            ...result,
+            content: result.content.map((block) => ({ ...block })),
+          } as CallToolResult;
+        },
+      );
+      if (!hasConnectionsRead || !hasDirectoryRead) {
+        const tools: Array<Record<string, unknown>> = [];
+        if (hasConnectionsRead) {
+          tools.push({
+            description:
+              "List every non-deleted WhatsApp Connection selected by the current MCP Authorization.",
+            inputSchema: z.toJSONSchema(ListConnectionsInput, {
+              target: "draft-2020-12",
+            }),
+            name: "list_connections",
+            outputSchema: z.toJSONSchema(ListConnectionsOutputSchema, {
+              target: "draft-2020-12",
+            }),
+            title: "List WhatsApp Connections",
+          });
+        }
+        if (hasDirectoryRead) {
+          tools.push({
+            description:
+              "List currently joined groups in one selected WhatsApp Connection without roster or provider metadata.",
+            inputSchema: z.toJSONSchema(ListGroupsInput, {
+              target: "draft-2020-12",
+            }),
+            name: "list_groups",
+            outputSchema: z.toJSONSchema(ListGroupsOutputSchema, {
+              target: "draft-2020-12",
+            }),
+            title: "List WhatsApp Groups",
+          });
+        }
+        server.server.setRequestHandler("tools/list", () => ({
+          tools: tools as never,
+        }));
       }
       return server;
     };

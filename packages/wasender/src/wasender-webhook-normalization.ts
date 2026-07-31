@@ -760,12 +760,14 @@ const normalizeContacts = async (
       );
       const active = contact.active !== false;
       const phoneNumber = contactPhoneNumber(contact, jid);
+      const recipient = await makeContact(key, jid);
       return {
         contact: {
           active,
           displayName,
+          identity: recipient,
           phoneNumber,
-          recipient: await makeContact(key, jid),
+          recipient,
         },
         evidence: await makeEvidence(key, occurrence),
         itemIdentity: (await makeIdentity(key, "item:directory-contact", [
@@ -809,12 +811,14 @@ const normalizeGroups = async (
       }
       const displayName = firstString(group.subject, group.name);
       const joined = group.joined !== false;
+      const recipient = await makeGroup(key, jid);
       return {
         evidence: await makeEvidence(key, occurrence),
         group: {
           displayName,
+          identity: recipient,
           joined,
-          recipient: await makeGroup(key, jid),
+          recipient,
         },
         itemIdentity: (await makeIdentity(key, "item:directory-group", [
           jid,
