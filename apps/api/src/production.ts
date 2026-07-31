@@ -18,6 +18,7 @@ import { makePgMcpToolRepository } from "@whatsapp-mcp/db/mcp-tool";
 import { makePgPersonalAccountRepository } from "@whatsapp-mcp/db/personal-account";
 import { makePgWebhookEventRepository } from "@whatsapp-mcp/db/webhook-event";
 import { makePgWebhookIngressRepository } from "@whatsapp-mcp/db/webhook-ingress";
+import { makePgWebhookReplayRepository } from "@whatsapp-mcp/db/webhook-replay";
 import { makePgWhatsAppConnectionRepository } from "@whatsapp-mcp/db/whatsapp-connection";
 import { Config, ConfigProvider, Data, Effect, Layer, Redacted } from "effect";
 import { makeClerkHumanIdentity } from "./auth/clerk";
@@ -152,6 +153,17 @@ import {
   WebhookRecoveryPersistence,
   WebhookRecoveryPersistenceError,
 } from "./webhook-recovery";
+import {
+  handleWebhookReplayBatch,
+  handleWebhookSourceRetention,
+  WebhookReplayClock,
+  WebhookReplayPersistence,
+  WebhookReplayPersistenceError,
+  WebhookReplayQueue,
+  WebhookReplayQueueError,
+  WebhookSourceObjectStore,
+  WebhookSourceObjectStoreError,
+} from "./webhook-replay";
 import {
   createWhatsAppConnectionHandler,
   isWhatsAppConnectionRequest,
@@ -1226,6 +1238,106 @@ const webhookRecoveryRuntimeLayer = (environment: ApiEnvironment) =>
     }),
   );
 
+const webhookReplayRuntimeLayer = (environment: ApiEnvironment) =>
+  Layer.mergeAll(
+    Layer.succeed(WebhookReplayClock, {
+      now: Effect.sync(() => new Date().toISOString()),
+    }),
+    Layer.succeed(WebhookReplayPersistence, {
+      complete: (input) =>
+        Effect.tryPromise({
+          try: async () => {
+            const connectionString =
+              environment.WEBHOOK_HYPERDRIVE?.connectionString;
+            if (typeof connectionString !== "string") {
+              throw new Error("Webhook Hyperdrive unavailable");
+            }
+            await makePgWebhookReplayRepository(connectionString).complete(
+              input,
+            );
+          },
+          catch: () => new WebhookReplayPersistenceError(),
+        }),
+      finalizeExpiredSource: (input) =>
+        Effect.tryPromise({
+          try: async () => {
+            const connectionString =
+              environment.WEBHOOK_HYPERDRIVE?.connectionString;
+            if (typeof connectionString !== "string") {
+              throw new Error("Webhook Hyperdrive unavailable");
+            }
+            return makePgWebhookReplayRepository(
+              connectionString,
+            ).finalizeExpiredSource(input);
+          },
+          catch: () => new WebhookReplayPersistenceError(),
+        }),
+      listExpiredSources: (input) =>
+        Effect.tryPromise({
+          try: async () => {
+            const connectionString =
+              environment.WEBHOOK_HYPERDRIVE?.connectionString;
+            if (typeof connectionString !== "string") {
+              throw new Error("Webhook Hyperdrive unavailable");
+            }
+            return makePgWebhookReplayRepository(
+              connectionString,
+            ).listExpiredSources(input);
+          },
+          catch: () => new WebhookReplayPersistenceError(),
+        }),
+      prepare: ({ observedAt, request: input }) =>
+        Effect.tryPromise({
+          try: async () => {
+            const connectionString =
+              environment.WEBHOOK_HYPERDRIVE?.connectionString;
+            if (typeof connectionString !== "string") {
+              throw new Error("Webhook Hyperdrive unavailable");
+            }
+            return makePgWebhookReplayRepository(connectionString).prepare({
+              incidentReference: input.incident_reference,
+              observedAt,
+              operatorReference: input.operator_reference,
+              reasonCode: input.reason_code,
+              requestId: input.request_id,
+              requestedAt: input.requested_at,
+            });
+          },
+          catch: () => new WebhookReplayPersistenceError(),
+        }),
+    }),
+    Layer.succeed(WebhookReplayQueue, {
+      publish: (message) =>
+        Effect.tryPromise({
+          try: async () => {
+            const queue = environment.INGESTION_QUEUE;
+            if (!hasMethods(queue, ["send"])) {
+              throw new Error("ingestion Queue unavailable");
+            }
+            await (queue as Pick<Queue, "send">).send(message, {
+              contentType: "json",
+            });
+          },
+          catch: () => new WebhookReplayQueueError(),
+        }),
+    }),
+    Layer.succeed(WebhookSourceObjectStore, {
+      delete: (eventId) =>
+        Effect.tryPromise({
+          try: async () => {
+            const bucket = environment.WEBHOOK_INGRESS;
+            if (!hasMethods(bucket, ["delete"])) {
+              throw new Error("Webhook ingress bucket unavailable");
+            }
+            await (bucket as Pick<R2Bucket, "delete">).delete(
+              `webhook-events/${eventId}`,
+            );
+          },
+          catch: () => new WebhookSourceObjectStoreError(),
+        }),
+    }),
+  );
+
 const connectionSetupProvisioningQueueLayer = (environment: ApiEnvironment) =>
   Layer.succeed(ConnectionSetupProvisioningQueue, {
     enqueue: (setupId) =>
@@ -1870,9 +1982,31 @@ const deadLetterQueueName = (environment: ApiEnvironment): string | null => {
   return `whatsapp-mcp-ingestion-dlq${suffix}`;
 };
 
+const replayQueueName = (environment: ApiEnvironment): string | null => {
+  const deploymentEnvironment = environment.DEPLOYMENT_ENVIRONMENT;
+  if (
+    deploymentEnvironment !== "development" &&
+    deploymentEnvironment !== "preview" &&
+    deploymentEnvironment !== "production"
+  ) {
+    return null;
+  }
+  const suffix =
+    deploymentEnvironment === "production" ? "" : `-${deploymentEnvironment}`;
+  return `whatsapp-mcp-ingestion-replay${suffix}`;
+};
+
 export const createProductionQueueHandler =
   (environment: ApiEnvironment) =>
   async (batch: MessageBatch): Promise<void> => {
+    if (batch.queue === replayQueueName(environment)) {
+      const layer = Layer.mergeAll(
+        telemetryLayer,
+        webhookReplayRuntimeLayer(environment),
+      );
+      await handleWebhookReplayBatch(batch, layer);
+      return;
+    }
     if (batch.queue === deadLetterQueueName(environment)) {
       const layer = Layer.mergeAll(
         encryptionLayer(environment),
@@ -1954,10 +2088,26 @@ export const createProductionScheduledHandler =
         connectionString: string,
       ) => ConnectionSetupScheduledRepository;
       readonly now?: () => string;
+      readonly retainWebhookSources?: (observedAt: string) => Promise<void>;
       readonly sweepWebhookIngress?: (observedAt: string) => Promise<void>;
     } = {},
   ) =>
   async (controller: ScheduledController): Promise<void> => {
+    if (controller.cron === "0 * * * *") {
+      const observedAt = new Date(controller.scheduledTime).toISOString();
+      await (
+        dependencies.retainWebhookSources ??
+        ((value) =>
+          handleWebhookSourceRetention(
+            value,
+            Layer.mergeAll(
+              telemetryLayer,
+              webhookReplayRuntimeLayer(environment),
+            ),
+          ))
+      )(observedAt);
+      return;
+    }
     if (controller.cron === "*/5 * * * *") {
       const connectionString = environment.HYPERDRIVE?.connectionString;
       if (

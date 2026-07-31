@@ -704,16 +704,42 @@ plan must both retain exactly seven ingestion retries and the active DLQ
 consumer.
 
 Page on any `webhook_event.dead_letter.completed` outcome of `gap_recorded` or
-`invalid_message`. For `gap_recorded`, verify through restricted metadata-only
+`invalid_message`. For `gap_recorded`, copy only the emitted
+`incidentReference` and verify through restricted metadata-only
 diagnostics that the Webhook Event is marked dead-lettered, exactly one
 `processing_failure` Ingestion Gap exists, and the encrypted source remains
 under its seven-day R2 lifecycle. Do not acknowledge manually, delete or edit
 the source, close the Ingestion Gap without confirmed recovery, or synthesize a
 new deduplication identity. Restore the failing dependency first; immutable
 operator replay must use the retained source and ordinary validation path.
+Set `CLOUDFLARE_ACCOUNT_ID`, the sensitive
+`CLOUDFLARE_INGESTION_REPLAY_QUEUE_ID` OpenTofu output, a short-lived
+`CLOUDFLARE_REPLAY_API_TOKEN` restricted to Queues Write, and the approved
+64-character `WEBHOOK_REPLAY_OPERATOR_REFERENCE`. Then run:
+
+```sh
+bun run ingestion:replay <incident-reference> dependency_recovered
+```
+
+Use `schema_support_deployed` only after reviewed parser or normalizer support
+is deployed, or `transient_incident_resolved` for a resolved incident that is
+not a dependency outage. Record the returned `attempt_reference`. Confirm
+`webhook_event.replay.completed` reports `dispatched`, then verify the ordinary
+`webhook_event.processing.completed` signal. Never place ciphertext, payload,
+provider identifiers, tenant IDs, connection IDs, or object keys in the
+command. An `already_dispatched` outcome is an idempotent success; do not issue
+a new request ID merely to force another delivery.
+
 An `invalid_message` means the DLQ envelope itself is corrupt and requires an
 ingestion incident because connection-scoped gap recording cannot be proven
 from that envelope.
+
+At the first hourly boundary after source expiry, confirm
+`webhook_event.source_retention.completed` advances its bounded deletion count.
+The R2 object, Webhook Event row, quarantine rows, and incident-to-source link
+must be gone, while the content-free Webhook Item deduplication identity
+remains. Treat any replay after that point as `source_unavailable`; never
+reconstruct or substitute the payload.
 
 From the retained non-production WhatsApp Connection, choose **Disconnect**.
 Confirm the product reports `disconnected`, retained history remains described

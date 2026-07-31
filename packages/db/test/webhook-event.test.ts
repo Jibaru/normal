@@ -239,8 +239,12 @@ describe("Webhook Event repository", () => {
       deadLetteredAt: "2026-08-01T09:10:00.000Z",
     };
 
-    expect(await repository.deadLetter(input)).toBe("gap_recorded");
-    expect(await repository.deadLetter(input)).toBe("gap_recorded");
+    const firstDeadLetter = await repository.deadLetter(input);
+    expect(firstDeadLetter).toMatchObject({ outcome: "gap_recorded" });
+    expect(firstDeadLetter.incidentReference).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(await repository.deadLetter(input)).toEqual(firstDeadLetter);
 
     const recorded = await database.query<{
       cause: string;
@@ -348,7 +352,7 @@ describe("Webhook Event repository", () => {
         ...eventInput(firstEventId),
         deadLetteredAt: "2026-08-01T09:10:00.000Z",
       }),
-    ).toBe("already_completed");
+    ).toEqual({ incidentReference: null, outcome: "already_completed" });
     const gaps = await database.query("SELECT id FROM app.ingestion_gaps");
     expect(gaps.rows).toEqual([]);
   });

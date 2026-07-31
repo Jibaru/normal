@@ -60,6 +60,9 @@ The Worker runtime suite proves:
 - minute-scheduled orphan discovery from real R2 metadata, republishing through
   the Queue binding, convergence with later provider redelivery, jittered
   transient retries, and DLQ acknowledgment after Ingestion Gap persistence;
+- opaque incident alerting, audited immutable replay through the ordinary
+  ingestion Queue, and seven-day source/quarantine cleanup that retains
+  non-reversible Webhook Item identities;
 - provider-control service-binding calls;
 - scheduled-handler effects through the supported runtime helpers;
 - an OAuth authorization redirect over signed-in HTTP;

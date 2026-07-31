@@ -815,6 +815,155 @@ describe("public-boundary Worker harness", () => {
     expect(recorded).toContain(message.object_id);
   });
 
+  test("audits an opaque immutable replay and routes its canonical source through normal ingestion", async () => {
+    const ingress = await exports.default.fetch(
+      new Request(
+        "https://api.example.test/webhooks/wasender/30000000-0000-4000-8000-000000000018",
+        {
+          body: JSON.stringify({
+            data: { status: "connected" },
+            event: "session.status",
+            sessionId: "test-session-credential",
+            timestamp: 1_767_323_460_000,
+          }),
+          headers: {
+            "content-type": "application/json",
+            "x-webhook-signature": "test-webhook-secret",
+          },
+          method: "POST",
+        },
+      ),
+    );
+    const beforeReplay = (await (
+      await exports.default.fetch("https://api.example.test/test/webhook-queue")
+    ).json()) as ReadonlyArray<Record<string, unknown>>;
+    const canonical = beforeReplay.at(-1);
+    if (canonical === undefined) throw new Error("missing replay source");
+    const deadLetter = createMessageBatch("whatsapp-mcp-ingestion-dlq", [
+      {
+        attempts: 8,
+        body: canonical,
+        id: "dead-letter-replay-source",
+        timestamp: new Date("2026-01-03T00:00:00.000Z"),
+      },
+    ]);
+    const deadLetterContext = createExecutionContext();
+    await worker.queue?.(deadLetter, env, deadLetterContext);
+    await getQueueResult(deadLetter, deadLetterContext);
+
+    const requestId = "60000000-0000-4000-8000-000000000018";
+    const replay = createMessageBatch("whatsapp-mcp-ingestion-replay", [
+      {
+        attempts: 1,
+        body: {
+          incident_reference: "50000000-0000-4000-8000-000000000018",
+          operator_reference: "b".repeat(64),
+          reason_code: "dependency_recovered",
+          request_id: requestId,
+          requested_at: "2026-01-03T00:00:00.000Z",
+          version: 1,
+        },
+        id: "immutable-replay-request",
+        timestamp: new Date("2026-01-03T00:00:00.000Z"),
+      },
+    ]);
+    const replayContext = createExecutionContext();
+    await worker.queue?.(replay, env, replayContext);
+    const replayResult = await getQueueResult(replay, replayContext);
+    const afterReplay = (await (
+      await exports.default.fetch("https://api.example.test/test/webhook-queue")
+    ).json()) as ReadonlyArray<Record<string, unknown>>;
+    const attempts = (await (
+      await exports.default.fetch(
+        "https://api.example.test/test/webhook-replay-attempts",
+      )
+    ).json()) as ReadonlyArray<Record<string, unknown>>;
+
+    expect(ingress.status).toBe(200);
+    expect(replayResult).toMatchObject({
+      explicitAcks: ["immutable-replay-request"],
+      outcome: "ok",
+    });
+    expect(afterReplay.at(-1)).toEqual(canonical);
+    expect(attempts).toContainEqual({
+      requestId,
+      status: "dispatched",
+    });
+
+    const normal = createMessageBatch("whatsapp-mcp-ingestion", [
+      {
+        attempts: 1,
+        body: afterReplay.at(-1),
+        id: "normal-replay-ingestion",
+        timestamp: new Date("2026-01-03T00:00:01.000Z"),
+      },
+    ]);
+    const normalContext = createExecutionContext();
+    await worker.queue?.(normal, env, normalContext);
+    expect(await getQueueResult(normal, normalContext)).toMatchObject({
+      explicitAcks: ["normal-replay-ingestion"],
+      outcome: "ok",
+    });
+  });
+
+  test("removes an expired dead-letter source through the hourly Worker boundary", async () => {
+    const ingress = await exports.default.fetch(
+      new Request(
+        "https://api.example.test/webhooks/wasender/30000000-0000-4000-8000-000000000018",
+        {
+          body: JSON.stringify({
+            data: { status: "connected" },
+            event: "session.status",
+            sessionId: "test-session-credential",
+            timestamp: 1_767_323_520_000,
+          }),
+          headers: {
+            "content-type": "application/json",
+            "x-webhook-signature": "test-webhook-secret",
+          },
+          method: "POST",
+        },
+      ),
+    );
+    const published = (await (
+      await exports.default.fetch("https://api.example.test/test/webhook-queue")
+    ).json()) as ReadonlyArray<Record<string, unknown>>;
+    const canonical = published.at(-1);
+    if (
+      canonical === undefined ||
+      typeof canonical.object_id !== "string" ||
+      typeof canonical.received_at !== "string"
+    ) {
+      throw new Error("missing retention source");
+    }
+    const objectKey = `webhook-events/${canonical.object_id}`;
+    const deadLetter = createMessageBatch("whatsapp-mcp-ingestion-dlq", [
+      {
+        attempts: 8,
+        body: canonical,
+        id: "dead-letter-retention-source",
+        timestamp: new Date(canonical.received_at),
+      },
+    ]);
+    const deadLetterContext = createExecutionContext();
+    await worker.queue?.(deadLetter, env, deadLetterContext);
+    await getQueueResult(deadLetter, deadLetterContext);
+
+    expect(ingress.status).toBe(200);
+    expect(await env.WEBHOOK_INGRESS.get(objectKey)).not.toBeNull();
+
+    const controller = createScheduledController({
+      cron: "0 * * * *",
+      scheduledTime:
+        Date.parse(canonical.received_at) + 7 * 24 * 60 * 60 * 1_000,
+    });
+    const retentionContext = createExecutionContext();
+    await worker.scheduled?.(controller, env, retentionContext);
+    await waitOnExecutionContext(retentionContext);
+
+    expect(await env.WEBHOOK_INGRESS.get(objectKey)).toBeNull();
+  });
+
   test("routes an invalid ingestion message through the Webhook Event consumer", async () => {
     const batch = createMessageBatch("whatsapp-mcp-ingestion", [
       {

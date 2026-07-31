@@ -146,11 +146,29 @@ export interface WebhookEventProcessingCompletedEvent {
 
 export interface WebhookEventDeadLetterCompletedEvent {
   readonly event: "webhook_event.dead_letter.completed";
+  readonly incidentReference: string | null;
   readonly outcome:
     | "already_completed"
     | "gap_recorded"
     | "invalid_message"
     | "source_unavailable";
+  readonly service: "api";
+}
+
+export interface WebhookEventReplayCompletedEvent {
+  readonly attemptReference: string | null;
+  readonly event: "webhook_event.replay.completed";
+  readonly outcome:
+    | "already_dispatched"
+    | "dispatched"
+    | "invalid_message"
+    | "source_unavailable";
+  readonly service: "api";
+}
+
+export interface WebhookEventSourceRetentionCompletedEvent {
+  readonly deletedCount: number;
+  readonly event: "webhook_event.source_retention.completed";
   readonly service: "api";
 }
 
@@ -252,6 +270,8 @@ export type SafeTelemetryEvent =
   | PersonalAccountBootstrapCompletedEvent
   | StoredMediaContainerEvent
   | WebhookEventDeadLetterCompletedEvent
+  | WebhookEventReplayCompletedEvent
+  | WebhookEventSourceRetentionCompletedEvent
   | WebhookEventProcessingCompletedEvent
   | WebhookIngressCompletedEvent
   | WebhookIngressRecoveryCompletedEvent

@@ -68,6 +68,12 @@ import {
   WebhookRecoveryPersistence,
 } from "../../src/webhook-recovery";
 import {
+  WebhookReplayClock,
+  WebhookReplayPersistence,
+  WebhookReplayQueue,
+  WebhookSourceObjectStore,
+} from "../../src/webhook-replay";
+import {
   WhatsAppConnectionClock,
   WhatsAppConnectionIdentifiers,
   WhatsAppConnectionPersistence,
@@ -123,6 +129,15 @@ const encryptedWebhookPayloads = new Map<string, Uint8Array>();
 const claimedWebhookItems = new Set<string>();
 const claimedWebhookEvents = new Set<string>();
 const deadLetteredWebhookEvents = new Set<string>();
+let latestDeadLetteredWebhookEventId: string | null = null;
+const webhookIncidentReference = "50000000-0000-4000-8000-000000000018";
+const webhookReplayAttempts = new Map<
+  string,
+  {
+    readonly message: WebhookIngressQueueMessage;
+    status: "dispatched" | "pending";
+  }
+>();
 let projectedConnectionStateVersion: string | null = null;
 let projectedConnectionStateReceivedAt: string | null = null;
 let nextWebhookObjectId = 0;
@@ -899,7 +914,11 @@ const makeTestLayer = (
       deadLetter: (input) =>
         Effect.sync(() => {
           deadLetteredWebhookEvents.add(input.eventId);
-          return "gap_recorded" as const;
+          latestDeadLetteredWebhookEventId = input.eventId;
+          return {
+            incidentReference: webhookIncidentReference,
+            outcome: "gap_recorded" as const,
+          };
         }),
       prepare: (input) =>
         Effect.sync(() => {
@@ -977,6 +996,77 @@ const makeTestLayer = (
         }),
       quarantine: () => Effect.void,
     }),
+    Layer.succeed(WebhookReplayClock, {
+      now: Effect.succeed("2026-01-03T00:00:01.000Z"),
+    }),
+    Layer.succeed(WebhookReplayPersistence, {
+      complete: ({ requestId }) =>
+        Effect.sync(() => {
+          const attempt = webhookReplayAttempts.get(requestId);
+          if (attempt === undefined) throw new Error("missing replay attempt");
+          attempt.status = "dispatched";
+        }),
+      finalizeExpiredSource: ({ eventId }) =>
+        Effect.sync(() => {
+          claimedWebhookEvents.delete(eventId);
+          deadLetteredWebhookEvents.delete(eventId);
+          return true;
+        }),
+      listExpiredSources: ({ observedAt }) =>
+        Effect.succeed(
+          publishedWebhookMessages
+            .filter(
+              (message) =>
+                deadLetteredWebhookEvents.has(message.object_id) &&
+                Date.parse(message.received_at) + 7 * 24 * 60 * 60 * 1_000 <=
+                  Date.parse(observedAt),
+            )
+            .map((message) => message.object_id),
+        ),
+      prepare: ({ request: input }) =>
+        Effect.sync(() => {
+          const existing = webhookReplayAttempts.get(input.request_id);
+          if (existing !== undefined) {
+            return {
+              message: existing.message,
+              outcome:
+                existing.status === "dispatched"
+                  ? ("already_dispatched" as const)
+                  : ("pending" as const),
+            };
+          }
+          const message = publishedWebhookMessages.find(
+            (candidate) =>
+              input.incident_reference === webhookIncidentReference &&
+              candidate.object_id === latestDeadLetteredWebhookEventId,
+          );
+          if (message === undefined) {
+            return { outcome: "source_unavailable" as const };
+          }
+          webhookReplayAttempts.set(input.request_id, {
+            message,
+            status: "pending",
+          });
+          return { message, outcome: "pending" as const };
+        }),
+    }),
+    Layer.succeed(WebhookReplayQueue, {
+      publish: (message) =>
+        Effect.sync(() => {
+          publishedWebhookMessages.push(message);
+        }),
+    }),
+    Layer.succeed(WebhookSourceObjectStore, {
+      delete: (eventId) =>
+        environment === undefined
+          ? Effect.void
+          : Effect.promise(async () => {
+              await environment.WEBHOOK_INGRESS.delete(
+                `webhook-events/${eventId}`,
+              );
+              encryptedWebhookPayloads.delete(eventId);
+            }),
+    }),
   );
 };
 
@@ -1012,27 +1102,47 @@ const worker = createPublicBoundaryWorker({
               },
             }),
           )
-        : new URL(request.url).pathname === "/test/provider-observations"
+        : new URL(request.url).pathname === "/test/webhook-replay-attempts"
           ? Promise.resolve(
-              new Response(JSON.stringify(providerObservations), {
-                headers: {
-                  "cache-control": "no-store",
-                  "content-type": "application/json; charset=utf-8",
+              new Response(
+                JSON.stringify(
+                  [...webhookReplayAttempts.entries()].map(
+                    ([requestId, attempt]) => ({
+                      requestId,
+                      status: attempt.status,
+                    }),
+                  ),
+                ),
+                {
+                  headers: {
+                    "cache-control": "no-store",
+                    "content-type": "application/json; charset=utf-8",
+                  },
                 },
-              }),
+              ),
             )
-          : createProductionHandler({
-              ...environment,
-              WEBHOOK_HYPERDRIVE: {
-                connectionString:
-                  "postgresql://webhook-runtime@hyperdrive.test/database",
-              },
-            } as Env)(request),
+          : new URL(request.url).pathname === "/test/provider-observations"
+            ? Promise.resolve(
+                new Response(JSON.stringify(providerObservations), {
+                  headers: {
+                    "cache-control": "no-store",
+                    "content-type": "application/json; charset=utf-8",
+                  },
+                }),
+              )
+            : createProductionHandler({
+                ...environment,
+                WEBHOOK_HYPERDRIVE: {
+                  connectionString:
+                    "postgresql://webhook-runtime@hyperdrive.test/database",
+                },
+              } as Env)(request),
   layerFor: (request, environment) =>
     makeTestLayer(selectedFailure(request), environment),
   provisioningLayer: makeTestLayer(undefined),
   webhookEventLayer: (environment) => makeTestLayer(undefined, environment),
   webhookRecoveryLayer: (environment) => makeTestLayer(undefined, environment),
+  webhookReplayLayer: (environment) => makeTestLayer(undefined, environment),
 });
 
 export default worker;

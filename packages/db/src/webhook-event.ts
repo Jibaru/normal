@@ -65,6 +65,11 @@ export type DeadLetterWebhookEventOutcome =
   | "gap_recorded"
   | "source_unavailable";
 
+export interface DeadLetterWebhookEventResult {
+  readonly incidentReference: string | null;
+  readonly outcome: DeadLetterWebhookEventOutcome;
+}
+
 export type WebhookItemQuarantineClassification =
   | "invalid_item_shape"
   | "invalid_top_level_shape"
@@ -115,7 +120,7 @@ export interface WebhookEventRepository {
   }) => Promise<void>;
   readonly deadLetter: (
     input: DeadLetterWebhookEventInput,
-  ) => Promise<DeadLetterWebhookEventOutcome>;
+  ) => Promise<DeadLetterWebhookEventResult>;
   readonly filterUnclaimed: <Input extends PrepareWebhookEventInput>(
     inputs: ReadonlyArray<Input>,
   ) => Promise<ReadonlyArray<Input>>;
@@ -402,6 +407,14 @@ export const makeWebhookEventRepository = (
         if (result.rows.length !== 1) {
           throw new Error("Webhook Event completion target unavailable");
         }
+        const resolved = await connection.query<{ resolved: unknown }>(
+          `SELECT app_private.resolve_webhook_processing_gap($1, $2, $3)
+             AS resolved`,
+          [input.personalAccountId, input.whatsappConnectionId, input.eventId],
+        );
+        if (resolved.rows[0]?.resolved !== true) {
+          throw new Error("failed to resolve Webhook Event processing gap");
+        }
       }),
     ),
 
@@ -420,7 +433,12 @@ export const makeWebhookEventRepository = (
              AND accounts.state = 'active'`,
           [input.personalAccountId, input.whatsappConnectionId],
         );
-        if (active.rows.length === 0) return "source_unavailable" as const;
+        if (active.rows.length === 0) {
+          return {
+            incidentReference: null,
+            outcome: "source_unavailable" as const,
+          };
+        }
 
         await connection.query(
           `INSERT INTO app.webhook_events (
@@ -462,7 +480,10 @@ export const makeWebhookEventRepository = (
           throw new Error("conflicting dead-letter Webhook Event");
         }
         if (event?.processing_completed_at !== null) {
-          return "already_completed" as const;
+          return {
+            incidentReference: null,
+            outcome: "already_completed" as const,
+          };
         }
 
         await connection.query(
@@ -494,7 +515,59 @@ export const makeWebhookEventRepository = (
         if (recorded.rows[0]?.recorded !== true) {
           throw new Error("failed to record dead-letter Ingestion Gap");
         }
-        return "gap_recorded" as const;
+        const incident = await connection.query<{
+          incident_reference: unknown;
+        }>(
+          `INSERT INTO app.webhook_dead_letter_incidents (
+             personal_account_id,
+             whatsapp_connection_id,
+             webhook_event_id,
+             detected_at,
+             source_expires_at
+           )
+           SELECT
+             events.personal_account_id,
+             events.whatsapp_connection_id,
+             events.id,
+             $4::timestamptz,
+             events.source_expires_at
+           FROM app.webhook_events AS events
+           WHERE events.personal_account_id = $1
+             AND events.whatsapp_connection_id = $2
+             AND events.id = $3
+           ON CONFLICT (webhook_event_id) DO NOTHING
+           RETURNING id AS incident_reference`,
+          [
+            input.personalAccountId,
+            input.whatsappConnectionId,
+            input.eventId,
+            input.deadLetteredAt,
+          ],
+        );
+        const existingIncident =
+          incident.rows[0] ??
+          (
+            await connection.query<{ incident_reference: unknown }>(
+              `SELECT id AS incident_reference
+               FROM app.webhook_dead_letter_incidents
+               WHERE personal_account_id = $1
+                 AND whatsapp_connection_id = $2
+                 AND webhook_event_id = $3`,
+              [
+                input.personalAccountId,
+                input.whatsappConnectionId,
+                input.eventId,
+              ],
+            )
+          ).rows[0];
+        const incidentReference = existingIncident?.incident_reference;
+        if (typeof incidentReference !== "string") {
+          throw new Error("failed to create Webhook Event incident reference");
+        }
+        return {
+          incidentReference,
+          outcome: "gap_recorded" as const,
+        };
       }),
     ),
 

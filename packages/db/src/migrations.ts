@@ -201,6 +201,17 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 17,
   },
+  {
+    name: "immutable Webhook Event replay and source retention",
+    sql: await readFile(
+      new NodeUrl(
+        "../migrations/0018_webhook_replay_and_retention.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    version: 18,
+  },
 ];
 
 const checksum = (sql: string): string =>
