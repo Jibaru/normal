@@ -1,0 +1,174 @@
+import { Schema } from "effect";
+
+const SetupMarker = Schema.String.pipe(
+  Schema.pattern(/^[A-Za-z0-9_-]{1,128}$/u),
+);
+const SessionLocator = Schema.String.pipe(
+  Schema.pattern(/^wsl_[A-Za-z0-9_-]{43}$/u),
+);
+const WhatsAppNumber = Schema.String.pipe(Schema.pattern(/^\+[1-9]\d{7,14}$/u));
+
+const ReconcileSessionRequest = Schema.Struct({
+  setupMarker: SetupMarker,
+});
+const ListSessionsRequest = ReconcileSessionRequest;
+const CreateSessionRequest = Schema.Struct({
+  phoneNumber: WhatsAppNumber,
+  setupMarker: SetupMarker,
+});
+const SessionRequest = Schema.Struct({
+  session: SessionLocator,
+});
+
+const strictDecode = <A, I>(schema: Schema.Schema<A, I>) =>
+  Schema.decodeUnknownSync(schema, { onExcessProperty: "error" });
+
+export const decodeReconcileSessionRequest = strictDecode(
+  ReconcileSessionRequest,
+);
+export const decodeListSessionsRequest = strictDecode(ListSessionsRequest);
+export const decodeCreateSessionRequest = strictDecode(CreateSessionRequest);
+export const decodeConnectSessionRequest = strictDecode(SessionRequest);
+export const decodeGetQrCodeRequest = strictDecode(SessionRequest);
+export const decodeDeleteSessionRequest = strictDecode(SessionRequest);
+
+export interface ReconcileSessionRequest {
+  readonly setupMarker: string;
+}
+
+export interface ListSessionsRequest {
+  readonly setupMarker: string;
+}
+
+export interface CreateSessionRequest {
+  readonly phoneNumber: string;
+  readonly setupMarker: string;
+}
+
+export interface SessionRequest {
+  readonly session: string;
+}
+
+export type LifecycleConnectionState =
+  | "connected"
+  | "connecting"
+  | "degraded"
+  | "disconnected"
+  | "reconnect_required";
+
+/**
+ * `authority` is per-session authority, never the account-level Provider API
+ * Credential. The API Worker must envelope-encrypt it before persistence.
+ */
+export interface LifecycleSession {
+  readonly authority: string;
+  readonly connectionState: LifecycleConnectionState;
+  readonly session: string;
+}
+
+export type SessionReconciliation =
+  | {
+      readonly outcome: "absent";
+    }
+  | {
+      readonly outcome: "present";
+      readonly session: LifecycleSession;
+    }
+  | {
+      readonly outcome: "duplicates";
+      readonly sessions: readonly [
+        LifecycleSession,
+        LifecycleSession,
+        ...ReadonlyArray<LifecycleSession>,
+      ];
+    };
+
+export type QrCodeObservation =
+  | {
+      readonly state: "not_available";
+    }
+  | {
+      readonly expiresAt: string | null;
+      readonly image: Uint8Array;
+      readonly state: "available";
+    };
+
+export interface SessionDeletionObservation {
+  readonly state: "absent" | "present";
+}
+
+export type ProviderControlFailureCode =
+  | "authentication_failed"
+  | "configuration_invalid"
+  | "integrity_failed"
+  | "invalid_request"
+  | "invalid_response"
+  | "response_too_large"
+  | "source_rejected"
+  | "throttled"
+  | "timed_out"
+  | "unavailable";
+
+export type ProviderControlOperation =
+  | "boundary"
+  | "lifecycle-write"
+  | "safe-read";
+
+export type ProviderControlRetryDecision =
+  | "do_not_retry"
+  | "reconcile_before_repeat"
+  | "retry_within_safe_read_budget";
+
+export interface ProviderControlFailure {
+  readonly _tag: "ProviderControlFailure";
+  readonly code: ProviderControlFailureCode;
+  readonly operation: ProviderControlOperation;
+  readonly retryAfterMs: number | null;
+  readonly retryDecision: ProviderControlRetryDecision;
+}
+
+export type ProviderControlResult<Value> =
+  | {
+      readonly ok: true;
+      readonly value: Value;
+    }
+  | {
+      readonly error: ProviderControlFailure;
+      readonly ok: false;
+    };
+
+export type ProviderControlRpcMethod =
+  | "connectSession"
+  | "createSession"
+  | "deleteSession"
+  | "getQrCode"
+  | "listSessions"
+  | "reconcileSession";
+
+export interface ProviderControlRpcTelemetryEvent {
+  readonly event: "provider_control.rpc.completed";
+  readonly method: ProviderControlRpcMethod;
+  readonly outcome: "success" | ProviderControlFailureCode;
+  readonly service: "provider-control";
+}
+
+export interface ProviderControlService {
+  readonly connectSession: (
+    request: SessionRequest,
+  ) => Promise<ProviderControlResult<LifecycleSession>>;
+  readonly createSession: (
+    request: CreateSessionRequest,
+  ) => Promise<ProviderControlResult<LifecycleSession>>;
+  readonly deleteSession: (
+    request: SessionRequest,
+  ) => Promise<ProviderControlResult<SessionDeletionObservation>>;
+  readonly getQrCode: (
+    request: SessionRequest,
+  ) => Promise<ProviderControlResult<QrCodeObservation>>;
+  readonly listSessions: (
+    request: ListSessionsRequest,
+  ) => Promise<ProviderControlResult<ReadonlyArray<LifecycleSession>>>;
+  readonly reconcileSession: (
+    request: ReconcileSessionRequest,
+  ) => Promise<ProviderControlResult<SessionReconciliation>>;
+}

@@ -1,3 +1,4 @@
+import type { ProviderControlService } from "@whatsapp-mcp/contracts/provider-control";
 import { createProductionHandler } from "./production";
 
 interface Env {
@@ -11,7 +12,7 @@ interface Env {
   readonly INGESTION_QUEUE: Queue;
   readonly KMS_CONTENT_ROOT_KEY_ARN: string;
   readonly OAUTH_KV: KVNamespace;
-  readonly PROVIDER_CONTROL: Fetcher;
+  readonly PROVIDER_CONTROL: Fetcher & ProviderControlService;
   readonly STORED_MEDIA: R2Bucket;
   readonly WEBHOOK_INGRESS: R2Bucket;
 }

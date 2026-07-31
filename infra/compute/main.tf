@@ -183,6 +183,14 @@ resource "cloudflare_worker_version" "provider_control" {
       name = "DEPLOYMENT_ENVIRONMENT"
       text = var.deployment_environment
       type = "plain_text"
+    },
+    {
+      name = "WASENDER_API_CREDENTIAL"
+      type = "inherit"
+    },
+    {
+      name = "WASENDER_REFERENCE_SECRET"
+      type = "inherit"
     }
   ]
 }

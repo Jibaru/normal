@@ -29,14 +29,7 @@ export interface ApiEnvironment {
   readonly KMS_CONTENT_ROOT_KEY_ARN?: string | undefined;
   readonly INGESTION_QUEUE?: unknown;
   readonly OAUTH_KV?: unknown;
-  readonly PROVIDER_CONTROL?:
-    | {
-        readonly fetch: (
-          input: RequestInfo | URL,
-          init?: RequestInit,
-        ) => Promise<Response>;
-      }
-    | undefined;
+  readonly PROVIDER_CONTROL?: unknown;
   readonly STORED_MEDIA?: unknown;
   readonly WEBHOOK_INGRESS?: unknown;
 }
@@ -128,7 +121,17 @@ const configLayer = (environment: ApiEnvironment) =>
     productionConfig.pipe(
       Effect.flatMap((config) =>
         Effect.gen(function* () {
-          if (typeof environment.PROVIDER_CONTROL?.fetch !== "function") {
+          if (
+            !hasMethods(environment.PROVIDER_CONTROL, [
+              "connectSession",
+              "createSession",
+              "deleteSession",
+              "fetch",
+              "getQrCode",
+              "listSessions",
+              "reconcileSession",
+            ])
+          ) {
             return yield* Effect.fail(new MissingProviderControlBinding());
           }
           yield* validateCloudflareBindings(environment);

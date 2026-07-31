@@ -43,20 +43,39 @@ endpoint; every other API route passes the database readiness gate, and
 `/ready` returns unavailable unless `HYPERDRIVE` can report exactly the compiled
 schema version.
 
+`PROVIDER_CONTROL` is a Cloudflare RPC service binding with the closed
+`listSessions`, `createSession`, `connectSession`, `getQrCode`,
+`reconcileSession`, and `deleteSession` method set. API startup rejects a
+fetch-only or incomplete binding. Provider-control validates each RPC argument
+as a closed object before loading its credential-backed lifecycle Layer.
+Malformed calls therefore cannot trigger provider access. The account-level
+Provider API Credential is neither an RPC argument nor a result. A successful
+create, adopt, connect, or reconciliation result may carry the narrower
+per-session authority to the API Worker, which must envelope-encrypt it before
+persistence.
+
 The API Worker is also the declared consumer for the ingestion Queue and its
 dead-letter Queue. It receives no DLQ producer binding. Provider-control has no
-KV, R2, Queue, route, or custom-domain authority and has both `workers_dev` and
-preview URLs disabled, so the service binding is its only declared ingress.
+KV, R2, Queue, Hyperdrive, database role, tenant-decryption service, route, or
+custom-domain authority and has both `workers_dev` and preview URLs disabled,
+so the service binding is its only declared ingress. Bundle inspection also
+rejects tenant KMS, database, Stored Media, and Webhook ingress authority from
+the provider-control artifact and rejects provider-control secret names from
+the API and web artifacts.
 The API also disables generated Cloudflare hostnames and is public only on its
 declared custom domain.
 
 Provider-control startup also validates both Wasender secrets before serving
-even its private health route. Its adapter always calls the fixed
+even its private health route or an RPC method. The Wrangler manifest declares
+both names as required secrets, so deployment fails before serving when either
+secret has not been configured. Its adapter always calls the fixed
 `https://www.wasenderapi.com` origin with the account-level credential, forces
 provider message logging and automatic incoming-message reads off during
 creation, and emits only operation class, normalized outcome, attempt, duration,
-and bounded response size. No runtime value can select a fake provider or an
-alternate origin.
+bounded response size, RPC method, and normalized result code. No telemetry
+field contains a Connection Setup marker, WhatsApp Number, provider locator,
+per-session authority, Provider API Credential, or raw result. No runtime value
+can select a fake provider or an alternate origin.
 
 `WASENDER_REFERENCE_SECRET` must remain stable because persisted adapter
 locators are keyed by it. To rotate it, stop provisioning, retain the old value,

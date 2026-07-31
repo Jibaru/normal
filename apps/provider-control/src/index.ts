@@ -1,12 +1,44 @@
+import { WorkerEntrypoint } from "cloudflare:workers";
+import type {
+  CreateSessionRequest,
+  ListSessionsRequest,
+  ReconcileSessionRequest,
+  SessionRequest,
+} from "@whatsapp-mcp/contracts/provider-control";
 import {
   createProductionHandler,
+  createProductionRpc,
   type ProviderControlEnvironment,
 } from "./production";
 
 type Env = ProviderControlEnvironment;
 
-export default {
-  fetch(request, env) {
-    return createProductionHandler(env)(request);
-  },
-} satisfies ExportedHandler<Env>;
+export default class ProviderControl extends WorkerEntrypoint<Env> {
+  fetch(request: Request) {
+    return createProductionHandler(this.env)(request);
+  }
+
+  connectSession(request: SessionRequest) {
+    return createProductionRpc(this.env).connectSession(request);
+  }
+
+  createSession(request: CreateSessionRequest) {
+    return createProductionRpc(this.env).createSession(request);
+  }
+
+  deleteSession(request: SessionRequest) {
+    return createProductionRpc(this.env).deleteSession(request);
+  }
+
+  getQrCode(request: SessionRequest) {
+    return createProductionRpc(this.env).getQrCode(request);
+  }
+
+  listSessions(request: ListSessionsRequest) {
+    return createProductionRpc(this.env).listSessions(request);
+  }
+
+  reconcileSession(request: ReconcileSessionRequest) {
+    return createProductionRpc(this.env).reconcileSession(request);
+  }
+}

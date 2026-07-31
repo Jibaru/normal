@@ -22,6 +22,15 @@ The lifecycle implementation closes over the account-level Provider API
 Credential and a stable locator HMAC key in provider-control; neither is a
 capability input or output, and no runtime setting can select a fake or
 alternate provider origin.
+Provider-control publishes that capability only as closed Cloudflare RPC
+methods on its service-binding entrypoint. Each input is validated before the
+credential-backed Layer is loaded, adapter failures cross as content-free
+provider-control results, and lifecycle methods are not HTTP routes. The
+account-level credential never crosses the binding. Because Effect `Redacted`
+instances intentionally do not serialize their hidden values, provider-control
+unwraps only the newly issued per-session authority into the RPC value; the API
+must immediately restore the redaction boundary and envelope-encrypt that value
+before persistence.
 The WhatsApp Number required for creation crosses the seam only as a `Redacted`
 value. Newly provisioned or adopted per-session authority is returned only as a
 log-safe `Redacted` value so the owning Worker can envelope-encrypt it before a

@@ -9,6 +9,48 @@ for (const deployable of deployables) {
     await Bun.file(manifestPath).text(),
   ) as Record<string, unknown>;
 
+  if (deployable === "provider-control") {
+    const forbiddenAuthority = [
+      "d1_databases",
+      "durable_objects",
+      "hyperdrive",
+      "kv_namespaces",
+      "queues",
+      "r2_buckets",
+      "services",
+    ];
+    const configurations = [
+      manifest,
+      ...Object.values(
+        (manifest.env as Record<string, Record<string, unknown>> | undefined) ??
+          {},
+      ),
+    ];
+    for (const configuration of configurations) {
+      for (const key of forbiddenAuthority) {
+        if (key in configuration) {
+          throw new Error(
+            `Provider-control must not declare ${key}; it receives lifecycle secrets only.`,
+          );
+        }
+      }
+    }
+
+    const requiredSecrets = (
+      manifest.secrets as { readonly required?: ReadonlyArray<string> }
+    ).required;
+    if (
+      JSON.stringify([...(requiredSecrets ?? [])].sort()) !==
+      JSON.stringify(
+        ["WASENDER_API_CREDENTIAL", "WASENDER_REFERENCE_SECRET"].sort(),
+      )
+    ) {
+      throw new Error(
+        "Provider-control must fail deployment unless both lifecycle secrets exist.",
+      );
+    }
+  }
+
   if (
     manifest.workers_dev !== false ||
     manifest.preview_urls !== false ||

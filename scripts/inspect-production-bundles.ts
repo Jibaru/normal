@@ -28,4 +28,47 @@ const inspect = async (path: string): Promise<void> => {
 };
 
 await Promise.all(roots.map(inspect));
+
+const inspectForForbiddenAuthority = async (
+  path: string,
+  forbiddenValues: ReadonlyArray<string>,
+): Promise<void> => {
+  for (const entry of await readdir(path, { withFileTypes: true })) {
+    const entryPath = join(path, entry.name);
+    if (entry.isDirectory()) {
+      await inspectForForbiddenAuthority(entryPath, forbiddenValues);
+      continue;
+    }
+    if (!entry.isFile() || entry.name.endsWith(".map")) continue;
+    const contents = await Bun.file(entryPath).text();
+    for (const forbiddenValue of forbiddenValues) {
+      if (contents.includes(forbiddenValue)) {
+        throw new Error(
+          `Forbidden production authority ${forbiddenValue} found in ${entryPath}`,
+        );
+      }
+    }
+  }
+};
+
+await Promise.all([
+  inspectForForbiddenAuthority("apps/api/dist", [
+    "WASENDER_API_CREDENTIAL",
+    "WASENDER_REFERENCE_SECRET",
+  ]),
+  inspectForForbiddenAuthority("apps/web/.next/server", [
+    "WASENDER_API_CREDENTIAL",
+    "WASENDER_REFERENCE_SECRET",
+  ]),
+  inspectForForbiddenAuthority("apps/provider-control/dist", [
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "DATABASE_URL",
+    "HYPERDRIVE",
+    "KMS_CONTENT_ROOT_KEY_ARN",
+    "STORED_MEDIA",
+    "WEBHOOK_INGRESS",
+  ]),
+]);
 console.info("Production outputs contain no test Layer marker.");

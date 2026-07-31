@@ -5,6 +5,9 @@
   "compatibility_date": "2026-07-30",
   "workers_dev": false,
   "preview_urls": false,
+  "secrets": {
+    "required": ["WASENDER_API_CREDENTIAL", "WASENDER_REFERENCE_SECRET"]
+  },
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1
@@ -15,18 +18,27 @@
   "env": {
     "development": {
       "name": "whatsapp-mcp-provider-control-development",
+      "secrets": {
+        "required": ["WASENDER_API_CREDENTIAL", "WASENDER_REFERENCE_SECRET"]
+      },
       "vars": {
         "DEPLOYMENT_ENVIRONMENT": "development"
       }
     },
     "preview": {
       "name": "whatsapp-mcp-provider-control-preview",
+      "secrets": {
+        "required": ["WASENDER_API_CREDENTIAL", "WASENDER_REFERENCE_SECRET"]
+      },
       "vars": {
         "DEPLOYMENT_ENVIRONMENT": "preview"
       }
     },
     "production": {
       "name": "whatsapp-mcp-provider-control",
+      "secrets": {
+        "required": ["WASENDER_API_CREDENTIAL", "WASENDER_REFERENCE_SECRET"]
+      },
       "vars": {
         "DEPLOYMENT_ENVIRONMENT": "production"
       }

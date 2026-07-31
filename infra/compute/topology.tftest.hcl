@@ -90,8 +90,12 @@ run "development_topology" {
     condition = toset([
       for binding in cloudflare_worker_version.provider_control.bindings :
       "${binding.type}:${binding.name}"
-    ]) == toset(["plain_text:DEPLOYMENT_ENVIRONMENT"])
-    error_message = "Provider-control must receive no OAuth, R2, or Queue authority."
+      ]) == toset([
+      "inherit:WASENDER_API_CREDENTIAL",
+      "inherit:WASENDER_REFERENCE_SECRET",
+      "plain_text:DEPLOYMENT_ENVIRONMENT",
+    ])
+    error_message = "Provider-control must receive only its environment and inherited Wasender secrets."
   }
 }
 

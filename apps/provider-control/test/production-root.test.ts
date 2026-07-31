@@ -1,5 +1,8 @@
-import { describe, expect, test } from "vitest";
-import { createProductionHandler } from "../src/production";
+import { describe, expect, test, vi } from "vitest";
+import {
+  createProductionHandler,
+  createProductionRpc,
+} from "../src/production";
 
 describe("provider-control production root", () => {
   test("accepts valid production configuration", async () => {
@@ -44,5 +47,31 @@ describe("provider-control production root", () => {
       service: "provider-control",
       status: "unavailable",
     });
+  });
+
+  test("fails RPC closed before provider access for an invalid deployment environment", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch");
+    const rpc = createProductionRpc({
+      DEPLOYMENT_ENVIRONMENT: "bogus",
+      WASENDER_API_CREDENTIAL: "12|opaque+provider/credential=value",
+      WASENDER_REFERENCE_SECRET:
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    });
+
+    const result = await rpc.reconcileSession({
+      setupMarker: "cst_0123456789abcdefghijk",
+    });
+
+    expect(result).toEqual({
+      error: {
+        _tag: "ProviderControlFailure",
+        code: "configuration_invalid",
+        operation: "boundary",
+        retryAfterMs: null,
+        retryDecision: "do_not_retry",
+      },
+      ok: false,
+    });
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

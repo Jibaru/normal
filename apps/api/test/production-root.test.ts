@@ -26,7 +26,67 @@ const validEnvironment = () => ({
     put: async () => undefined,
   },
   PROVIDER_CONTROL: {
+    connectSession: async () => ({
+      error: {
+        _tag: "ProviderControlFailure" as const,
+        code: "configuration_invalid" as const,
+        operation: "boundary" as const,
+        retryAfterMs: null,
+        retryDecision: "do_not_retry" as const,
+      },
+      ok: false as const,
+    }),
+    createSession: async () => ({
+      error: {
+        _tag: "ProviderControlFailure" as const,
+        code: "configuration_invalid" as const,
+        operation: "boundary" as const,
+        retryAfterMs: null,
+        retryDecision: "do_not_retry" as const,
+      },
+      ok: false as const,
+    }),
+    deleteSession: async () => ({
+      error: {
+        _tag: "ProviderControlFailure" as const,
+        code: "configuration_invalid" as const,
+        operation: "boundary" as const,
+        retryAfterMs: null,
+        retryDecision: "do_not_retry" as const,
+      },
+      ok: false as const,
+    }),
     fetch: async () => new Response(null, { status: 204 }),
+    getQrCode: async () => ({
+      error: {
+        _tag: "ProviderControlFailure" as const,
+        code: "configuration_invalid" as const,
+        operation: "boundary" as const,
+        retryAfterMs: null,
+        retryDecision: "do_not_retry" as const,
+      },
+      ok: false as const,
+    }),
+    listSessions: async () => ({
+      error: {
+        _tag: "ProviderControlFailure" as const,
+        code: "configuration_invalid" as const,
+        operation: "boundary" as const,
+        retryAfterMs: null,
+        retryDecision: "do_not_retry" as const,
+      },
+      ok: false as const,
+    }),
+    reconcileSession: async () => ({
+      error: {
+        _tag: "ProviderControlFailure" as const,
+        code: "configuration_invalid" as const,
+        operation: "boundary" as const,
+        retryAfterMs: null,
+        retryDecision: "do_not_retry" as const,
+      },
+      ok: false as const,
+    }),
   },
   STORED_MEDIA: {
     delete: async () => undefined,
@@ -69,6 +129,17 @@ describe("API production root", () => {
     const response = await createProductionHandler(environment)(
       new Request("https://api.example.test/health"),
     );
+
+    expect(response.status).toBe(503);
+  });
+
+  test("fails closed when the provider-control binding lacks RPC lifecycle authority", async () => {
+    const response = await createProductionHandler({
+      ...validEnvironment(),
+      PROVIDER_CONTROL: {
+        fetch: async () => new Response(null, { status: 204 }),
+      },
+    })(new Request("https://api.example.test/health"));
 
     expect(response.status).toBe(503);
   });

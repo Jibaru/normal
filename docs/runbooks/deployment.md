@@ -298,6 +298,15 @@ wrangler secret put WASENDER_API_CREDENTIAL \
   --cwd apps/provider-control --env production
 ```
 
+The provider-control Wrangler manifest declares both names under
+`secrets.required`. A subsequent Wrangler upload or deploy therefore fails
+before publishing code if the selected environment does not already have both
+secrets. OpenTofu represents both names as `inherit` bindings, so every
+subsequent provider-control version preserves the already stored ciphertext
+without putting either plaintext value in input, a saved plan, or state. Repeat
+the two commands with `--env development` or `--env preview` for those isolated
+Workers; never rely on one environment's secrets for another.
+
 The credential must be the account-level Personal Access Token, never a
 WhatsApp Connection's per-session API key. Provider-control has no public route,
 and its Cloudflare deployment identity should be scoped only to that Worker so
@@ -322,9 +331,20 @@ curl --fail --silent "$WEB_ORIGIN/health"
 The readiness response proves a restricted Hyperdrive connection can read the
 exact expected schema version. It emits only an allowlisted request outcome;
 database URLs, SQL, tenant identifiers, and migration errors are never logged.
-Verify provider-control through the API's service binding from an authenticated
-operator canary once that endpoint is introduced; do not enable `workers.dev`
-or preview URLs for provider-control.
+The repository's provider-control acceptance suite invokes real lifecycle
+reconciliation through the Cloudflare RPC entrypoint, rejects malformed RPC
+arguments before provider access, and proves that the same lifecycle operation
+is unavailable over HTTP. Deployment validation proves that only the
+same-environment API Worker receives the service binding. Until the
+authenticated operator canary is added to the API, verify the deployed binding
+and Worker version in the reviewed Cloudflare deployment output; do not add a
+temporary API endpoint or enable `workers.dev` or preview URLs for
+provider-control.
+
+Provider-control RPC logs may contain only the RPC method and normalized
+success or failure code. Treat a Connection Setup marker, WhatsApp Number,
+opaque locator, per-session authority, account credential, request body, or
+provider response in logs as a credential-handling incident.
 
 ### Wasender media retrieval
 

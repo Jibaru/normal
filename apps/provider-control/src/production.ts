@@ -5,6 +5,7 @@ import {
 } from "@whatsapp-mcp/wasender/control";
 import { Config, ConfigProvider, Effect, Layer, Redacted } from "effect";
 import { createCanaryHandler } from "./canary";
+import { makeProviderControlRpc } from "./rpc";
 import {
   ApplicationConfig,
   type HttpCompletedEvent,
@@ -54,17 +55,17 @@ const environmentConfigProvider = (environment: ProviderControlEnvironment) =>
     ),
   );
 
-const configLayer = (environment: ProviderControlEnvironment) =>
-  Layer.effect(
-    ApplicationConfig,
-    productionConfig.pipe(
-      Effect.map((config) => ({
-        ...config,
-        service: "provider-control" as const,
-      })),
-      Effect.withConfigProvider(environmentConfigProvider(environment)),
-    ),
+const applicationConfigEffect = (environment: ProviderControlEnvironment) =>
+  productionConfig.pipe(
+    Effect.map((config) => ({
+      ...config,
+      service: "provider-control" as const,
+    })),
+    Effect.withConfigProvider(environmentConfigProvider(environment)),
   );
+
+const configLayer = (environment: ProviderControlEnvironment) =>
+  Layer.effect(ApplicationConfig, applicationConfigEffect(environment));
 
 const providerTelemetry = (event: WasenderLifecycleTelemetryEvent) =>
   console.info(
@@ -76,19 +77,19 @@ const providerTelemetry = (event: WasenderLifecycleTelemetryEvent) =>
   );
 
 const sessionLifecycleLayer = (environment: ProviderControlEnvironment) =>
-  Layer.effect(
-    SessionLifecycle,
-    Config.all({
-      credential: providerApiCredential,
-      referenceSecret: providerReferenceSecret,
-    }).pipe(
-      Effect.map((config) =>
-        makeWasenderSessionLifecycle(config, {
-          telemetry: providerTelemetry,
-        }),
-      ),
-      Effect.withConfigProvider(environmentConfigProvider(environment)),
+  Layer.effect(SessionLifecycle, sessionLifecycleEffect(environment));
+
+const sessionLifecycleEffect = (environment: ProviderControlEnvironment) =>
+  Config.all({
+    credential: providerApiCredential,
+    referenceSecret: providerReferenceSecret,
+  }).pipe(
+    Effect.map((config) =>
+      makeWasenderSessionLifecycle(config, {
+        telemetry: providerTelemetry,
+      }),
     ),
+    Effect.withConfigProvider(environmentConfigProvider(environment)),
   );
 
 const telemetryLayer = Layer.succeed(SafeTelemetry, {
@@ -136,3 +137,14 @@ export const createProductionHandler = (
     }
   };
 };
+
+export const createProductionRpc = (environment: ProviderControlEnvironment) =>
+  makeProviderControlRpc({
+    loadLifecycle: () =>
+      Effect.runPromise(
+        applicationConfigEffect(environment).pipe(
+          Effect.flatMap(() => sessionLifecycleEffect(environment)),
+        ),
+      ),
+    telemetry: (event) => console.info(JSON.stringify(event)),
+  });
