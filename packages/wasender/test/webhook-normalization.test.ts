@@ -36,11 +36,12 @@ const makeNormalizer = async (): Promise<WebhookNormalization> => {
 const normalize = async (
   normalizer: WebhookNormalization,
   value: unknown,
+  observedAt = receivedAt,
 ): Promise<NormalizedWebhookDelivery> =>
   Effect.runPromise(
     normalizer.normalize({
       payload: encode(value),
-      receivedAt,
+      receivedAt: observedAt,
     }),
   );
 
@@ -127,6 +128,71 @@ describe("Wasender webhook normalization", () => {
     }
   });
 
+  test("isolates malformed media metadata from valid batch siblings", async () => {
+    const normalizer = await makeNormalizer();
+    const payload =
+      '{"event":"messages.upsert","data":{"messages":[' +
+      '{"key":{"id":"valid","fromMe":false,"remoteJid":"15550101@s.whatsapp.net"},' +
+      '"message":{"conversation":"hello"}},' +
+      '{"key":{"id":"invalid-media","fromMe":false,"remoteJid":"15550102@s.whatsapp.net"},' +
+      '"message":{"imageMessage":{"fileLength":1e400}}}' +
+      "]}}";
+    const delivery = await Effect.runPromise(
+      normalizer.normalize({
+        payload: encoder.encode(payload),
+        receivedAt,
+      }),
+    );
+
+    expect(delivery.items).toMatchObject([
+      { itemIndex: 0, kind: "message_upsert" },
+      {
+        classification: "invalid_item_shape",
+        itemIndex: 1,
+        kind: "malformed",
+      },
+    ]);
+  });
+
+  test("fails closed on missing direction and unsupported conversations", async () => {
+    const normalizer = await makeNormalizer();
+    const delivery = await normalize(normalizer, {
+      event: "messages.upsert",
+      data: {
+        messages: [
+          {
+            key: {
+              id: "missing-direction",
+              remoteJid: "15550101@s.whatsapp.net",
+            },
+            message: { conversation: "direction is required" },
+          },
+          {
+            key: {
+              id: "invalid-conversation",
+              fromMe: false,
+              remoteJid: "not a provider address",
+            },
+            message: { conversation: "unsupported address" },
+          },
+        ],
+      },
+    });
+
+    expect(delivery.items).toEqual([
+      {
+        classification: "invalid_item_shape",
+        itemIndex: 0,
+        kind: "malformed",
+      },
+      {
+        classification: "unsupported_item_kind",
+        itemIndex: 1,
+        kind: "unsupported",
+      },
+    ]);
+  });
+
   test("normalizes edits, deletions, and receipt or send evidence", async () => {
     const normalizer = await makeNormalizer();
     const deliveries = await Promise.all(
@@ -178,6 +244,82 @@ describe("Wasender webhook normalization", () => {
     });
   });
 
+  test("correlates message evidence by exact provider message identity", async () => {
+    const normalizer = await makeNormalizer();
+    const providerMessageId = "shared-provider-message";
+    const [upsert, status, deletion] = await Promise.all([
+      normalize(normalizer, {
+        event: "messages.upsert",
+        data: {
+          messages: {
+            key: {
+              id: providerMessageId,
+              fromMe: true,
+              remoteJid: "15550110@s.whatsapp.net",
+            },
+            message: { conversation: "sent text" },
+          },
+        },
+      }),
+      normalize(normalizer, {
+        event: "messages.update",
+        data: {
+          key: {
+            id: providerMessageId,
+            fromMe: true,
+            remoteJid: "+15550110",
+          },
+          update: { status: 2 },
+        },
+      }),
+      normalize(normalizer, {
+        event: "messages.delete",
+        data: { keys: [{ id: providerMessageId }] },
+      }),
+    ]);
+    const upsertItem = upsert.items[0];
+    const statusItem = status.items[0];
+    const deletionItem = deletion.items[0];
+    if (
+      upsertItem?.kind !== "message_upsert" ||
+      statusItem?.kind !== "send_evidence" ||
+      deletionItem?.kind !== "message_delete"
+    ) {
+      throw new Error("expected identity-bearing message evidence");
+    }
+
+    expect(
+      new Set([
+        upsertItem.messageIdentity,
+        statusItem.messageIdentity,
+        deletionItem.messageIdentity,
+      ]).size,
+    ).toBe(1);
+  });
+
+  test("does not turn inbound status changes into outbound send evidence", async () => {
+    const normalizer = await makeNormalizer();
+    const delivery = await normalize(normalizer, {
+      event: "messages.update",
+      data: {
+        key: {
+          id: "inbound-status",
+          fromMe: false,
+          remoteJid: "15550110@s.whatsapp.net",
+        },
+        update: { status: 3 },
+      },
+    });
+
+    expect(delivery.items).toEqual([
+      {
+        classification: "unsupported_item_kind",
+        itemIndex: 0,
+        kind: "unsupported",
+      },
+    ]);
+  });
+
   test("falls back to receipt time for deletion and rejects content-free edits", async () => {
     const normalizer = await makeNormalizer();
     const deletionWithoutTimestamp = {
@@ -220,6 +362,47 @@ describe("Wasender webhook normalization", () => {
         kind: "malformed",
       },
     ]);
+  });
+
+  test("keeps edit identity stable across provider retries without occurrence time", async () => {
+    const normalizer = await makeNormalizer();
+    const editWithoutTimestamp = {
+      ...editFixture,
+      timestamp: undefined,
+      data: {
+        messages: {
+          ...editFixture.data.messages,
+          message: {
+            protocolMessage: {
+              ...editFixture.data.messages.message.protocolMessage,
+              timestampMs: undefined,
+            },
+          },
+        },
+      },
+    };
+
+    const first = await normalize(
+      normalizer,
+      editWithoutTimestamp,
+      "2026-07-30T12:00:00.000Z",
+    );
+    const retry = await normalize(
+      normalizer,
+      editWithoutTimestamp,
+      "2026-07-30T12:01:00.000Z",
+    );
+    const firstItem = first.items[0];
+    const retryItem = retry.items[0];
+    if (
+      firstItem?.kind !== "message_edit" ||
+      retryItem?.kind !== "message_edit"
+    ) {
+      throw new Error("expected normalized message edits");
+    }
+
+    expect(firstItem.editedAt).not.toBe(retryItem.editedAt);
+    expect(firstItem.itemIdentity).toBe(retryItem.itemIdentity);
   });
 
   test("normalizes Directory and connection-state changes with missing optional fields", async () => {
@@ -296,6 +479,46 @@ describe("Wasender webhook normalization", () => {
     expect(firstItem.contact.phoneNumber).toBe("+15550111");
     expect(secondItem.contact.phoneNumber).toBe("+15550112");
     expect(firstItem.itemIdentity).not.toBe(secondItem.itemIdentity);
+  });
+
+  test("canonicalizes phone identities without guessing numbers from text", async () => {
+    const normalizer = await makeNormalizer();
+    const contacts = await normalize(normalizer, {
+      event: "contacts.upsert",
+      data: [
+        { jid: "15550108" },
+        {
+          jid: "123456789@lid",
+          phoneNumber: "call 15550112 now",
+        },
+      ],
+    });
+    const message = await normalize(normalizer, {
+      event: "messages.upsert",
+      data: {
+        messages: {
+          key: {
+            id: "canonical-phone-message",
+            fromMe: false,
+            remoteJid: "15550108@s.whatsapp.net",
+          },
+          message: { conversation: "hello" },
+        },
+      },
+    });
+    const contact = contacts.items[0];
+    const lidContact = contacts.items[1];
+    const messageItem = message.items[0];
+    if (
+      contact?.kind !== "directory_contact" ||
+      lidContact?.kind !== "directory_contact" ||
+      messageItem?.kind !== "message_upsert"
+    ) {
+      throw new Error("expected contact and message items");
+    }
+
+    expect(messageItem.recipient).toBe(contact.contact.recipient);
+    expect(lidContact.contact.phoneNumber).toBeNull();
   });
 
   test("does not erase Directory fields from unrelated partial updates", async () => {

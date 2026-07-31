@@ -294,20 +294,23 @@ const logicalItems = (value: unknown): ReadonlyArray<unknown> | null =>
 
 const isGroup = (jid: string): boolean => jid.endsWith("@g.us");
 
+const phoneNumberDigits = (value: unknown): string | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const match = /^\+?([1-9]\d{6,14})(?:@s\.whatsapp\.net)?$/.exec(value);
+  return match?.[1] ?? null;
+};
+
 const isSupportedConversation = (jid: string): boolean =>
-  !jid.includes("@") ||
-  jid.endsWith("@g.us") ||
-  jid.endsWith("@lid") ||
-  jid.endsWith("@s.whatsapp.net");
+  phoneNumberDigits(jid) !== null ||
+  /^[^\s@]+@g\.us$/.test(jid) ||
+  /^\d+@lid$/.test(jid);
 
 const phoneNumberFrom = (...values: ReadonlyArray<unknown>): string | null => {
   for (const value of values) {
-    if (typeof value !== "string") {
-      continue;
-    }
-    const local = value.split("@")[0] ?? "";
-    const digits = local.replace(/\D/g, "");
-    if (digits.length >= 7 && digits.length <= 15) {
+    const digits = phoneNumberDigits(value);
+    if (digits !== null) {
       return `+${digits}`;
     }
   }
@@ -320,6 +323,11 @@ const contactPhoneNumber = (contact: JsonRecord, jid: string): string | null =>
     jid.includes("@") && !jid.endsWith("@s.whatsapp.net") ? null : jid,
   );
 
+const canonicalContactIdentity = (raw: string): string => {
+  const digits = phoneNumberDigits(raw);
+  return digits === null ? raw : `pn:${digits}`;
+};
+
 const makeRecipient = async (
   key: CryptoKey,
   raw: string,
@@ -327,14 +335,18 @@ const makeRecipient = async (
   (await makeIdentity(
     key,
     isGroup(raw) ? "group-recipient" : "contact-recipient",
-    raw,
+    isGroup(raw) ? raw : canonicalContactIdentity(raw),
   )) as RecipientLocator;
 
 const makeContact = async (
   key: CryptoKey,
   raw: string,
 ): Promise<ContactLocator> =>
-  (await makeIdentity(key, "contact-recipient", raw)) as ContactLocator;
+  (await makeIdentity(
+    key,
+    "contact-recipient",
+    canonicalContactIdentity(raw),
+  )) as ContactLocator;
 
 const makeGroup = async (key: CryptoKey, raw: string): Promise<GroupLocator> =>
   (await makeIdentity(key, "group-recipient", raw)) as GroupLocator;
@@ -342,12 +354,8 @@ const makeGroup = async (key: CryptoKey, raw: string): Promise<GroupLocator> =>
 const makeMessageIdentity = async (
   key: CryptoKey,
   rawId: string,
-  remoteJid: string | null,
 ): Promise<StableMessageIdentity> =>
-  (await makeIdentity(key, "message-identity", [
-    remoteJid,
-    rawId,
-  ])) as StableMessageIdentity;
+  (await makeIdentity(key, "message-identity", rawId)) as StableMessageIdentity;
 
 const messageContainer = (record: JsonRecord): JsonRecord | null =>
   asRecord(record.message);
@@ -355,7 +363,7 @@ const messageContainer = (record: JsonRecord): JsonRecord | null =>
 const extractContent = (
   rawMessage: unknown,
   messageBody: unknown = null,
-): NormalizedMessageContent => {
+): NormalizedMessageContent | null => {
   const message = asRecord(rawMessage) ?? {};
   const mediaKinds: ReadonlyArray<readonly [string, NormalizedContentType]> = [
     ["imageMessage", "image"],
@@ -367,11 +375,15 @@ const extractContent = (
   for (const [field, type] of mediaKinds) {
     const media = asRecord(message[field]);
     if (media !== null) {
-      return {
-        mediaSource: Redacted.make(canonicalJson(media)) as MediaSource,
-        text: firstString(messageBody, media.caption),
-        type,
-      };
+      try {
+        return {
+          mediaSource: Redacted.make(canonicalJson(media)) as MediaSource,
+          text: firstString(messageBody, media.caption),
+          type,
+        };
+      } catch {
+        return null;
+      }
     }
   }
 
@@ -426,7 +438,10 @@ const normalizeMessage = async (
     );
     const editedAt = occurrence?.timestamp ?? receivedAt;
     const content = extractContent(editedMessage);
-    if (content.text === null && content.mediaSource === null) {
+    if (
+      content === null ||
+      (content.text === null && content.mediaSource === null)
+    ) {
       return malformed(itemIndex);
     }
     return {
@@ -434,25 +449,26 @@ const normalizeMessage = async (
       editedAt,
       evidence: await makeEvidence(key, occurrence),
       itemIdentity: (await makeIdentity(key, "item:message-edit", [
-        targetRemoteJid,
         targetId,
-        editedAt,
+        occurrence?.epochMilliseconds ?? null,
         content.type,
         content.text,
+        content.mediaSource === null
+          ? null
+          : Redacted.value(content.mediaSource),
       ])) as WebhookItemIdentity,
       itemIndex,
       kind: "message_edit",
-      messageIdentity: await makeMessageIdentity(
-        key,
-        targetId,
-        targetRemoteJid,
-      ),
+      messageIdentity: await makeMessageIdentity(key, targetId),
     };
   }
 
   const rawId = asIdentity(keyRecord?.id);
   if (rawId === null || remoteJid === null) {
     return malformed(itemIndex, "missing_required_identity");
+  }
+  if (typeof keyRecord?.fromMe !== "boolean") {
+    return malformed(itemIndex);
   }
   if (!isSupportedConversation(remoteJid)) {
     return unsupported(itemIndex);
@@ -480,17 +496,21 @@ const normalizeMessage = async (
           )
       : null;
   const content = extractContent(record.message, record.messageBody);
+  if (content === null) {
+    return malformed(itemIndex);
+  }
   return {
     content,
     direction,
     evidence: await makeEvidence(key, occurrence),
-    itemIdentity: (await makeIdentity(key, "item:message-upsert", [
-      remoteJid,
+    itemIdentity: (await makeIdentity(
+      key,
+      "item:message-upsert",
       rawId,
-    ])) as WebhookItemIdentity,
+    )) as WebhookItemIdentity,
     itemIndex,
     kind: "message_upsert",
-    messageIdentity: await makeMessageIdentity(key, rawId, remoteJid),
+    messageIdentity: await makeMessageIdentity(key, rawId),
     recipient: await makeRecipient(key, remoteJid),
     sender: senderRaw === null ? null : await makeContact(key, senderRaw),
     sentAt,
@@ -532,7 +552,7 @@ const normalizeDeletions = async (
       if (record === null || rawId === null) {
         return malformed(itemIndex, "missing_required_identity");
       }
-      const remoteJid = asString(record.remoteJid);
+      const remoteJid = asIdentity(record.remoteJid);
       if (remoteJid !== null && !isSupportedConversation(remoteJid)) {
         return unsupported(itemIndex);
       }
@@ -540,13 +560,14 @@ const normalizeDeletions = async (
       return {
         deletedAt,
         evidence: await makeEvidence(key, occurrence),
-        itemIdentity: (await makeIdentity(key, "item:message-delete", [
-          remoteJid,
+        itemIdentity: (await makeIdentity(
+          key,
+          "item:message-delete",
           rawId,
-        ])) as WebhookItemIdentity,
+        )) as WebhookItemIdentity,
         itemIndex,
         kind: "message_delete" as const,
-        messageIdentity: await makeMessageIdentity(key, rawId, remoteJid),
+        messageIdentity: await makeMessageIdentity(key, rawId),
       };
     }),
   );
@@ -591,22 +612,30 @@ const makeSendEvidence = async (
   if (rawId === null) {
     return malformed(itemIndex, "missing_required_identity");
   }
+  if (keyRecord?.fromMe === false) {
+    return unsupported(itemIndex);
+  }
+  if (keyRecord?.fromMe !== true) {
+    return malformed(itemIndex);
+  }
   if (status === null) {
     return malformed(itemIndex);
   }
-  const remoteJid = asString(keyRecord?.remoteJid);
+  const remoteJid = asIdentity(keyRecord?.remoteJid);
+  if (remoteJid !== null && !isSupportedConversation(remoteJid)) {
+    return unsupported(itemIndex);
+  }
   return {
     direction: "outbound",
     evidence: await makeEvidence(key, occurrence),
     itemIdentity: (await makeIdentity(key, "item:send-evidence", [
-      remoteJid,
       rawId,
       status,
       occurrence?.epochMilliseconds ?? null,
     ])) as WebhookItemIdentity,
     itemIndex,
     kind: "send_evidence",
-    messageIdentity: await makeMessageIdentity(key, rawId, remoteJid),
+    messageIdentity: await makeMessageIdentity(key, rawId),
     status,
   };
 };

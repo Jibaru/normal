@@ -1,10 +1,17 @@
 /**
  * Reviewed against Wasender's webhook documentation on 2026-07-30:
  * https://wasenderapi.com/api-docs/webhooks/webhook-message-upsert
+ * https://wasenderapi.com/api-docs/webhooks/webhook-message-received
+ * https://wasenderapi.com/api-docs/webhooks/webhook-personal-message-received
+ * https://wasenderapi.com/api-docs/webhooks/webhook-group-message-received
+ * https://wasenderapi.com/api-docs/webhooks/webhook-message-sent
  * https://wasenderapi.com/api-docs/webhooks/webhook-message-update
  * https://wasenderapi.com/api-docs/webhooks/webhook-message-deleted
+ * https://wasenderapi.com/api-docs/webhooks/webhook-message-receipt-update
  * https://wasenderapi.com/api-docs/webhooks/webhook-contact-upsert
+ * https://wasenderapi.com/api-docs/webhooks/webhook-contact-update
  * https://wasenderapi.com/api-docs/webhooks/webhook-group-upsert
+ * https://wasenderapi.com/api-docs/webhooks/webhook-group-update
  * https://wasenderapi.com/api-docs/webhooks/webhook-session-status
  * https://wasenderapi.com/api-docs/messages/edit-a-message
  */
