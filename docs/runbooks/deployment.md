@@ -281,6 +281,25 @@ Verify provider-control through the API's service binding from an authenticated
 operator canary once that endpoint is introduced; do not enable `workers.dev`
 or preview URLs for provider-control.
 
+### Wasender media retrieval
+
+No additional Cloudflare binding or public ingress is required for media
+retrieval. If an organization-level egress policy is applied outside this
+repository, allow outbound HTTPS only as needed to `www.wasenderapi.com` for
+decrypt metadata and guarded downloads and to `cloudflare-dns.com` for the
+adapter's bounded A and AAAA checks. Do not add an alternate media hostname or
+disable DNS validation to work around an outage.
+
+After a real Wasender account and connected session exist, send one test image
+to the test WhatsApp Connection and verify through the authenticated ingestion
+path that metadata becomes available and the guarded stream's actual byte
+count matches the object written by the caller. Repeat with a caller limit one
+byte below the object size and verify the stream fails with
+`response_too_large` and the partial object is discarded. Operator telemetry
+may show only operation class, normalized outcome, attempt count, duration, and
+bounded byte count; a URL, credential, provider response, filename, MIME type,
+message identity, or media bytes in logs is an incident.
+
 ## Rollback
 
 Vercel uses immutable deployment history. Worker rollback is a reviewed

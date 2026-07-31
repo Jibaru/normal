@@ -5,11 +5,12 @@
   "type": "module",
   "exports": {
     "./control": "./src/control.ts",
+    "./media": "./src/media-live.ts",
     "./session": "./src/session.ts",
     "./webhook": "./src/webhook.ts"
   },
   "scripts": {
-    "build": "bun build src/control.ts src/session.ts src/webhook.ts --outdir dist --target bun",
+    "build": "bun build src/control.ts src/media-live.ts src/session.ts src/webhook.ts --outdir dist --target bun",
     "lint": "biome check .",
     "test": "bun test",
     "typecheck": "tsc --noEmit"

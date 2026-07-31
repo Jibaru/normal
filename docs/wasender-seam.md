@@ -69,3 +69,27 @@ Adapter telemetry may contain only the operation class, normalized outcome,
 attempt count, duration, and bounded byte counts. It never contains capability
 inputs or outputs, message text, full phone numbers, opaque references,
 encrypted adapter values, raw response data, URLs, or credentials.
+
+## Production media retrieval
+
+The real `MediaRetrieval` Layer uses the per-session authority only for the
+30-second `POST https://www.wasenderapi.com/api/decrypt-media` metadata call.
+The encrypted provider message and the returned one-hour download URL remain
+inside versioned Effect `Redacted` adapter values. The download request never
+forwards the session authority.
+
+`www.wasenderapi.com` is the only approved metadata and download hostname and
+is deliberately not configurable. Before every request, including every
+same-host redirect, the adapter resolves both address families through bounded
+DNS-over-HTTPS requests and rejects empty answers or any non-global, private,
+loopback, link-local, transition, benchmarking, documentation, multicast, or
+reserved address. Fetch redirect handling is manual and limited to three
+same-host redirects.
+
+Metadata responses are read and counted up to 1 MiB. Downloads are streamed,
+count actual bytes independently of `Content-Length`, cancel the response at
+the caller's validated hard limit, and use a typed stream failure so partial
+bytes are discarded and any later attempt starts at byte zero. The 60-second
+budget covers DNS resolution, redirects, response setup, and complete stream
+consumption. Production construction validates a non-empty printable session
+authority and exposes no runtime fake or host override.

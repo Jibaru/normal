@@ -36,6 +36,16 @@ origin with no credentials, path, query, or fragment. The Vercel manifest has
 no rewrite or proxy to the API. Browser data-plane requests therefore go
 directly to the API Worker.
 
+The Wasender media adapter has no hostname, endpoint, redirect, timeout, or
+byte-limit environment override. Its production Layer fixes the decrypt
+endpoint and approved download hostname to `www.wasenderapi.com`, resolves that
+host through bounded DNS-over-HTTPS at `cloudflare-dns.com`, and fails closed
+when the per-session authority is empty, non-printable, or otherwise invalid.
+The session authority is provider data encrypted under the owning WhatsApp
+Connection; it is decrypted only to construct that connection's adapter Layer
+and is not a deploy-time environment variable. This fixed configuration keeps
+an environment change from broadening the media SSRF boundary.
+
 ## Infrastructure inputs
 
 `infra/compute` represents exactly one deployment environment and remote state.
