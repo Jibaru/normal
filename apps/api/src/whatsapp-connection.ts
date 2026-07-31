@@ -59,6 +59,7 @@ export interface WhatsAppConnectionPersistenceService {
   >;
   readonly loadSetup: (input: {
     readonly clerkUserId: string;
+    readonly observedAt: string;
     readonly setupId: string;
   }) => Effect.Effect<
     ConnectionSetupActivation | null,
@@ -315,7 +316,13 @@ export const observeConnectionSetup = (
 > =>
   Effect.gen(function* () {
     const persistence = yield* WhatsAppConnectionPersistence;
-    const loaded = yield* persistence.loadSetup({ clerkUserId, setupId });
+    const clock = yield* WhatsAppConnectionClock;
+    const observedAt = yield* clock.now;
+    const loaded = yield* persistence.loadSetup({
+      clerkUserId,
+      observedAt,
+      setupId,
+    });
     if (loaded === null) {
       return yield* Effect.fail(new WhatsAppConnectionNotAccessible());
     }

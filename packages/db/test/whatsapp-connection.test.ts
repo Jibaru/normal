@@ -145,10 +145,12 @@ describe("WhatsApp Connection repository", () => {
 
     const owned = await repository.loadSetupForActivation({
       clerkUserId: "user_connectiona",
+      observedAt: connectedAt,
       setupId,
     });
     const otherTenant = await repository.loadSetupForActivation({
       clerkUserId: "user_connectionb",
+      observedAt: connectedAt,
       setupId,
     });
 
@@ -169,6 +171,31 @@ describe("WhatsApp Connection repository", () => {
       },
     });
     expect(otherTenant).toBeNull();
+  });
+
+  test("does not load or activate an incomplete Setup at its expiry", async () => {
+    const repository = makeWhatsAppConnectionRepository(provider);
+    const expiresAt = "2026-07-31T12:15:00.000Z";
+
+    await expect(
+      repository.loadSetupForActivation({
+        clerkUserId: "user_connectiona",
+        observedAt: expiresAt,
+        setupId,
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      repository.activate({
+        ...activationInput,
+        connectedAt: expiresAt,
+      }),
+    ).rejects.toThrow();
+
+    const counts = await database.query<{ connection_count: number }>(`
+      SELECT count(*)::integer AS connection_count
+      FROM app.whatsapp_connections
+    `);
+    expect(counts.rows).toEqual([{ connection_count: 0 }]);
   });
 
   test("atomically activates exactly one Connection and returns the idempotent winner", async () => {

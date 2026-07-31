@@ -24,6 +24,7 @@ type SetupState =
   | "idle"
   | "loading"
   | "pending"
+  | "connecting"
   | "qr_available"
   | "connected"
   | "provisioned"
@@ -68,10 +69,12 @@ export function PublicBoundaryJourney({
     readonly whatsappNumber: string;
   } | null>(null);
   const activeQrImageUrl = useRef<string | null>(null);
+  const observationGeneration = useRef(0);
   const observationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(
     () => () => {
+      observationGeneration.current += 1;
       if (observationTimer.current !== null) {
         clearTimeout(observationTimer.current);
       }
@@ -100,6 +103,15 @@ export function PublicBoundaryJourney({
     }
     activeQrImageUrl.current = next;
     setQrImageUrl(next);
+  };
+
+  const stopObserving = () => {
+    observationGeneration.current += 1;
+    if (observationTimer.current !== null) {
+      clearTimeout(observationTimer.current);
+      observationTimer.current = null;
+    }
+    replaceQrImage(null);
   };
 
   const loadConnections = async (token: string) => {
@@ -148,45 +160,59 @@ export function PublicBoundaryJourney({
     return true;
   };
 
-  const observeSetup = async (setupId: string): Promise<void> => {
+  const observeSetup = async (
+    setupId: string,
+    generation: number,
+  ): Promise<void> => {
+    const isCurrent = () => observationGeneration.current === generation;
+    const observeAgain = () => {
+      observationTimer.current = setTimeout(() => {
+        observationTimer.current = null;
+        void observeSetup(setupId, generation);
+      }, 750);
+    };
+
     try {
       const token = await getToken();
+      if (!isCurrent()) return;
       if (token === null) {
+        replaceQrImage(null);
         setSetupState("unavailable");
         return;
       }
       const response = await fetch(`${connectionSetupEndpoint}/${setupId}/qr`, {
         headers: { authorization: `Bearer ${token}` },
       });
+      if (!isCurrent()) return;
       if (response.status === 200) {
         const image = await response.blob();
+        if (!isCurrent()) return;
         replaceQrImage(URL.createObjectURL(image));
         setSetupState("qr_available");
-        observationTimer.current = setTimeout(() => {
-          void observeSetup(setupId);
-        }, 750);
+        observeAgain();
         return;
       }
       if (response.status === 202) {
+        replaceQrImage(null);
         setSetupState(
-          response.headers.get("x-connection-setup-state") === "pending"
-            ? "pending"
-            : "provisioned",
+          response.headers.get("x-connection-setup-state") === "connecting"
+            ? "connecting"
+            : "pending",
         );
-        observationTimer.current = setTimeout(() => {
-          void observeSetup(setupId);
-        }, 750);
+        observeAgain();
         return;
       }
       if (response.status === 204) {
         replaceQrImage(null);
         setSetupState("connected");
         if (!(await loadConnections(token))) {
-          setSetupState("unavailable");
+          if (isCurrent()) setSetupState("unavailable");
         }
         return;
       }
       const body = (await response.json()) as { readonly error?: unknown };
+      if (!isCurrent()) return;
+      replaceQrImage(null);
       if (
         body.error === "provisioning_failed" ||
         body.error === "provisioning_quarantined"
@@ -196,8 +222,16 @@ export function PublicBoundaryJourney({
       }
       setSetupState("unavailable");
     } catch {
-      setSetupState("unavailable");
+      if (isCurrent()) {
+        replaceQrImage(null);
+        setSetupState("unavailable");
+      }
     }
+  };
+
+  const startObserving = (setupId: string) => {
+    stopObserving();
+    void observeSetup(setupId, observationGeneration.current);
   };
 
   const checkBoundary = async () => {
@@ -255,6 +289,8 @@ export function PublicBoundaryJourney({
 
   const startSetup = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    stopObserving();
+    const requestGeneration = observationGeneration.current;
     setSetupState("loading");
 
     const intent =
@@ -268,6 +304,7 @@ export function PublicBoundaryJourney({
 
     try {
       const token = await getToken();
+      if (observationGeneration.current !== requestGeneration) return;
       if (token === null) {
         setSetupState("unavailable");
         return;
@@ -283,6 +320,7 @@ export function PublicBoundaryJourney({
         },
         method: "POST",
       });
+      if (observationGeneration.current !== requestGeneration) return;
       const body = (await response.json()) as {
         readonly connection_setup?: {
           readonly expires_at?: unknown;
@@ -303,7 +341,7 @@ export function PublicBoundaryJourney({
             setSetupState(
               setup.idempotent_replay === true ? "replayed" : "pending",
             );
-            void observeSetup(setup.id);
+            startObserving(setup.id);
             return;
           }
           if (
@@ -316,7 +354,13 @@ export function PublicBoundaryJourney({
               setup.state === "activated" ? "connected" : setup.state,
             );
             if (setup.state === "provisioned") {
-              void observeSetup(setup.id);
+              startObserving(setup.id);
+            } else if (
+              setup.state === "activated" &&
+              !(await loadConnections(token)) &&
+              observationGeneration.current === requestGeneration
+            ) {
+              setSetupState("unavailable");
             }
             return;
           }
@@ -379,6 +423,7 @@ export function PublicBoundaryJourney({
               id="whatsapp-number"
               inputMode="tel"
               onChange={(event) => {
+                stopObserving();
                 setWhatsappNumber(event.target.value);
                 setSetupState("idle");
               }}
@@ -405,21 +450,23 @@ export function PublicBoundaryJourney({
                 ? "Connection Setup already started. Preparing your QR code."
                 : setupState === "qr_available"
                   ? "Scan this QR code with WhatsApp."
-                  : setupState === "connected"
-                    ? "WhatsApp Connection active."
-                    : setupState === "provisioned"
-                      ? "Connection Setup is ready."
-                      : setupState === "provisioning_failed"
-                        ? "Connection Setup could not be prepared."
-                        : setupState === "provisioning_quarantined"
-                          ? "Connection Setup needs support review."
-                          : setupState === "number_unavailable"
-                            ? "That WhatsApp Number is already in use."
-                            : setupState === "connection_limit_reached"
-                              ? "Your Personal Account already has three active setup or Connection slots."
-                              : setupState === "invalid"
-                                ? "Enter a valid international WhatsApp Number."
-                                : setupState}
+                  : setupState === "connecting"
+                    ? "Waiting for WhatsApp to finish connecting."
+                    : setupState === "connected"
+                      ? "WhatsApp Connection active."
+                      : setupState === "provisioned"
+                        ? "Connection Setup is ready."
+                        : setupState === "provisioning_failed"
+                          ? "Connection Setup could not be prepared."
+                          : setupState === "provisioning_quarantined"
+                            ? "Connection Setup needs support review."
+                            : setupState === "number_unavailable"
+                              ? "That WhatsApp Number is already in use."
+                              : setupState === "connection_limit_reached"
+                                ? "Your Personal Account already has three active setup or Connection slots."
+                                : setupState === "invalid"
+                                  ? "Enter a valid international WhatsApp Number."
+                                  : setupState}
           </p>
           {qrImageUrl === null ? null : (
             // The object URL is created from the authenticated, non-persisted

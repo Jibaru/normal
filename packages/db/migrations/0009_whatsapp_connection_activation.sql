@@ -1,7 +1,6 @@
 ALTER TABLE app.whatsapp_connections
   ALTER COLUMN display_name_ciphertext DROP NOT NULL,
-  ADD COLUMN connection_setup_id text UNIQUE
-    REFERENCES app.connection_setups (id) ON DELETE RESTRICT,
+  ADD COLUMN connection_setup_id text,
   ADD COLUMN number_suffix text
     CHECK (number_suffix IS NULL OR number_suffix ~ '^[0-9]{4}$'),
   ADD COLUMN state text NOT NULL DEFAULT 'degraded'
@@ -17,6 +16,14 @@ ALTER TABLE app.whatsapp_connections
     ),
   ADD COLUMN state_changed_at timestamptz NOT NULL
     DEFAULT transaction_timestamp();
+
+ALTER TABLE app.whatsapp_connections
+  ADD CONSTRAINT whatsapp_connections_connection_setup_unique
+    UNIQUE (connection_setup_id),
+  ADD CONSTRAINT whatsapp_connections_connection_setup_tenant_fk
+    FOREIGN KEY (personal_account_id, connection_setup_id)
+    REFERENCES app.connection_setups (personal_account_id, id)
+    ON DELETE RESTRICT;
 
 ALTER TABLE app.connection_setups
   DROP CONSTRAINT connection_setups_state_check,
@@ -327,7 +334,8 @@ $function$;
 
 CREATE FUNCTION app_private.load_connection_setup_for_activation(
   verified_clerk_user_id text,
-  requested_setup_id text
+  requested_setup_id text,
+  requested_observed_at timestamptz
 )
 RETURNS TABLE (
   outcome text,
@@ -405,6 +413,10 @@ AS $function$
       'provisioning_failed',
       'provisioning_quarantined',
       'activated'
+    )
+    AND (
+      setups.state = 'activated'
+      OR setups.expires_at > requested_observed_at
     )
     AND (
       (setups.state <> 'activated' AND connections.id IS NULL)
@@ -530,6 +542,7 @@ BEGIN
   END IF;
 
   IF setup.state <> 'provisioned'
+    OR setup.expires_at <= requested_connected_at
     OR NOT EXISTS (
       SELECT 1
       FROM app.connection_setup_provider_sessions AS provider_sessions
@@ -656,7 +669,11 @@ END
 $function$;
 
 REVOKE ALL
-  ON FUNCTION app_private.load_connection_setup_for_activation(text, text)
+  ON FUNCTION app_private.load_connection_setup_for_activation(
+    text,
+    text,
+    timestamptz
+  )
   FROM PUBLIC;
 REVOKE ALL
   ON FUNCTION app_private.load_whatsapp_connection_account(text)
@@ -690,7 +707,11 @@ REVOKE ALL
   FROM PUBLIC;
 
 GRANT EXECUTE
-  ON FUNCTION app_private.load_connection_setup_for_activation(text, text)
+  ON FUNCTION app_private.load_connection_setup_for_activation(
+    text,
+    text,
+    timestamptz
+  )
   TO whatsapp_api_runtime;
 GRANT EXECUTE
   ON FUNCTION app_private.load_whatsapp_connection_account(text)

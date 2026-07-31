@@ -107,6 +107,9 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(page.getByTestId("connection-setup-status")).toHaveText(
     "WhatsApp Connection active.",
   );
+  await expect(
+    page.getByRole("img", { name: "Scan this WhatsApp QR code" }),
+  ).toHaveCount(0);
   await expect(page.getByTestId("whatsapp-connection")).toContainText(
     "Number ending 3456",
   );

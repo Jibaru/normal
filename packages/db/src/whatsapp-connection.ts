@@ -106,6 +106,7 @@ export interface WhatsAppConnectionRepository {
   ) => Promise<ReadonlyArray<WhatsAppConnectionRecord>>;
   readonly loadSetupForActivation: (input: {
     readonly clerkUserId: string;
+    readonly observedAt: string;
     readonly setupId: string;
   }) => Promise<ConnectionSetupActivation | null>;
 }
@@ -416,8 +417,8 @@ export const makeWhatsAppConnectionRepository = (
     provider.withConnection(async (connection) => {
       const result = await connection.query<ActivationRow>(
         `SELECT *
-         FROM app_private.load_connection_setup_for_activation($1, $2)`,
-        [input.clerkUserId, input.setupId],
+         FROM app_private.load_connection_setup_for_activation($1, $2, $3)`,
+        [input.clerkUserId, input.setupId, input.observedAt],
       );
       return activation(input.setupId, result.rows[0]);
     }),
