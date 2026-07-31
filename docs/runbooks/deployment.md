@@ -285,10 +285,13 @@ newer-than-expected schema. An interrupted migration rolls back its version;
 rerun `bun run db:migrate` after correcting the cause. Never edit an applied
 migration—add a new forward migration. Migration 0007 contains the
 RLS-protected refresh-credential hash ledger and its least-privilege API-role
-functions; it adds no secret, Cloudflare binding, or infrastructure authority.
-Apply it immediately before the matching API Worker version. The previous
-Worker and the new Worker intentionally fail readiness on the other's exact
-schema version, so complete this step as one controlled fail-closed deployment.
+functions. Migration 0009 adds product-safe MCP Authorization management
+metadata using the API role's existing RLS-protected `SELECT` and `UPDATE`
+authority; it adds no secret, Cloudflare binding, or infrastructure authority.
+Apply all pending migrations immediately before the matching API Worker
+version. The previous Worker and the new Worker intentionally fail readiness
+on the other's exact schema version, so complete this step as one controlled
+fail-closed deployment.
 
 ## Provision encryption authority
 
@@ -585,6 +588,26 @@ Treat any `reuse` outcome outside this controlled check as a credential-replay
 incident: revoke or confirm revocation of the affected MCP Authorization,
 notify the User through the incident process, and investigate the MCP Client's
 credential storage. Never query, export, or log a credential hash.
+
+In the signed-in product, inspect the disposable authorization and confirm its
+MCP Client name, selected WhatsApp Connections, scopes, creation time, absolute
+expiry state, and revocation state. Confirm the browser calls
+`GET /v1/mcp-authorizations` directly and that the response contains no
+internal UUID, OAuth subject, token, refresh credential, credential hash, or KV
+artifact. Revoke it once through the product, repeat the same action through an
+isolated non-production API check, and confirm both return the original
+revocation time. Immediately retry one existing access token and the latest
+refresh credential; both must fail even if the OAuth KV records are retained.
+
+Attempt the same management handle as a different disposable Personal Account
+and compare it with a random well-formed `mca_` handle. Both must return the
+same not-found status and body. Inspect only allowlisted
+`mcp_authorization.management.completed` operation/outcome counts. If an
+access-token call or refresh succeeds after a successful revoke response,
+disable the affected API deployment, preserve metadata-only evidence, and
+investigate the Neon authority check before restoring traffic. Never delete KV
+as the primary containment action: authoritative Neon revocation must remain
+sufficient on its own.
 
 The readiness response proves a restricted Hyperdrive connection can read the
 exact expected schema version. It emits only an allowlisted request outcome;

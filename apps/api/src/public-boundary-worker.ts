@@ -10,6 +10,12 @@ import {
   isConnectionSetupProvisioningMessage,
 } from "./connection-setup-provisioning";
 import {
+  createMcpAuthorizationManagementHandler,
+  isMcpAuthorizationManagementRequest,
+  type McpAuthorizationClockService,
+  type McpAuthorizationPersistenceService,
+} from "./mcp-authorization";
+import {
   createPersonalAccountHandler,
   isPersonalAccountRequest,
   type PersonalAccountRequirements,
@@ -33,6 +39,8 @@ type BoundaryRequirements =
 type PublicBoundaryRequirements =
   | BoundaryRequirements
   | ConnectionSetupRequirements
+  | McpAuthorizationClockService
+  | McpAuthorizationPersistenceService
   | PersonalAccountRequirements;
 
 export interface PublicBoundaryEnvironment {
@@ -112,6 +120,13 @@ export const createPublicBoundaryWorker = (
 
       if (isConnectionSetupRequest(request)) {
         return createConnectionSetupHandler(
+          options.layerFor(request),
+          options.browserOrigin,
+        )(request);
+      }
+
+      if (isMcpAuthorizationManagementRequest(request)) {
+        return createMcpAuthorizationManagementHandler(
           options.layerFor(request),
           options.browserOrigin,
         )(request);

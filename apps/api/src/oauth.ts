@@ -763,6 +763,44 @@ const oauthSubjectFromRefreshToken = (token: string): string | null => {
     : null;
 };
 
+const accessAuthorizationFrom = (
+  context: ExecutionContext,
+): {
+  readonly authorizationId: string;
+  readonly clientId: string;
+  readonly oauthSubject: string;
+} | null => {
+  const props = (context as ExecutionContext & { readonly props?: unknown })
+    .props;
+  if (typeof props !== "object" || props === null || Array.isArray(props)) {
+    return null;
+  }
+  const value = props as Record<string, unknown>;
+  return typeof value.authorizationId === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+      value.authorizationId,
+    ) &&
+    typeof value.clientId === "string" &&
+    typeof value.oauthSubject === "string" &&
+    /^[A-Za-z0-9_-]{43}$/.test(value.oauthSubject)
+    ? {
+        authorizationId: value.authorizationId,
+        clientId: value.clientId,
+        oauthSubject: value.oauthSubject,
+      }
+    : null;
+};
+
+const invalidAccessToken = (): Response =>
+  new Response(JSON.stringify({ error: "invalid_token" }), {
+    headers: {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+      "www-authenticate": 'Bearer error="invalid_token"',
+    },
+    status: 401,
+  });
+
 const isOAuthProviderRequest = (
   request: Request,
   configuration: OAuthConfiguration,
@@ -778,7 +816,8 @@ const isOAuthProviderRequest = (
       url.pathname === "/.well-known/oauth-authorization-server" ||
       url.pathname === "/.well-known/oauth-protected-resource" ||
       url.pathname === "/.well-known/oauth-protected-resource/mcp" ||
-      url.pathname === "/mcp")
+      url.pathname === "/mcp" ||
+      url.pathname.startsWith("/mcp/"))
   );
 };
 
@@ -794,7 +833,18 @@ export const createOAuthHandler = (
     allowImplicitFlow: false,
     allowPlainPKCE: false,
     apiHandler: {
-      fetch: options.applicationHandler,
+      fetch: async (request, environment, context) => {
+        const authorization = accessAuthorizationFrom(context);
+        if (authorization === null) return invalidAccessToken();
+        try {
+          if (!(await options.isAuthorizationActive(authorization))) {
+            return invalidAccessToken();
+          }
+        } catch {
+          return invalidAccessToken();
+        }
+        return options.applicationHandler(request, environment, context);
+      },
     },
     apiRoute: options.configuration.resource,
     authorizeEndpoint: `${options.configuration.issuer}/oauth/authorize`,
@@ -826,18 +876,21 @@ export const createOAuthHandler = (
           ? (exchange.props as Record<string, unknown>)
           : {};
       const authorizationId = props.authorizationId;
+      const clientId = props.clientId;
       const oauthSubject = props.oauthSubject;
       if (
         typeof authorizationId !== "string" ||
         !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
           authorizationId,
         ) ||
+        typeof clientId !== "string" ||
+        clientId !== exchange.clientId ||
         typeof oauthSubject !== "string" ||
         !/^[A-Za-z0-9_-]{43}$/.test(oauthSubject) ||
         exchange.userId !== oauthSubject ||
         !(await options.isAuthorizationActive({
           authorizationId,
-          clientId: exchange.clientId,
+          clientId,
           oauthSubject,
         }))
       ) {

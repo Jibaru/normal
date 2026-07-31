@@ -55,7 +55,9 @@ import {
 } from "./encryption/stored-media-container";
 import {
   createMcpAuthorizationConsentHandler,
+  createMcpAuthorizationManagementHandler,
   isMcpAuthorizationConsentRequest,
+  isMcpAuthorizationManagementRequest,
   McpAuthorizationClock,
   McpAuthorizationIdentifiers,
   McpAuthorizationPersistence,
@@ -683,6 +685,20 @@ const mcpAuthorizationPersistenceLayer = (environment: ApiEnvironment) =>
         },
         catch: () => new McpAuthorizationPersistenceError(),
       }),
+    list: (clerkUserId, observedAt) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgMcpAuthorizationRepository(connectionString).list(
+            clerkUserId,
+            observedAt,
+          );
+        },
+        catch: () => new McpAuthorizationPersistenceError(),
+      }),
     registerRefreshCredential: (input) =>
       Effect.tryPromise({
         try: () => {
@@ -706,6 +722,19 @@ const mcpAuthorizationPersistenceLayer = (environment: ApiEnvironment) =>
           return makePgMcpAuthorizationRepository(
             connectionString,
           ).rotateRefreshCredential(input, issue);
+        },
+        catch: () => new McpAuthorizationPersistenceError(),
+      }),
+    revoke: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgMcpAuthorizationRepository(connectionString).revoke(
+            input,
+          );
         },
         catch: () => new McpAuthorizationPersistenceError(),
       }),
@@ -899,6 +928,11 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     layer,
     environment.CLERK_AUTHORIZED_PARTY ?? "",
   );
+  const mcpAuthorizationManagementHandler =
+    createMcpAuthorizationManagementHandler(
+      layer,
+      environment.CLERK_AUTHORIZED_PARTY ?? "",
+    );
   const oauthConfiguration = Effect.runPromise(
     loadOAuthConfiguration(environment as unknown as Record<string, unknown>),
   );
@@ -934,6 +968,9 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
         }
         if (isConnectionSetupRequest(nextRequest)) {
           return connectionSetupHandler(nextRequest);
+        }
+        if (isMcpAuthorizationManagementRequest(nextRequest)) {
+          return mcpAuthorizationManagementHandler(nextRequest);
         }
         if (isPersonalAccountRequest(nextRequest)) {
           return personalAccountHandler(nextRequest);

@@ -17,6 +17,10 @@ const personalAccountConfiguration =
     ? {
         clerkJwtTemplate,
         clerkPublishableKey,
+        mcpAuthorizationsEndpoint: new URL(
+          "/v1/mcp-authorizations",
+          apiOrigin,
+        ).toString(),
         connectionSetupEndpoint: new URL(
           "/v1/connection-setups",
           apiOrigin,

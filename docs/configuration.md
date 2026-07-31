@@ -146,6 +146,26 @@ required beyond the existing OAuth KV and API Hyperdrive; migration 0007 grants
 only `SELECT`, `INSERT`, and `UPDATE` on the ledger plus execute access to its
 narrow fixed-search-path bootstrap functions to `whatsapp_api_runtime`.
 
+Migration 0009 adds an ADR 0023 `mca_` management handle and the consent-time
+MCP Client display name. Historical rows without a stored display name safely
+fall back to their public OAuth client ID. The signed-in product reads
+`GET /v1/mcp-authorizations` and idempotently revokes one owned grant with
+`DELETE /v1/mcp-authorizations/{authorization_id}`. Responses contain only the
+management handle, MCP Client ID and name, selected Connection handles, scopes,
+creation and absolute-expiry times, and explicit expiry and revocation states.
+They never contain the internal authorization UUID, OAuth subject, access or
+refresh token, credential hash, or KV artifact.
+
+Revocation updates the MCP Authorization state and its refresh-family state in
+one Neon row transaction. Existing access-token checks, protected resource
+reads, and refresh rotation all re-read those authoritative fields, so a
+successful response makes cached OAuth KV or edge artifacts insufficient for
+access immediately. RLS and the Clerk-to-Personal-Account bootstrap make an
+unknown handle and another Personal Account's handle the same not-found result.
+The API runtime already has the minimum required `SELECT` and `UPDATE`
+privileges on MCP Authorizations; no new secret, Cloudflare binding, OpenTofu
+resource, or production-selectable substitute is introduced.
+
 Consent decision telemetry contains only
 `oauth.authorization.decision.completed`, the allowlisted client class,
 `approved` or `denied`, and the API service name. Never add the User, Personal
@@ -155,6 +175,12 @@ presentation digest. Refresh telemetry contains only
 `rotated`, `invalid`, `reuse`, or `unavailable` outcome. A `reuse` outcome is
 an incident signal that the family has already been revoked; it must never
 include either credential, its hash, or a tenant identifier.
+
+Authorization-management telemetry contains only
+`mcp_authorization.management.completed`, `list` or `revoke`, `success` or
+`not_found`, and the API service name. Never add the User, Personal Account,
+authorization handle or internal ID, MCP Client, Connection, scope set,
+timestamp, token, credential hash, or request path.
 
 Declare the reviewed per-environment allowlist through `oauth_clients`:
 

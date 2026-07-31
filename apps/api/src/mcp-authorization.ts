@@ -1,5 +1,8 @@
 import type { OAuthHelpers } from "@cloudflare/workers-oauth-provider";
-import type { McpAuthorizationScope } from "@whatsapp-mcp/db/mcp-authorization";
+import type {
+  McpAuthorizationScope,
+  McpAuthorizationSummary,
+} from "@whatsapp-mcp/db/mcp-authorization";
 import { Context, Data, Effect, type Layer } from "effect";
 import {
   HumanIdentity,
@@ -12,10 +15,16 @@ import {
   type OpenedAuthorizationRequest,
   openAuthorizationRequest,
 } from "./oauth";
+import {
+  SafeTelemetry,
+  type SafeTelemetry as SafeTelemetryService,
+} from "./services";
 
 const INSPECT_PATH = "/v1/oauth/consent/inspect";
 const DECISION_PATH = "/v1/oauth/consent/decision";
+const MANAGEMENT_PATH = "/v1/mcp-authorizations";
 const AUTHORIZATION_SESSION_SECONDS = 90 * 24 * 60 * 60;
+const MCP_AUTHORIZATION_HANDLE_PATTERN = /^mca_[A-Za-z0-9_-]{21}$/u;
 
 export class McpAuthorizationPersistenceError extends Data.TaggedError(
   "McpAuthorizationPersistenceError",
@@ -27,6 +36,7 @@ export interface McpAuthorizationPersistenceService {
     readonly authorizedAt: Date;
     readonly clientClass: string;
     readonly clientId: string;
+    readonly clientName: string;
     readonly clerkUserId: string;
     readonly connectionIds: ReadonlyArray<string>;
     readonly expiresAt: Date;
@@ -44,6 +54,13 @@ export interface McpAuthorizationPersistenceService {
     clerkUserId: string,
   ) => Effect.Effect<
     ReadonlyArray<{ readonly connectionId: string }> | null,
+    McpAuthorizationPersistenceError
+  >;
+  readonly list: (
+    clerkUserId: string,
+    observedAt: Date,
+  ) => Effect.Effect<
+    ReadonlyArray<McpAuthorizationSummary> | null,
     McpAuthorizationPersistenceError
   >;
   readonly registerRefreshCredential: (input: {
@@ -66,6 +83,14 @@ export interface McpAuthorizationPersistenceService {
   ) => Effect.Effect<
     | { readonly outcome: "invalid" | "reuse" }
     | { readonly outcome: "rotated"; readonly value: Value },
+    McpAuthorizationPersistenceError
+  >;
+  readonly revoke: (input: {
+    readonly authorizationId: string;
+    readonly clerkUserId: string;
+    readonly revokedAt: Date;
+  }) => Effect.Effect<
+    { readonly revokedAt: Date } | null,
     McpAuthorizationPersistenceError
   >;
 }
@@ -176,6 +201,7 @@ const presentationFor = async (
       `${handoff}\0${clerkUserId}\0${JSON.stringify({
         clientClass: opened.client.clientClass,
         clientId: opened.client.clientId,
+        clientName: opened.client.clientName,
         expiresAt: opened.expiresAt,
         request: opened.request,
       })}`,
@@ -483,6 +509,7 @@ const decide = async (
       },
       props: {
         authorizationId: generated.right.authorizationId,
+        clientId: opened.client.clientId,
         oauthSubject: generated.right.oauthSubject,
       },
       request: opened.request,
@@ -501,6 +528,7 @@ const decide = async (
         authorizedAt: generated.right.now,
         clientClass: opened.client.clientClass,
         clientId: opened.client.clientId,
+        clientName: opened.client.clientName,
         clerkUserId: verified.right.clerkUserId,
         connectionIds: selectedConnections as ReadonlyArray<string>,
         expiresAt: new Date(
@@ -566,3 +594,209 @@ export const createMcpAuthorizationConsentHandler =
 
 export const isMcpAuthorizationConsentRequest = (request: Request): boolean =>
   [INSPECT_PATH, DECISION_PATH].includes(new URL(request.url).pathname);
+
+type McpAuthorizationManagementRequirements =
+  | HumanIdentityService
+  | McpAuthorizationClockService
+  | McpAuthorizationPersistenceService
+  | SafeTelemetryService;
+
+const managementCorsHeaders = (browserOrigin: string): HeadersInit => ({
+  "access-control-allow-headers": "authorization,content-type",
+  "access-control-allow-methods": "DELETE,GET,OPTIONS",
+  "access-control-allow-origin": browserOrigin,
+  vary: "Origin",
+});
+
+const managementJsonResponse = (
+  body: unknown,
+  status: number,
+  browserOrigin?: string,
+): Response =>
+  new Response(JSON.stringify(body), {
+    headers: {
+      ...(browserOrigin === undefined
+        ? {}
+        : managementCorsHeaders(browserOrigin)),
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+    },
+    status,
+  });
+
+const managementNotFound = (browserOrigin?: string): Response =>
+  managementJsonResponse({ error: "not_found" }, 404, browserOrigin);
+
+const authorizationHandleFromPath = (path: string): string | null => {
+  if (!path.startsWith(`${MANAGEMENT_PATH}/`)) return null;
+  const handle = path.slice(MANAGEMENT_PATH.length + 1);
+  return MCP_AUTHORIZATION_HANDLE_PATTERN.test(handle) ? handle : null;
+};
+
+const managementList = (
+  request: Request,
+  layer: Layer.Layer<McpAuthorizationManagementRequirements, unknown>,
+  browserOrigin: string,
+): Promise<Response> =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const identity = yield* HumanIdentity;
+      const clerkUserId = yield* identity.verify(request);
+      const clock = yield* McpAuthorizationClock;
+      const observedAt = yield* clock.now;
+      const persistence = yield* McpAuthorizationPersistence;
+      const authorizations = yield* persistence.list(clerkUserId, observedAt);
+      if (authorizations === null) {
+        return yield* Effect.fail(new InvalidManagementAuthorization());
+      }
+      const telemetry = yield* SafeTelemetry;
+      yield* telemetry.emit({
+        event: "mcp_authorization.management.completed",
+        operation: "list",
+        outcome: "success",
+        service: "api",
+      });
+      return authorizations;
+    }).pipe(
+      Effect.provide(layer),
+      Effect.match({
+        onFailure: (failure: unknown) =>
+          typeof failure === "object" &&
+          failure !== null &&
+          "_tag" in failure &&
+          (failure._tag === "InvalidHumanIdentity" ||
+            failure._tag === "InvalidManagementAuthorization")
+            ? managementNotFound(browserOrigin)
+            : managementJsonResponse(
+                { error: "unavailable" },
+                503,
+                browserOrigin,
+              ),
+        onSuccess: (authorizations) =>
+          managementJsonResponse(
+            {
+              mcp_authorizations: authorizations.map((authorization) => ({
+                client: {
+                  id: authorization.clientId,
+                  name: authorization.clientName,
+                },
+                connection_ids: authorization.connectionIds,
+                created_at: authorization.authorizedAt.toISOString(),
+                expires_at: authorization.expiresAt.toISOString(),
+                expiry_state: authorization.expired ? "expired" : "active",
+                id: authorization.authorizationId,
+                revocation_state: authorization.revoked ? "revoked" : "active",
+                revoked_at: authorization.revokedAt?.toISOString() ?? null,
+                scopes: authorization.scopes,
+              })),
+            },
+            200,
+            browserOrigin,
+          ),
+      }),
+    ),
+  );
+
+class InvalidManagementAuthorization extends Data.TaggedError(
+  "InvalidManagementAuthorization",
+) {}
+
+const managementRevoke = (
+  request: Request,
+  authorizationId: string,
+  layer: Layer.Layer<McpAuthorizationManagementRequirements, unknown>,
+  browserOrigin: string,
+): Promise<Response> =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const identity = yield* HumanIdentity;
+      const clerkUserId = yield* identity.verify(request);
+      const clock = yield* McpAuthorizationClock;
+      const persistence = yield* McpAuthorizationPersistence;
+      const result = yield* persistence.revoke({
+        authorizationId,
+        clerkUserId,
+        revokedAt: yield* clock.now,
+      });
+      const telemetry = yield* SafeTelemetry;
+      yield* telemetry.emit({
+        event: "mcp_authorization.management.completed",
+        operation: "revoke",
+        outcome: result === null ? "not_found" : "success",
+        service: "api",
+      });
+      if (result === null) {
+        return yield* Effect.fail(new InvalidManagementAuthorization());
+      }
+      return result;
+    }).pipe(
+      Effect.provide(layer),
+      Effect.match({
+        onFailure: (failure: unknown) =>
+          typeof failure === "object" &&
+          failure !== null &&
+          "_tag" in failure &&
+          (failure._tag === "InvalidHumanIdentity" ||
+            failure._tag === "InvalidManagementAuthorization")
+            ? managementNotFound(browserOrigin)
+            : managementJsonResponse(
+                { error: "unavailable" },
+                503,
+                browserOrigin,
+              ),
+        onSuccess: (result) =>
+          managementJsonResponse(
+            {
+              mcp_authorization: {
+                id: authorizationId,
+                revocation_state: "revoked",
+                revoked_at: result.revokedAt.toISOString(),
+              },
+            },
+            200,
+            browserOrigin,
+          ),
+      }),
+    ),
+  );
+
+export const createMcpAuthorizationManagementHandler =
+  (
+    layer: Layer.Layer<McpAuthorizationManagementRequirements, unknown>,
+    browserOrigin: string,
+  ) =>
+  (request: Request): Promise<Response> => {
+    const path = new URL(request.url).pathname;
+    if (
+      request.headers.get("origin") !== browserOrigin ||
+      (path !== MANAGEMENT_PATH && !path.startsWith(`${MANAGEMENT_PATH}/`))
+    ) {
+      return Promise.resolve(managementNotFound());
+    }
+    const authorizationId = authorizationHandleFromPath(path);
+    if (request.method === "OPTIONS") {
+      if (path !== MANAGEMENT_PATH && authorizationId === null) {
+        return Promise.resolve(managementNotFound(browserOrigin));
+      }
+      return Promise.resolve(
+        new Response(null, {
+          headers: managementCorsHeaders(browserOrigin),
+          status: 204,
+        }),
+      );
+    }
+    if (request.method === "GET" && path === MANAGEMENT_PATH) {
+      return managementList(request, layer, browserOrigin);
+    }
+    if (request.method === "DELETE" && authorizationId !== null) {
+      return managementRevoke(request, authorizationId, layer, browserOrigin);
+    }
+    return Promise.resolve(managementNotFound(browserOrigin));
+  };
+
+export const isMcpAuthorizationManagementRequest = (
+  request: Request,
+): boolean => {
+  const path = new URL(request.url).pathname;
+  return path === MANAGEMENT_PATH || path.startsWith(`${MANAGEMENT_PATH}/`);
+};

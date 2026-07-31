@@ -104,6 +104,13 @@ export interface OAuthRefreshCompletedEvent {
   readonly service: "api";
 }
 
+export interface McpAuthorizationManagementCompletedEvent {
+  readonly event: "mcp_authorization.management.completed";
+  readonly operation: "list" | "revoke";
+  readonly outcome: "not_found" | "success";
+  readonly service: "api";
+}
+
 export interface SafeTelemetry {
   readonly emit: (event: SafeTelemetryEvent) => Effect.Effect<void>;
 }
@@ -113,6 +120,7 @@ export type SafeTelemetryEvent =
   | ConnectionSetupProvisionRecoveryEnqueuedEvent
   | ConnectionSetupStartCompletedEvent
   | HttpCompletedEvent
+  | McpAuthorizationManagementCompletedEvent
   | OAuthAuthorizationDecisionCompletedEvent
   | OAuthAuthorizationRequestCompletedEvent
   | OAuthProtocolRequestFailedEvent

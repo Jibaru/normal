@@ -19,6 +19,10 @@ import {
 import { EnvelopeEncryptionService } from "../../src/encryption/envelope";
 import type { Env } from "../../src/index";
 import {
+  McpAuthorizationClock,
+  McpAuthorizationPersistence,
+} from "../../src/mcp-authorization";
+import {
   PersonalAccountIdentifiers,
   PersonalAccountPersistence,
   PrivateBetaConfig,
@@ -57,6 +61,8 @@ const connectionSetups = new Map<
 let nextConnectionSetupId = 0;
 const provisioningLeases = new Map<string, string>();
 const provisionedSetups = new Set<string>();
+let authorizationRevokedAt: Date | null = null;
+const testAuthorizationId = "mca_123456789012345678901";
 
 const tokenKey = (value: Uint8Array) => Array.from(value).join(",");
 
@@ -272,6 +278,47 @@ const makeTestLayer = (failure: FailureTarget | undefined) => {
           ok: true as const,
           value: { outcome: "absent" as const },
         }),
+    }),
+    Layer.succeed(McpAuthorizationClock, {
+      now: Effect.succeed(new Date("2026-01-02T03:05:00.000Z")),
+    }),
+    Layer.succeed(McpAuthorizationPersistence, {
+      create: () => Effect.die("not used"),
+      isActive: () => Effect.succeed(authorizationRevokedAt === null),
+      list: (clerkUserId) =>
+        Effect.succeed(
+          clerkUserId === "user_test_public_boundary"
+            ? [
+                {
+                  authorizationId: testAuthorizationId,
+                  authorizedAt: new Date("2026-01-01T03:05:00.000Z"),
+                  clientClass: "approved",
+                  clientId: "approved-client",
+                  clientName: "Approved MCP Client",
+                  connectionIds: ["con_123456789012345678901"],
+                  expired: false,
+                  expiresAt: new Date("2026-04-01T03:05:00.000Z"),
+                  revoked: authorizationRevokedAt !== null,
+                  revokedAt: authorizationRevokedAt,
+                  scopes: ["connections:read", "messages:send"] as const,
+                },
+              ]
+            : [],
+        ),
+      listConnections: () => Effect.succeed([]),
+      registerRefreshCredential: () => Effect.die("not used"),
+      revoke: ({ authorizationId, clerkUserId, revokedAt }) =>
+        Effect.sync(() => {
+          if (
+            clerkUserId !== "user_test_public_boundary" ||
+            authorizationId !== testAuthorizationId
+          ) {
+            return null;
+          }
+          authorizationRevokedAt ??= revokedAt;
+          return { revokedAt: authorizationRevokedAt };
+        }),
+      rotateRefreshCredential: () => Effect.die("not used"),
     }),
     Layer.succeed(ConnectionSetupPersistence, {
       prepare: ({ idempotencyKey, numberToken }) =>

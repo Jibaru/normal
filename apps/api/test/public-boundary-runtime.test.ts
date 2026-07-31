@@ -166,6 +166,58 @@ describe("public-boundary Worker harness", () => {
     });
   });
 
+  test("lists and revokes an MCP Authorization through the signed-in product boundary", async () => {
+    const list = await exports.default.fetch(
+      new Request("https://api.example.test/v1/mcp-authorizations", {
+        headers: {
+          authorization: "Bearer signed-test-user",
+          origin: "http://127.0.0.1:3000",
+        },
+      }),
+    );
+    const body = (await list.json()) as {
+      readonly mcp_authorizations: ReadonlyArray<{
+        readonly id: string;
+      }>;
+    };
+    const authorizationId = body.mcp_authorizations[0]?.id;
+    if (authorizationId === undefined) {
+      throw new Error("test authorization was not listed");
+    }
+    const revoked = await exports.default.fetch(
+      new Request(
+        `https://api.example.test/v1/mcp-authorizations/${authorizationId}`,
+        {
+          headers: {
+            authorization: "Bearer signed-test-user",
+            origin: "http://127.0.0.1:3000",
+          },
+          method: "DELETE",
+        },
+      ),
+    );
+
+    expect(list.status).toBe(200);
+    expect(body.mcp_authorizations[0]).toMatchObject({
+      client: {
+        id: "approved-client",
+        name: "Approved MCP Client",
+      },
+      connection_ids: ["con_123456789012345678901"],
+      expiry_state: "active",
+      revocation_state: "active",
+      scopes: ["connections:read", "messages:send"],
+    });
+    expect(revoked.status).toBe(200);
+    expect(await revoked.json()).toEqual({
+      mcp_authorization: {
+        id: authorizationId,
+        revocation_state: "revoked",
+        revoked_at: "2026-01-02T03:05:00.000Z",
+      },
+    });
+  });
+
   test("injects deterministic external failures only in the test root", async () => {
     const response = await exports.default.fetch(
       new Request("https://api.example.test/v1/personal-account", {

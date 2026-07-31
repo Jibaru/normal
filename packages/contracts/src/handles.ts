@@ -10,6 +10,7 @@ const groupIdPattern = new RegExp(`^grp_${nanoIdSuffixPattern}$`);
 const conversationIdPattern = new RegExp(`^cvs_${nanoIdSuffixPattern}$`);
 const messageIdPattern = new RegExp(`^msg_${nanoIdSuffixPattern}$`);
 const mediaIdPattern = new RegExp(`^med_${nanoIdSuffixPattern}$`);
+const mcpAuthorizationIdPattern = new RegExp(`^mca_${nanoIdSuffixPattern}$`);
 const sendIdPattern = new RegExp(`^snd_${nanoIdSuffixPattern}$`);
 const idempotencyKeyPattern = new RegExp(`^${nanoIdSuffixPattern}$`);
 
@@ -55,6 +56,12 @@ export const MediaId = Schema.String.pipe(
 );
 export type MediaId = typeof MediaId.Type;
 
+export const McpAuthorizationId = Schema.String.pipe(
+  Schema.pattern(mcpAuthorizationIdPattern),
+  Schema.brand("McpAuthorizationId"),
+);
+export type McpAuthorizationId = typeof McpAuthorizationId.Type;
+
 export const SendId = Schema.String.pipe(
   Schema.pattern(sendIdPattern),
   Schema.brand("SendId"),
@@ -83,6 +90,9 @@ export const makeConversationId = (): ConversationId =>
 export const makeMessageId = (): MessageId => MessageId.make(`msg_${nanoid()}`);
 
 export const makeMediaId = (): MediaId => MediaId.make(`med_${nanoid()}`);
+
+export const makeMcpAuthorizationId = (): McpAuthorizationId =>
+  McpAuthorizationId.make(`mca_${nanoid()}`);
 
 export const makeSendId = (): SendId => SendId.make(`snd_${nanoid()}`);
 

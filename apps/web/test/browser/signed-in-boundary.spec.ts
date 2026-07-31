@@ -4,7 +4,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   page,
   request,
 }) => {
-  let apiMethod: string | undefined;
+  let bootstrapMethod: string | undefined;
   const setupBodies: Array<{
     readonly idempotency_key: string;
     readonly whatsapp_number: string;
@@ -15,8 +15,11 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   });
   await page.route("https://api.example.test/**", async (route) => {
     const original = route.request();
-    apiMethod = original.method();
-    if (new URL(original.url()).pathname === "/v1/connection-setups") {
+    const originalPath = new URL(original.url()).pathname;
+    if (originalPath === "/v1/personal-account/bootstrap") {
+      bootstrapMethod = original.method();
+    }
+    if (originalPath === "/v1/connection-setups") {
       setupBodies.push(original.postDataJSON());
       if (setupBodies.length === 1) {
         await firstSetupCanContinue;
@@ -87,6 +90,29 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(page.getByTestId("api-boundary-status")).toHaveText(
     "Personal Account ready",
   );
+  const authorizations = page.getByRole("region", {
+    name: "MCP Authorizations",
+  });
+  await expect(authorizations).toContainText("Approved MCP Client");
+  await expect(authorizations).toContainText("con_123456789012345678901");
+  await expect(authorizations).toContainText("Connection metadata");
+  await expect(authorizations).toContainText("Send messages");
+  await expect(authorizations).toContainText("Created");
+  await expect(authorizations).toContainText("Expires");
+  await expect(
+    authorizations.getByTestId("mcp-authorization-state"),
+  ).toHaveText("Active");
+  await authorizations
+    .getByRole("button", { name: "Revoke Approved MCP Client" })
+    .click();
+  await expect(
+    authorizations.getByTestId("mcp-authorization-state"),
+  ).toHaveText("Revoked");
+  await expect(
+    authorizations.getByRole("button", {
+      name: "Revoke Approved MCP Client",
+    }),
+  ).toBeDisabled();
   expect(
     await page.evaluate(
       () =>
@@ -97,7 +123,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
         ).__requestedTokenTemplate,
     ),
   ).toEqual({ template: "whatsapp-api" });
-  expect(apiMethod).toBe("POST");
+  expect(bootstrapMethod).toBe("POST");
 
   const whatsappNumber = page.getByLabel("WhatsApp Number");
   const startConnectionSetup = page.getByRole("button", {

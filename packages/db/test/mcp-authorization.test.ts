@@ -13,6 +13,7 @@ const connectionB = "con_123456789012345678902";
 const oauthSubject = "A".repeat(43);
 const credentialHash = new Uint8Array(32).fill(1);
 const rotatedCredentialHash = new Uint8Array(32).fill(2);
+const secondAccountId = "10000000-0000-4000-8000-000000000029";
 
 describe("MCP Authorization repository", () => {
   let database: PGlite;
@@ -72,6 +73,7 @@ describe("MCP Authorization repository", () => {
         authorizedAt: new Date("2026-07-31T12:00:00.000Z"),
         clientClass: "approved",
         clientId: "approved-client",
+        clientName: "Approved MCP Client",
         clerkUserId: "user_authorization27",
         connectionIds: [connectionA],
         expiresAt: new Date("2026-10-29T12:00:00.000Z"),
@@ -122,6 +124,133 @@ describe("MCP Authorization repository", () => {
     ]);
   });
 
+  test("lists safe grant details and idempotently revokes authorization and refresh access for only the owning User", async () => {
+    await repository.create({
+      authorizationId,
+      authorizedAt: new Date("2026-07-31T12:00:00.000Z"),
+      clientClass: "approved",
+      clientId: "approved-client",
+      clientName: "Approved MCP Client",
+      clerkUserId: "user_authorization27",
+      connectionIds: [connectionA, connectionB],
+      expiresAt: new Date("2026-10-29T12:00:00.000Z"),
+      oauthSubject,
+      reverifiedAt: new Date("2026-07-31T11:59:00.000Z"),
+      scopes: ["connections:read", "messages:send"],
+    });
+    expect(
+      await repository.registerRefreshCredential({
+        clientId: "approved-client",
+        credentialHash,
+        oauthSubject,
+        observedAt: new Date("2026-07-31T12:01:00.000Z"),
+      }),
+    ).toBe(true);
+
+    const listed = await repository.list(
+      "user_authorization27",
+      new Date("2026-08-01T12:00:00.000Z"),
+    );
+    expect(listed).toHaveLength(1);
+    expect(listed?.[0]).toMatchObject({
+      authorizedAt: new Date("2026-07-31T12:00:00.000Z"),
+      clientClass: "approved",
+      clientId: "approved-client",
+      clientName: "Approved MCP Client",
+      connectionIds: [connectionA, connectionB],
+      expired: false,
+      expiresAt: new Date("2026-10-29T12:00:00.000Z"),
+      revoked: false,
+      revokedAt: null,
+      scopes: ["connections:read", "messages:send"],
+    });
+    expect(listed?.[0]?.authorizationId).toMatch(/^mca_[A-Za-z0-9_-]{21}$/u);
+    expect(listed?.[0]).not.toHaveProperty("oauthSubject");
+    expect(listed?.[0]).not.toHaveProperty("credentialHash");
+
+    const publicAuthorizationId = listed?.[0]?.authorizationId;
+    if (publicAuthorizationId === undefined) {
+      throw new Error("authorization was not listed");
+    }
+    const firstRevocation = await repository.revoke({
+      authorizationId: publicAuthorizationId,
+      clerkUserId: "user_authorization27",
+      revokedAt: new Date("2026-08-01T12:05:00.000Z"),
+    });
+    const replayedRevocation = await repository.revoke({
+      authorizationId: publicAuthorizationId,
+      clerkUserId: "user_authorization27",
+      revokedAt: new Date("2026-08-01T13:05:00.000Z"),
+    });
+    expect(firstRevocation).toEqual({
+      revokedAt: new Date("2026-08-01T12:05:00.000Z"),
+    });
+    expect(replayedRevocation).toEqual(firstRevocation);
+    expect(
+      await repository.isActive({
+        authorizationId,
+        clientId: "approved-client",
+        observedAt: new Date("2026-08-01T12:05:00.000Z"),
+        oauthSubject,
+      }),
+    ).toBe(false);
+    expect(
+      await repository.rotateRefreshCredential(
+        {
+          clientId: "approved-client",
+          credentialHash,
+          oauthSubject,
+          observedAt: new Date("2026-08-01T12:05:00.000Z"),
+        },
+        async () => ({
+          credentialHash: rotatedCredentialHash,
+          value: "must-not-issue",
+        }),
+      ),
+    ).toEqual({ outcome: "invalid" });
+
+    const afterRevocation = await repository.list(
+      "user_authorization27",
+      new Date("2026-10-29T12:00:00.000Z"),
+    );
+    expect(afterRevocation?.[0]).toMatchObject({
+      expired: true,
+      revoked: true,
+      revokedAt: new Date("2026-08-01T12:05:00.000Z"),
+    });
+
+    await database.query(
+      `SELECT * FROM app_private.admit_personal_account_for_clerk(
+        $1, $2, 1, $3, decode('0304', 'hex'), 6
+      )`,
+      [
+        "user_authorization29",
+        secondAccountId,
+        "arn:aws:kms:us-east-1:111122223333:key/content-root-key",
+      ],
+    );
+    expect(
+      await repository.revoke({
+        authorizationId: publicAuthorizationId,
+        clerkUserId: "user_authorization29",
+        revokedAt: new Date("2026-08-01T14:05:00.000Z"),
+      }),
+    ).toBeNull();
+    expect(
+      await repository.revoke({
+        authorizationId: "mca_999999999999999999999",
+        clerkUserId: "user_authorization27",
+        revokedAt: new Date("2026-08-01T14:05:00.000Z"),
+      }),
+    ).toBeNull();
+    expect(
+      await repository.list(
+        "user_authorization29",
+        new Date("2026-08-01T14:05:00.000Z"),
+      ),
+    ).toEqual([]);
+  });
+
   test("uses the restricted role and fails closed for cross-account selections or expiry", async () => {
     expect(await repository.listConnections("user_authorization27")).toEqual([
       { connectionId: connectionA },
@@ -133,6 +262,7 @@ describe("MCP Authorization repository", () => {
         authorizedAt: new Date("2026-07-31T12:00:00.000Z"),
         clientClass: "approved",
         clientId: "approved-client",
+        clientName: "Approved MCP Client",
         clerkUserId: "user_authorization27",
         connectionIds: ["con_999999999999999999999"],
         expiresAt: new Date("2026-10-29T12:00:00.000Z"),
@@ -147,6 +277,7 @@ describe("MCP Authorization repository", () => {
       authorizedAt: new Date("2026-07-31T12:00:00.000Z"),
       clientClass: "approved",
       clientId: "approved-client",
+      clientName: "Approved MCP Client",
       clerkUserId: "user_authorization27",
       connectionIds: [connectionA],
       expiresAt: new Date("2026-10-29T12:00:00.000Z"),
@@ -180,6 +311,7 @@ describe("MCP Authorization repository", () => {
         authorizedAt: new Date("2026-07-31T12:00:00.000Z"),
         clientClass: "approved",
         clientId: "approved-client",
+        clientName: "Approved MCP Client",
         clerkUserId: "user_authorization27",
         connectionIds: [connectionA],
         expiresAt: new Date("2026-10-29T12:00:00.000Z"),
@@ -195,6 +327,7 @@ describe("MCP Authorization repository", () => {
         authorizedAt: new Date("2026-07-31T12:00:00.000Z"),
         clientClass: "approved",
         clientId: "approved-client",
+        clientName: "Approved MCP Client",
         clerkUserId: "user_authorization27",
         connectionIds: [connectionA],
         expiresAt: new Date("2026-10-29T12:00:00.001Z"),
@@ -211,6 +344,7 @@ describe("MCP Authorization repository", () => {
       authorizedAt: new Date("2026-07-31T12:00:00.000Z"),
       clientClass: "approved",
       clientId: "approved-client",
+      clientName: "Approved MCP Client",
       clerkUserId: "user_authorization27",
       connectionIds: [connectionA],
       expiresAt: new Date("2026-10-29T12:00:00.000Z"),
@@ -298,6 +432,7 @@ describe("MCP Authorization repository", () => {
       authorizedAt: new Date("2026-07-31T12:00:00.000Z"),
       clientClass: "approved",
       clientId: "approved-client",
+      clientName: "Approved MCP Client",
       clerkUserId: "user_authorization27",
       connectionIds: [connectionA],
       expiresAt: new Date("2026-10-29T12:00:00.000Z"),
@@ -444,6 +579,7 @@ describe("MCP Authorization repository", () => {
       authorizedAt: new Date("2026-05-01T12:00:00.000Z"),
       clientClass: "approved",
       clientId: "approved-client",
+      clientName: "Approved MCP Client",
       clerkUserId: "user_authorization27",
       connectionIds: [connectionA],
       expiresAt: new Date("2026-07-30T12:00:00.000Z"),

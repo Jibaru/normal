@@ -94,12 +94,14 @@ const makeHarness = async (
         return true;
       }),
     isActive: () => Effect.succeed(true),
+    list: () => Effect.succeed([]),
     listConnections: () => Effect.succeed([{ connectionId }] as const),
     registerRefreshCredential: () => Effect.succeed(true),
     rotateRefreshCredential: (_input, issue) =>
       Effect.promise(issue).pipe(
         Effect.map(({ value }) => ({ outcome: "rotated" as const, value })),
       ),
+    revoke: () => Effect.succeed(null),
   };
   const completed: Array<unknown> = [];
   const helpers = {
@@ -208,6 +210,7 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
     expect(harness.created).toHaveLength(1);
     expect(harness.created[0]).toMatchObject({
       clientId: "approved-client",
+      clientName: "Approved MCP Client",
       connectionIds: [connectionId],
       scopes: ["messages:send"],
     });
@@ -327,10 +330,12 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
         Layer.succeed(McpAuthorizationPersistence, {
           create: () => Effect.succeed(false),
           isActive: () => Effect.succeed(false),
+          list: () => Effect.succeed(null),
           listConnections: () => Effect.succeed(null),
           registerRefreshCredential: () => Effect.succeed(false),
           rotateRefreshCredential: () =>
             Effect.succeed({ outcome: "invalid" as const }),
+          revoke: () => Effect.succeed(null),
         }),
         Layer.succeed(McpAuthorizationClock, {
           now: Effect.succeed(new Date()),
@@ -364,7 +369,7 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
       kv: harness.kv,
       layer: harness.layer,
     });
-    const authorizationActive = true;
+    let authorizationActive = true;
     let currentCredentialHash: string | undefined;
     let familyRevoked = false;
     const consumedCredentialHashes = new Set<string>();
@@ -409,10 +414,18 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
     };
     const makeOAuth = () =>
       createOAuthHandler({
-        applicationHandler: (request, environment) =>
-          environment.OAUTH_PROVIDER
+        applicationHandler: (request, environment) => {
+          if (new URL(request.url).pathname.startsWith("/mcp")) {
+            return Promise.resolve(
+              new Response(JSON.stringify({ outcome: "called" }), {
+                headers: { "content-type": "application/json" },
+              }),
+            );
+          }
+          return environment.OAUTH_PROVIDER
             ? consent(request, environment.OAUTH_PROVIDER)
-            : Promise.resolve(new Response(null, { status: 503 })),
+            : Promise.resolve(new Response(null, { status: 503 }));
+        },
         configuration,
         environment: {
           OAUTH_KV: harness.kv,
@@ -502,6 +515,28 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
     expect(JSON.stringify(token)).not.toContain("clerk");
     expect(currentCredentialHash).toBeDefined();
 
+    const accessRequest = () =>
+      new Request("https://api.example.test/mcp", {
+        headers: {
+          authorization: `Bearer ${String(token.access_token)}`,
+          "content-type": "application/json",
+        },
+        method: "POST",
+      });
+    const activeAccess = await oauth(accessRequest(), context);
+    expect(activeAccess.status).toBe(200);
+    const protectedAccessRequest = () =>
+      new Request("https://api.example.test/mcp/resources/protected", {
+        headers: {
+          authorization: `Bearer ${String(token.access_token)}`,
+        },
+      });
+    const activeProtectedAccess = await oauth(
+      protectedAccessRequest(),
+      context,
+    );
+    expect(activeProtectedAccess.status).toBe(200);
+
     const refreshRequest = (
       clientAuthentication: "basic" | "body" = "body",
     ) => {
@@ -574,5 +609,19 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
     expect(await refreshResponse.json()).toMatchObject({
       error: "invalid_grant",
     });
+
+    authorizationActive = false;
+    const revokedAccess = await oauth(accessRequest(), context);
+    expect(revokedAccess.status).toBe(401);
+    expect(revokedAccess.headers.get("cache-control")).toBe("no-store");
+    expect(revokedAccess.headers.get("www-authenticate")).toBe(
+      'Bearer error="invalid_token"',
+    );
+    expect(await revokedAccess.json()).toEqual({ error: "invalid_token" });
+    const revokedProtectedAccess = await oauth(
+      protectedAccessRequest(),
+      context,
+    );
+    expect(revokedProtectedAccess.status).toBe(401);
   });
 });

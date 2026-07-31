@@ -7,6 +7,7 @@ import {
   ConversationId,
   GroupId,
   IdempotencyKey,
+  McpAuthorizationId,
   MediaId,
   MessageId,
   makeConnectionId,
@@ -15,6 +16,7 @@ import {
   makeConversationId,
   makeGroupId,
   makeIdempotencyKey,
+  makeMcpAuthorizationId,
   makeMediaId,
   makeMessageId,
   makeSendId,
@@ -34,6 +36,7 @@ describe("public handles", () => {
         Schema.decodeUnknownSync(ConversationId)(`cvs_${suffix}`),
         Schema.decodeUnknownSync(MessageId)(`msg_${suffix}`),
         Schema.decodeUnknownSync(MediaId)(`med_${suffix}`),
+        Schema.decodeUnknownSync(McpAuthorizationId)(`mca_${suffix}`),
         Schema.decodeUnknownSync(SendId)(`snd_${suffix}`),
       ].map(String),
     ).toEqual([
@@ -44,6 +47,7 @@ describe("public handles", () => {
       `cvs_${suffix}`,
       `msg_${suffix}`,
       `med_${suffix}`,
+      `mca_${suffix}`,
       `snd_${suffix}`,
     ]);
   });
@@ -72,13 +76,14 @@ describe("public handles", () => {
       makeConversationId(),
       makeMessageId(),
       makeMediaId(),
+      makeMcpAuthorizationId(),
       makeSendId(),
     ];
 
     expect(generated).toHaveLength(new Set(generated).size);
     for (const handle of generated) {
       expect(handle).toMatch(
-        /^(con|cst|ctc|grp|cvs|msg|med|snd)_[A-Za-z0-9_-]{21}$/,
+        /^(con|cst|ctc|grp|cvs|msg|med|mca|snd)_[A-Za-z0-9_-]{21}$/,
       );
     }
   });

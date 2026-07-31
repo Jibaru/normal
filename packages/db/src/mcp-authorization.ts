@@ -22,11 +22,26 @@ export interface CreateMcpAuthorizationInput {
   readonly authorizedAt: Date;
   readonly clientClass: string;
   readonly clientId: string;
+  readonly clientName: string;
   readonly clerkUserId: string;
   readonly connectionIds: ReadonlyArray<string>;
   readonly expiresAt: Date;
   readonly oauthSubject: string;
   readonly reverifiedAt: Date;
+  readonly scopes: ReadonlyArray<McpAuthorizationScope>;
+}
+
+export interface McpAuthorizationSummary {
+  readonly authorizationId: string;
+  readonly authorizedAt: Date;
+  readonly clientClass: string;
+  readonly clientId: string;
+  readonly clientName: string;
+  readonly connectionIds: ReadonlyArray<string>;
+  readonly expired: boolean;
+  readonly expiresAt: Date;
+  readonly revoked: boolean;
+  readonly revokedAt: Date | null;
   readonly scopes: ReadonlyArray<McpAuthorizationScope>;
 }
 
@@ -41,9 +56,18 @@ export interface McpAuthorizationRepository {
   readonly listConnections: (
     clerkUserId: string,
   ) => Promise<ReadonlyArray<SelectableWhatsAppConnection> | null>;
+  readonly list: (
+    clerkUserId: string,
+    observedAt: Date,
+  ) => Promise<ReadonlyArray<McpAuthorizationSummary> | null>;
   readonly registerRefreshCredential: (
     input: RefreshCredentialInput,
   ) => Promise<boolean>;
+  readonly revoke: (input: {
+    readonly authorizationId: string;
+    readonly clerkUserId: string;
+    readonly revokedAt: Date;
+  }) => Promise<{ readonly revokedAt: Date } | null>;
   readonly rotateRefreshCredential: <Value>(
     input: RefreshCredentialInput,
     issue: () => Promise<{
@@ -136,14 +160,16 @@ export const makeMcpAuthorizationRepository = (
         await connection.query(
           `INSERT INTO app.mcp_authorizations (
              id, personal_account_id, oauth_subject, client_id, client_class,
-             scopes, reverified_at, authorized_at, absolute_expires_at
-           ) VALUES ($1, $2, $3, $4, $5, $6::text[], $7, $8, $9)`,
+             client_name, scopes, reverified_at, authorized_at,
+             absolute_expires_at
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7::text[], $8, $9, $10)`,
           [
             input.authorizationId,
             personalAccountId,
             input.oauthSubject,
             input.clientId,
             input.clientClass,
+            input.clientName,
             [...input.scopes],
             input.reverifiedAt,
             input.authorizedAt,
@@ -215,6 +241,80 @@ export const makeMcpAuthorizationRepository = (
         return result.rows.map((row) => ({ connectionId: row.public_id }));
       }),
     ),
+  list: (clerkUserId, observedAt) =>
+    provider.withConnection((connection) =>
+      withTransaction(connection, async () => {
+        if ((await enterClerkContext(connection, clerkUserId)) === null) {
+          return null;
+        }
+        const result = await connection.query<{
+          absolute_expires_at: Date;
+          authorized_at: Date;
+          client_class: string;
+          client_id: string;
+          client_name: string | null;
+          connection_public_id: string | null;
+          public_id: string;
+          revoked_at: Date | null;
+          scopes: Array<McpAuthorizationScope>;
+          state: "active" | "revoked";
+        }>(
+          `SELECT
+             authorizations.public_id,
+             authorizations.client_id,
+             authorizations.client_class,
+             authorizations.client_name,
+             authorizations.scopes,
+             authorizations.authorized_at,
+             authorizations.absolute_expires_at,
+             authorizations.state,
+             authorizations.revoked_at,
+             connections.public_id AS connection_public_id
+           FROM app.mcp_authorizations AS authorizations
+           LEFT JOIN app.mcp_authorization_connections AS selected
+             ON selected.personal_account_id =
+               authorizations.personal_account_id
+             AND selected.mcp_authorization_id = authorizations.id
+           LEFT JOIN app.whatsapp_connections AS connections
+             ON connections.personal_account_id = selected.personal_account_id
+             AND connections.id = selected.whatsapp_connection_id
+           ORDER BY
+             authorizations.authorized_at DESC,
+             authorizations.public_id,
+             connections.created_at,
+             connections.public_id`,
+        );
+        const summaries = new Map<string, McpAuthorizationSummary>();
+        for (const row of result.rows) {
+          const existing = summaries.get(row.public_id);
+          if (existing !== undefined) {
+            if (row.connection_public_id !== null) {
+              (existing.connectionIds as Array<string>).push(
+                row.connection_public_id,
+              );
+            }
+            continue;
+          }
+          summaries.set(row.public_id, {
+            authorizationId: row.public_id,
+            authorizedAt: row.authorized_at,
+            clientClass: row.client_class,
+            clientId: row.client_id,
+            clientName: row.client_name ?? row.client_id,
+            connectionIds:
+              row.connection_public_id === null
+                ? []
+                : [row.connection_public_id],
+            expired: row.absolute_expires_at <= observedAt,
+            expiresAt: row.absolute_expires_at,
+            revoked: row.state === "revoked",
+            revokedAt: row.revoked_at,
+            scopes: row.scopes,
+          });
+        }
+        return [...summaries.values()];
+      }),
+    ),
   registerRefreshCredential: (input) =>
     provider.withConnection((connection) =>
       withTransaction(connection, async () => {
@@ -259,6 +359,31 @@ export const makeMcpAuthorizationRepository = (
           ],
         );
         return inserted.rows.length === 1;
+      }),
+    ),
+  revoke: (input) =>
+    provider.withConnection((connection) =>
+      withTransaction(connection, async () => {
+        if (!/^mca_[A-Za-z0-9_-]{21}$/u.test(input.authorizationId)) {
+          return null;
+        }
+        if ((await enterClerkContext(connection, input.clerkUserId)) === null) {
+          return null;
+        }
+        const revoked = await connection.query<{ revoked_at: Date }>(
+          `UPDATE app.mcp_authorizations
+           SET
+             state = 'revoked',
+             revoked_at = COALESCE(revoked_at, $2),
+             refresh_family_state = 'revoked',
+             refresh_family_revoked_at =
+               COALESCE(refresh_family_revoked_at, $2)
+           WHERE public_id = $1
+           RETURNING revoked_at`,
+          [input.authorizationId, input.revokedAt],
+        );
+        const revokedAt = revoked.rows[0]?.revoked_at;
+        return revokedAt === undefined ? null : { revokedAt };
       }),
     ),
   rotateRefreshCredential: (input, issue) =>

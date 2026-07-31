@@ -29,6 +29,13 @@ same shape: drive the production-built web app, cross directly to the API
 Worker, and fake only external organizations through the test composition
 root.
 
+The MCP Authorization management journey lists and revokes through that same
+browser-to-Worker seam. Database coverage separately applies the production
+migrations and switches to `whatsapp_api_runtime` to prove RLS isolation,
+idempotent atomic authorization/family revocation, and immediate access and
+refresh denial. The HTTP fixture contains only safe product metadata and never
+models or returns token material.
+
 The browser always renders `apps/web/src/app/home-experience.tsx`; there is no
 test component alias or selectable web composition root. Playwright supplies
 only the external Clerk-shaped identity boundary and test network routing from
