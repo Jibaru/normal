@@ -70,18 +70,18 @@ const config = JSON.parse(await readFile(sourcePath, "utf8")) as Record<
 >;
 const oauthKvNamespaceId = requireIdentifier("CLOUDFLARE_OAUTH_KV_ID");
 const oauthKvPlaceholder = "replace-with-rendered-oauth-kv-id";
-const clerkVariables = {
+const apiVariables = {
   CLERK_API_AUDIENCE: requireHttpsOrigin("CLERK_API_AUDIENCE"),
   CLERK_AUTHORIZED_PARTY: requireHttpsOrigin("CLERK_AUTHORIZED_PARTY"),
   CLERK_ISSUER: requireHttpsOrigin("CLERK_ISSUER"),
   PROVIDER_APPROVED_SESSION_CAPACITY: requireProviderApprovedSessionCapacity(),
 };
-const renderClerkVariables = (target: Record<string, unknown>): void => {
+const renderApiVariables = (target: Record<string, unknown>): void => {
   const variables = target.vars;
   if (typeof variables !== "object" || variables === null) {
     throw new Error("API Wrangler source config must declare variables");
   }
-  Object.assign(variables, clerkVariables);
+  Object.assign(variables, apiVariables);
 };
 const renderOAuthKv = (target: Record<string, unknown>): void => {
   const namespaces = target.kv_namespaces;
@@ -118,7 +118,7 @@ for (const key of ["$schema", "main"]) {
 if (environmentArgument === "production") {
   renderOAuthKv(config);
 }
-renderClerkVariables(config);
+renderApiVariables(config);
 const environments = config.env;
 if (typeof environments !== "object" || environments === null) {
   throw new Error("API Wrangler source config must declare environments");
@@ -132,7 +132,7 @@ if (typeof selectedEnvironment !== "object" || selectedEnvironment === null) {
   );
 }
 renderOAuthKv(selectedEnvironment as Record<string, unknown>);
-renderClerkVariables(selectedEnvironment as Record<string, unknown>);
+renderApiVariables(selectedEnvironment as Record<string, unknown>);
 
 const hyperdrive = [
   {

@@ -86,6 +86,25 @@ describe("Personal Account repository", () => {
     });
   });
 
+  test("accepts a production-valid capacity above PostgreSQL integer range", async () => {
+    const repository = makePersonalAccountRepository(provider);
+
+    await expect(
+      repository.create({
+        clerkUserId: "user_largecapacity",
+        keyCiphertext: new Uint8Array([1, 2, 3]),
+        keyVersion: 1,
+        kmsKeyId: "arn:aws:kms:us-east-1:111122223333:key/content-root-key",
+        personalAccountId: accountId,
+        providerApprovedSessionCapacity: 3_000_000_000,
+      }),
+    ).resolves.toMatchObject({
+      admissionState: "active",
+      created: true,
+      personalAccountId: accountId,
+    });
+  });
+
   test("returns one safe absence for a deleting identity", async () => {
     const repository = makePersonalAccountRepository(provider);
     await repository.create({

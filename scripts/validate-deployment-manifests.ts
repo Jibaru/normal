@@ -169,7 +169,7 @@ for (const deployable of deployables) {
       ]) {
         if (!output.includes(binding)) {
           throw new Error(
-            `API ${environment} is missing required Clerk binding ${binding}.`,
+            `API ${environment} is missing required binding ${binding}.`,
           );
         }
       }

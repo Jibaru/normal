@@ -95,7 +95,7 @@ CREATE FUNCTION app_private.admit_personal_account_for_clerk(
   proposed_key_version integer,
   proposed_kms_key_id text,
   proposed_key_ciphertext bytea,
-  provider_approved_session_capacity integer
+  provider_approved_session_capacity bigint
 )
 RETURNS TABLE (
   admission_state text,
@@ -280,7 +280,7 @@ REVOKE ALL
     integer,
     text,
     bytea,
-    integer
+    bigint
   )
   FROM PUBLIC;
 
@@ -294,6 +294,6 @@ GRANT EXECUTE
     integer,
     text,
     bytea,
-    integer
+    bigint
   )
   TO whatsapp_api_runtime;
