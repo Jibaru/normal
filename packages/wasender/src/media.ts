@@ -382,7 +382,11 @@ const readBoundedBytes = async (
       }
       total += result.value.byteLength;
       if (total > maximumBytes) {
-        await reader.cancel();
+        try {
+          await reader.cancel();
+        } catch {
+          // Preserve the bounded-response failure if cancellation also fails.
+        }
         throw overflowFailure;
       }
       chunks.push(result.value);
@@ -502,7 +506,7 @@ export const makeWasenderMediaRetrieval = ({
             requestBody: JSON.stringify(parsedSource.requestBody),
             url: new URL(wasenderMediaDecryptEndpoint),
           });
-          if (!response.ok) {
+          if (response.status !== 200) {
             await cancelBody(response);
             throw mapProviderStatus(response.status, "media-metadata");
           }
@@ -575,7 +579,7 @@ export const makeWasenderMediaRetrieval = ({
           operation: "media-download",
           url,
         });
-        if (!response.ok) {
+        if (response.status !== 200) {
           await cancelBody(response);
           throw mapProviderStatus(response.status, "media-download");
         }
@@ -592,7 +596,11 @@ export const makeWasenderMediaRetrieval = ({
           }
           const nextByteCount = byteCount + result.value.byteLength;
           if (nextByteCount > maxBytes) {
-            await activeReader.cancel();
+            try {
+              await activeReader.cancel();
+            } catch {
+              // Preserve the hard-limit failure if cancellation also fails.
+            }
             throw downloadFailure(
               "response_too_large",
               "restart_media_from_byte_zero",

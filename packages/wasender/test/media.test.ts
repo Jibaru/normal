@@ -395,6 +395,40 @@ describe("real Wasender media adapter", () => {
     expect(cancelled).toBe(true);
   });
 
+  test("preserves the overflow failure when stream cancellation fails", async () => {
+    const adapter = makeWasenderMediaRetrieval({
+      dependencies: dependencies(
+        async () =>
+          new Response(
+            new ReadableStream({
+              cancel() {
+                throw new Error("cancel failed");
+              },
+              start(controller) {
+                controller.enqueue(new Uint8Array([1, 2, 3]));
+              },
+            }),
+          ),
+      ),
+      sessionAuthority,
+    });
+    const download = await Effect.runPromise(
+      adapter.download({
+        maxBytes: makeMediaDownloadByteLimit(2),
+        source: makeDownloadMediaSource(
+          "https://www.wasenderapi.com/api/decrypted-media/id",
+        ),
+      }),
+    );
+
+    const failure = await runStreamFailure(download.stream);
+
+    expect(failure).toMatchObject({
+      code: "response_too_large",
+      retryDecision: "restart_media_from_byte_zero",
+    });
+  });
+
   test("uses actual bytes when Content-Length is over-reported", async () => {
     const adapter = makeWasenderMediaRetrieval({
       dependencies: dependencies(
@@ -582,6 +616,7 @@ describe("real Wasender media adapter", () => {
   test.each([
     [403, "authentication_failed", "do_not_retry"],
     [429, "throttled", "do_not_retry"],
+    [206, "invalid_response", "do_not_retry"],
     [502, "unavailable", "restart_media_from_byte_zero"],
   ])(
     "maps download provider status %i to %s",
