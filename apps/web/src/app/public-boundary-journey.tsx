@@ -255,6 +255,7 @@ export function PublicBoundaryJourney({
       if (activeQrImageUrl.current !== null) {
         URL.revokeObjectURL(activeQrImageUrl.current);
       }
+      lifecycleGeneration.current += 1;
       if (lifecycleTimer.current !== null) {
         clearTimeout(lifecycleTimer.current);
       }
