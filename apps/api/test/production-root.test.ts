@@ -105,6 +105,8 @@ describe("API production root", () => {
     "OAUTH_ISSUER",
     "OAUTH_PROTOCOL_ENCRYPTION_KEY",
     "OAUTH_RESOURCE",
+    "MCP_REQUESTS_PER_HOUR",
+    "MCP_REQUESTS_PER_MINUTE",
     "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
   ] as const)("fails closed when %s is absent", async (configuration) => {
     const { [configuration]: _missing, ...environment } = validEnvironment();
@@ -145,6 +147,20 @@ describe("API production root", () => {
       expect(response.status).toBe(503);
     },
   );
+
+  test.each([
+    ["MCP_REQUESTS_PER_MINUTE", "0"],
+    ["MCP_REQUESTS_PER_MINUTE", "1.5"],
+    ["MCP_REQUESTS_PER_HOUR", "0"],
+    ["MCP_REQUESTS_PER_HOUR", "59"],
+  ] as const)("fails closed when %s is %s", async (name, value) => {
+    const response = await createProductionHandler({
+      ...validEnvironment(),
+      [name]: value,
+    })(new Request("https://api.example.test/health"));
+
+    expect(response.status).toBe(503);
+  });
 
   test.each([
     ["CLERK_API_AUDIENCE", "http://api.example.test"],

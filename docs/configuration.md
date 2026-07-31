@@ -18,6 +18,8 @@ request is accepted. Production roots accept only `development`, `preview`, or
 | `OAUTH_RESOURCE` | Non-secret | API OAuth provider | Exact protected MCP resource, formed as `OAUTH_ISSUER` plus `/mcp`. |
 | `OAUTH_CLIENT_REGISTRY` | Non-secret reviewed policy | API OAuth provider | JSON allowlist rendered from `oauth_clients`, containing each stable MCP Client ID, class, display name, and exact permitted redirects. |
 | `OAUTH_PROTOCOL_ENCRYPTION_KEY` | Secret | API OAuth provider | Dedicated 32-byte hex AES key for short-lived consent handoff records. Generate with `openssl rand -hex 32`; never reuse another platform key. |
+| `MCP_REQUESTS_PER_MINUTE` | Non-secret approved quota | API MCP resource server | Authoritative per-Personal-Account request reservations allowed in an exact rolling minute. Set the reviewed positive integer through `mcp_requests_per_minute`; there is no production default. |
+| `MCP_REQUESTS_PER_HOUR` | Non-secret approved quota | API MCP resource server | Authoritative per-Personal-Account request reservations allowed in an exact rolling hour. Set the reviewed integer through `mcp_requests_per_hour`; it must be at least the minute value and has no production default. |
 | `PROVIDER_APPROVED_SESSION_CAPACITY` | Non-secret operational limit | API | Vendor-approved session ceiling for the environment. Set the reviewed integer through `provider_approved_session_capacity`; missing, placeholder, fractional, or values below three fail closed. Increase only after written provider approval. |
 | `DATABASE_URL` | Secret | Database tooling that consumes `@whatsapp-mcp/db/config` | Issue a restricted Neon role URL, store it in the deployment secret store, and rotate it through Neon plus the deployment platform. API production traffic uses Hyperdrive instead. |
 | `MIGRATION_DATABASE_URL` | Secret | `bun run db:migrate` and `bun run db:check` | Obtain the direct, unpooled owner URL from the sensitive OpenTofu output. It must be a TLS Neon URL and must never be configured on a Worker or web deployable. Rotate it by rotating the Neon migration-owner password. |
@@ -184,6 +186,28 @@ Authorization-management telemetry contains only
 `not_found`, and the API service name. Never add the User, Personal Account,
 authorization handle or internal ID, MCP Client, Connection, scope set,
 timestamp, token, credential hash, or request path.
+
+Migration 0012 adds the RLS-protected, metadata-only Tool Call Log and the
+stateless MCP `list_connections` boundary. Each invocation first locks its
+Personal Account quota subject, rechecks the current MCP Authorization and
+`connections:read` scope, and atomically persists the audit row with one request
+reservation. Exact rolling minute and hour counts use only committed
+`quota_reserved` rows. Authorization failures and pre-reservation audit failures
+do not consume quota. When either window is exhausted, the API returns the
+binding window's safe retry and reset values without reading Connection state.
+Missing or invalid quota configuration prevents the production root from
+serving.
+
+Tool Call Logs expire after 90 days and contain only the tenant, authorization,
+tool name, timestamps, normalized outcome and error code, bounded result count,
+latency, and whether request quota was reserved. They never contain OAuth
+credentials, Connection handles, display names, phone suffixes, provider
+identifiers, scope sets, request or response content, or raw payloads. MCP tool
+telemetry is limited to `mcp.tool_call.completed`, the fixed
+`list_connections` tool name, an allowlisted outcome, the API service name, and
+the bounded result count on success. Do not enrich it with tenant,
+authorization, client, Connection, quota, credential, request, or response
+fields.
 
 Declare the reviewed per-environment allowlist through `oauth_clients`:
 
@@ -493,6 +517,8 @@ repository:
 | `clerk_publishable_key` | Public browser key for the same-environment Clerk instance. |
 | `oauth_clients` | Reviewed environment-specific MCP Client classes, IDs, names, and exact redirects. |
 | `provider_approved_session_capacity` | Required reviewed integer ceiling; each admitted Personal Account reserves three sessions. |
+| `mcp_requests_per_minute` | Required approved positive integer for authoritative per-Personal-Account requests in an exact rolling minute. |
+| `mcp_requests_per_hour` | Required approved integer for authoritative per-Personal-Account requests in an exact rolling hour; at least the minute value. |
 
 Provider and backend credentials are ambient only:
 

@@ -141,6 +141,14 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 11,
   },
+  {
+    name: "audited MCP tools",
+    sql: await readFile(
+      new NodeUrl("../migrations/0012_audited_mcp_tools.sql", import.meta.url),
+      "utf8",
+    ),
+    version: 12,
+  },
 ];
 
 const checksum = (sql: string): string =>

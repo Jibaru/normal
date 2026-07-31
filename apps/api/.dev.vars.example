@@ -2,6 +2,8 @@
 DEPLOYMENT_ENVIRONMENT=development
 AWS_KMS_REGION=us-east-1
 PROVIDER_APPROVED_SESSION_CAPACITY=replace-with-vendor-approved-session-capacity
+MCP_REQUESTS_PER_MINUTE=replace-with-approved-minute-request-limit
+MCP_REQUESTS_PER_HOUR=replace-with-approved-hour-request-limit
 KMS_CONTENT_ROOT_KEY_ARN=arn:aws:kms:us-east-1:111122223333:key/replace-with-content-root-key-id
 KMS_DELETION_COORDINATOR_KEY_ARN=arn:aws:kms:us-east-1:111122223333:key/replace-with-deletion-coordinator-key-id
 

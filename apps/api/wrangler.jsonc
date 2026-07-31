@@ -22,7 +22,9 @@
     "OAUTH_ISSUER": "replace-with-rendered-oauth-issuer",
     "OAUTH_RESOURCE": "replace-with-rendered-oauth-resource",
     "DEPLOYMENT_ENVIRONMENT": "production",
-    "PROVIDER_APPROVED_SESSION_CAPACITY": "replace-with-approved-session-capacity"
+    "PROVIDER_APPROVED_SESSION_CAPACITY": "replace-with-approved-session-capacity",
+    "MCP_REQUESTS_PER_MINUTE": "replace-with-approved-minute-request-limit",
+    "MCP_REQUESTS_PER_HOUR": "replace-with-approved-hour-request-limit"
   },
   "secrets": {
     "required": [
@@ -115,7 +117,9 @@
         "OAUTH_ISSUER": "replace-with-rendered-oauth-issuer",
         "OAUTH_RESOURCE": "replace-with-rendered-oauth-resource",
         "DEPLOYMENT_ENVIRONMENT": "development",
-        "PROVIDER_APPROVED_SESSION_CAPACITY": "replace-with-approved-session-capacity"
+        "PROVIDER_APPROVED_SESSION_CAPACITY": "replace-with-approved-session-capacity",
+        "MCP_REQUESTS_PER_MINUTE": "replace-with-approved-minute-request-limit",
+        "MCP_REQUESTS_PER_HOUR": "replace-with-approved-hour-request-limit"
       },
       "secrets": {
         "required": [
@@ -208,7 +212,9 @@
         "OAUTH_ISSUER": "replace-with-rendered-oauth-issuer",
         "OAUTH_RESOURCE": "replace-with-rendered-oauth-resource",
         "DEPLOYMENT_ENVIRONMENT": "preview",
-        "PROVIDER_APPROVED_SESSION_CAPACITY": "replace-with-approved-session-capacity"
+        "PROVIDER_APPROVED_SESSION_CAPACITY": "replace-with-approved-session-capacity",
+        "MCP_REQUESTS_PER_MINUTE": "replace-with-approved-minute-request-limit",
+        "MCP_REQUESTS_PER_HOUR": "replace-with-approved-hour-request-limit"
       },
       "secrets": {
         "required": [
@@ -301,7 +307,9 @@
         "OAUTH_ISSUER": "replace-with-rendered-oauth-issuer",
         "OAUTH_RESOURCE": "replace-with-rendered-oauth-resource",
         "DEPLOYMENT_ENVIRONMENT": "production",
-        "PROVIDER_APPROVED_SESSION_CAPACITY": "replace-with-approved-session-capacity"
+        "PROVIDER_APPROVED_SESSION_CAPACITY": "replace-with-approved-session-capacity",
+        "MCP_REQUESTS_PER_MINUTE": "replace-with-approved-minute-request-limit",
+        "MCP_REQUESTS_PER_HOUR": "replace-with-approved-hour-request-limit"
       },
       "secrets": {
         "required": [

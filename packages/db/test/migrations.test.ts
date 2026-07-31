@@ -443,10 +443,13 @@ describe("production migrations", () => {
         AND proname IN (
           'bootstrap_personal_account_for_clerk',
           'bootstrap_whatsapp_connection_for_ingress',
+          'bootstrap_active_mcp_tool_call',
           'bootstrap_mcp_access_authorization',
           'bootstrap_mcp_authorization',
           'bootstrap_mcp_refresh_authorization',
           'bootstrap_mcp_refresh_credential',
+          'bootstrap_mcp_tool_call',
+          'bootstrap_tool_call_log',
           'admit_personal_account_for_clerk',
           'resolve_personal_account_for_clerk'
         )
@@ -456,6 +459,11 @@ describe("production migrations", () => {
       {
         config: ["search_path=pg_catalog, pg_temp"],
         proname: "admit_personal_account_for_clerk",
+        prosecdef: true,
+      },
+      {
+        config: ["search_path=pg_catalog, pg_temp"],
+        proname: "bootstrap_active_mcp_tool_call",
         prosecdef: true,
       },
       {
@@ -480,7 +488,17 @@ describe("production migrations", () => {
       },
       {
         config: ["search_path=pg_catalog, pg_temp"],
+        proname: "bootstrap_mcp_tool_call",
+        prosecdef: true,
+      },
+      {
+        config: ["search_path=pg_catalog, pg_temp"],
         proname: "bootstrap_personal_account_for_clerk",
+        prosecdef: true,
+      },
+      {
+        config: ["search_path=pg_catalog, pg_temp"],
+        proname: "bootstrap_tool_call_log",
         prosecdef: true,
       },
       {

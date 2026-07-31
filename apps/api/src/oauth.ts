@@ -763,7 +763,7 @@ const oauthSubjectFromRefreshToken = (token: string): string | null => {
     : null;
 };
 
-const accessAuthorizationFrom = (
+export const accessAuthorizationFrom = (
   context: ExecutionContext,
 ): {
   readonly authorizationId: string;

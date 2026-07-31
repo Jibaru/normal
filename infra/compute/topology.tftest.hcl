@@ -18,6 +18,8 @@ run "development_topology" {
     clerk_issuer                       = "https://clerk.dev.example.com"
     clerk_publishable_key              = "pk_test_Y2xlcmsuZGV2LmV4YW1wbGUuY29tJA"
     provider_approved_session_capacity = 3
+    mcp_requests_per_minute            = 60
+    mcp_requests_per_hour              = 600
     oauth_clients = [{
       client_class  = "approved"
       client_id     = "approved-client"
@@ -97,6 +99,8 @@ run "development_topology" {
       "plain_text:OAUTH_CLIENT_REGISTRY",
       "plain_text:OAUTH_ISSUER",
       "plain_text:OAUTH_RESOURCE",
+      "plain_text:MCP_REQUESTS_PER_HOUR",
+      "plain_text:MCP_REQUESTS_PER_MINUTE",
       "plain_text:PROVIDER_APPROVED_SESSION_CAPACITY",
       "queue:CONNECTION_SETUP_PROVISIONING_QUEUE",
       "queue:INGESTION_QUEUE",
@@ -197,6 +201,8 @@ run "preview_topology" {
     clerk_issuer                       = "https://clerk.preview.example.com"
     clerk_publishable_key              = "pk_test_Y2xlcmsucHJldmlldy5leGFtcGxlJA"
     provider_approved_session_capacity = 3
+    mcp_requests_per_minute            = 60
+    mcp_requests_per_hour              = 600
     oauth_clients = [{
       client_class  = "approved"
       client_id     = "approved-client"
@@ -238,6 +244,8 @@ run "production_topology" {
     clerk_issuer                       = "https://clerk.example.com"
     clerk_publishable_key              = "pk_live_Y2xlcmsuZXhhbXBsZS5jb20k"
     provider_approved_session_capacity = 3
+    mcp_requests_per_minute            = 60
+    mcp_requests_per_hour              = 600
     oauth_clients = [{
       client_class  = "approved"
       client_id     = "approved-client"
@@ -338,6 +346,8 @@ run "reject_same_web_and_api_origin" {
     clerk_issuer                       = "https://clerk.example.com"
     clerk_publishable_key              = "pk_live_Y2xlcmsuZXhhbXBsZS5jb20k"
     provider_approved_session_capacity = 3
+    mcp_requests_per_minute            = 60
+    mcp_requests_per_hour              = 600
     oauth_clients = [{
       client_class  = "approved"
       client_id     = "approved-client"

@@ -336,6 +336,16 @@ resource "cloudflare_worker_version" "api" {
       type = "plain_text"
     },
     {
+      name = "MCP_REQUESTS_PER_MINUTE"
+      text = tostring(var.mcp_requests_per_minute)
+      type = "plain_text"
+    },
+    {
+      name = "MCP_REQUESTS_PER_HOUR"
+      text = tostring(var.mcp_requests_per_hour)
+      type = "plain_text"
+    },
+    {
       name = "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET"
       type = "inherit"
     },

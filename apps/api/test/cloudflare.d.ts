@@ -2,6 +2,8 @@ declare namespace Cloudflare {
   interface Env {
     readonly CONNECTION_SETUP_PROVISIONING_QUEUE: Queue;
     readonly INGESTION_QUEUE: Queue;
+    readonly MCP_REQUESTS_PER_HOUR: string;
+    readonly MCP_REQUESTS_PER_MINUTE: string;
     readonly WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET: string;
     readonly OAUTH_KV: KVNamespace;
     readonly PROVIDER_CONTROL: Fetcher;
