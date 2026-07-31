@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "CLERK_API_AUDIENCE=https://api.example.test CLERK_AUTHORIZED_PARTY=https://app.example.test CLERK_ISSUER=https://clerk.example.test OAUTH_CLIENT_REGISTRY='[{\"clientClass\":\"approved\",\"clientId\":\"approved-client\",\"clientName\":\"Approved MCP Client\",\"redirectUris\":[\"https://client.example.test/callback\"]}]' OAUTH_ISSUER=https://api.example.test OAUTH_RESOURCE=https://api.example.test/mcp PROVIDER_APPROVED_SESSION_CAPACITY=3 CLOUDFLARE_HYPERDRIVE_ID=00000000000000000000000000000000 CLOUDFLARE_OAUTH_KV_ID=22222222222222222222222222222222 CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID=11111111111111111111111111111111 bun ../../scripts/render-api-wrangler.ts .wrangler/build.jsonc production && CI=true wrangler deploy --dry-run --config .wrangler/build.jsonc --env '' --outdir dist",
+    "build": "CLERK_API_AUDIENCE=https://api.example.test CLERK_AUTHORIZED_PARTY=https://app.example.test CLERK_ISSUER=https://clerk.example.test MCP_REQUESTS_PER_HOUR=600 MCP_REQUESTS_PER_MINUTE=60 OAUTH_CLIENT_REGISTRY='[{\"clientClass\":\"approved\",\"clientId\":\"approved-client\",\"clientName\":\"Approved MCP Client\",\"redirectUris\":[\"https://client.example.test/callback\"]}]' OAUTH_ISSUER=https://api.example.test OAUTH_RESOURCE=https://api.example.test/mcp PROVIDER_APPROVED_SESSION_CAPACITY=3 CLOUDFLARE_HYPERDRIVE_ID=00000000000000000000000000000000 CLOUDFLARE_OAUTH_KV_ID=22222222222222222222222222222222 CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID=11111111111111111111111111111111 bun ../../scripts/render-api-wrangler.ts .wrangler/build.jsonc production && CI=true wrangler deploy --dry-run --config .wrangler/build.jsonc --env '' --outdir dist",
     "dev": "wrangler dev",
     "lint": "biome check .",
     "test": "vitest run --exclude test/public-boundary-runtime.test.ts && vitest run --config vitest.public-boundary.config.ts",
@@ -14,11 +14,14 @@
     "@aws-sdk/client-kms": "3.1099.0",
     "@clerk/backend": "3.14.0",
     "@cloudflare/workers-oauth-provider": "0.8.3",
+    "@modelcontextprotocol/server": "2.0.0",
     "@whatsapp-mcp/contracts": "workspace:*",
     "@whatsapp-mcp/db": "workspace:*",
     "@whatsapp-mcp/domain": "workspace:*",
     "@whatsapp-mcp/wasender": "workspace:*",
-    "effect": "3.22.1"
+    "agents": "0.20.1",
+    "effect": "3.22.1",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260730.1",

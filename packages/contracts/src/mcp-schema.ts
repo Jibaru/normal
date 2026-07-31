@@ -1,4 +1,5 @@
 import { JSONSchema, Schema } from "effect";
+import { ConnectionId } from "./handles";
 
 const utcTimestampPattern =
   /^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?Z(?![\s\S])/;
@@ -50,3 +51,25 @@ export const makePublicObjectContract = <
 export type PublicObjectContract<A> = {
   readonly decodeUnknown: (input: unknown) => A;
 };
+
+export const ListConnectionsOutputContract = makePublicObjectContract({
+  connections: Schema.Array(
+    Schema.Struct({
+      connection_id: ConnectionId,
+      display_name: Schema.NullOr(Schema.String),
+      number_last_four: Schema.NullOr(
+        Schema.String.pipe(Schema.pattern(/^[0-9]{4}$/)),
+      ),
+      state: Schema.Literal(
+        "connected",
+        "connecting",
+        "disconnected",
+        "reconnect_required",
+        "degraded",
+      ),
+      state_changed_at: UtcTimestamp,
+    }),
+  ).pipe(Schema.maxItems(3)),
+});
+export type ListConnectionsOutput =
+  typeof ListConnectionsOutputContract.schema.Type;

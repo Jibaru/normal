@@ -173,7 +173,10 @@ reviewed browser configuration uses another safe name. Copy the template's PEM
 reviewed browser configuration uses another safe name. Record the written
 vendor-approved session ceiling as the required
 `provider_approved_session_capacity` integer; there is no default, and one
-admitted Personal Account reserves three sessions. Copy the template's PEM
+admitted Personal Account reserves three sessions. Record the approved
+authoritative MCP request limits as the required positive integers
+`mcp_requests_per_minute` and `mcp_requests_per_hour`; there are no defaults,
+and the hour value must be at least the minute value. Copy the template's PEM
 public key without changing its line breaks. Load it and a separately generated
 32-byte OAuth protocol-encryption key into the API Worker shell:
 
@@ -213,7 +216,8 @@ API Worker/custom domain, one private provider-control Worker, disabled
 service binding. The API version must inherit `CLERK_JWT_KEY` and the OAuth
 protocol-encryption key, and receive exact Clerk audience, authorized-party,
 OAuth issuer/resource, reviewed client-registry, and
-`PROVIDER_APPROVED_SESSION_CAPACITY` text bindings;
+`PROVIDER_APPROVED_SESSION_CAPACITY`, `MCP_REQUESTS_PER_MINUTE`, and
+`MCP_REQUESTS_PER_HOUR` text bindings;
 provider-control must receive none of them. The Vercel project must
 receive only the public Clerk key and JWT template name. It must also contain
 four private R2 buckets with disabled
@@ -432,6 +436,8 @@ export OAUTH_CLIENT_REGISTRY="$(
 )"
 export OAUTH_ISSUER="$CLERK_API_AUDIENCE"
 export OAUTH_RESOURCE="$OAUTH_ISSUER/mcp"
+export MCP_REQUESTS_PER_MINUTE="$(sed -n 's/^[[:space:]]*mcp_requests_per_minute[[:space:]]*=[[:space:]]*\\([0-9][0-9]*\\)[[:space:]]*$/\\1/p' "$TFVARS_PATH")"
+export MCP_REQUESTS_PER_HOUR="$(sed -n 's/^[[:space:]]*mcp_requests_per_hour[[:space:]]*=[[:space:]]*\\([0-9][0-9]*\\)[[:space:]]*$/\\1/p' "$TFVARS_PATH")"
 export PROVIDER_APPROVED_SESSION_CAPACITY="$(sed -n 's/^[[:space:]]*provider_approved_session_capacity[[:space:]]*=[[:space:]]*\\([0-9][0-9]*\\)[[:space:]]*$/\\1/p' "$TFVARS_PATH")"
 bun scripts/render-api-wrangler.ts \
   apps/api/.wrangler/production.jsonc \
@@ -442,7 +448,8 @@ CI=true bun run --cwd apps/api wrangler deploy \
 unset CLOUDFLARE_HYPERDRIVE_ID CLOUDFLARE_OAUTH_KV_ID \
   CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID CLERK_API_AUDIENCE \
   CLERK_AUTHORIZED_PARTY CLERK_ISSUER OAUTH_CLIENT_REGISTRY \
-  OAUTH_ISSUER OAUTH_RESOURCE PROVIDER_APPROVED_SESSION_CAPACITY
+  MCP_REQUESTS_PER_HOUR MCP_REQUESTS_PER_MINUTE OAUTH_ISSUER OAUTH_RESOURCE \
+  PROVIDER_APPROVED_SESSION_CAPACITY
 export VERCEL_ORG_ID="$(tofu -chdir=infra/compute output -raw vercel_team_id)"
 export VERCEL_PROJECT_ID="$(tofu -chdir=infra/compute output -raw vercel_project_id)"
 vercel deploy --prod --yes --cwd apps/web
@@ -465,7 +472,7 @@ secrets before deployment. `CLERK_JWT_KEY` and
 and are preserved as inherited secret bindings. Rendering fails unless the
 Clerk audience, authorized party, Clerk issuer, OAuth issuer, exact MCP
 resource, non-empty reviewed client registry, and provider-approved session
-capacity are valid.
+capacity and approved MCP minute and hour request quotas are valid.
 
 Provider-control authority is populated during the first-deployment bootstrap
 above, directly in Cloudflare's secret store. The Wrangler manifest declares
@@ -509,6 +516,19 @@ and no registration endpoint. An authorization request from an unregistered
 client and one from a registered client with a one-character redirect change
 must both return `400` without a `Location` header. Do not complete real consent
 or a token exchange during this metadata smoke check.
+
+Using the designated non-production approved MCP Client, complete consent for
+one smoke-test WhatsApp Connection and `connections:read`, then initialize a
+fresh MCP session against `$API_ORIGIN/mcp`. Confirm `tools/list` advertises
+`list_connections`, a call returns that selected Connection through the exact
+public fields, and a newly initialized session behaves identically. Repeat
+discovery with an authorization that lacks `connections:read` and confirm the
+tool is absent. Revoke the first authorization and confirm the next call is
+denied even with its unexpired access token. Through the restricted API database
+role, confirm each attempted invocation has one metadata-only Tool Call Log and
+that successful invocations reserve request quota. Do not print or retain the
+access token, OAuth subject, internal IDs, Connection fields, or log rows as
+deployment evidence; retain only normalized counts and outcomes.
 
 Sign in through the deployed web application with a designated smoke-test Clerk
 User and bootstrap once. Confirm the browser sends `POST

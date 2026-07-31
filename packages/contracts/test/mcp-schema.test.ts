@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { Schema } from "effect";
-import { makePublicObjectContract } from "../src/mcp-schema";
+import {
+  ListConnectionsOutputContract,
+  makePublicObjectContract,
+} from "../src/mcp-schema";
 
 describe("makePublicObjectContract", () => {
   const ExampleContract = makePublicObjectContract({
@@ -36,6 +39,43 @@ describe("makePublicObjectContract", () => {
         limit: 20,
         note: null,
         leaked: "provider-id",
+      }),
+    ).toThrow();
+  });
+
+  test("validates the exact unpaginated list_connections result", () => {
+    const output = {
+      connections: [
+        {
+          connection_id: "con_123456789012345678901",
+          display_name: null,
+          number_last_four: "1234",
+          state: "connected",
+          state_changed_at: "2026-07-30T12:00:00.000Z",
+        },
+      ],
+    };
+
+    expect(
+      ListConnectionsOutputContract.decodeUnknown(output) as unknown,
+    ).toEqual(output);
+    expect(ListConnectionsOutputContract.jsonSchema).toMatchObject({
+      additionalProperties: false,
+    });
+    expect(() =>
+      ListConnectionsOutputContract.decodeUnknown({
+        ...output,
+        provider_session_id: "must-not-escape",
+      }),
+    ).toThrow();
+    expect(() =>
+      ListConnectionsOutputContract.decodeUnknown({
+        connections: [
+          {
+            ...output.connections[0],
+            state: "deleting",
+          },
+        ],
       }),
     ).toThrow();
   });

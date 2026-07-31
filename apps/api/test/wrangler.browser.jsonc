@@ -8,6 +8,8 @@
   "preview_urls": false,
   "vars": {
     "DEPLOYMENT_ENVIRONMENT": "test",
-    "PROVIDER_APPROVED_SESSION_CAPACITY": "3"
+    "PROVIDER_APPROVED_SESSION_CAPACITY": "3",
+    "MCP_REQUESTS_PER_MINUTE": "60",
+    "MCP_REQUESTS_PER_HOUR": "600"
   }
 }

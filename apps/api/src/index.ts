@@ -24,6 +24,8 @@ export interface Env {
   readonly INGESTION_QUEUE: Queue;
   readonly KMS_CONTENT_ROOT_KEY_ARN: string;
   readonly KMS_DELETION_COORDINATOR_KEY_ARN: string;
+  readonly MCP_REQUESTS_PER_HOUR: string;
+  readonly MCP_REQUESTS_PER_MINUTE: string;
   readonly OAUTH_CLIENT_REGISTRY: string;
   readonly OAUTH_ISSUER: string;
   readonly OAUTH_KV: KVNamespace;

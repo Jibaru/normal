@@ -171,6 +171,8 @@ for (const deployable of deployables) {
               '[{"clientClass":"approved","clientId":"approved-client","clientName":"Approved MCP Client","redirectUris":["https://client.example.test/callback"]}]',
             OAUTH_ISSUER: "https://api.example.test",
             OAUTH_RESOURCE: "https://api.example.test/mcp",
+            MCP_REQUESTS_PER_HOUR: "600",
+            MCP_REQUESTS_PER_MINUTE: "60",
             PROVIDER_APPROVED_SESSION_CAPACITY: "3",
           },
           stderr: "pipe",
@@ -254,6 +256,8 @@ for (const deployable of deployables) {
         'env.OAUTH_CLIENT_REGISTRY ("[{"clientClass":"approved","clientId"...")',
         'env.OAUTH_ISSUER ("https://api.example.test")',
         'env.OAUTH_RESOURCE ("https://api.example.test/mcp")',
+        'env.MCP_REQUESTS_PER_HOUR ("600")',
+        'env.MCP_REQUESTS_PER_MINUTE ("60")',
         'env.PROVIDER_APPROVED_SESSION_CAPACITY ("3")',
       ]) {
         if (!output.includes(binding)) {

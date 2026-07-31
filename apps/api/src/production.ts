@@ -14,6 +14,7 @@ import {
 import { makePgConnectionSetupRepository } from "@whatsapp-mcp/db/connection-setup";
 import { checkDatabaseReadiness } from "@whatsapp-mcp/db/connectivity";
 import { makePgMcpAuthorizationRepository } from "@whatsapp-mcp/db/mcp-authorization";
+import { makePgMcpToolRepository } from "@whatsapp-mcp/db/mcp-tool";
 import { makePgPersonalAccountRepository } from "@whatsapp-mcp/db/personal-account";
 import { makePgWebhookEventRepository } from "@whatsapp-mcp/db/webhook-event";
 import { makePgWebhookIngressRepository } from "@whatsapp-mcp/db/webhook-ingress";
@@ -82,6 +83,13 @@ import {
   StoredMediaContainerService,
 } from "./encryption/stored-media-container";
 import {
+  createMcpRequestHandler,
+  McpToolClock,
+  McpToolIdentifiers,
+  McpToolPersistence,
+  McpToolPersistenceError,
+} from "./mcp";
+import {
   createMcpAuthorizationConsentHandler,
   createMcpAuthorizationManagementHandler,
   isMcpAuthorizationConsentRequest,
@@ -91,7 +99,11 @@ import {
   McpAuthorizationPersistence,
   McpAuthorizationPersistenceError,
 } from "./mcp-authorization";
-import { createOAuthHandler, loadOAuthConfiguration } from "./oauth";
+import {
+  accessAuthorizationFrom,
+  createOAuthHandler,
+  loadOAuthConfiguration,
+} from "./oauth";
 import {
   createPersonalAccountHandler,
   isPersonalAccountRequest,
@@ -171,6 +183,8 @@ export interface ApiEnvironment {
   readonly CONNECTION_SETUP_PROVISIONING_QUEUE?: unknown;
   readonly KMS_CONTENT_ROOT_KEY_ARN?: string | undefined;
   readonly KMS_DELETION_COORDINATOR_KEY_ARN?: string | undefined;
+  readonly MCP_REQUESTS_PER_HOUR?: string | undefined;
+  readonly MCP_REQUESTS_PER_MINUTE?: string | undefined;
   readonly INGESTION_QUEUE?: unknown;
   readonly OAUTH_CLIENT_REGISTRY?: string | undefined;
   readonly OAUTH_ISSUER?: string | undefined;
@@ -189,12 +203,33 @@ export interface ApiEnvironment {
   readonly WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET?: string | undefined;
 }
 
+const mcpRequestQuotaConfig = Config.all({
+  hourLimit: Config.integer("MCP_REQUESTS_PER_HOUR").pipe(
+    Config.validate({
+      message: "MCP_REQUESTS_PER_HOUR must be a positive safe integer",
+      validation: (value) => Number.isSafeInteger(value) && value > 0,
+    }),
+  ),
+  minuteLimit: Config.integer("MCP_REQUESTS_PER_MINUTE").pipe(
+    Config.validate({
+      message: "MCP_REQUESTS_PER_MINUTE must be a positive safe integer",
+      validation: (value) => Number.isSafeInteger(value) && value > 0,
+    }),
+  ),
+}).pipe(
+  Config.validate({
+    message: "MCP_REQUESTS_PER_HOUR must be at least MCP_REQUESTS_PER_MINUTE",
+    validation: ({ hourLimit, minuteLimit }) => hourLimit >= minuteLimit,
+  }),
+);
+
 const productionConfig = Config.all({
   environment: Config.literal(
     "development",
     "preview",
     "production",
   )("DEPLOYMENT_ENVIRONMENT"),
+  mcpRequestQuota: mcpRequestQuotaConfig,
 });
 
 const providerApprovedSessionCapacity = Config.integer(
@@ -1358,6 +1393,69 @@ const mcpAuthorizationPersistenceLayer = (environment: ApiEnvironment) =>
       }),
   });
 
+const mcpToolPersistenceLayer = (environment: ApiEnvironment) =>
+  Layer.succeed(McpToolPersistence, {
+    beginToolCall: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgMcpToolRepository(connectionString).beginToolCall(input);
+        },
+        catch: () => new McpToolPersistenceError(),
+      }),
+    completeToolCall: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgMcpToolRepository(connectionString).completeToolCall(
+            input,
+          );
+        },
+        catch: () => new McpToolPersistenceError(),
+      }),
+    inspectAuthorization: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgMcpToolRepository(connectionString).inspectAuthorization(
+            input,
+          );
+        },
+        catch: () => new McpToolPersistenceError(),
+      }),
+    listConnections: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgMcpToolRepository(connectionString).listConnections(
+            input,
+          );
+        },
+        catch: () => new McpToolPersistenceError(),
+      }),
+  });
+
+const mcpToolRuntimeLayer = Layer.mergeAll(
+  Layer.succeed(McpToolClock, {
+    now: Effect.sync(() => new Date()),
+  }),
+  Layer.succeed(McpToolIdentifiers, {
+    nextAuditLogId: Effect.sync(() => crypto.randomUUID()),
+  }),
+);
+
 const randomBase64Url = (): string => {
   const value = new Uint8Array(32);
   crypto.getRandomValues(value);
@@ -1564,6 +1662,8 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     mcpAuthorizationRuntimeLayer,
     webhookIngressPersistenceLayer(environment),
     webhookIngressCloudflareLayer(environment),
+    mcpToolPersistenceLayer(environment),
+    mcpToolRuntimeLayer,
   );
   const handler = createCanaryHandler(layer);
   const personalAccountHandler = createPersonalAccountHandler(
@@ -1587,16 +1687,24 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
   const oauthConfiguration = Effect.runPromise(
     loadOAuthConfiguration(environment as unknown as Record<string, unknown>),
   );
+  const mcpRequestQuota = Effect.runPromise(
+    mcpRequestQuotaConfig.pipe(
+      Effect.withConfigProvider(environmentConfigProvider(environment)),
+    ),
+  );
 
   return async (
     request: Request,
     context?: ExecutionContext,
   ): Promise<Response> => {
     try {
-      const configuration = await oauthConfiguration;
       if (isWebhookIngressRequest(request)) {
         return webhookIngressHandler(request);
       }
+      const [configuration, requestQuota] = await Promise.all([
+        oauthConfiguration,
+        mcpRequestQuota,
+      ]);
       const consentHandler = createMcpAuthorizationConsentHandler({
         browserOrigin: environment.CLERK_AUTHORIZED_PARTY ?? "",
         configuration,
@@ -1613,7 +1721,31 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
         nextEnvironment: Parameters<
           Parameters<typeof createOAuthHandler>[0]["applicationHandler"]
         >[1],
+        nextContext: ExecutionContext,
       ): Promise<Response> => {
+        if (
+          nextRequest.method === "POST" &&
+          new URL(nextRequest.url).pathname === "/mcp"
+        ) {
+          const authorization = accessAuthorizationFrom(nextContext);
+          if (authorization === null) {
+            return new Response(JSON.stringify({ error: "invalid_token" }), {
+              headers: {
+                "cache-control": "no-store",
+                "content-type": "application/json; charset=utf-8",
+                "www-authenticate": 'Bearer error="invalid_token"',
+              },
+              status: 401,
+            });
+          }
+          return createMcpRequestHandler({
+            browserOrigin: environment.CLERK_AUTHORIZED_PARTY ?? "",
+            hourLimit: requestQuota.hourLimit,
+            layer,
+            minuteLimit: requestQuota.minuteLimit,
+            resourceUrl: configuration.resource,
+          })(nextRequest, nextEnvironment, nextContext, authorization);
+        }
         if (
           isMcpAuthorizationConsentRequest(nextRequest) &&
           nextEnvironment.OAUTH_PROVIDER

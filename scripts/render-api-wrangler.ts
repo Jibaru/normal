@@ -101,6 +101,18 @@ const requireProviderApprovedSessionCapacity = (): string => {
   return String(capacity);
 };
 
+const requirePositiveInteger = (name: string): number => {
+  const value = process.env[name];
+  if (!value || !/^[0-9]+$/u.test(value)) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new Error(`${name} must be a positive safe integer`);
+  }
+  return parsed;
+};
+
 const sourcePath = resolve(import.meta.dir, "../apps/api/wrangler.jsonc");
 const outputPath = resolve(process.cwd(), outputArgument);
 const config = JSON.parse(await readFile(sourcePath, "utf8")) as Record<
@@ -110,10 +122,19 @@ const config = JSON.parse(await readFile(sourcePath, "utf8")) as Record<
 const oauthKvNamespaceId = requireIdentifier("CLOUDFLARE_OAUTH_KV_ID");
 const oauthKvPlaceholder = "replace-with-rendered-oauth-kv-id";
 const oauthIssuer = requireHttpsOrigin("OAUTH_ISSUER");
+const mcpRequestsPerMinute = requirePositiveInteger("MCP_REQUESTS_PER_MINUTE");
+const mcpRequestsPerHour = requirePositiveInteger("MCP_REQUESTS_PER_HOUR");
+if (mcpRequestsPerHour < mcpRequestsPerMinute) {
+  throw new Error(
+    "MCP_REQUESTS_PER_HOUR must be at least MCP_REQUESTS_PER_MINUTE",
+  );
+}
 const apiVariables = {
   CLERK_API_AUDIENCE: requireHttpsOrigin("CLERK_API_AUDIENCE"),
   CLERK_AUTHORIZED_PARTY: requireHttpsOrigin("CLERK_AUTHORIZED_PARTY"),
   CLERK_ISSUER: requireHttpsOrigin("CLERK_ISSUER"),
+  MCP_REQUESTS_PER_HOUR: String(mcpRequestsPerHour),
+  MCP_REQUESTS_PER_MINUTE: String(mcpRequestsPerMinute),
   OAUTH_CLIENT_REGISTRY: requireOAuthClientRegistry(),
   OAUTH_ISSUER: oauthIssuer,
   OAUTH_RESOURCE: requireMcpResource(oauthIssuer),

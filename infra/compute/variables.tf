@@ -135,3 +135,26 @@ variable "provider_approved_session_capacity" {
     error_message = "provider_approved_session_capacity must be an integer of at least three."
   }
 }
+
+variable "mcp_requests_per_minute" {
+  description = "Approved authoritative MCP request reservations allowed in an exact rolling minute."
+  type        = number
+
+  validation {
+    condition     = var.mcp_requests_per_minute >= 1 && floor(var.mcp_requests_per_minute) == var.mcp_requests_per_minute
+    error_message = "mcp_requests_per_minute must be a positive integer."
+  }
+}
+
+variable "mcp_requests_per_hour" {
+  description = "Approved authoritative MCP request reservations allowed in an exact rolling hour."
+  type        = number
+
+  validation {
+    condition = (
+      var.mcp_requests_per_hour >= var.mcp_requests_per_minute &&
+      floor(var.mcp_requests_per_hour) == var.mcp_requests_per_hour
+    )
+    error_message = "mcp_requests_per_hour must be an integer at least as large as mcp_requests_per_minute."
+  }
+}

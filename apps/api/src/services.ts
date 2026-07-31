@@ -216,6 +216,19 @@ export interface McpAuthorizationManagementCompletedEvent {
   readonly service: "api";
 }
 
+export interface McpToolCallCompletedEvent {
+  readonly event: "mcp.tool_call.completed";
+  readonly outcome:
+    | "audit_unavailable"
+    | "authorization_denied"
+    | "rate_limited"
+    | "service_unavailable"
+    | "success";
+  readonly resultCount?: number | undefined;
+  readonly service: "api";
+  readonly tool: "list_connections";
+}
+
 export interface SafeTelemetry {
   readonly emit: (event: SafeTelemetryEvent) => Effect.Effect<void>;
 }
@@ -231,6 +244,7 @@ export type SafeTelemetryEvent =
   | ConnectionSetupStartCompletedEvent
   | HttpCompletedEvent
   | McpAuthorizationManagementCompletedEvent
+  | McpToolCallCompletedEvent
   | OAuthAuthorizationDecisionCompletedEvent
   | OAuthAuthorizationRequestCompletedEvent
   | OAuthProtocolRequestFailedEvent

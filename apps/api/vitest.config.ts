@@ -32,6 +32,8 @@ export default defineConfig({
           OAUTH_PROTOCOL_ENCRYPTION_KEY:
             "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
           OAUTH_RESOURCE: "https://api.example.test/mcp",
+          MCP_REQUESTS_PER_HOUR: "600",
+          MCP_REQUESTS_PER_MINUTE: "60",
           PROVIDER_APPROVED_SESSION_CAPACITY: "3",
           WEBHOOK_HYPERDRIVE: {
             connectionString:
