@@ -148,7 +148,10 @@ narrow fixed-search-path bootstrap functions to `whatsapp_api_runtime`.
 
 Migration 0009 adds an ADR 0023 `mca_` management handle and the consent-time
 MCP Client display name. Historical rows without a stored display name safely
-fall back to their public OAuth client ID. The signed-in product reads
+fall back to their public OAuth client ID. A narrow fixed-search-path bootstrap,
+executable only by `whatsapp_api_runtime`, preserves the Neon authority check
+for access tokens issued before OAuth props included the client ID; newly
+issued tokens retain the stricter client binding. The signed-in product reads
 `GET /v1/mcp-authorizations` and idempotently revokes one owned grant with
 `DELETE /v1/mcp-authorizations/{authorization_id}`. Responses contain only the
 management handle, MCP Client ID and name, selected Connection handles, scopes,

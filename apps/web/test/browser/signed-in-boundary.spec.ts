@@ -197,6 +197,65 @@ test("waitlists a signed-in User when private-beta capacity is exhausted", async
   );
 });
 
+test("keeps the Personal Account usable when MCP Authorization listing is unavailable", async ({
+  page,
+  request,
+}) => {
+  await page.route("https://api.example.test/**", async (route) => {
+    const original = route.request();
+    if (
+      new URL(original.url()).pathname === "/v1/mcp-authorizations" &&
+      original.method() === "GET"
+    ) {
+      await route.fulfill({
+        body: "temporarily unavailable",
+        contentType: "text/plain",
+        status: 503,
+      });
+      return;
+    }
+    const localUrl = new URL(original.url());
+    localUrl.protocol = "http:";
+    localUrl.hostname = "127.0.0.1";
+    localUrl.port = "8787";
+    const response = await request.fetch(localUrl.toString(), {
+      data: original.postDataBuffer(),
+      headers: original.headers(),
+      method: original.method(),
+    });
+    await route.fulfill({
+      body: await response.body(),
+      headers: response.headers(),
+      status: response.status(),
+    });
+  });
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "Clerk", {
+      configurable: false,
+      value: {
+        loaded: true,
+        session: {
+          getToken: async () => "signed-test-user",
+        },
+      },
+      writable: false,
+    });
+  });
+  await page.goto("/");
+
+  await page
+    .getByRole("button", { name: "Bootstrap Personal Account" })
+    .click();
+
+  await expect(page.getByTestId("api-boundary-status")).toHaveText(
+    "Personal Account ready",
+  );
+  await expect(
+    page.getByText("MCP Authorizations are temporarily unavailable."),
+  ).toBeVisible();
+  await expect(page.getByLabel("WhatsApp Number")).toBeVisible();
+});
+
 test("recovers when the external identity token lookup fails", async ({
   page,
 }) => {

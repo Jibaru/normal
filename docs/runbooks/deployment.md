@@ -287,7 +287,8 @@ migration—add a new forward migration. Migration 0007 contains the
 RLS-protected refresh-credential hash ledger and its least-privilege API-role
 functions. Migration 0009 adds product-safe MCP Authorization management
 metadata using the API role's existing RLS-protected `SELECT` and `UPDATE`
-authority; it adds no secret, Cloudflare binding, or infrastructure authority.
+authority plus execute access to one narrow fixed-search-path compatibility
+bootstrap; it adds no secret, Cloudflare binding, or infrastructure authority.
 Apply all pending migrations immediately before the matching API Worker
 version. The previous Worker and the new Worker intentionally fail readiness
 on the other's exact schema version, so complete this step as one controlled

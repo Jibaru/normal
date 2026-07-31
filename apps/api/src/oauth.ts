@@ -65,7 +65,7 @@ interface OAuthHandlerOptions {
   readonly environment: OAuthEnvironment;
   readonly isAuthorizationActive: (input: {
     readonly authorizationId: string;
-    readonly clientId: string;
+    readonly clientId?: string | undefined;
     readonly oauthSubject: string;
   }) => Promise<boolean>;
   readonly now?: (() => Date) | undefined;
@@ -767,7 +767,7 @@ const accessAuthorizationFrom = (
   context: ExecutionContext,
 ): {
   readonly authorizationId: string;
-  readonly clientId: string;
+  readonly clientId?: string | undefined;
   readonly oauthSubject: string;
 } | null => {
   const props = (context as ExecutionContext & { readonly props?: unknown })
@@ -776,16 +776,17 @@ const accessAuthorizationFrom = (
     return null;
   }
   const value = props as Record<string, unknown>;
+  const clientId = value.clientId;
   return typeof value.authorizationId === "string" &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
       value.authorizationId,
     ) &&
-    typeof value.clientId === "string" &&
+    (clientId === undefined || typeof clientId === "string") &&
     typeof value.oauthSubject === "string" &&
     /^[A-Za-z0-9_-]{43}$/.test(value.oauthSubject)
     ? {
         authorizationId: value.authorizationId,
-        clientId: value.clientId,
+        ...(clientId === undefined ? {} : { clientId }),
         oauthSubject: value.oauthSubject,
       }
     : null;
@@ -883,14 +884,14 @@ export const createOAuthHandler = (
         !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
           authorizationId,
         ) ||
-        typeof clientId !== "string" ||
-        clientId !== exchange.clientId ||
+        (clientId !== undefined &&
+          (typeof clientId !== "string" || clientId !== exchange.clientId)) ||
         typeof oauthSubject !== "string" ||
         !/^[A-Za-z0-9_-]{43}$/.test(oauthSubject) ||
         exchange.userId !== oauthSubject ||
         !(await options.isAuthorizationActive({
           authorizationId,
-          clientId,
+          clientId: exchange.clientId,
           oauthSubject,
         }))
       ) {
@@ -900,7 +901,10 @@ export const createOAuthHandler = (
       }
       const tokenProperties = {
         accessTokenTTL: 10 * 60,
-        accessTokenProps: props,
+        accessTokenProps: {
+          ...props,
+          clientId: exchange.clientId,
+        },
       };
       return exchange.grantType === "authorization_code"
         ? {

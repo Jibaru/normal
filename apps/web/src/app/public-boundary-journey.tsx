@@ -228,19 +228,24 @@ export function PublicBoundaryJourney({
       }
       setState("ok");
       setAuthorizationState("loading");
-      const authorizationsResponse = await fetch(mcpAuthorizationsEndpoint, {
-        headers: {
-          authorization: `Bearer ${token}`,
-        },
-      });
-      const authorizationsBody = await authorizationsResponse.json();
-      const decodedAuthorizations = decodeMcpAuthorizations(authorizationsBody);
-      if (!authorizationsResponse.ok || decodedAuthorizations === null) {
+      try {
+        const authorizationsResponse = await fetch(mcpAuthorizationsEndpoint, {
+          headers: {
+            authorization: `Bearer ${token}`,
+          },
+        });
+        const authorizationsBody = await authorizationsResponse.json();
+        const decodedAuthorizations =
+          decodeMcpAuthorizations(authorizationsBody);
+        if (!authorizationsResponse.ok || decodedAuthorizations === null) {
+          setAuthorizationState("unavailable");
+          return;
+        }
+        setAuthorizations(decodedAuthorizations);
+        setAuthorizationState("ok");
+      } catch {
         setAuthorizationState("unavailable");
-        return;
       }
-      setAuthorizations(decodedAuthorizations);
-      setAuthorizationState("ok");
     } catch {
       setState("unavailable");
       setAuthorizationState("unavailable");

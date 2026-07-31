@@ -46,7 +46,7 @@ export interface McpAuthorizationPersistenceService {
   }) => Effect.Effect<boolean, McpAuthorizationPersistenceError>;
   readonly isActive: (input: {
     readonly authorizationId: string;
-    readonly clientId: string;
+    readonly clientId?: string | undefined;
     readonly observedAt: Date;
     readonly oauthSubject: string;
   }) => Effect.Effect<boolean, McpAuthorizationPersistenceError>;

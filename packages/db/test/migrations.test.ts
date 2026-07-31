@@ -443,6 +443,7 @@ describe("production migrations", () => {
         AND proname IN (
           'bootstrap_personal_account_for_clerk',
           'bootstrap_whatsapp_connection_for_ingress',
+          'bootstrap_mcp_access_authorization',
           'bootstrap_mcp_authorization',
           'bootstrap_mcp_refresh_authorization',
           'bootstrap_mcp_refresh_credential',
@@ -455,6 +456,11 @@ describe("production migrations", () => {
       {
         config: ["search_path=pg_catalog, pg_temp"],
         proname: "admit_personal_account_for_clerk",
+        prosecdef: true,
+      },
+      {
+        config: ["search_path=pg_catalog, pg_temp"],
+        proname: "bootstrap_mcp_access_authorization",
         prosecdef: true,
       },
       {
@@ -550,6 +556,14 @@ describe("production migrations", () => {
       await expect(
         database.query(
           "SELECT credential_hash FROM app.mcp_refresh_credentials",
+        ),
+      ).rejects.toThrow();
+      await expect(
+        database.query(
+          `SELECT app_private.bootstrap_mcp_access_authorization(
+            $1, $2, transaction_timestamp()
+          )`,
+          ["40000000-0000-4000-8000-000000000001", "A".repeat(43)],
         ),
       ).rejects.toThrow();
       await expect(

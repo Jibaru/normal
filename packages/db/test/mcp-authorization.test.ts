@@ -167,6 +167,13 @@ describe("MCP Authorization repository", () => {
     expect(listed?.[0]?.authorizationId).toMatch(/^mca_[A-Za-z0-9_-]{21}$/u);
     expect(listed?.[0]).not.toHaveProperty("oauthSubject");
     expect(listed?.[0]).not.toHaveProperty("credentialHash");
+    expect(
+      await repository.isActive({
+        authorizationId,
+        observedAt: new Date("2026-08-01T12:00:00.000Z"),
+        oauthSubject,
+      }),
+    ).toBe(true);
 
     const publicAuthorizationId = listed?.[0]?.authorizationId;
     if (publicAuthorizationId === undefined) {

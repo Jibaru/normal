@@ -214,7 +214,15 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
       connectionIds: [connectionId],
       scopes: ["messages:send"],
     });
-    expect(harness.completed).toHaveLength(1);
+    expect(harness.completed).toEqual([
+      expect.objectContaining({
+        props: {
+          authorizationId: "40000000-0000-4000-8000-000000000027",
+          clientId: "approved-client",
+          oauthSubject: "B".repeat(43),
+        },
+      }),
+    ]);
   });
 
   test("does not persist authority when OAuth grant completion fails", async () => {
@@ -422,9 +430,22 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
               }),
             );
           }
-          return environment.OAUTH_PROVIDER
-            ? consent(request, environment.OAUTH_PROVIDER)
-            : Promise.resolve(new Response(null, { status: 503 }));
+          if (!environment.OAUTH_PROVIDER) {
+            return Promise.resolve(new Response(null, { status: 503 }));
+          }
+          const legacyHelpers = {
+            completeAuthorization: (
+              input: Parameters<OAuthHelpers["completeAuthorization"]>[0],
+            ) => {
+              const props = input.props as Record<string, unknown>;
+              const { clientId: _clientId, ...legacyProps } = props;
+              return environment.OAUTH_PROVIDER?.completeAuthorization({
+                ...input,
+                props: legacyProps,
+              }) as ReturnType<OAuthHelpers["completeAuthorization"]>;
+            },
+          } as OAuthHelpers;
+          return consent(request, legacyHelpers);
         },
         configuration,
         environment: {
@@ -576,12 +597,24 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
     });
     const rotated = (await rotatedResponse?.json()) as Record<string, unknown>;
     expect(rotated).toMatchObject({
+      access_token: expect.any(String),
       expires_in: 600,
       resource: "https://api.example.test/mcp",
       scope: "connections:read",
     });
     expect(rotated.refresh_token).toEqual(expect.any(String));
     expect(rotated.refresh_token).not.toBe(token.refresh_token);
+    const rotatedAccess = await oauth(
+      new Request("https://api.example.test/mcp", {
+        headers: {
+          authorization: `Bearer ${String(rotated.access_token)}`,
+          "content-type": "application/json",
+        },
+        method: "POST",
+      }),
+      context,
+    );
+    expect(rotatedAccess.status).toBe(200);
     expect(familyRevoked).toBe(true);
 
     const replayResponse = await oauth(refreshRequest(), context);

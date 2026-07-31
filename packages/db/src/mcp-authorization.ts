@@ -49,7 +49,7 @@ export interface McpAuthorizationRepository {
   readonly create: (input: CreateMcpAuthorizationInput) => Promise<boolean>;
   readonly isActive: (input: {
     readonly authorizationId: string;
-    readonly clientId: string;
+    readonly clientId?: string | undefined;
     readonly observedAt: Date;
     readonly oauthSubject: string;
   }) => Promise<boolean>;
@@ -194,14 +194,20 @@ export const makeMcpAuthorizationRepository = (
         const context = await connection.query<{
           personal_account_id: string | null;
         }>(
-          `SELECT app_private.bootstrap_mcp_authorization($1, $2, $3, $4)
-             AS personal_account_id`,
-          [
-            input.authorizationId,
-            input.oauthSubject,
-            input.clientId,
-            input.observedAt,
-          ],
+          input.clientId === undefined
+            ? `SELECT app_private.bootstrap_mcp_access_authorization(
+                 $1, $2, $3
+               ) AS personal_account_id`
+            : `SELECT app_private.bootstrap_mcp_authorization($1, $2, $3, $4)
+                 AS personal_account_id`,
+          input.clientId === undefined
+            ? [input.authorizationId, input.oauthSubject, input.observedAt]
+            : [
+                input.authorizationId,
+                input.oauthSubject,
+                input.clientId,
+                input.observedAt,
+              ],
         );
         const personalAccountId = context.rows[0]?.personal_account_id;
         if (typeof personalAccountId !== "string") return false;
@@ -214,13 +220,13 @@ export const makeMcpAuthorizationRepository = (
            FROM app.mcp_authorizations
            WHERE id = $1
              AND oauth_subject = $2
-             AND client_id = $3
+             AND ($3::text IS NULL OR client_id = $3)
              AND state = 'active'
              AND absolute_expires_at > $4`,
           [
             input.authorizationId,
             input.oauthSubject,
-            input.clientId,
+            input.clientId ?? null,
             input.observedAt,
           ],
         );
