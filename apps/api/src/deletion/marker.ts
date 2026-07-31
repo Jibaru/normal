@@ -206,6 +206,7 @@ export const makeDeletionMarkerStore = ({
     Effect.tryPromise({
       try: async () => {
         const markers: DeletionMarkerReference[] = [];
+        const seenCursors = new Set<string>();
         let cursor: string | undefined;
         do {
           const page = await bucket.list({ cursor, prefix: markerPrefix });
@@ -219,8 +220,11 @@ export const makeDeletionMarkerStore = ({
               objectKey: object.key,
             });
           }
-          if (page.truncated && !page.cursor) {
-            throw operationError("enumerate-markers");
+          if (page.truncated) {
+            if (!page.cursor || seenCursors.has(page.cursor)) {
+              throw operationError("enumerate-markers");
+            }
+            seenCursors.add(page.cursor);
           }
           cursor = page.truncated ? page.cursor : undefined;
         } while (cursor);

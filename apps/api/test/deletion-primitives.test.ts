@@ -227,6 +227,33 @@ describe("restore-safe deletion markers", () => {
     ).toBe(true);
   });
 
+  test("fails closed when restore enumeration repeats a truncated page cursor", async () => {
+    const storage = makeBucket();
+    const markers = makeDeletionMarkerStore({
+      bucket: {
+        ...storage.bucket,
+        list: () =>
+          Promise.resolve({
+            cursor: "repeated-cursor",
+            objects: [],
+            truncated: true,
+          }),
+      },
+      environment: "production",
+      hmacSecret: markerSecret,
+    });
+
+    const result = await Effect.runPromise(Effect.either(markers.enumerate()));
+
+    expect(result).toMatchObject({
+      _tag: "Left",
+      left: {
+        _tag: "DeletionPrimitiveError",
+        operation: "enumerate-markers",
+      },
+    });
+  });
+
   test("rejects a restore marker with any extra identity field", async () => {
     const storage = makeBucket();
     storage.objects.set(`markers/v1/${"d".repeat(64)}.json`, {

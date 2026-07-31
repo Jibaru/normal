@@ -120,10 +120,10 @@ API Worker/custom domain, one private provider-control Worker, disabled
 `workers.dev` and preview URLs for both Workers, and an API-to-provider-control
 service binding. It must also contain four private R2 buckets with disabled
 managed domains, the seven-day Webhook Event lifecycle, the isolated Deletion
-Capsule bucket, the indefinite deletion-marker lock, one OAuth KV namespace, an
-ingestion Queue and active DLQ, the two Queue consumers, and the three API
-schedules. Provider-control must have no R2, KV, or Queue binding. Apply the
-reviewed plan:
+Capsule bucket with destroy protection, the indefinite deletion-marker lock,
+one OAuth KV namespace, an ingestion Queue and active DLQ, the two Queue
+consumers, and the three API schedules. Provider-control must have no R2, KV, or
+Queue binding. Apply the reviewed plan:
 
 ```sh
 tofu -chdir=infra/compute apply "$DEPLOYMENT_ENVIRONMENT.tfplan"
@@ -419,7 +419,10 @@ migration command before deploying application traffic.
 Do not destroy, unlock, rename, or remove the deletion-marker bucket during a
 rollback or environment teardown. Its OpenTofu resource deliberately has
 `prevent_destroy`, and its indefinite lock is the restore-external deletion
-authority. Retire other environment resources only after Queue drain and
+authority. The Deletion Capsule bucket also has `prevent_destroy`; retain it
+through rollback, and remove that safeguard only in a separately reviewed
+environment teardown after the coordinator has confirmed that no capsule
+remains. Retire other environment resources only after Queue drain and
 retention cleanup; retain the marker bucket and its isolated encrypted state
 under the production recovery authority.
 

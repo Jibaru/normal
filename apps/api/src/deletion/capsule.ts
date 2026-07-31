@@ -55,7 +55,15 @@ export interface DeletionCapsuleWriter {
   readonly create: DeletionCapsuleStore["create"];
 }
 
-type DeletionCapsuleWriteBucket = Pick<DeletionObjectBucket, "get" | "put">;
+export type DeletionCapsuleWriteBucket = Pick<
+  DeletionObjectBucket,
+  "get" | "put"
+>;
+
+type DeletionCapsuleCoordinatorStore = Pick<
+  DeletionCapsuleStore,
+  "destroy" | "read"
+>;
 
 const operationError = (
   operation:
@@ -395,7 +403,7 @@ export const makeDeletionCapsuleCoordinator = ({
   kmsReader,
   reconcileProviderAbsence,
 }: {
-  readonly capsuleStore: DeletionCapsuleStore;
+  readonly capsuleStore: DeletionCapsuleCoordinatorStore;
   readonly kmsReader: DeletionCapsuleKmsReader;
   readonly reconcileProviderAbsence: (
     identifiers: ProviderCleanupIdentifiers,

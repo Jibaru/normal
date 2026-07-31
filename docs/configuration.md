@@ -148,8 +148,9 @@ retention jobs own object deletion, while incomplete multipart uploads still
 abort after one day. Encrypted Deletion Capsules have no age-based deletion
 rule: only confirmed provider absence permits the deletion coordinator to
 destroy one, and an overdue capsule must alert rather than silently lose the
-cleanup identifier. Deletion markers cover every object path with an indefinite
-bucket lock and the bucket is protected from OpenTofu destroy. All four buckets
+cleanup identifier. The capsule bucket is protected from OpenTofu destroy.
+Deletion markers cover every object path with an indefinite bucket lock and the
+marker bucket is also protected from OpenTofu destroy. All four buckets
 explicitly disable the public `r2.dev` managed domain and declare no custom
 domain or CORS exposure.
 

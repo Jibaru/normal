@@ -55,6 +55,10 @@ resource "cloudflare_r2_bucket" "deletion_capsules" {
   account_id    = var.cloudflare_account_id
   name          = local.deletion_capsules_bucket_name
   storage_class = "Standard"
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "cloudflare_r2_bucket_lifecycle" "stored_media" {

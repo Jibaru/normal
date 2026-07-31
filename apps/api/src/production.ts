@@ -2,7 +2,10 @@ import { KMSClient } from "@aws-sdk/client-kms";
 import { checkDatabaseReadiness } from "@whatsapp-mcp/db/connectivity";
 import { Config, ConfigProvider, Data, Effect, Layer, Redacted } from "effect";
 import { createCanaryHandler } from "./canary";
-import { makeDeletionCapsuleWriter } from "./deletion/capsule";
+import {
+  type DeletionCapsuleWriteBucket,
+  makeDeletionCapsuleWriter,
+} from "./deletion/capsule";
 import {
   type DeletionMarkerBucket,
   makeDeletionMarkerStore,
@@ -225,7 +228,7 @@ const deletionLayer = (environment: ApiEnvironment) =>
         });
         return {
           capsules: makeDeletionCapsuleWriter({
-            bucket: environment.DELETION_CAPSULES as DeletionMarkerBucket,
+            bucket: environment.DELETION_CAPSULES as DeletionCapsuleWriteBucket,
             environment: application.environment,
             keyId: kms.deletionCoordinatorKeyArn,
             kmsWriter: makeAwsDeletionCapsuleKmsWriter(client),
