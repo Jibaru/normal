@@ -7,7 +7,7 @@
     "build": "CLOUDFLARE_HYPERDRIVE_ID=00000000000000000000000000000000 CLOUDFLARE_OAUTH_KV_ID=22222222222222222222222222222222 CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID=11111111111111111111111111111111 bun ../../scripts/render-api-wrangler.ts .wrangler/build.jsonc production && CI=true wrangler deploy --dry-run --config .wrangler/build.jsonc --env '' --outdir dist",
     "dev": "wrangler dev",
     "lint": "biome check .",
-    "test": "vitest run",
+    "test": "vitest run --exclude test/public-boundary-runtime.test.ts && vitest run --config vitest.public-boundary.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

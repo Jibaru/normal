@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import {
+  isDeploymentEnvironment,
+  parseApiOrigin,
+} from "../src/effect/api-origin";
 import { createProductionHealthRoute } from "../src/effect/production";
 
 describe("web production root", () => {
@@ -38,5 +42,14 @@ describe("web production root", () => {
     })();
 
     expect(response.status).toBe(200);
+  });
+
+  test("shares validated browser configuration with the product UI", () => {
+    expect(parseApiOrigin("https://api.example.com")?.origin).toBe(
+      "https://api.example.com",
+    );
+    expect(parseApiOrigin("https://api.example.com/path")).toBeNull();
+    expect(isDeploymentEnvironment("production")).toBe(true);
+    expect(isDeploymentEnvironment("test")).toBe(false);
   });
 });

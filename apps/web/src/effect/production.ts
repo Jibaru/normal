@@ -1,4 +1,5 @@
 import { Config, ConfigProvider, Data, Effect, Layer } from "effect";
+import { parseApiOrigin } from "./api-origin";
 import { createHealthRoute } from "./canary";
 import {
   ApplicationConfig,
@@ -22,29 +23,21 @@ const productionConfig = Config.all({
 
 class InvalidApiOrigin extends Data.TaggedError("InvalidApiOrigin") {}
 
-const parseApiOrigin = (value: string) =>
-  Effect.try({
-    try: () => new URL(value),
-    catch: () => new InvalidApiOrigin(),
-  }).pipe(
-    Effect.filterOrFail(
-      (url) =>
-        url.protocol === "https:" &&
-        url.username === "" &&
-        url.password === "" &&
-        url.pathname === "/" &&
-        url.search === "" &&
-        url.hash === "",
-      () => new InvalidApiOrigin(),
-    ),
-  );
+const validatedApiOrigin = (
+  value: string,
+): Effect.Effect<URL, InvalidApiOrigin> => {
+  const url = parseApiOrigin(value);
+  return url === null
+    ? Effect.fail(new InvalidApiOrigin())
+    : Effect.succeed(url);
+};
 
 const configLayer = (environment: WebEnvironment) =>
   Layer.effect(
     ApplicationConfig,
     productionConfig.pipe(
       Effect.flatMap(({ apiOrigin, environment }) =>
-        parseApiOrigin(apiOrigin).pipe(
+        validatedApiOrigin(apiOrigin).pipe(
           Effect.map((validatedApiOrigin) => ({
             apiOrigin: validatedApiOrigin,
             environment,

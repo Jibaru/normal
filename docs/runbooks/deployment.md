@@ -71,6 +71,7 @@ database passwords and must receive the same protections.
 
 ```sh
 bun install --frozen-lockfile
+bun x playwright install --with-deps chromium
 bun run format:check
 bun run lint
 bun run typecheck
@@ -82,11 +83,16 @@ bun run infra:validate
 ```
 
 `bun run build` performs Wrangler dry-run production bundles for both Workers,
-builds the Next.js application, and rejects any production output containing
-the test Layer marker. Manifest validation dry-runs development, preview, and
-production. Infrastructure validation checks formatting and provider schemas,
-then runs mocked OpenTofu plans for all environments. Mock providers exist only
-in `topology.tftest.hcl`; no production input can select them.
+builds the Next.js application, and rejects any production server or browser
+output containing a test Layer, controlled credential, or fault injector.
+`bun run test` includes the production-built Playwright browser-to-API journey,
+the Cloudflare fetch, OAuth/MCP, protected-resource, binding, Queue, and
+scheduled-handler harnesses, and the production-migration restricted-role
+checks described in `docs/testing.md`.
+Manifest validation dry-runs development, preview, and production.
+Infrastructure validation checks formatting and provider schemas, then runs
+mocked OpenTofu plans for all environments. Mock providers exist only in
+`topology.tftest.hcl`; no production input can select them.
 
 ## Plan and apply
 
