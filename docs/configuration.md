@@ -36,6 +36,32 @@ origin with no credentials, path, query, or fragment. The Vercel manifest has
 no rewrite or proxy to the API. Browser data-plane requests therefore go
 directly to the API Worker.
 
+## Wasender text-send authority
+
+Text sending does not add an account-level Provider API Credential, endpoint
+override, public route, service binding, or infrastructure secret. The
+production adapter always calls
+`https://www.wasenderapi.com/api/send-message` over the Worker's existing
+outbound HTTPS capability, rejects redirects, and cannot select a test
+transport at runtime. This zero-binding infrastructure delta keeps ordinary
+connection operations outside provider-control and preserves ADR 0004's
+least-privilege split.
+
+The adapter is composed per WhatsApp Connection with two values already
+protected by the connection's encryption boundary: its session-specific
+authority and a 32-byte connection-scoped identity-protection key. It fails
+closed when the authority contains control characters or is empty, when the
+key is not exactly 32 bytes, or when the domain resolver cannot supply the
+encrypted provider identity for the selected Directory recipient. These are
+runtime connection records, not deployment environment variables, so they do
+not belong in `.dev.vars`, Wrangler bindings, OpenTofu state, or operator
+configuration.
+
+Text-send telemetry is mandatory at composition and is limited to operation
+class, normalized outcome, attempt count, duration, and bounded response-byte
+count. It must not include text, phone numbers, recipient or message tokens,
+session authority, raw response data, URLs, or provider status values.
+
 ## Infrastructure inputs
 
 `infra/compute` represents exactly one deployment environment and remote state.

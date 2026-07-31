@@ -11,8 +11,10 @@ Effect capabilities:
 - `WebhookNormalization` turns one authenticated delivery into independently
   processable provider-neutral items.
 
-Production implementations arrive in issues 12 through 16. This contract does
-not add network access, configuration, credentials, or a selectable fake.
+Production implementations arrive in issues 12 through 16. The text-send
+implementation is available through `makeWasenderTextSendingLayer`; it fixes
+the provider endpoint and platform transport in production and exposes no
+runtime provider or fake selection.
 The production lifecycle Layer will close over the account-level Provider API
 Credential, which is never a capability input or output. Newly provisioned
 per-session authority is returned only as a log-safe `Redacted` value so the
@@ -64,6 +66,16 @@ limit; the implementation counts streamed bytes rather than trusting
 
 The seam deliberately provides no message-information polling capability:
 `get_send_status` is a local domain read and never invokes the provider.
+
+The text-send adapter posts the domain-resolved provider identity and exact
+validated text to Wasender once. The documented `in_progress` direct response
+is only provider acknowledgement: its numeric `msgId` is not the stable
+WhatsApp message identity shared with webhook evidence. Identity-bearing
+evidence requires an outbound `key.id` bound to the exact resolved recipient;
+the adapter returns only a connection-keyed HMAC of that identifier. A
+timeout, lost connection, `408`, `5xx`, oversized or malformed response, or
+unverifiable identity is ambiguous and is never retried. Complete
+authentication, recipient, provider, and throttling rejections are definitive.
 
 Adapter telemetry may contain only the operation class, normalized outcome,
 attempt count, duration, and bounded byte counts. It never contains capability

@@ -16,9 +16,12 @@
 - Short-lived `NEON_API_KEY`, `CLOUDFLARE_API_TOKEN`, `VERCEL_API_TOKEN`, and
   AWS credentials for exactly the environment being changed
 
-No Clerk tenant or Wasender account is required for this foundation. The API
-does require its environment-specific AWS KMS stack and short-lived
-`ContentRuntimeRole` credentials before it becomes healthy.
+No Clerk tenant or Wasender account is required for the current health checks.
+Exercising the real text-send adapter additionally requires an approved
+Wasender account, a connected operator-owned WhatsApp Connection with its
+session-specific authority, and a designated test recipient. The API requires
+its environment-specific AWS KMS stack and short-lived `ContentRuntimeRole`
+credentials before it becomes healthy.
 
 Production authority must not be available to development or preview jobs.
 Use a separate production Cloudflare account and Vercel team, and a separate
@@ -281,6 +284,23 @@ Verify provider-control through the API's service binding from an authenticated
 operator canary once that endpoint is introduced; do not enable `workers.dev`
 or preview URLs for provider-control.
 
+When the outbound-send public boundary is deployed, run its smoke check only
+with a dedicated operator-owned WhatsApp Connection and designated recipient.
+Confirm one provider attempt and a normalized operation receipt. The currently
+documented Wasender response with `status: "in_progress"` must converge only to
+`accepted`; do not treat numeric `msgId` as stable message identity. Confirm
+logs contain only the normalized outcome, attempt count, duration, and bounded
+response-byte count. The provider request and response references are the
+[send-text endpoint](https://www.wasenderapi.com/api-docs/messages/send-text-message)
+and [error response](https://www.wasenderapi.com/api-docs/responses-errors/error-responses)
+documentation; pause rollout on incompatible schema drift rather than adding a
+permissive parser or endpoint override.
+
+Alert on elevated ambiguous outcomes, timeouts, server errors, and malformed or
+oversized responses. Never replay an ambiguous Send Operation during an
+incident. Reconcile it only from authenticated webhook evidence carrying the
+same connection and HMAC-protected stable message identity.
+
 ## Rollback
 
 Vercel uses immutable deployment history. Worker rollback is a reviewed
@@ -292,6 +312,11 @@ OpenTofu apply of the last known-good commit:
 3. Roll back provider-control only after confirming that its API callers remain
    compatible.
 4. Repeat the health checks.
+
+If rollback overlaps a text-send timeout or interrupted response, retain the
+Send Operation as `unknown` and do not issue a replacement provider call. A
+rollback does not relax the single-attempt rule or turn a provider `msgId` into
+correlation evidence.
 
 Database migrations are forward-only. If application rollback would target a
 binary whose compiled schema version differs from production, it will fail

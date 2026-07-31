@@ -1,4 +1,4 @@
-import { Context, type Effect, type Stream } from "effect";
+import { Context, type Effect, type Redacted, type Stream } from "effect";
 import type {
   AdapterEffect,
   AdapterReference,
@@ -12,6 +12,7 @@ import {
   maximumMediaDownloadBytes,
   maximumRetryAfterMs,
 } from "./common";
+import type { SessionAuthority } from "./control";
 
 export type {
   AdapterFailureCode,
@@ -27,6 +28,20 @@ export type GroupLocator = AdapterReference<"GroupLocator">;
 export type MediaSource = ProtectedAdapterValue<"MediaSource">;
 export type StableMessageIdentity = AdapterReference<"StableMessageIdentity">;
 export type RecipientLocator = ContactLocator | GroupLocator;
+export type WasenderRecipientIdentity =
+  ProtectedAdapterValue<"WasenderRecipientIdentity">;
+
+declare const wasenderIdentityProtectionKey: unique symbol;
+
+/**
+ * Connection-scoped key used only to turn a verified provider message
+ * identity into a non-reversible equality token.
+ */
+export type WasenderIdentityProtectionKey = Redacted.Redacted<
+  Uint8Array & {
+    readonly [wasenderIdentityProtectionKey]: "WasenderIdentityProtectionKey";
+  }
+>;
 
 export interface DirectoryContact {
   readonly active: boolean;
@@ -124,6 +139,32 @@ export interface TextSending {
 export const TextSending = Context.GenericTag<TextSending>(
   "@whatsapp-mcp/wasender/TextSending",
 );
+
+export interface TextSendTelemetryEvent {
+  readonly attemptCount: 0 | 1;
+  readonly durationMs: number;
+  readonly operationClass: "text-send";
+  readonly outcome: TextSendResult["outcome"];
+  readonly responseBytes: number | null;
+}
+
+export interface TextSendTelemetry {
+  readonly emit: (event: TextSendTelemetryEvent) => void;
+}
+
+/**
+ * Per-connection production dependencies. The domain resolver unwraps only
+ * the encrypted provider identity belonging to the already-authorized
+ * Directory recipient; it returns no identity for any other locator.
+ */
+export interface WasenderTextSendingOptions {
+  readonly authority: SessionAuthority;
+  readonly identityKey: WasenderIdentityProtectionKey;
+  readonly resolveRecipient: (
+    recipient: RecipientLocator,
+  ) => WasenderRecipientIdentity | null;
+  readonly telemetry: TextSendTelemetry;
+}
 
 declare const mediaDownloadByteLimit: unique symbol;
 
@@ -229,3 +270,8 @@ export const guardedMediaDownloadPolicy = {
   operationClass: "media-download",
   reconciliation: "restart-from-byte-zero",
 } as const;
+
+export {
+  makeWasenderTextSending,
+  makeWasenderTextSendingLayer,
+} from "./text-send";
