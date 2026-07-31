@@ -256,16 +256,26 @@ const accept = (
       },
     });
     const authentication = yield* withZeroedBytes(authority, (authorityBytes) =>
-      authenticateWasenderWebhook({
-        authority: Redacted.make(
-          new TextDecoder("utf-8", {
-            fatal: true,
-            ignoreBOM: false,
-          }).decode(authorityBytes),
-        ),
-        payload,
-        signature,
-      }),
+      Effect.try({
+        try: () =>
+          Redacted.make(
+            new TextDecoder("utf-8", {
+              fatal: true,
+              ignoreBOM: false,
+            }).decode(authorityBytes),
+          ),
+        catch: () => undefined,
+      }).pipe(
+        Effect.matchEffect({
+          onFailure: () => Effect.succeed("invalid_authority" as const),
+          onSuccess: (decodedAuthority) =>
+            authenticateWasenderWebhook({
+              authority: decodedAuthority,
+              payload,
+              signature,
+            }),
+        }),
+      ),
     );
     if (authentication === "invalid_payload") return "invalid_payload" as const;
     if (authentication !== "authenticated") {

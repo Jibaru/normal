@@ -64,6 +64,7 @@ const ingressMaterial = {
 
 const makeHarness = (
   options: {
+    readonly authorityBytes?: Uint8Array;
     readonly persistenceUnavailable?: boolean;
     readonly queueUnavailable?: boolean;
     readonly storeUnavailable?: boolean;
@@ -130,7 +131,7 @@ const makeHarness = (
       createPersonalAccountKey: () => Effect.die("not used"),
       decrypt: ({ context }) =>
         context.fieldOrObjectPurpose === "provider-session-authority"
-          ? Effect.succeed(authority.slice())
+          ? Effect.succeed(options.authorityBytes?.slice() ?? authority.slice())
           : Effect.die("unexpected decryption"),
       encrypt: ({ context, plaintext }) =>
         Effect.sync(() => {
@@ -237,17 +238,19 @@ describe("authenticated Webhook Event ingress", () => {
     ]);
   });
 
-  test("rejects an unknown ingress, wrong secret, session mismatch, and malformed payload without writes", async () => {
+  test("rejects unknown ingress, invalid authentication material, session mismatch, and malformed payload without writes", async () => {
     const cases = [
       {
         harness: makeHarness({ unknownIngress: true }),
         request: request(),
+        status: 404,
       },
       {
         harness: makeHarness(),
         request: request(validPayload, {
           "x-webhook-signature": "wrong-secret",
         }),
+        status: 404,
       },
       {
         harness: makeHarness(),
@@ -259,16 +262,25 @@ describe("authenticated Webhook Event ingress", () => {
             }),
           ),
         ),
+        status: 404,
       },
       {
         harness: makeHarness(),
         request: request(encoder.encode("{")),
+        status: 400,
+      },
+      {
+        harness: makeHarness({
+          authorityBytes: new Uint8Array([0xff]),
+        }),
+        request: request(),
+        status: 404,
       },
     ];
 
     for (const testCase of cases) {
       const response = await testCase.harness.handler(testCase.request);
-      expect([400, 404]).toContain(response.status);
+      expect(response.status).toBe(testCase.status);
       expect(testCase.harness.calls).toEqual([]);
       expect(testCase.harness.objects).toEqual([]);
       expect(testCase.harness.queueMessages).toEqual([]);
