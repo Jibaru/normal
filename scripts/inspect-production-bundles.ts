@@ -1,11 +1,17 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
-const sentinel = "TEST_LAYER_SENTINEL_DO_NOT_INCLUDE_IN_PRODUCTION";
+const forbiddenMarkers = [
+  "TEST_LAYER_SENTINEL_DO_NOT_INCLUDE_IN_PRODUCTION",
+  "TEST_FAULT_INJECTOR_DO_NOT_INCLUDE_IN_PRODUCTION",
+  "signed-test-user",
+  "x-test-failure",
+] as const;
 const roots = [
   "apps/api/dist",
   "apps/provider-control/dist",
   "apps/web/.next/server",
+  "apps/web/.next/static",
 ];
 
 const inspect = async (path: string): Promise<void> => {
@@ -19,10 +25,12 @@ const inspect = async (path: string): Promise<void> => {
       continue;
     }
     const contents = await Bun.file(entryPath).text();
-    if (contents.includes(sentinel)) {
-      throw new Error(
-        `Test Layer marker found in production output: ${entryPath}`,
-      );
+    for (const marker of forbiddenMarkers) {
+      if (contents.includes(marker)) {
+        throw new Error(
+          `Test-only marker ${JSON.stringify(marker)} found in production output: ${entryPath}`,
+        );
+      }
     }
   }
 };
@@ -71,4 +79,6 @@ await Promise.all([
     "WEBHOOK_INGRESS",
   ]),
 ]);
-console.info("Production outputs contain no test Layer marker.");
+console.info(
+  "Production outputs contain no test Layers, fakes, or fault injectors.",
+);

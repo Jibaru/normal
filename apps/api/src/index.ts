@@ -1,7 +1,8 @@
 import type { ProviderControlService } from "@whatsapp-mcp/contracts/provider-control";
 import { createProductionHandler } from "./production";
+import { createWorker } from "./worker";
 
-interface Env {
+export interface Env {
   readonly AWS_ACCESS_KEY_ID: string;
   readonly AWS_KMS_REGION: string;
   readonly AWS_SECRET_ACCESS_KEY: string;
@@ -20,8 +21,6 @@ interface Env {
   readonly WEBHOOK_INGRESS: R2Bucket;
 }
 
-export default {
-  fetch(request, env) {
-    return createProductionHandler(env)(request);
-  },
-} satisfies ExportedHandler<Env>;
+export default createWorker<Env>({
+  fetch: (request, env) => createProductionHandler(env)(request),
+});

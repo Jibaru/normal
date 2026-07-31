@@ -21,6 +21,7 @@ jobs:
         with:
           tofu_version: 1.12.5
       - run: bun install --frozen-lockfile
+      - run: bun x playwright install --with-deps chromium
       - run: bun run format:check
       - run: bun run lint
       - run: bun run typecheck

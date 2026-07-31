@@ -1,0 +1,133 @@
+import type { Layer } from "effect";
+import {
+  type BoundaryClock,
+  type BoundaryIdentifiers,
+  type BoundaryIdentity,
+  type BoundaryProvider,
+  type BoundaryResource,
+  createPublicBoundaryHandler,
+} from "./public-boundary";
+import { createWorker } from "./worker";
+
+type BoundaryRequirements =
+  | BoundaryClock
+  | BoundaryIdentifiers
+  | BoundaryIdentity
+  | BoundaryProvider
+  | BoundaryResource;
+
+export interface PublicBoundaryEnvironment {
+  readonly INGESTION_QUEUE: Queue;
+  readonly OAUTH_KV: KVNamespace;
+  readonly PROVIDER_CONTROL: Fetcher;
+  readonly WEBHOOK_INGRESS: R2Bucket;
+}
+
+export interface PublicBoundaryWorkerOptions {
+  readonly browserOrigin: string;
+  readonly fallback: (
+    request: Request,
+    environment: PublicBoundaryEnvironment,
+  ) => Promise<Response>;
+  readonly layerFor: (request: Request) => Layer.Layer<BoundaryRequirements>;
+}
+
+const jsonResponse = (body: unknown, status = 200): Response =>
+  new Response(JSON.stringify(body), {
+    headers: {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+    },
+    status,
+  });
+
+const bindingResponse = async (
+  environment: PublicBoundaryEnvironment,
+): Promise<Response> => {
+  await environment.OAUTH_KV.put("public-boundary:kv", "stored");
+  await environment.WEBHOOK_INGRESS.put("public-boundary/r2", "stored");
+  await environment.INGESTION_QUEUE.send({
+    object_id: "evt_public_boundary",
+  });
+  const providerControl = await environment.PROVIDER_CONTROL.fetch(
+    "https://provider-control.internal/health",
+  );
+
+  return jsonResponse({
+    kv: "stored",
+    provider_control: providerControl.ok ? "ok" : "unavailable",
+    queue: "published",
+    r2: "stored",
+  });
+};
+
+/**
+ * Public Worker behavior exercised by the boundary suite. The test
+ * composition root supplies only external Effect services; HTTP dispatch,
+ * binding calls, Queue acknowledgement, and scheduled work remain here.
+ */
+export const createPublicBoundaryWorker = (
+  options: PublicBoundaryWorkerOptions,
+): ExportedHandler<PublicBoundaryEnvironment> =>
+  createWorker<PublicBoundaryEnvironment>({
+    async fetch(
+      request: Request,
+      environment: PublicBoundaryEnvironment,
+      _context: ExecutionContext,
+    ): Promise<Response> {
+      const path = new URL(request.url).pathname;
+
+      if (request.method === "GET" && path === "/test/bindings") {
+        return bindingResponse(environment);
+      }
+
+      if (
+        request.method === "OPTIONS" ||
+        (request.method === "GET" &&
+          (path === "/test/ready" ||
+            path === "/v1/personal-account" ||
+            path === "/oauth/authorize" ||
+            path === "/mcp/resources/protected")) ||
+        (request.method === "POST" && path === "/mcp")
+      ) {
+        return createPublicBoundaryHandler(
+          options.layerFor(request),
+          options.browserOrigin,
+        )(request);
+      }
+
+      return options.fallback(request, environment);
+    },
+
+    async queue(
+      batch: MessageBatch,
+      environment: PublicBoundaryEnvironment,
+      _context: ExecutionContext,
+    ): Promise<void> {
+      for (const message of batch.messages) {
+        await environment.OAUTH_KV.put(
+          `queue:${message.id}`,
+          JSON.stringify(message.body),
+        );
+        message.ack();
+      }
+    },
+
+    async scheduled(
+      controller: ScheduledController,
+      environment: PublicBoundaryEnvironment,
+      _context: ExecutionContext,
+    ): Promise<void> {
+      await environment.OAUTH_KV.put(
+        "scheduled:last",
+        new Date(controller.scheduledTime).toISOString(),
+      );
+      const response = await environment.PROVIDER_CONTROL.fetch(
+        "https://provider-control.internal/health",
+      );
+      await environment.OAUTH_KV.put(
+        "scheduled:provider-control",
+        response.ok ? "ok" : "unavailable",
+      );
+    },
+  });
