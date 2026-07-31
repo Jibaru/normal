@@ -135,4 +135,31 @@ describe("Webhook Event ingress repository", () => {
     });
     expect(unknown).toBeNull();
   });
+
+  test("rejects ingress material whose key versions cannot decrypt together", async () => {
+    const repository = makeWebhookIngressRepository(provider);
+
+    await database.query(
+      `UPDATE app.personal_account_key_envelopes
+       SET key_version = 2
+       WHERE personal_account_id = $1`,
+      [accountId],
+    );
+    expect(await repository.resolve(ingressId)).toBeNull();
+
+    await database.query(
+      `UPDATE app.personal_account_key_envelopes
+       SET key_version = 1
+       WHERE personal_account_id = $1`,
+      [accountId],
+    );
+    await database.query(
+      `UPDATE app.whatsapp_connection_provider_sessions
+       SET authority_key_version = 3
+       WHERE personal_account_id = $1
+         AND whatsapp_connection_id = $2`,
+      [accountId, connectionId],
+    );
+    expect(await repository.resolve(ingressId)).toBeNull();
+  });
 });

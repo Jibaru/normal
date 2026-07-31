@@ -135,14 +135,16 @@ AS $function$
   FROM app.whatsapp_connections AS connections
   JOIN app.personal_accounts AS accounts
     ON accounts.id = connections.personal_account_id
-  JOIN app.personal_account_key_envelopes AS account_keys
-    ON account_keys.personal_account_id = connections.personal_account_id
   JOIN app.whatsapp_connection_key_envelopes AS connection_keys
     ON connection_keys.personal_account_id = connections.personal_account_id
    AND connection_keys.whatsapp_connection_id = connections.id
+  JOIN app.personal_account_key_envelopes AS account_keys
+    ON account_keys.personal_account_id = connections.personal_account_id
+   AND account_keys.key_version = connection_keys.account_key_version
   JOIN app.whatsapp_connection_provider_sessions AS provider_sessions
     ON provider_sessions.personal_account_id = connections.personal_account_id
    AND provider_sessions.whatsapp_connection_id = connections.id
+   AND provider_sessions.authority_key_version = connection_keys.key_version
   WHERE connections.webhook_ingress_id = verified_webhook_ingress_id
     AND accounts.state = 'active'
     AND connections.state <> 'deleting'
