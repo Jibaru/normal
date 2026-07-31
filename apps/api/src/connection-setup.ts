@@ -159,6 +159,7 @@ type ConnectionSetupOutcome =
         readonly state:
           | "cancelled"
           | "expired"
+          | "activated"
           | "provisioned"
           | "provisioning_failed"
           | "provisioning_pending"

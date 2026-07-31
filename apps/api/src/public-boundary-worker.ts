@@ -28,6 +28,11 @@ import {
   type BoundaryResource,
   createPublicBoundaryHandler,
 } from "./public-boundary";
+import {
+  createWhatsAppConnectionHandler,
+  isWhatsAppConnectionRequest,
+  type WhatsAppConnectionRequirements,
+} from "./whatsapp-connection";
 import { createWorker } from "./worker";
 
 type BoundaryRequirements =
@@ -41,7 +46,8 @@ type PublicBoundaryRequirements =
   | ConnectionSetupRequirements
   | McpAuthorizationClockService
   | McpAuthorizationPersistenceService
-  | PersonalAccountRequirements;
+  | PersonalAccountRequirements
+  | WhatsAppConnectionRequirements;
 
 export interface PublicBoundaryEnvironment {
   readonly INGESTION_QUEUE: Queue;
@@ -127,6 +133,13 @@ export const createPublicBoundaryWorker = (
 
       if (isMcpAuthorizationManagementRequest(request)) {
         return createMcpAuthorizationManagementHandler(
+          options.layerFor(request),
+          options.browserOrigin,
+        )(request);
+      }
+
+      if (isWhatsAppConnectionRequest(request)) {
+        return createWhatsAppConnectionHandler(
           options.layerFor(request),
           options.browserOrigin,
         )(request);

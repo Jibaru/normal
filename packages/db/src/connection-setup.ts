@@ -23,6 +23,7 @@ export interface ConnectionSetupRecord {
     | "cancelled"
     | "expired"
     | "provisioned"
+    | "activated"
     | "provisioning_failed"
     | "provisioning_pending"
     | "provisioning_quarantined";
@@ -346,6 +347,7 @@ const setupRecord = (
     typeof setupId !== "string" ||
     (state !== "cancelled" &&
       state !== "expired" &&
+      state !== "activated" &&
       state !== "provisioned" &&
       state !== "provisioning_failed" &&
       state !== "provisioning_pending" &&

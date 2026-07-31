@@ -130,6 +130,17 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 10,
   },
+  {
+    name: "WhatsApp Connection activation",
+    sql: await readFile(
+      new NodeUrl(
+        "../migrations/0011_whatsapp_connection_activation.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    version: 11,
+  },
 ];
 
 const checksum = (sql: string): string =>
