@@ -94,7 +94,7 @@
         "queue": "whatsapp-mcp-ingestion-dlq",
         "max_batch_size": 10,
         "max_batch_timeout": 5,
-        "max_retries": 7,
+        "max_retries": 100,
         "retry_delay": 300,
         "visibility_timeout_ms": 900000
       }
@@ -187,7 +187,7 @@
             "queue": "whatsapp-mcp-ingestion-dlq-development",
             "max_batch_size": 10,
             "max_batch_timeout": 5,
-            "max_retries": 7,
+            "max_retries": 100,
             "retry_delay": 300,
             "visibility_timeout_ms": 900000
           }
@@ -280,7 +280,7 @@
             "queue": "whatsapp-mcp-ingestion-dlq-preview",
             "max_batch_size": 10,
             "max_batch_timeout": 5,
-            "max_retries": 7,
+            "max_retries": 100,
             "retry_delay": 300,
             "visibility_timeout_ms": 900000
           }
@@ -373,7 +373,7 @@
             "queue": "whatsapp-mcp-ingestion-dlq",
             "max_batch_size": 10,
             "max_batch_timeout": 5,
-            "max_retries": 7,
+            "max_retries": 100,
             "retry_delay": 300,
             "visibility_timeout_ms": 900000
           }

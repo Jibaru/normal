@@ -300,9 +300,11 @@ run "production_topology" {
       cloudflare_queue_consumer.ingestion.dead_letter_queue == cloudflare_queue.dead_letter.queue_name &&
       cloudflare_queue_consumer.ingestion.settings.max_retries == 7 &&
       cloudflare_queue_consumer.ingestion.settings.retry_delay == 10800 &&
+      cloudflare_queue_consumer.dead_letter.settings.max_retries == 100 &&
+      cloudflare_queue_consumer.dead_letter.settings.retry_delay == 300 &&
       cloudflare_queue.dead_letter.settings.message_retention_period == 345600
     )
-    error_message = "Provisioning and ingestion Queues must retain their bounded production delivery policies."
+    error_message = "Provisioning, ingestion, and dead-letter Queues must retain their bounded production delivery policies."
   }
 
   assert {

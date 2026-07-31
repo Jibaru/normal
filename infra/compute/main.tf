@@ -440,7 +440,7 @@ resource "cloudflare_queue_consumer" "dead_letter" {
 
   settings = {
     batch_size            = 10
-    max_retries           = 7
+    max_retries           = 100
     max_wait_time_ms      = 5000
     retry_delay           = 300
     visibility_timeout_ms = 900000

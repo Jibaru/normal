@@ -664,6 +664,37 @@ Wasender safe-read availability, exact webhook configuration, Hyperdrive, and
 schema version in that order. Telemetry containing any tenant or provider
 identifier is an incident.
 
+### Webhook recovery checks
+
+Confirm the next minute trigger republishes the deliberately orphaned object
+from the Queue-denial check, then deliver the same provider item again. Both
+Queue messages must acknowledge successfully while the restricted database
+shows one Webhook Item identity and one projected domain change. Recovery
+telemetry may contain only `webhook_ingress.recovery.completed` with candidate,
+invalid-object, and enqueued counts. Any object key, event ID, Personal Account,
+WhatsApp Connection, hash, receipt metadata, provider value, or payload in that
+event is an incident.
+
+For a controlled transient-failure drill, fail each of Neon, KMS, R2, and the
+Worker normalization boundary separately. Confirm no message is acknowledged
+and its retry delay stays between 9,900 and 11,700 seconds. Restore the
+dependency and let normal delivery continue; do not publish a replacement
+payload or edit the encrypted object. The deployment manifest and OpenTofu
+plan must both retain exactly seven ingestion retries and the active DLQ
+consumer.
+
+Page on any `webhook_event.dead_letter.completed` outcome of `gap_recorded` or
+`invalid_message`. For `gap_recorded`, verify through restricted metadata-only
+diagnostics that the Webhook Event is marked dead-lettered, exactly one
+`processing_failure` Ingestion Gap exists, and the encrypted source remains
+under its seven-day R2 lifecycle. Do not acknowledge manually, delete or edit
+the source, close the Ingestion Gap without confirmed recovery, or synthesize a
+new deduplication identity. Restore the failing dependency first; immutable
+operator replay must use the retained source and ordinary validation path.
+An `invalid_message` means the DLQ envelope itself is corrupt and requires an
+ingestion incident because connection-scoped gap recording cannot be proven
+from that envelope.
+
 From the retained non-production WhatsApp Connection, choose **Disconnect**.
 Confirm the product reports `disconnected`, retained history remains described
 as available under Message Retention Policy, and the same `con_` handle and

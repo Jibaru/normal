@@ -1,5 +1,8 @@
 import { describe, expect, test } from "vitest";
-import { createProductionHandler } from "../src/production";
+import {
+  createProductionHandler,
+  createProductionQueueHandler,
+} from "../src/production";
 import { validEnvironment } from "./support/production";
 
 describe("API production root", () => {
@@ -72,6 +75,54 @@ describe("API production root", () => {
 
     expect(response.status).toBe(503);
   });
+
+  test("fails closed when Webhook ingress cannot list orphan candidates", async () => {
+    const environment = validEnvironment();
+    const { list: _missing, ...webhookIngressWithoutList } =
+      environment.WEBHOOK_INGRESS;
+
+    const response = await createProductionHandler({
+      ...environment,
+      WEBHOOK_INGRESS: webhookIngressWithoutList,
+    })(new Request("https://api.example.test/health"));
+
+    expect(response.status).toBe(503);
+  });
+
+  test.each(["development", "preview"] as const)(
+    "routes the %s ingestion DLQ through active dead-letter handling",
+    async (deploymentEnvironment) => {
+      let acknowledgements = 0;
+      let retries = 0;
+
+      await createProductionQueueHandler({
+        ...validEnvironment(),
+        DEPLOYMENT_ENVIRONMENT: deploymentEnvironment,
+      })({
+        ackAll: () => undefined,
+        messages: [
+          {
+            ack: () => {
+              acknowledgements += 1;
+            },
+            attempts: 1,
+            body: { invalid: "envelope" },
+            id: "invalid-dead-letter",
+            retry: () => {
+              retries += 1;
+            },
+            timestamp: new Date("2026-07-31T12:15:00.000Z"),
+          },
+        ],
+        metadata: { metrics: { backlogBytes: 0, backlogCount: 0 } },
+        queue: `whatsapp-mcp-ingestion-dlq-${deploymentEnvironment}`,
+        retryAll: () => undefined,
+      } as MessageBatch);
+
+      expect(acknowledgements).toBe(1);
+      expect(retries).toBe(0);
+    },
+  );
 
   test("fails closed before data-plane traffic when Hyperdrive is absent", async () => {
     const { HYPERDRIVE: _missing, ...environment } = validEnvironment();

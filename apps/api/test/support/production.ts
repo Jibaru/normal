@@ -144,6 +144,7 @@ export const validEnvironment = () => ({
   WEBHOOK_INGRESS: {
     delete: async () => undefined,
     get: async () => null,
+    list: async () => ({ objects: [], truncated: false }),
     put: async () => null,
   },
   WEBHOOK_HYPERDRIVE: {

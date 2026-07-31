@@ -721,3 +721,41 @@ counts; it must never include tenant, connection, event, item, provider,
 payload, ciphertext, hash, or key values. The existing seven-day R2 lifecycle
 remains the encrypted-source retention authority, so no new deployment secret
 or public binding is introduced.
+
+## Webhook recovery and bounded retry
+
+The minute maintenance trigger scans at most 100 encrypted objects under the
+private Webhook Event prefix. It ignores objects newer than one minute,
+reconstructs the closed Queue envelope only from the object key and the six
+safe custom-metadata fields, and asks `WEBHOOK_HYPERDRIVE` under
+`whatsapp_webhook_runtime` which exact events already exist. Only unclaimed
+objects are republished. The next opaque R2 listing cursor is checkpointed
+under a maintenance-only key in the existing API KV binding after publication,
+so a bounded page cannot permanently starve later object keys; a missing,
+stale, or eventually consistent checkpoint safely restarts from the first
+page. A race with provider redelivery or Queue consumption is safe because
+both deliveries retain the original Webhook Item identities and the projector
+claims those identities transactionally.
+
+Transient R2, Neon, KMS, and Worker failures leave the ingestion message
+unacknowledged. The consumer selects a per-attempt delay from 9,900 through
+11,700 seconds; Cloudflare's validated `max_retries: 7` policy is the durable
+limit, producing seven jittered retries over roughly 21 hours. The Queue's
+10,800-second configured delay is the fail-closed default if application code
+does not provide an override. Permanent malformed, unsupported, and
+not-yet-projected items are quarantined and do not enter that retry schedule.
+
+The API Worker actively consumes the environment's ingestion DLQ. For a valid
+exhausted receipt it transactionally creates or verifies the `webhook_events`
+source reference, marks it dead-lettered, and inserts one connection-scoped
+`processing_failure` Ingestion Gap beginning at the verified receipt time. A
+duplicate already completed by another delivery creates no false gap. Only
+after the transaction and the safe `webhook_event.dead_letter.completed`
+alert event succeed is the DLQ message acknowledged. The DLQ consumer uses
+Cloudflare's maximum 100 retries at five-minute intervals, keeping failed gap
+recording eligible beyond the four-hour recovery objective rather than reusing
+the ingestion consumer's seven-retry exhaustion policy. The source ciphertext
+remains in R2 for the existing seven-day diagnostic and immutable-replay window.
+Recovery telemetry contains only bounded counts and normalized outcomes; it
+never contains object, tenant, connection, provider, payload, ciphertext, or
+key identifiers.

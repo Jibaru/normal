@@ -672,6 +672,149 @@ describe("public-boundary Worker harness", () => {
     });
   });
 
+  test("sweeps an orphaned ingress object and converges later provider redelivery", async () => {
+    const endpoint =
+      "https://api.example.test/webhooks/wasender/30000000-0000-4000-8000-000000000018";
+    const payload = JSON.stringify({
+      data: { status: "connected" },
+      event: "session.status",
+      sessionId: "test-session-credential",
+      timestamp: 1_767_323_400_000,
+    });
+    const deliver = (failure?: string) =>
+      exports.default.fetch(
+        new Request(endpoint, {
+          body: payload,
+          headers: {
+            "content-type": "application/json",
+            "x-test-failure": failure ?? "",
+            "x-webhook-signature": "test-webhook-secret",
+          },
+          method: "POST",
+        }),
+      );
+    const published = async () =>
+      (await (
+        await exports.default.fetch(
+          "https://api.example.test/test/webhook-queue",
+        )
+      ).json()) as ReadonlyArray<Record<string, unknown>>;
+    const consume = async (
+      body: Record<string, unknown>,
+      id: string,
+      queue = "whatsapp-mcp-ingestion",
+    ) => {
+      const batch = createMessageBatch(queue, [
+        {
+          attempts: 1,
+          body,
+          id,
+          timestamp: new Date("2026-01-02T03:10:00.000Z"),
+        },
+      ]);
+      const context = createExecutionContext();
+      await worker.queue?.(batch, env, context);
+      return getQueueResult(batch, context);
+    };
+    const objectsBefore = await env.WEBHOOK_INGRESS.list({
+      prefix: "webhook-events/",
+    });
+
+    const failedPublication = await deliver("webhook-queue");
+    const objectsAfter = await env.WEBHOOK_INGRESS.list({
+      prefix: "webhook-events/",
+    });
+    const orphan = objectsAfter.objects.find(
+      ({ key }) => !objectsBefore.objects.some((before) => before.key === key),
+    );
+    if (orphan === undefined) throw new Error("missing orphaned ingress");
+    const orphanId = orphan.key.slice("webhook-events/".length);
+
+    const controller = createScheduledController({
+      cron: "* * * * *",
+      scheduledTime: orphan.uploaded.valueOf() + 60_000,
+    });
+    const context = createExecutionContext();
+    await worker.scheduled?.(controller, env, context);
+    await waitOnExecutionContext(context);
+    const recovered = (await published()).find(
+      (message) => message.object_id === orphanId,
+    );
+    if (recovered === undefined) throw new Error("orphan was not recovered");
+    const recoveredResult = await consume(recovered, "recovered-ingress");
+
+    const redelivery = await deliver();
+    const redeliveredMessage = (await published()).at(-1);
+    if (redeliveredMessage === undefined) {
+      throw new Error("redelivery was not published");
+    }
+    const redeliveryResult = await consume(
+      redeliveredMessage,
+      "provider-redelivery",
+    );
+
+    expect(failedPublication.status).toBe(503);
+    expect(redelivery.status).toBe(200);
+    expect(recoveredResult).toMatchObject({
+      explicitAcks: ["recovered-ingress"],
+      outcome: "ok",
+    });
+    expect(redeliveryResult).toMatchObject({
+      explicitAcks: ["provider-redelivery"],
+      outcome: "ok",
+    });
+  });
+
+  test("actively records and acknowledges exhausted ingestion work from DLQ", async () => {
+    const ingress = await exports.default.fetch(
+      new Request(
+        "https://api.example.test/webhooks/wasender/30000000-0000-4000-8000-000000000018",
+        {
+          body: JSON.stringify({
+            data: { status: "degraded" },
+            event: "session.status",
+            sessionId: "test-session-credential",
+            timestamp: 1_767_323_460_000,
+          }),
+          headers: {
+            "content-type": "application/json",
+            "x-webhook-signature": "test-webhook-secret",
+          },
+          method: "POST",
+        },
+      ),
+    );
+    const messages = (await (
+      await exports.default.fetch("https://api.example.test/test/webhook-queue")
+    ).json()) as ReadonlyArray<Record<string, unknown>>;
+    const message = messages.at(-1);
+    if (message === undefined) throw new Error("missing Webhook Event fixture");
+    const batch = createMessageBatch("whatsapp-mcp-ingestion-dlq", [
+      {
+        attempts: 1,
+        body: message,
+        id: "dead-letter-ingress",
+        timestamp: new Date("2026-01-03T00:00:00.000Z"),
+      },
+    ]);
+    const context = createExecutionContext();
+
+    await worker.queue?.(batch, env, context);
+    const result = await getQueueResult(batch, context);
+    const recorded = (await (
+      await exports.default.fetch(
+        "https://api.example.test/test/webhook-dead-letters",
+      )
+    ).json()) as ReadonlyArray<string>;
+
+    expect(ingress.status).toBe(200);
+    expect(result).toMatchObject({
+      explicitAcks: ["dead-letter-ingress"],
+      outcome: "ok",
+    });
+    expect(recorded).toContain(message.object_id);
+  });
+
   test("routes an invalid ingestion message through the Webhook Event consumer", async () => {
     const batch = createMessageBatch("whatsapp-mcp-ingestion", [
       {

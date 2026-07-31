@@ -57,6 +57,9 @@ The Worker runtime suite proves:
 - five-minute safe-read connection and webhook reconciliation with
   evidence-based Ingestion Gap opening, recovery closure, and stale-snapshot
   suppression;
+- minute-scheduled orphan discovery from real R2 metadata, republishing through
+  the Queue binding, convergence with later provider redelivery, jittered
+  transient retries, and DLQ acknowledgment after Ingestion Gap persistence;
 - provider-control service-binding calls;
 - scheduled-handler effects through the supported runtime helpers;
 - an OAuth authorization redirect over signed-in HTTP;

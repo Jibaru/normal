@@ -2,16 +2,24 @@ import type { WebhookEventProcessingMaterial } from "@whatsapp-mcp/db/webhook-ev
 import type { NormalizedWebhookDelivery } from "@whatsapp-mcp/wasender/webhook";
 import { Effect, Layer } from "effect";
 import { describe, expect, test } from "vitest";
-import { EnvelopeEncryptionService } from "../src/encryption/envelope";
+import {
+  EncryptionError,
+  EnvelopeEncryptionService,
+} from "../src/encryption/envelope";
 import { SafeTelemetry, type SafeTelemetryEvent } from "../src/services";
 import {
+  handleWebhookDeadLetterBatch,
   handleWebhookEventBatch,
+  jitteredWebhookRetryDelaySeconds,
   WebhookEventClock,
   WebhookEventNormalization,
+  WebhookEventNormalizationError,
   WebhookEventObjectStore,
+  WebhookEventObjectStoreError,
   WebhookEventPersistence,
   WebhookEventPersistenceError,
   type WebhookEventQueueMessage,
+  WebhookEventRetrySchedule,
 } from "../src/webhook-event";
 
 const encoder = new TextEncoder();
@@ -86,6 +94,11 @@ const delivery: NormalizedWebhookDelivery = {
 };
 
 interface HarnessOptions {
+  readonly deadLetterUnavailable?: boolean;
+  readonly decryptionUnavailable?: boolean;
+  readonly normalizationUnavailable?: boolean;
+  readonly permanentlyInvalidSource?: boolean;
+  readonly objectStoreUnavailable?: boolean;
   readonly persistenceUnavailable?: boolean;
 }
 
@@ -95,23 +108,34 @@ const makeHarness = (options: HarnessOptions = {}) => {
   const layer = Layer.mergeAll(
     Layer.succeed(WebhookEventObjectStore, {
       load: () =>
-        Effect.succeed({
-          body: storedCiphertext,
-          customMetadata: {
-            ciphertextSha256: message.ciphertext_sha256,
-            payloadBytes: String(message.payload_bytes),
-            personalAccountId: message.personal_account_id,
-            receivedAt: message.received_at,
-            version: "1",
-            whatsappConnectionId: message.whatsapp_connection_id,
-          },
-        }),
+        options.objectStoreUnavailable
+          ? Effect.fail(new WebhookEventObjectStoreError())
+          : Effect.succeed({
+              body: storedCiphertext,
+              customMetadata: {
+                ciphertextSha256: options.permanentlyInvalidSource
+                  ? "f".repeat(64)
+                  : message.ciphertext_sha256,
+                payloadBytes: String(message.payload_bytes),
+                personalAccountId: message.personal_account_id,
+                receivedAt: message.received_at,
+                version: "1",
+                whatsappConnectionId: message.whatsapp_connection_id,
+              },
+            }),
     }),
     Layer.succeed(WebhookEventPersistence, {
       complete: () =>
         Effect.sync(() => {
           calls.push("complete");
         }),
+      deadLetter: () =>
+        options.deadLetterUnavailable
+          ? Effect.fail(new WebhookEventPersistenceError())
+          : Effect.sync(() => {
+              calls.push("dead-letter");
+              return "gap_recorded" as const;
+            }),
       prepare: () =>
         options.persistenceUnavailable
           ? Effect.fail(new WebhookEventPersistenceError())
@@ -135,23 +159,34 @@ const makeHarness = (options: HarnessOptions = {}) => {
     Layer.succeed(WebhookEventClock, {
       now: Effect.succeed("2026-07-31T12:10:01.000Z"),
     }),
+    Layer.succeed(WebhookEventRetrySchedule, {
+      delaySeconds: (attempt) =>
+        Effect.sync(() => {
+          expect(attempt).toBe(1);
+          return 10_123;
+        }),
+    }),
     Layer.succeed(WebhookEventNormalization, {
       make: (key) =>
-        Effect.sync(() => {
-          expect(key).toEqual(identityKey);
-          return {
-            compareVersions: () => Effect.succeed("equal" as const),
-            normalize: () => Effect.succeed(delivery),
-          };
-        }),
+        options.normalizationUnavailable
+          ? Effect.fail(new WebhookEventNormalizationError())
+          : Effect.sync(() => {
+              expect(key).toEqual(identityKey);
+              return {
+                compareVersions: () => Effect.succeed("equal" as const),
+                normalize: () => Effect.succeed(delivery),
+              };
+            }),
     }),
     Layer.succeed(EnvelopeEncryptionService, {
       createConnectionKey: () => Effect.die("not used"),
       createPersonalAccountKey: () => Effect.die("not used"),
       decrypt: ({ context }) =>
-        context.fieldOrObjectPurpose === "webhook-identity-key"
-          ? Effect.succeed(identityKey.slice())
-          : Effect.succeed(new Uint8Array(message.payload_bytes)),
+        options.decryptionUnavailable
+          ? Effect.fail(new EncryptionError({ operation: "decrypt" }))
+          : context.fieldOrObjectPurpose === "webhook-identity-key"
+            ? Effect.succeed(identityKey.slice())
+            : Effect.succeed(new Uint8Array(message.payload_bytes)),
       encrypt: () => Effect.die("not used"),
     }),
     Layer.succeed(SafeTelemetry, {
@@ -228,7 +263,7 @@ describe("Webhook Event processing", () => {
     );
 
     expect(queued.acknowledgements).toEqual([]);
-    expect(queued.retries).toEqual([10_800]);
+    expect(queued.retries).toEqual([10_123]);
     expect(harness.telemetry).toContainEqual({
       appliedCount: 0,
       duplicateCount: 0,
@@ -238,6 +273,101 @@ describe("Webhook Event processing", () => {
       service: "api",
       supersededCount: 0,
     });
+  });
+
+  test.each([
+    ["R2", { objectStoreUnavailable: true }],
+    ["KMS", { decryptionUnavailable: true }],
+    ["Neon", { persistenceUnavailable: true }],
+    ["Worker", { normalizationUnavailable: true }],
+  ] as const)(
+    "retries a transient %s failure with jitter and without acknowledging",
+    async (_boundary, options) => {
+      const harness = makeHarness(options);
+      const queued = queueMessage(message);
+
+      await handleWebhookEventBatch(
+        {
+          messages: [queued.message],
+          queue: "whatsapp-mcp-ingestion",
+        } as unknown as MessageBatch,
+        harness.layer,
+      );
+
+      expect(queued.acknowledgements).toEqual([]);
+      expect(queued.retries).toEqual([10_123]);
+    },
+  );
+
+  test("records a processing Ingestion Gap and alerts before acknowledging DLQ work", async () => {
+    const harness = makeHarness();
+    const queued = queueMessage(message);
+
+    await handleWebhookDeadLetterBatch(
+      {
+        messages: [queued.message],
+        queue: "whatsapp-mcp-ingestion-dlq",
+      } as unknown as MessageBatch,
+      harness.layer,
+    );
+
+    expect(harness.calls).toEqual(["dead-letter"]);
+    expect(queued.acknowledgements).toEqual(["ack"]);
+    expect(queued.retries).toEqual([]);
+    expect(harness.telemetry).toContainEqual({
+      event: "webhook_event.dead_letter.completed",
+      outcome: "gap_recorded",
+      service: "api",
+    });
+  });
+
+  test("records and acknowledges permanent source validation failure without transient retry", async () => {
+    const harness = makeHarness({ permanentlyInvalidSource: true });
+    const queued = queueMessage(message);
+
+    await handleWebhookEventBatch(
+      {
+        messages: [queued.message],
+        queue: "whatsapp-mcp-ingestion",
+      } as unknown as MessageBatch,
+      harness.layer,
+    );
+
+    expect(harness.calls).toEqual(["dead-letter"]);
+    expect(queued.acknowledgements).toEqual(["ack"]);
+    expect(queued.retries).toEqual([]);
+    expect(harness.telemetry).toContainEqual({
+      event: "webhook_event.dead_letter.completed",
+      outcome: "gap_recorded",
+      service: "api",
+    });
+  });
+
+  test("retries DLQ work without acknowledgement when the gap transaction fails", async () => {
+    const harness = makeHarness({ deadLetterUnavailable: true });
+    const queued = queueMessage(message);
+
+    await handleWebhookDeadLetterBatch(
+      {
+        messages: [queued.message],
+        queue: "whatsapp-mcp-ingestion-dlq",
+      } as unknown as MessageBatch,
+      harness.layer,
+    );
+
+    expect(queued.acknowledgements).toEqual([]);
+    expect(queued.retries).toEqual([300]);
+    expect(harness.telemetry).not.toContainEqual(
+      expect.objectContaining({
+        event: "webhook_event.dead_letter.completed",
+      }),
+    );
+  });
+
+  test("bounds jitter around three hours for the seven-retry Queue policy", () => {
+    expect(jitteredWebhookRetryDelaySeconds(0)).toBe(9_900);
+    expect(jitteredWebhookRetryDelaySeconds(0.5)).toBe(10_800);
+    expect(jitteredWebhookRetryDelaySeconds(1)).toBe(11_700);
   });
 
   test("acknowledges a permanently invalid Queue envelope without touching data", async () => {

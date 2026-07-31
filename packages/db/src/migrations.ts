@@ -185,6 +185,14 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 15,
   },
+  {
+    name: "Webhook Event orphan and transient recovery",
+    sql: await readFile(
+      new NodeUrl("../migrations/0016_webhook_recovery.sql", import.meta.url),
+      "utf8",
+    ),
+    version: 16,
+  },
 ];
 
 const checksum = (sql: string): string =>
