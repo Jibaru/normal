@@ -86,6 +86,17 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 6,
   },
+  {
+    name: "rotating MCP refresh credentials",
+    sql: await readFile(
+      new NodeUrl(
+        "../migrations/0007_rotating_refresh_credentials.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    version: 7,
+  },
 ];
 
 const checksum = (sql: string): string =>

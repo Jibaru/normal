@@ -520,6 +520,32 @@ const mcpAuthorizationPersistenceLayer = (environment: ApiEnvironment) =>
         },
         catch: () => new McpAuthorizationPersistenceError(),
       }),
+    registerRefreshCredential: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgMcpAuthorizationRepository(
+            connectionString,
+          ).registerRefreshCredential(input);
+        },
+        catch: () => new McpAuthorizationPersistenceError(),
+      }),
+    rotateRefreshCredential: (input, issue) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgMcpAuthorizationRepository(
+            connectionString,
+          ).rotateRefreshCredential(input, issue);
+        },
+        catch: () => new McpAuthorizationPersistenceError(),
+      }),
   });
 
 const randomBase64Url = (): string => {
@@ -759,6 +785,22 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
           } catch {
             return false;
           }
+        },
+        refreshCredentials: {
+          register: (input) =>
+            Effect.runPromise(
+              Effect.gen(function* () {
+                const persistence = yield* McpAuthorizationPersistence;
+                return yield* persistence.registerRefreshCredential(input);
+              }).pipe(Effect.provide(layer)),
+            ),
+          rotate: (input, issue) =>
+            Effect.runPromise(
+              Effect.gen(function* () {
+                const persistence = yield* McpAuthorizationPersistence;
+                return yield* persistence.rotateRefreshCredential(input, issue);
+              }).pipe(Effect.provide(layer)),
+            ),
         },
         telemetry: (event) => {
           Effect.runSync(safeTelemetry.emit(event));

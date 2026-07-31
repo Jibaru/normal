@@ -283,7 +283,12 @@ Migration execution takes a session-level advisory lock, applies each version
 in its own transaction, records a SHA-256 checksum, and refuses a changed or
 newer-than-expected schema. An interrupted migration rolls back its version;
 rerun `bun run db:migrate` after correcting the cause. Never edit an applied
-migration—add a new forward migration.
+migration—add a new forward migration. Migration 0007 contains the
+RLS-protected refresh-credential hash ledger and its least-privilege API-role
+functions; it adds no secret, Cloudflare binding, or infrastructure authority.
+Apply it immediately before the matching API Worker version. The previous
+Worker and the new Worker intentionally fail readiness on the other's exact
+schema version, so complete this step as one controlled fail-closed deployment.
 
 ## Provision encryption authority
 
@@ -550,6 +555,20 @@ and scope/Connection cardinalities through an audited restricted-role
 diagnostic. A later test WhatsApp Connection must not change the original
 authorization's selected-Connection count. Safe consent telemetry may contain
 only the allowlisted client class and `approved` or `denied`.
+
+Using that disposable non-production authorization, let the client store the
+returned refresh credential without printing it. Refresh once and confirm the
+response contains a different refresh credential, the same reviewed scope and
+resource, and `expires_in: 600`. In the automated acceptance check, submit two
+concurrent refreshes with the same current credential: exactly one response
+may contain a descendant and the other must be `invalid_grant`. Re-present the
+consumed credential and confirm `invalid_grant`, then confirm the descendant
+also cannot refresh because reuse revoked the family. Inspect only
+`oauth.refresh.completed` outcome counts and the allowlisted client class.
+Treat any `reuse` outcome outside this controlled check as a credential-replay
+incident: revoke or confirm revocation of the affected MCP Authorization,
+notify the User through the incident process, and investigate the MCP Client's
+credential storage. Never query, export, or log a credential hash.
 
 The readiness response proves a restricted Hyperdrive connection can read the
 exact expected schema version. It emits only an allowlisted request outcome;

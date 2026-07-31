@@ -11,6 +11,8 @@ const authorizationId = "40000000-0000-4000-8000-000000000027";
 const connectionA = "con_123456789012345678901";
 const connectionB = "con_123456789012345678902";
 const oauthSubject = "A".repeat(43);
+const credentialHash = new Uint8Array(32).fill(1);
+const rotatedCredentialHash = new Uint8Array(32).fill(2);
 
 describe("MCP Authorization repository", () => {
   let database: PGlite;
@@ -201,5 +203,286 @@ describe("MCP Authorization repository", () => {
         scopes: ["connections:read"],
       }),
     ).rejects.toThrow();
+  });
+
+  test("rotates a refresh credential once and revokes the family when the consumed credential is reused", async () => {
+    await repository.create({
+      authorizationId,
+      authorizedAt: new Date("2026-07-31T12:00:00.000Z"),
+      clientClass: "approved",
+      clientId: "approved-client",
+      clerkUserId: "user_authorization27",
+      connectionIds: [connectionA],
+      expiresAt: new Date("2026-10-29T12:00:00.000Z"),
+      oauthSubject,
+      reverifiedAt: new Date("2026-07-31T11:59:00.000Z"),
+      scopes: ["connections:read"],
+    });
+
+    expect(
+      await repository.registerRefreshCredential({
+        clientId: "approved-client",
+        credentialHash,
+        oauthSubject,
+        observedAt: new Date("2026-07-31T12:00:01.000Z"),
+      }),
+    ).toBe(true);
+
+    let issueCount = 0;
+    const rotation = await repository.rotateRefreshCredential(
+      {
+        clientId: "approved-client",
+        credentialHash,
+        oauthSubject,
+        observedAt: new Date("2026-08-01T12:00:00.000Z"),
+      },
+      async () => {
+        issueCount += 1;
+        return {
+          credentialHash: rotatedCredentialHash,
+          value: "new-token-pair",
+        };
+      },
+    );
+
+    expect(rotation).toEqual({
+      outcome: "rotated",
+      value: "new-token-pair",
+    });
+    expect(issueCount).toBe(1);
+
+    const persisted = await database.query<{
+      consumed_at: Date | null;
+      credential_hash: Uint8Array;
+    }>(
+      `SELECT credential_hash, consumed_at
+       FROM app.mcp_refresh_credentials
+       WHERE mcp_authorization_id = $1
+       ORDER BY issued_at`,
+      [authorizationId],
+    );
+    expect(persisted.rows).toHaveLength(2);
+    expect(persisted.rows[0]?.consumed_at).not.toBeNull();
+    expect(persisted.rows[1]?.consumed_at).toBeNull();
+
+    const reuse = await repository.rotateRefreshCredential(
+      {
+        clientId: "approved-client",
+        credentialHash,
+        oauthSubject,
+        observedAt: new Date("2026-08-01T12:00:01.000Z"),
+      },
+      async () => {
+        issueCount += 1;
+        return {
+          credentialHash: new Uint8Array(32).fill(3),
+          value: "must-not-be-issued",
+        };
+      },
+    );
+    expect(reuse).toEqual({ outcome: "reuse" });
+    expect(issueCount).toBe(1);
+    expect(
+      await repository.isActive({
+        authorizationId,
+        clientId: "approved-client",
+        observedAt: new Date("2026-08-01T12:00:02.000Z"),
+        oauthSubject,
+      }),
+    ).toBe(false);
+  });
+
+  test("denies inactivity and rechecks the current User, Personal Account, MCP Authorization, and selected connections", async () => {
+    await repository.create({
+      authorizationId,
+      authorizedAt: new Date("2026-07-31T12:00:00.000Z"),
+      clientClass: "approved",
+      clientId: "approved-client",
+      clerkUserId: "user_authorization27",
+      connectionIds: [connectionA],
+      expiresAt: new Date("2026-10-29T12:00:00.000Z"),
+      oauthSubject,
+      reverifiedAt: new Date("2026-07-31T11:59:00.000Z"),
+      scopes: ["connections:read"],
+    });
+    await repository.registerRefreshCredential({
+      clientId: "approved-client",
+      credentialHash,
+      oauthSubject,
+      observedAt: new Date("2026-07-31T12:00:01.000Z"),
+    });
+
+    let issueCount = 0;
+    const inactive = await repository.rotateRefreshCredential(
+      {
+        clientId: "approved-client",
+        credentialHash,
+        oauthSubject,
+        observedAt: new Date("2026-08-30T12:00:01.000Z"),
+      },
+      async () => {
+        issueCount += 1;
+        return {
+          credentialHash: rotatedCredentialHash,
+          value: "must-not-be-issued",
+        };
+      },
+    );
+    expect(inactive).toEqual({ outcome: "invalid" });
+
+    await database.query(
+      "DELETE FROM app_private.clerk_identities WHERE personal_account_id = $1",
+      [accountId],
+    );
+    const missingUser = await repository.rotateRefreshCredential(
+      {
+        clientId: "approved-client",
+        credentialHash,
+        oauthSubject,
+        observedAt: new Date("2026-08-01T12:00:00.000Z"),
+      },
+      async () => {
+        issueCount += 1;
+        return {
+          credentialHash: rotatedCredentialHash,
+          value: "must-not-be-issued",
+        };
+      },
+    );
+    expect(missingUser).toEqual({ outcome: "invalid" });
+
+    await database.query(
+      `INSERT INTO app_private.clerk_identities (
+         clerk_user_id, personal_account_id
+       ) VALUES ($1, $2)`,
+      ["user_authorization27", accountId],
+    );
+    await database.query(
+      "UPDATE app.personal_accounts SET state = 'deleting' WHERE id = $1",
+      [accountId],
+    );
+    expect(
+      await repository.rotateRefreshCredential(
+        {
+          clientId: "approved-client",
+          credentialHash,
+          oauthSubject,
+          observedAt: new Date("2026-08-01T12:00:00.000Z"),
+        },
+        async () => {
+          issueCount += 1;
+          return {
+            credentialHash: rotatedCredentialHash,
+            value: "must-not-be-issued",
+          };
+        },
+      ),
+    ).toEqual({ outcome: "invalid" });
+
+    await database.query(
+      "UPDATE app.personal_accounts SET state = 'active' WHERE id = $1",
+      [accountId],
+    );
+    await database.query(
+      `UPDATE app.mcp_authorizations
+       SET state = 'revoked', revoked_at = $2
+       WHERE id = $1`,
+      [authorizationId, new Date("2026-08-01T11:00:00.000Z")],
+    );
+    expect(
+      await repository.rotateRefreshCredential(
+        {
+          clientId: "approved-client",
+          credentialHash,
+          oauthSubject,
+          observedAt: new Date("2026-08-01T12:00:00.000Z"),
+        },
+        async () => {
+          issueCount += 1;
+          return {
+            credentialHash: rotatedCredentialHash,
+            value: "must-not-be-issued",
+          };
+        },
+      ),
+    ).toEqual({ outcome: "invalid" });
+
+    await database.query(
+      `UPDATE app.mcp_authorizations
+       SET state = 'active', revoked_at = NULL
+       WHERE id = $1`,
+      [authorizationId],
+    );
+    await database.query(
+      `DELETE FROM app.mcp_authorization_connections
+       WHERE mcp_authorization_id = $1`,
+      [authorizationId],
+    );
+    expect(
+      await repository.rotateRefreshCredential(
+        {
+          clientId: "approved-client",
+          credentialHash,
+          oauthSubject,
+          observedAt: new Date("2026-08-01T12:00:00.000Z"),
+        },
+        async () => {
+          issueCount += 1;
+          return {
+            credentialHash: rotatedCredentialHash,
+            value: "must-not-be-issued",
+          };
+        },
+      ),
+    ).toEqual({ outcome: "invalid" });
+    expect(issueCount).toBe(0);
+  });
+
+  test("caps refresh credentials at the 90-day absolute authorization session", async () => {
+    await repository.create({
+      authorizationId,
+      authorizedAt: new Date("2026-05-01T12:00:00.000Z"),
+      clientClass: "approved",
+      clientId: "approved-client",
+      clerkUserId: "user_authorization27",
+      connectionIds: [connectionA],
+      expiresAt: new Date("2026-07-30T12:00:00.000Z"),
+      oauthSubject,
+      reverifiedAt: new Date("2026-05-01T11:59:00.000Z"),
+      scopes: ["connections:read"],
+    });
+    expect(
+      await repository.registerRefreshCredential({
+        clientId: "approved-client",
+        credentialHash,
+        oauthSubject,
+        observedAt: new Date("2026-07-29T12:00:00.000Z"),
+      }),
+    ).toBe(true);
+
+    const persisted = await database.query<{ inactive_expires_at: Date }>(
+      `SELECT inactive_expires_at
+       FROM app.mcp_refresh_credentials
+       WHERE mcp_authorization_id = $1`,
+      [authorizationId],
+    );
+    expect(persisted.rows[0]?.inactive_expires_at).toEqual(
+      new Date("2026-07-30T12:00:00.000Z"),
+    );
+
+    expect(
+      await repository.rotateRefreshCredential(
+        {
+          clientId: "approved-client",
+          credentialHash,
+          oauthSubject,
+          observedAt: new Date("2026-07-30T12:00:00.000Z"),
+        },
+        async () => ({
+          credentialHash: rotatedCredentialHash,
+          value: "must-not-be-issued",
+        }),
+      ),
+    ).toEqual({ outcome: "invalid" });
   });
 });

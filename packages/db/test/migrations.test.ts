@@ -444,6 +444,8 @@ describe("production migrations", () => {
           'bootstrap_personal_account_for_clerk',
           'bootstrap_whatsapp_connection_for_ingress',
           'bootstrap_mcp_authorization',
+          'bootstrap_mcp_refresh_authorization',
+          'bootstrap_mcp_refresh_credential',
           'admit_personal_account_for_clerk',
           'resolve_personal_account_for_clerk'
         )
@@ -458,6 +460,16 @@ describe("production migrations", () => {
       {
         config: ["search_path=pg_catalog, pg_temp"],
         proname: "bootstrap_mcp_authorization",
+        prosecdef: true,
+      },
+      {
+        config: ["search_path=pg_catalog, pg_temp"],
+        proname: "bootstrap_mcp_refresh_authorization",
+        prosecdef: true,
+      },
+      {
+        config: ["search_path=pg_catalog, pg_temp"],
+        proname: "bootstrap_mcp_refresh_credential",
         prosecdef: true,
       },
       {
@@ -484,6 +496,17 @@ describe("production migrations", () => {
         ["clerk_user_a"],
       );
       expect(clerkLookup.rows[0]?.account_id).toBe(accountA);
+      expect(
+        (
+          await database.query(
+            `SELECT *
+             FROM app_private.bootstrap_mcp_refresh_credential(
+               decode(repeat('00', 32), 'hex'), $1, $2
+             )`,
+            ["A".repeat(43), "approved-client"],
+          )
+        ).rows,
+      ).toEqual([]);
       await expect(
         database.query(
           "SELECT * FROM app_private.bootstrap_whatsapp_connection_for_ingress($1)",
@@ -513,6 +536,20 @@ describe("production migrations", () => {
         database.query(
           "SELECT app_private.bootstrap_personal_account_for_clerk($1)",
           ["clerk_user_a"],
+        ),
+      ).rejects.toThrow();
+      await expect(
+        database.query(
+          `SELECT *
+           FROM app_private.bootstrap_mcp_refresh_credential(
+             decode(repeat('00', 32), 'hex'), $1, $2
+           )`,
+          ["A".repeat(43), "approved-client"],
+        ),
+      ).rejects.toThrow();
+      await expect(
+        database.query(
+          "SELECT credential_hash FROM app.mcp_refresh_credentials",
         ),
       ).rejects.toThrow();
       await expect(

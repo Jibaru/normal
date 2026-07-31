@@ -79,6 +79,13 @@ export interface OAuthAuthorizationDecisionCompletedEvent {
   readonly service: "api";
 }
 
+export interface OAuthRefreshCompletedEvent {
+  readonly clientClass?: string | undefined;
+  readonly event: "oauth.refresh.completed";
+  readonly outcome: "invalid" | "reuse" | "rotated" | "unavailable";
+  readonly service: "api";
+}
+
 export interface SafeTelemetry {
   readonly emit: (event: SafeTelemetryEvent) => Effect.Effect<void>;
 }
@@ -89,6 +96,7 @@ export type SafeTelemetryEvent =
   | OAuthAuthorizationDecisionCompletedEvent
   | OAuthAuthorizationRequestCompletedEvent
   | OAuthProtocolRequestFailedEvent
+  | OAuthRefreshCompletedEvent
   | PersonalAccountBootstrapCompletedEvent
   | StoredMediaContainerEvent;
 

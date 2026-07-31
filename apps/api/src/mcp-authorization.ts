@@ -46,6 +46,28 @@ export interface McpAuthorizationPersistenceService {
     ReadonlyArray<{ readonly connectionId: string }> | null,
     McpAuthorizationPersistenceError
   >;
+  readonly registerRefreshCredential: (input: {
+    readonly clientId: string;
+    readonly credentialHash: Uint8Array;
+    readonly oauthSubject: string;
+    readonly observedAt: Date;
+  }) => Effect.Effect<boolean, McpAuthorizationPersistenceError>;
+  readonly rotateRefreshCredential: <Value>(
+    input: {
+      readonly clientId: string;
+      readonly credentialHash: Uint8Array;
+      readonly oauthSubject: string;
+      readonly observedAt: Date;
+    },
+    issue: () => Promise<{
+      readonly credentialHash: Uint8Array;
+      readonly value: Value;
+    }>,
+  ) => Effect.Effect<
+    | { readonly outcome: "invalid" | "reuse" }
+    | { readonly outcome: "rotated"; readonly value: Value },
+    McpAuthorizationPersistenceError
+  >;
 }
 
 export const McpAuthorizationPersistence =

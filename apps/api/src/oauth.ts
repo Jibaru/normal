@@ -9,6 +9,7 @@ import { Config, ConfigProvider, Data, Effect, Redacted } from "effect";
 import type {
   OAuthAuthorizationRequestCompletedEvent,
   OAuthProtocolRequestFailedEvent,
+  OAuthRefreshCompletedEvent,
 } from "./services";
 
 export const OAUTH_SCOPES = [
@@ -67,11 +68,35 @@ interface OAuthHandlerOptions {
     readonly clientId: string;
     readonly oauthSubject: string;
   }) => Promise<boolean>;
+  readonly now?: (() => Date) | undefined;
+  readonly refreshCredentials: RefreshCredentialPersistence;
   readonly telemetry: (
     event:
       | OAuthAuthorizationRequestCompletedEvent
-      | OAuthProtocolRequestFailedEvent,
+      | OAuthProtocolRequestFailedEvent
+      | OAuthRefreshCompletedEvent,
   ) => void;
+}
+
+export interface RefreshCredentialInput {
+  readonly clientId: string;
+  readonly credentialHash: Uint8Array;
+  readonly oauthSubject: string;
+  readonly observedAt: Date;
+}
+
+export interface RefreshCredentialPersistence {
+  readonly register: (input: RefreshCredentialInput) => Promise<boolean>;
+  readonly rotate: <Value>(
+    input: RefreshCredentialInput,
+    issue: () => Promise<{
+      readonly credentialHash: Uint8Array;
+      readonly value: Value;
+    }>,
+  ) => Promise<
+    | { readonly outcome: "invalid" | "reuse" }
+    | { readonly outcome: "rotated"; readonly value: Value }
+  >;
 }
 
 class InvalidOAuthConfiguration extends Data.TaggedError(
@@ -284,6 +309,11 @@ const hashLookup = async (secret: string): Promise<string> => {
   );
   return bytesToBase64Url(new Uint8Array(hash));
 };
+
+const hashCredential = async (secret: string): Promise<Uint8Array> =>
+  new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret)),
+  );
 
 export const sealAuthorizationRequest = async (
   request: AuthRequest,
@@ -616,6 +646,110 @@ const addNoStore = (response: Response): Response => {
   });
 };
 
+interface TokenRequest {
+  readonly clientId: string;
+  readonly grantType: "authorization_code" | "refresh_token";
+  readonly refreshToken?: string | undefined;
+}
+
+const parseTokenRequest = async (
+  request: Request,
+  configuration: OAuthConfiguration,
+): Promise<TokenRequest | null> => {
+  const url = new URL(request.url);
+  if (
+    request.method !== "POST" ||
+    url.origin !== configuration.issuer ||
+    url.pathname !== "/oauth/token" ||
+    request.headers
+      .get("content-type")
+      ?.split(";", 1)[0]
+      ?.trim()
+      .toLowerCase() !== "application/x-www-form-urlencoded"
+  ) {
+    return null;
+  }
+  try {
+    const body = new URLSearchParams();
+    for (const [name, value] of await request.clone().formData()) {
+      if (typeof value !== "string") return null;
+      body.append(name, value);
+    }
+    const grantTypes = body.getAll("grant_type");
+    const clientIds = body.getAll("client_id");
+    if (
+      grantTypes.length !== 1 ||
+      clientIds.length !== 1 ||
+      !["authorization_code", "refresh_token"].includes(grantTypes[0] ?? "") ||
+      !configuration.clients.some(
+        (candidate) => candidate.clientId === clientIds[0],
+      )
+    ) {
+      return null;
+    }
+    const grantType = grantTypes[0] as TokenRequest["grantType"];
+    const refreshTokens = body.getAll("refresh_token");
+    if (
+      grantType === "refresh_token" &&
+      (refreshTokens.length !== 1 || refreshTokens[0] === "")
+    ) {
+      return null;
+    }
+    return {
+      clientId: clientIds[0] ?? "",
+      grantType,
+      refreshToken:
+        grantType === "refresh_token" ? refreshTokens[0] : undefined,
+    };
+  } catch {
+    return null;
+  }
+};
+
+interface IssuedTokenPair {
+  readonly accessToken: string;
+  readonly refreshToken: string;
+}
+
+const readIssuedTokenPair = async (
+  response: Response,
+): Promise<IssuedTokenPair | null> => {
+  if (response.status !== 200) return null;
+  try {
+    const body = (await response.clone().json()) as Record<string, unknown>;
+    return typeof body.access_token === "string" &&
+      body.access_token !== "" &&
+      typeof body.refresh_token === "string" &&
+      body.refresh_token !== ""
+      ? {
+          accessToken: body.access_token,
+          refreshToken: body.refresh_token,
+        }
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+const oauthTokenError = (
+  error: "invalid_grant" | "temporarily_unavailable",
+  status: 400 | 503,
+): Response =>
+  new Response(JSON.stringify({ error }), {
+    headers: {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+    },
+    status,
+  });
+
+const oauthSubjectFromRefreshToken = (token: string): string | null => {
+  const parts = token.split(":");
+  return parts.length === 3 && /^[A-Za-z0-9_-]{43}$/.test(parts[0] ?? "")
+    ? (parts[0] ?? null)
+    : null;
+};
+
 const isOAuthProviderRequest = (
   request: Request,
   configuration: OAuthConfiguration,
@@ -661,7 +795,7 @@ export const createOAuthHandler = (
         status: error.status,
       });
     },
-    refreshTokenTTL: 30 * 24 * 60 * 60,
+    refreshTokenTTL: 90 * 24 * 60 * 60,
     resourceMetadata: {
       authorization_servers: [options.configuration.issuer],
       bearer_methods_supported: ["header"],
@@ -705,7 +839,7 @@ export const createOAuthHandler = (
       return exchange.grantType === "authorization_code"
         ? {
             ...tokenProperties,
-            refreshTokenTTL: 30 * 24 * 60 * 60,
+            refreshTokenTTL: 90 * 24 * 60 * 60,
           }
         : tokenProperties;
     },
@@ -715,8 +849,87 @@ export const createOAuthHandler = (
     if (!isOAuthProviderRequest(request, options.configuration)) {
       return options.applicationHandler(request, options.environment, context);
     }
-    return addNoStore(
+    const tokenRequest = await parseTokenRequest(
+      request,
+      options.configuration,
+    );
+    if (
+      tokenRequest?.grantType === "refresh_token" &&
+      tokenRequest.refreshToken !== undefined
+    ) {
+      const oauthSubject = oauthSubjectFromRefreshToken(
+        tokenRequest.refreshToken,
+      );
+      const clientClass = options.configuration.clients.find(
+        (candidate) => candidate.clientId === tokenRequest.clientId,
+      )?.clientClass;
+      if (oauthSubject === null) {
+        return oauthTokenError("invalid_grant", 400);
+      }
+      try {
+        const rotation = await options.refreshCredentials.rotate(
+          {
+            clientId: tokenRequest.clientId,
+            credentialHash: await hashCredential(tokenRequest.refreshToken),
+            oauthSubject,
+            observedAt: (options.now ?? (() => new Date()))(),
+          },
+          async () => {
+            const response = addNoStore(
+              await provider.fetch(request, allowlistedEnvironment, context),
+            );
+            const pair = await readIssuedTokenPair(response);
+            if (pair === null) {
+              throw new Error("OAuth provider did not issue a token pair");
+            }
+            return {
+              credentialHash: await hashCredential(pair.refreshToken),
+              value: response,
+            };
+          },
+        );
+        options.telemetry({
+          clientClass,
+          event: "oauth.refresh.completed",
+          outcome: rotation.outcome,
+          service: "api",
+        });
+        return rotation.outcome === "rotated"
+          ? rotation.value
+          : oauthTokenError("invalid_grant", 400);
+      } catch {
+        options.telemetry({
+          clientClass,
+          event: "oauth.refresh.completed",
+          outcome: "unavailable",
+          service: "api",
+        });
+        return oauthTokenError("temporarily_unavailable", 503);
+      }
+    }
+
+    const response = addNoStore(
       await provider.fetch(request, allowlistedEnvironment, context),
     );
+    if (tokenRequest?.grantType !== "authorization_code") {
+      return response;
+    }
+    const pair = await readIssuedTokenPair(response);
+    if (pair === null) return response;
+    const oauthSubject = oauthSubjectFromRefreshToken(pair.refreshToken);
+    if (oauthSubject === null) {
+      return oauthTokenError("temporarily_unavailable", 503);
+    }
+    try {
+      const registered = await options.refreshCredentials.register({
+        clientId: tokenRequest.clientId,
+        credentialHash: await hashCredential(pair.refreshToken),
+        oauthSubject,
+        observedAt: (options.now ?? (() => new Date()))(),
+      });
+      return registered ? response : oauthTokenError("invalid_grant", 400);
+    } catch {
+      return oauthTokenError("temporarily_unavailable", 503);
+    }
   };
 };

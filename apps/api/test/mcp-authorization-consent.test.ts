@@ -95,6 +95,11 @@ const makeHarness = async (
       }),
     isActive: () => Effect.succeed(true),
     listConnections: () => Effect.succeed([{ connectionId }] as const),
+    registerRefreshCredential: () => Effect.succeed(true),
+    rotateRefreshCredential: (_input, issue) =>
+      Effect.promise(issue).pipe(
+        Effect.map(({ value }) => ({ outcome: "rotated" as const, value })),
+      ),
   };
   const completed: Array<unknown> = [];
   const helpers = {
@@ -323,6 +328,9 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
           create: () => Effect.succeed(false),
           isActive: () => Effect.succeed(false),
           listConnections: () => Effect.succeed(null),
+          registerRefreshCredential: () => Effect.succeed(false),
+          rotateRefreshCredential: () =>
+            Effect.succeed({ outcome: "invalid" as const }),
         }),
         Layer.succeed(McpAuthorizationClock, {
           now: Effect.succeed(new Date()),
@@ -356,7 +364,49 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
       kv: harness.kv,
       layer: harness.layer,
     });
-    let authorizationActive = true;
+    const authorizationActive = true;
+    let currentCredentialHash: string | undefined;
+    let familyRevoked = false;
+    const consumedCredentialHashes = new Set<string>();
+    let rotationQueue = Promise.resolve();
+    const hashKey = (value: Uint8Array): string =>
+      Array.from(value, (byte) => byte.toString(16).padStart(2, "0")).join("");
+    const refreshCredentials = {
+      register: async (input: { readonly credentialHash: Uint8Array }) => {
+        currentCredentialHash = hashKey(input.credentialHash);
+        return true;
+      },
+      rotate: async <Value>(
+        input: { readonly credentialHash: Uint8Array },
+        issue: () => Promise<{
+          readonly credentialHash: Uint8Array;
+          readonly value: Value;
+        }>,
+      ) => {
+        const previous = rotationQueue;
+        let release: () => void = () => undefined;
+        rotationQueue = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        await previous;
+        try {
+          const presented = hashKey(input.credentialHash);
+          if (consumedCredentialHashes.has(presented)) {
+            familyRevoked = true;
+            return { outcome: "reuse" as const };
+          }
+          if (familyRevoked || currentCredentialHash !== presented) {
+            return { outcome: "invalid" as const };
+          }
+          const issued = await issue();
+          consumedCredentialHashes.add(presented);
+          currentCredentialHash = hashKey(issued.credentialHash);
+          return { outcome: "rotated" as const, value: issued.value };
+        } finally {
+          release();
+        }
+      },
+    };
     const makeOAuth = () =>
       createOAuthHandler({
         applicationHandler: (request, environment) =>
@@ -368,6 +418,7 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
           OAUTH_KV: harness.kv,
         },
         isAuthorizationActive: async () => authorizationActive,
+        refreshCredentials,
         telemetry: () => undefined,
       });
     let oauth = makeOAuth();
@@ -432,7 +483,7 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
           resource: "https://api.example.test/mcp",
         }),
         headers: {
-          "content-type": "application/x-www-form-urlencoded",
+          "content-type": "Application/X-Www-Form-Urlencoded; Charset=UTF-8",
         },
         method: "POST",
       }),
@@ -449,8 +500,9 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
     expect(token.access_token).toEqual(expect.any(String));
     expect(token.refresh_token).toEqual(expect.any(String));
     expect(JSON.stringify(token)).not.toContain("clerk");
+    expect(currentCredentialHash).toBeDefined();
 
-    const rotatedResponse = await oauth(
+    const refreshRequest = () =>
       new Request("https://api.example.test/oauth/token", {
         body: new URLSearchParams({
           client_id: "approved-client",
@@ -462,11 +514,23 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
           "content-type": "application/x-www-form-urlencoded",
         },
         method: "POST",
-      }),
-      context,
+      });
+    const concurrent = await Promise.all([
+      oauth(refreshRequest(), context),
+      oauth(refreshRequest(), context),
+    ]);
+    const rotatedResponse = concurrent.find(
+      (response) => response.status === 200,
     );
-    const rotated = (await rotatedResponse.json()) as Record<string, unknown>;
-    expect(rotatedResponse.status, JSON.stringify(rotated)).toBe(200);
+    const reusedResponse = concurrent.find(
+      (response) => response.status === 400,
+    );
+    expect(rotatedResponse).toBeDefined();
+    expect(reusedResponse).toBeDefined();
+    expect(await reusedResponse?.json()).toMatchObject({
+      error: "invalid_grant",
+    });
+    const rotated = (await rotatedResponse?.json()) as Record<string, unknown>;
     expect(rotated).toMatchObject({
       expires_in: 600,
       resource: "https://api.example.test/mcp",
@@ -474,8 +538,14 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
     });
     expect(rotated.refresh_token).toEqual(expect.any(String));
     expect(rotated.refresh_token).not.toBe(token.refresh_token);
+    expect(familyRevoked).toBe(true);
 
-    authorizationActive = false;
+    const replayResponse = await oauth(refreshRequest(), context);
+    expect(replayResponse.status).toBe(400);
+    expect(await replayResponse.json()).toMatchObject({
+      error: "invalid_grant",
+    });
+
     const refreshResponse = await oauth(
       new Request("https://api.example.test/oauth/token", {
         body: new URLSearchParams({

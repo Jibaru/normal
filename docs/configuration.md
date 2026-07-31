@@ -124,20 +124,36 @@ and therefore does not expand the grant. OAuth KV protocol records use an
 unlinkable per-authorization subject instead of Clerk identity; encrypted grant
 props contain that subject and the authorization lookup ID. The only
 application metadata outside those encrypted props is the allowlisted client
-class. Authorization-code and refresh exchanges recheck the active, unexpired
-Neon row through the restricted API role. Access tokens are bound to the exact
-`/mcp` resource and expire after ten minutes. The provider issues a rotating
-refresh credential whose current grant expires 30 days after code exchange,
-while Neon independently enforces the 90-day absolute authorization session.
-Sliding inactivity and refresh-reuse containment belong to the refresh-family
-lifecycle rollout. No additional Cloudflare binding or infrastructure
-authority is required beyond the existing OAuth KV and API Hyperdrive.
+class.
+
+Migration 0007 adds the RLS-protected refresh-credential ledger and
+authorization-family revocation state. Neon stores only SHA-256 credential
+hashes. One current hash is allowed per MCP Authorization; a successful
+refresh locks and consumes it before committing one descendant. A concurrent
+or later presentation of a consumed hash atomically revokes the family. Each
+descendant expires after 30 days without use and is capped by the
+authorization's 90-day absolute expiry. The OAuth KV grant is retained only
+up to that 90-day ceiling so it cannot expire before Neon's moving inactivity
+window, but KV never decides application validity.
+
+Every refresh rechecks the current Clerk identity mapping, active Personal
+Account, active MCP Authorization, non-revoked family, absolute expiry, and at
+least one still-selected existing WhatsApp Connection through the restricted
+API role. Access tokens remain bound to the exact `/mcp` resource and expire
+after ten minutes. No additional Cloudflare binding or OpenTofu authority is
+required beyond the existing OAuth KV and API Hyperdrive; migration 0007 grants
+only `SELECT`, `INSERT`, and `UPDATE` on the ledger plus execute access to its
+narrow fixed-search-path bootstrap functions to `whatsapp_api_runtime`.
 
 Consent decision telemetry contains only
 `oauth.authorization.decision.completed`, the allowlisted client class,
 `approved` or `denied`, and the API service name. Never add the User, Personal
 Account, MCP Authorization, Connection, scope set, redirect, token, handoff, or
-presentation digest.
+presentation digest. Refresh telemetry contains only
+`oauth.refresh.completed`, the allowlisted client class, and an allowlisted
+`rotated`, `invalid`, `reuse`, or `unavailable` outcome. A `reuse` outcome is
+an incident signal that the family has already been revoked; it must never
+include either credential, its hash, or a tenant identifier.
 
 Declare the reviewed per-environment allowlist through `oauth_clients`:
 
