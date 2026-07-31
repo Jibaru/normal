@@ -14,7 +14,7 @@ export type {
   ProviderNeutralFailure,
   RetryDecision,
 } from "./common";
-export { makeBoundedRetryAfterMs } from "./common";
+export { makeBoundedRetryAfterMs, maximumJsonResponseBytes } from "./common";
 
 declare const setupMarker: unique symbol;
 

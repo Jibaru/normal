@@ -10,6 +10,10 @@ for (const deployable of deployables) {
   ) as Record<string, unknown>;
 
   if (deployable === "provider-control") {
+    const requiredSecretNames = [
+      "WASENDER_API_CREDENTIAL",
+      "WASENDER_REFERENCE_SECRET",
+    ].sort();
     const forbiddenAuthority = [
       "d1_databases",
       "durable_objects",
@@ -20,13 +24,13 @@ for (const deployable of deployables) {
       "services",
     ];
     const configurations = [
-      manifest,
-      ...Object.values(
+      ["top level", manifest],
+      ...Object.entries(
         (manifest.env as Record<string, Record<string, unknown>> | undefined) ??
           {},
       ),
-    ];
-    for (const configuration of configurations) {
+    ] as const;
+    for (const [configurationName, configuration] of configurations) {
       for (const key of forbiddenAuthority) {
         if (key in configuration) {
           throw new Error(
@@ -34,20 +38,19 @@ for (const deployable of deployables) {
           );
         }
       }
-    }
-
-    const requiredSecrets = (
-      manifest.secrets as { readonly required?: ReadonlyArray<string> }
-    ).required;
-    if (
-      JSON.stringify([...(requiredSecrets ?? [])].sort()) !==
-      JSON.stringify(
-        ["WASENDER_API_CREDENTIAL", "WASENDER_REFERENCE_SECRET"].sort(),
-      )
-    ) {
-      throw new Error(
-        "Provider-control must fail deployment unless both lifecycle secrets exist.",
-      );
+      const requiredSecrets = (
+        configuration.secrets as
+          | { readonly required?: ReadonlyArray<string> }
+          | undefined
+      )?.required;
+      if (
+        JSON.stringify([...(requiredSecrets ?? [])].sort()) !==
+        JSON.stringify(requiredSecretNames)
+      ) {
+        throw new Error(
+          `Provider-control ${configurationName} configuration must require both lifecycle secrets.`,
+        );
+      }
     }
   }
 

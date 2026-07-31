@@ -161,6 +161,115 @@ describe("provider-control RPC authority", () => {
     expect(JSON.stringify(result)).not.toContain("account-credential");
   });
 
+  test("rejects malformed adapter successes without crossing excess authority", async () => {
+    const rpc = makeProviderControlRpc({
+      loadLifecycle: async () =>
+        makeLifecycle({
+          connectSession: () =>
+            Effect.succeed({
+              ...lifecycleSession,
+              accountCredential: "must-not-cross-the-binding",
+            } as never),
+          deleteSession: () =>
+            Effect.succeed({
+              accountCredential: "must-not-cross-the-binding",
+              state: "absent",
+            } as never),
+          getQrCode: () =>
+            Effect.succeed({
+              image: new Uint8Array(),
+              state: "available",
+            } as never),
+          listSessions: () =>
+            Effect.succeed({
+              accountCredential: "must-not-cross-the-binding",
+            } as never),
+          reconcileSession: () =>
+            Effect.succeed({
+              outcome: "duplicates",
+              sessions: [lifecycleSession],
+            } as never),
+        }),
+    });
+
+    const results = await Promise.all([
+      rpc.connectSession({ session: lifecycleSession.session }),
+      rpc.deleteSession({ session: lifecycleSession.session }),
+      rpc.getQrCode({ session: lifecycleSession.session }),
+      rpc.listSessions({ setupMarker }),
+      rpc.reconcileSession({ setupMarker }),
+    ]);
+
+    const invalidResponse = (operation: "lifecycle-write" | "safe-read") => ({
+      error: {
+        _tag: "ProviderControlFailure" as const,
+        code: "invalid_response" as const,
+        operation,
+        retryAfterMs: null,
+        retryDecision: "do_not_retry" as const,
+      },
+      ok: false as const,
+    });
+    expect(results).toEqual([
+      invalidResponse("lifecycle-write"),
+      invalidResponse("lifecycle-write"),
+      invalidResponse("safe-read"),
+      invalidResponse("safe-read"),
+      invalidResponse("safe-read"),
+    ]);
+    expect(JSON.stringify(results)).not.toContain("must-not-cross");
+  });
+
+  test("rejects retry metadata that does not match the operation class", async () => {
+    const rpc = makeProviderControlRpc({
+      loadLifecycle: async () =>
+        makeLifecycle({
+          connectSession: () =>
+            Effect.fail({
+              _tag: "ProviderNeutralFailure",
+              code: "timed_out",
+              operation: "lifecycle-write",
+              retryAfterMs: 1,
+              retryDecision: "retry_within_safe_read_budget",
+            } as never),
+          listSessions: () =>
+            Effect.fail({
+              _tag: "ProviderNeutralFailure",
+              code: "timed_out",
+              operation: "safe-read",
+              retryAfterMs: null,
+              retryDecision: "reconcile_before_repeat",
+            } as never),
+        }),
+    });
+
+    const [write, read] = await Promise.all([
+      rpc.connectSession({ session: lifecycleSession.session }),
+      rpc.listSessions({ setupMarker }),
+    ]);
+
+    expect(write).toEqual({
+      error: {
+        _tag: "ProviderControlFailure",
+        code: "invalid_response",
+        operation: "lifecycle-write",
+        retryAfterMs: null,
+        retryDecision: "do_not_retry",
+      },
+      ok: false,
+    });
+    expect(read).toEqual({
+      error: {
+        _tag: "ProviderControlFailure",
+        code: "invalid_response",
+        operation: "safe-read",
+        retryAfterMs: null,
+        retryDecision: "do_not_retry",
+      },
+      ok: false,
+    });
+  });
+
   test("exposes every lifecycle method through the same validated authority", async () => {
     const rpc = makeProviderControlRpc({
       loadLifecycle: async () => makeLifecycle(),

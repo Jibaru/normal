@@ -102,13 +102,62 @@ export VERCEL_API_TOKEN=...
 ```
 
 Authenticate to AWS with the matching short-lived state role, then initialize
-and inspect a saved plan:
+and build the deployable artifacts:
 
 ```sh
 tofu -chdir=infra/compute init \
   -reconfigure \
   -backend-config="$BACKEND_CONFIG_PATH"
 bun run build
+```
+
+For a new environment only, create the provider-control Worker shell before the
+full plan so Cloudflare has a target for its version-scoped secrets. Review and
+apply this bootstrap target; it contains no Worker version or secret value:
+
+```sh
+tofu -chdir=infra/compute plan \
+  -target=cloudflare_worker.provider_control \
+  -var-file="$TFVARS_PATH" \
+  -out="$DEPLOYMENT_ENVIRONMENT-provider-control-bootstrap.tfplan"
+tofu -chdir=infra/compute show \
+  "$DEPLOYMENT_ENVIRONMENT-provider-control-bootstrap.tfplan"
+tofu -chdir=infra/compute apply \
+  "$DEPLOYMENT_ENVIRONMENT-provider-control-bootstrap.tfplan"
+```
+
+Generate the 32-byte locator key inside the approved recovery inventory, where
+it can remain stable for the environment. Load that value and the account-level
+Personal Access Token without echoing either one, then create both required
+bindings atomically. The pipe does not put either plaintext value in a file,
+saved plan, or OpenTofu state:
+
+```sh
+read -rsp "WASENDER_REFERENCE_SECRET: " WASENDER_REFERENCE_SECRET
+echo
+read -rsp "WASENDER_API_CREDENTIAL: " WASENDER_API_CREDENTIAL
+echo
+export WASENDER_REFERENCE_SECRET WASENDER_API_CREDENTIAL
+bun -e 'process.stdout.write(JSON.stringify({
+  WASENDER_API_CREDENTIAL: process.env.WASENDER_API_CREDENTIAL,
+  WASENDER_REFERENCE_SECRET: process.env.WASENDER_REFERENCE_SECRET,
+}))' | wrangler secret bulk \
+  --cwd apps/provider-control \
+  --env "$DEPLOYMENT_ENVIRONMENT"
+wrangler secret list \
+  --cwd apps/provider-control \
+  --env "$DEPLOYMENT_ENVIRONMENT"
+unset WASENDER_REFERENCE_SECRET WASENDER_API_CREDENTIAL
+```
+
+The secret list must contain exactly the two names; it never returns their
+values. Delete the bootstrap plan after the Worker shell and bindings exist.
+For an existing environment where the list already contains both names, skip
+the bootstrap target and bulk upload.
+
+Now create and inspect the complete saved plan:
+
+```sh
 tofu -chdir=infra/compute plan \
   -var-file="$TFVARS_PATH" \
   -out="$DEPLOYMENT_ENVIRONMENT.tfplan"
@@ -286,32 +335,22 @@ The Worker manifests set `AWS_KMS_REGION` explicitly. Set
 `KMS_CONTENT_ROOT_KEY_ARN` in the API deployment configuration and populate the
 three AWS credential secrets before deployment.
 
-Populate provider-control authority directly in Cloudflare's secret store; do
-not put either value in Wrangler variables, OpenTofu input, saved plans, or
-state. Generate the locator key once per environment and retain it in the
-environment's recovery inventory:
-
-```sh
-openssl rand -hex 32 | wrangler secret put WASENDER_REFERENCE_SECRET \
-  --cwd apps/provider-control --env production
-wrangler secret put WASENDER_API_CREDENTIAL \
-  --cwd apps/provider-control --env production
-```
-
-The provider-control Wrangler manifest declares both names under
-`secrets.required`. A subsequent Wrangler upload or deploy therefore fails
-before publishing code if the selected environment does not already have both
-secrets. OpenTofu represents both names as `inherit` bindings, so every
+Provider-control authority is populated during the first-deployment bootstrap
+above, directly in Cloudflare's secret store. The Wrangler manifest declares
+both names under `secrets.required`, so a subsequent Wrangler upload or deploy
+fails before publishing code if the selected environment does not already have
+both secrets. OpenTofu represents both names as `inherit` bindings, so every
 subsequent provider-control version preserves the already stored ciphertext
-without putting either plaintext value in input, a saved plan, or state. Repeat
-the two commands with `--env development` or `--env preview` for those isolated
-Workers; never rely on one environment's secrets for another.
+without putting either plaintext value in input, a saved plan, or state. Run
+the bootstrap against `development`, `preview`, and `production` independently;
+never rely on one environment's secrets for another.
 
 The credential must be the account-level Personal Access Token, never a
 WhatsApp Connection's per-session API key. Provider-control has no public route,
 and its Cloudflare deployment identity should be scoped only to that Worker so
-the credential cannot enter the web or API deployments. Repeat with the exact
-target environment during rotation, deploy provider-control, and verify its
+the credential cannot enter the web or API deployments. Rotate only the
+account-level credential with `wrangler secret put WASENDER_API_CREDENTIAL`
+against the exact target environment, deploy provider-control, and verify its
 private service-binding health before deploying the API. Never rotate
 `WASENDER_REFERENCE_SECRET` directly; use the reconciliation procedure in
 `docs/configuration.md` so retained provider sessions remain addressable.
