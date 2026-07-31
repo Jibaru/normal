@@ -100,6 +100,51 @@ const httpsOriginConfig = (name: string) =>
     }),
   );
 
+const CLERK_RSA_SPKI_PREFIX = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA";
+const CLERK_RSA_SPKI_SUFFIX = "IDAQAB";
+
+class InvalidClerkJwtKey extends Data.TaggedError("InvalidClerkJwtKey") {}
+
+const validateClerkJwtKey = (
+  jwtKey: string,
+): Effect.Effect<string, InvalidClerkJwtKey> =>
+  Effect.tryPromise({
+    try: async () => {
+      const encoded = jwtKey
+        .replace("-----BEGIN PUBLIC KEY-----", "")
+        .replace("-----END PUBLIC KEY-----", "")
+        .replace(/\s/g, "");
+      if (
+        !encoded.startsWith(CLERK_RSA_SPKI_PREFIX) ||
+        !encoded.endsWith(CLERK_RSA_SPKI_SUFFIX)
+      ) {
+        throw new Error("invalid Clerk public key");
+      }
+      const decoded = Uint8Array.from(atob(encoded), (character) =>
+        character.charCodeAt(0),
+      );
+      const key = await crypto.subtle.importKey(
+        "spki",
+        decoded,
+        {
+          hash: "SHA-256",
+          name: "RSASSA-PKCS1-v1_5",
+        },
+        false,
+        ["verify"],
+      );
+      if (
+        key.algorithm.name !== "RSASSA-PKCS1-v1_5" ||
+        !("modulusLength" in key.algorithm) ||
+        key.algorithm.modulusLength !== 2_048
+      ) {
+        throw new Error("unsupported Clerk public key");
+      }
+      return jwtKey;
+    },
+    catch: () => new InvalidClerkJwtKey(),
+  });
+
 const clerkConfig = Config.all({
   audience: httpsOriginConfig("CLERK_API_AUDIENCE"),
   authorizedParty: httpsOriginConfig("CLERK_AUTHORIZED_PARTY"),
@@ -279,11 +324,15 @@ const humanIdentityLayer = (environment: ApiEnvironment) =>
   Layer.effect(
     HumanIdentity,
     clerkConfig.pipe(
-      Effect.map((config) =>
-        makeClerkHumanIdentity({
-          ...config,
-          jwtKey: Redacted.value(config.jwtKey),
-        }),
+      Effect.flatMap((config) =>
+        validateClerkJwtKey(Redacted.value(config.jwtKey)).pipe(
+          Effect.map((jwtKey) =>
+            makeClerkHumanIdentity({
+              ...config,
+              jwtKey,
+            }),
+          ),
+        ),
       ),
       Effect.withConfigProvider(environmentConfigProvider(environment)),
     ),

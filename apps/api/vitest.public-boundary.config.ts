@@ -1,5 +1,6 @@
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
+import { TEST_CLERK_JWT_PUBLIC_KEY } from "./test/support/clerk.ts";
 
 export default defineConfig({
   plugins: [
@@ -13,8 +14,7 @@ export default defineConfig({
           CLERK_API_AUDIENCE: "https://api.example.test",
           CLERK_AUTHORIZED_PARTY: "https://app.example.test",
           CLERK_ISSUER: "https://clerk.example.test",
-          CLERK_JWT_KEY:
-            "-----BEGIN PUBLIC KEY-----\ntest-public-key\n-----END PUBLIC KEY-----",
+          CLERK_JWT_KEY: TEST_CLERK_JWT_PUBLIC_KEY,
           DELETION_MARKER_HMAC_SECRET:
             "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
           DEPLOYMENT_ENVIRONMENT: "production",

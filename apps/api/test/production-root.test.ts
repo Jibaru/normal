@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { createProductionHandler } from "../src/production";
+import { TEST_CLERK_JWT_PUBLIC_KEY } from "./support/clerk";
 
 const validEnvironment = () => ({
   AWS_ACCESS_KEY_ID: "temporary-access-key",
@@ -9,8 +10,7 @@ const validEnvironment = () => ({
   CLERK_API_AUDIENCE: "https://api.example.test",
   CLERK_AUTHORIZED_PARTY: "https://app.example.test",
   CLERK_ISSUER: "https://clerk.example.test",
-  CLERK_JWT_KEY:
-    "-----BEGIN PUBLIC KEY-----\nproduction-public-key\n-----END PUBLIC KEY-----",
+  CLERK_JWT_KEY: TEST_CLERK_JWT_PUBLIC_KEY,
   DELETION_CAPSULES: {
     get: async () => null,
     put: async () => null,
@@ -233,6 +233,10 @@ describe("API production root", () => {
     ["CLERK_AUTHORIZED_PARTY", "https://app.example.test/path"],
     ["CLERK_ISSUER", "https://user@clerk.example.test"],
     ["CLERK_JWT_KEY", "not-a-public-key"],
+    [
+      "CLERK_JWT_KEY",
+      "-----BEGIN PUBLIC KEY-----\ncHJvZHVjdGlvbi1wdWJsaWMta2V5\n-----END PUBLIC KEY-----",
+    ],
   ] as const)(
     "fails closed when %s is invalid",
     async (configuration, value) => {
