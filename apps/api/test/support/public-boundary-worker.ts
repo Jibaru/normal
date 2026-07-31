@@ -35,6 +35,12 @@ import {
 } from "../../src/public-boundary";
 import { createPublicBoundaryWorker } from "../../src/public-boundary-worker";
 import { SafeTelemetry } from "../../src/services";
+import {
+  WhatsAppConnectionClock,
+  WhatsAppConnectionIdentifiers,
+  WhatsAppConnectionPersistence,
+  WhatsAppConnectionProvider,
+} from "../../src/whatsapp-connection";
 
 const TEST_LAYER_SENTINEL = "TEST_LAYER_SENTINEL_DO_NOT_INCLUDE_IN_PRODUCTION";
 const TEST_FAULT_INJECTOR_SENTINEL =
@@ -57,6 +63,15 @@ const connectionSetups = new Map<
 let nextConnectionSetupId = 0;
 const provisioningLeases = new Map<string, string>();
 const provisionedSetups = new Set<string>();
+const providerObservations: string[] = [];
+const qrObservations = new Map<string, number>();
+const whatsAppConnections: Array<{
+  readonly displayName: null;
+  readonly numberSuffix: string;
+  readonly publicId: string;
+  readonly state: "connected";
+  readonly stateChangedAt: string;
+}> = [];
 
 const tokenKey = (value: Uint8Array) => Array.from(value).join(",");
 
@@ -316,6 +331,129 @@ const makeTestLayer = (failure: FailureTarget | undefined) => {
           return { outcome: "created" as const, setup };
         }),
     }),
+    Layer.succeed(WhatsAppConnectionClock, {
+      now: Effect.succeed("2026-01-02T03:06:00.000Z"),
+    }),
+    Layer.succeed(WhatsAppConnectionIdentifiers, {
+      nextConnectionId: Effect.succeed("20000000-0000-4000-8000-000000000018"),
+      nextPublicId: Effect.succeed("con_000000000000000000018"),
+      nextWebhookIngressId: Effect.succeed(
+        "30000000-0000-4000-8000-000000000018",
+      ),
+      nextWebhookSecret: Effect.succeed(new Uint8Array(32).fill(18)),
+    }),
+    Layer.succeed(WhatsAppConnectionPersistence, {
+      activate: (input) =>
+        Effect.sync(() => {
+          const existing = whatsAppConnections[0];
+          if (existing !== undefined) return existing;
+          const connection = {
+            displayName: null,
+            numberSuffix: input.numberSuffix,
+            publicId: input.publicId,
+            state: "connected" as const,
+            stateChangedAt: input.connectedAt,
+          };
+          whatsAppConnections.push(connection);
+          return connection;
+        }),
+      list: (clerkUserId) =>
+        Effect.succeed(
+          clerkUserId === "user_test_public_boundary"
+            ? whatsAppConnections
+            : [],
+        ),
+      loadSetup: ({ clerkUserId, setupId }) =>
+        Effect.sync(() => {
+          if (clerkUserId !== "user_test_public_boundary") return null;
+          const exists = [...connectionSetups.values()].some(
+            ({ setup }) => setup.setupId === setupId,
+          );
+          if (!exists) return null;
+          const connection = whatsAppConnections[0];
+          if (connection !== undefined) {
+            return { connection, outcome: "activated" as const };
+          }
+          return {
+            outcome: "provisioned" as const,
+            setup: {
+              accountKey: {
+                ciphertext: "AQID",
+                keyVersion: 1,
+                kmsKeyId:
+                  "arn:aws:kms:us-east-1:111122223333:key/test-content-root",
+                personalAccountId: "10000000-0000-4000-8000-000000000018",
+                version: 1 as const,
+              },
+              numberCiphertext: {
+                ciphertext: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcY",
+                keyVersion: 1,
+                nonce: "AQIDBAUGBwgJCgsM",
+                version: 1 as const,
+              },
+              personalAccountId: "10000000-0000-4000-8000-000000000018",
+              setupId,
+              setupKey: {
+                accountKeyVersion: 1,
+                ciphertext: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcY",
+                connectionId: setupId,
+                keyVersion: 1,
+                nonce: "AQIDBAUGBwgJCgsM",
+                personalAccountId: "10000000-0000-4000-8000-000000000018",
+                version: 1 as const,
+              },
+            },
+          };
+        }),
+    }),
+    Layer.succeed(WhatsAppConnectionProvider, {
+      connect: () =>
+        Effect.sync(() => {
+          providerObservations.push("connectSession");
+          return {
+            ok: true as const,
+            value: {
+              authority: "test-session-authority",
+              connectionState: "connecting" as const,
+              session: "wsl_0000000000000000000000000000000000000000000",
+            },
+          };
+        }),
+      getQrCode: ({ session }) =>
+        Effect.sync(() => {
+          providerObservations.push("getQrCode");
+          qrObservations.set(session, (qrObservations.get(session) ?? 0) + 1);
+          return {
+            ok: true as const,
+            value: {
+              expiresAt: null,
+              image: new TextEncoder().encode(
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><path d="M0 0h1v1H0z"/></svg>',
+              ),
+              state: "available" as const,
+            },
+          };
+        }),
+      reconcile: () =>
+        Effect.sync(() => {
+          providerObservations.push("reconcileSession");
+          const session = "wsl_0000000000000000000000000000000000000000000";
+          return {
+            ok: true as const,
+            value: {
+              outcome: "present" as const,
+              session: {
+                authority: "test-session-authority",
+                connectionState:
+                  (qrObservations.get(session) ?? 0) > 0
+                    ? ("connected" as const)
+                    : ("disconnected" as const),
+                session,
+              },
+            },
+          };
+        }),
+    }),
     Layer.succeed(EnvelopeEncryptionService, {
       createPersonalAccountKey: ({ accountId, keyVersion }) =>
         Effect.succeed({
@@ -361,7 +499,16 @@ const selectedFailure = (request: Request): FailureTarget | undefined => {
 const worker = createPublicBoundaryWorker({
   browserOrigin,
   fallback: (request, environment) =>
-    createProductionHandler(environment as Env)(request),
+    new URL(request.url).pathname === "/test/provider-observations"
+      ? Promise.resolve(
+          new Response(JSON.stringify(providerObservations), {
+            headers: {
+              "cache-control": "no-store",
+              "content-type": "application/json; charset=utf-8",
+            },
+          }),
+        )
+      : createProductionHandler(environment as Env)(request),
   layerFor: (request) => makeTestLayer(selectedFailure(request)),
   provisioningLayer: makeTestLayer(undefined),
 });

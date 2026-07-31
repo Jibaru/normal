@@ -17,6 +17,10 @@ const personalAccountConfiguration =
     ? {
         clerkJwtTemplate,
         clerkPublishableKey,
+        connectionsEndpoint: new URL(
+          "/v1/whatsapp-connections",
+          apiOrigin,
+        ).toString(),
         connectionSetupEndpoint: new URL(
           "/v1/connection-setups",
           apiOrigin,

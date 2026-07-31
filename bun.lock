@@ -93,6 +93,7 @@
       "name": "@whatsapp-mcp/db",
       "version": "0.1.0",
       "dependencies": {
+        "@whatsapp-mcp/domain": "workspace:*",
         "effect": "3.22.1",
         "pg": "8.22.0",
       },

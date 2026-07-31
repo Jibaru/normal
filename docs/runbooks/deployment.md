@@ -540,6 +540,32 @@ ack without another create. Inspect only allowlisted outcome telemetry—never
 print the number, idempotency key, reservation token, setup identifier,
 ciphertext, provider locator, session authority, or key metadata.
 
+From the same signed-in product flow, wait for the current QR image to appear
+and scan it from the designated smoke-test WhatsApp account. Confirm the
+browser reads the setup-scoped QR route directly from `API_ORIGIN`, that the
+response is `image/svg+xml` with `Cache-Control: no-store`, and that no QR
+payload or image bytes appear in Worker logs, analytics, traces, database
+diagnostics, R2, Queue messages, or saved test artifacts. Do not copy, save, or
+screen-capture the QR image as deployment evidence.
+
+After scanning, confirm the next reconciled observation removes the QR image
+and the product lists exactly one WhatsApp Connection with a `con_` handle,
+nullable display name, four-digit number suffix, `connected` state, and
+state-change time. Repeat the QR observation and connection list reads; they
+must return the same Connection and must not create another connection key,
+webhook ingress identity, webhook secret, or provider session. Inspect safe
+counts through the restricted API role only. A second User requesting the same
+setup-scoped QR route must receive the ordinary not-found boundary without a
+provider-control call.
+
+Safe telemetry may show only `connection_setup.qr.completed` with a normalized
+outcome and `whatsapp_connection.list.completed` with a bounded count. A QR
+byte, full number, setup or connection handle, provider locator, session
+authority, webhook value, ciphertext, or key reference in telemetry is a
+credential-handling incident. No infrastructure apply should add a new public
+provider-control route or binding for this flow: the existing API-only closed
+service binding is the complete lifecycle authority delta.
+
 Exercise the reviewed provider-control test fixture for an ambiguous create
 timeout and confirm the next Queue delivery reconciles before any create
 decision. Exercise its duplicate fixture and confirm Neon exposes only the

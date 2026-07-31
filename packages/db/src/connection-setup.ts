@@ -21,6 +21,7 @@ export interface ConnectionSetupRecord {
   readonly setupId: string;
   readonly state:
     | "provisioned"
+    | "activated"
     | "provisioning_failed"
     | "provisioning_pending"
     | "provisioning_quarantined";
@@ -277,7 +278,8 @@ const setupRecord = (
   const expiresAt = timestamp(row?.[`${prefix}expires_at`]);
   if (
     typeof setupId !== "string" ||
-    (state !== "provisioned" &&
+    (state !== "activated" &&
+      state !== "provisioned" &&
       state !== "provisioning_failed" &&
       state !== "provisioning_pending" &&
       state !== "provisioning_quarantined") ||

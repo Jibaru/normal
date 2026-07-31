@@ -1,10 +1,13 @@
 import { expect, test } from "@playwright/test";
 
+// A failed journey must not retain the ephemeral QR response in a trace.
+test.use({ trace: "off" });
+
 test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   page,
   request,
 }) => {
-  let apiMethod: string | undefined;
+  const apiMethods: string[] = [];
   const setupBodies: Array<{
     readonly idempotency_key: string;
     readonly whatsapp_number: string;
@@ -15,27 +18,11 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   });
   await page.route("https://api.example.test/**", async (route) => {
     const original = route.request();
-    apiMethod = original.method();
+    apiMethods.push(original.method());
     if (new URL(original.url()).pathname === "/v1/connection-setups") {
       setupBodies.push(original.postDataJSON());
       if (setupBodies.length === 1) {
         await firstSetupCanContinue;
-      }
-      if (setupBodies.length === 3) {
-        await route.fulfill({
-          body: JSON.stringify({
-            connection_setup: {
-              created_at: "2026-07-31T12:00:00.000Z",
-              expires_at: "2026-07-31T12:15:00.000Z",
-              id: "cst_000000000000000000001",
-              idempotent_replay: true,
-              state: "provisioning_quarantined",
-            },
-          }),
-          contentType: "application/json",
-          status: 200,
-        });
-        return;
       }
     }
     const localUrl = new URL(original.url());
@@ -97,7 +84,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
         ).__requestedTokenTemplate,
     ),
   ).toEqual({ template: "whatsapp-api" });
-  expect(apiMethod).toBe("POST");
+  expect(apiMethods).toEqual(expect.arrayContaining(["POST", "GET"]));
 
   const whatsappNumber = page.getByLabel("WhatsApp Number");
   const startConnectionSetup = page.getByRole("button", {
@@ -111,19 +98,36 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(page.getByTestId("connection-setup-status")).toHaveText(
     "Connection Setup started. Preparing your QR code.",
   );
-  await startConnectionSetup.click();
+  await expect(
+    page.getByRole("img", { name: "Scan this WhatsApp QR code" }),
+  ).toBeVisible();
   await expect(page.getByTestId("connection-setup-status")).toHaveText(
-    "Connection Setup already started. Preparing your QR code.",
+    "Scan this QR code with WhatsApp.",
   );
-  await startConnectionSetup.click();
   await expect(page.getByTestId("connection-setup-status")).toHaveText(
-    "Connection Setup needs support review.",
+    "WhatsApp Connection active.",
   );
-  expect(setupBodies).toHaveLength(3);
+  await expect(page.getByTestId("whatsapp-connection")).toContainText(
+    "Number ending 3456",
+  );
+  await expect(page.getByTestId("whatsapp-connection")).toContainText(
+    "connected",
+  );
+  await expect(page.getByTestId("whatsapp-connection")).not.toContainText(
+    "session-authority",
+  );
+  expect(setupBodies).toHaveLength(1);
   expect(setupBodies[0]?.whatsapp_number).toBe("+1 (555) 012-3456");
   expect(setupBodies[0]?.idempotency_key).toMatch(/^[A-Za-z0-9_-]{21}$/);
-  expect(setupBodies[1]?.idempotency_key).toBe(setupBodies[0]?.idempotency_key);
-  expect(setupBodies[2]?.idempotency_key).toBe(setupBodies[0]?.idempotency_key);
+  const providerObservations = await request.get(
+    "http://127.0.0.1:8787/test/provider-observations",
+  );
+  expect(await providerObservations.json()).toEqual([
+    "reconcileSession",
+    "connectSession",
+    "getQrCode",
+    "reconcileSession",
+  ]);
 });
 
 test("waitlists a signed-in User when private-beta capacity is exhausted", async ({

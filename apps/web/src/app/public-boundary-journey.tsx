@@ -1,12 +1,13 @@
 "use client";
 
 import { makeIdempotencyKey } from "@whatsapp-mcp/contracts/handles";
-import { type FormEvent, useRef, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { loadBrowserClerk } from "../clerk/browser";
 
 interface PublicBoundaryJourneyProps {
   readonly clerkJwtTemplate: string;
   readonly clerkPublishableKey: string;
+  readonly connectionsEndpoint: string;
   readonly connectionSetupEndpoint: string;
   readonly personalAccountEndpoint: string;
 }
@@ -23,6 +24,8 @@ type SetupState =
   | "idle"
   | "loading"
   | "pending"
+  | "qr_available"
+  | "connected"
   | "provisioned"
   | "provisioning_failed"
   | "provisioning_quarantined"
@@ -32,19 +35,52 @@ type SetupState =
   | "connection_limit_reached"
   | "unavailable";
 
+interface SafeWhatsAppConnection {
+  readonly displayName: string | null;
+  readonly id: string;
+  readonly numberSuffix: string;
+  readonly state:
+    | "connected"
+    | "connecting"
+    | "degraded"
+    | "deleting"
+    | "disconnected"
+    | "reconnect_required";
+  readonly stateChangedAt: string;
+}
+
 export function PublicBoundaryJourney({
   clerkJwtTemplate,
   clerkPublishableKey,
+  connectionsEndpoint,
   connectionSetupEndpoint,
   personalAccountEndpoint,
 }: PublicBoundaryJourneyProps) {
   const [state, setState] = useState<JourneyState>("idle");
   const [setupState, setSetupState] = useState<SetupState>("idle");
+  const [connections, setConnections] = useState<
+    ReadonlyArray<SafeWhatsAppConnection>
+  >([]);
+  const [qrImageUrl, setQrImageUrl] = useState<string | null>(null);
   const [whatsappNumber, setWhatsappNumber] = useState("");
   const setupIntent = useRef<{
     readonly idempotencyKey: string;
     readonly whatsappNumber: string;
   } | null>(null);
+  const activeQrImageUrl = useRef<string | null>(null);
+  const observationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (observationTimer.current !== null) {
+        clearTimeout(observationTimer.current);
+      }
+      if (activeQrImageUrl.current !== null) {
+        URL.revokeObjectURL(activeQrImageUrl.current);
+      }
+    },
+    [],
+  );
 
   const getToken = async () => {
     const clerk = await loadBrowserClerk(clerkPublishableKey);
@@ -56,6 +92,112 @@ export function PublicBoundaryJourney({
       return null;
     }
     return token;
+  };
+
+  const replaceQrImage = (next: string | null) => {
+    if (activeQrImageUrl.current !== null) {
+      URL.revokeObjectURL(activeQrImageUrl.current);
+    }
+    activeQrImageUrl.current = next;
+    setQrImageUrl(next);
+  };
+
+  const loadConnections = async (token: string) => {
+    const response = await fetch(connectionsEndpoint, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) return false;
+    const body = (await response.json()) as {
+      readonly whatsapp_connections?: ReadonlyArray<{
+        readonly display_name?: unknown;
+        readonly id?: unknown;
+        readonly number_suffix?: unknown;
+        readonly state?: unknown;
+        readonly state_changed_at?: unknown;
+      }>;
+    };
+    if (!Array.isArray(body.whatsapp_connections)) return false;
+    const parsed: SafeWhatsAppConnection[] = [];
+    for (const connection of body.whatsapp_connections) {
+      if (
+        (connection.display_name !== null &&
+          typeof connection.display_name !== "string") ||
+        typeof connection.id !== "string" ||
+        !/^con_[A-Za-z0-9_-]{21}$/u.test(connection.id) ||
+        typeof connection.number_suffix !== "string" ||
+        !/^[0-9]{4}$/u.test(connection.number_suffix) ||
+        (connection.state !== "connected" &&
+          connection.state !== "connecting" &&
+          connection.state !== "degraded" &&
+          connection.state !== "deleting" &&
+          connection.state !== "disconnected" &&
+          connection.state !== "reconnect_required") ||
+        typeof connection.state_changed_at !== "string"
+      ) {
+        return false;
+      }
+      parsed.push({
+        displayName: connection.display_name,
+        id: connection.id,
+        numberSuffix: connection.number_suffix,
+        state: connection.state,
+        stateChangedAt: connection.state_changed_at,
+      });
+    }
+    setConnections(parsed);
+    return true;
+  };
+
+  const observeSetup = async (setupId: string): Promise<void> => {
+    try {
+      const token = await getToken();
+      if (token === null) {
+        setSetupState("unavailable");
+        return;
+      }
+      const response = await fetch(`${connectionSetupEndpoint}/${setupId}/qr`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      if (response.status === 200) {
+        const image = await response.blob();
+        replaceQrImage(URL.createObjectURL(image));
+        setSetupState("qr_available");
+        observationTimer.current = setTimeout(() => {
+          void observeSetup(setupId);
+        }, 750);
+        return;
+      }
+      if (response.status === 202) {
+        setSetupState(
+          response.headers.get("x-connection-setup-state") === "pending"
+            ? "pending"
+            : "provisioned",
+        );
+        observationTimer.current = setTimeout(() => {
+          void observeSetup(setupId);
+        }, 750);
+        return;
+      }
+      if (response.status === 204) {
+        replaceQrImage(null);
+        setSetupState("connected");
+        if (!(await loadConnections(token))) {
+          setSetupState("unavailable");
+        }
+        return;
+      }
+      const body = (await response.json()) as { readonly error?: unknown };
+      if (
+        body.error === "provisioning_failed" ||
+        body.error === "provisioning_quarantined"
+      ) {
+        setSetupState(body.error);
+        return;
+      }
+      setSetupState("unavailable");
+    } catch {
+      setSetupState("unavailable");
+    }
   };
 
   const checkBoundary = async () => {
@@ -103,6 +245,9 @@ export function PublicBoundaryJourney({
         return;
       }
       setState("ok");
+      if (!(await loadConnections(token))) {
+        setState("unavailable");
+      }
     } catch {
       setState("unavailable");
     }
@@ -158,14 +303,21 @@ export function PublicBoundaryJourney({
             setSetupState(
               setup.idempotent_replay === true ? "replayed" : "pending",
             );
+            void observeSetup(setup.id);
             return;
           }
           if (
             setup.state === "provisioned" ||
+            setup.state === "activated" ||
             setup.state === "provisioning_failed" ||
             setup.state === "provisioning_quarantined"
           ) {
-            setSetupState(setup.state);
+            setSetupState(
+              setup.state === "activated" ? "connected" : setup.state,
+            );
+            if (setup.state === "provisioned") {
+              void observeSetup(setup.id);
+            }
             return;
           }
         }
@@ -251,21 +403,71 @@ export function PublicBoundaryJourney({
               ? "Connection Setup started. Preparing your QR code."
               : setupState === "replayed"
                 ? "Connection Setup already started. Preparing your QR code."
-                : setupState === "provisioned"
-                  ? "Connection Setup is ready."
-                  : setupState === "provisioning_failed"
-                    ? "Connection Setup could not be prepared."
-                    : setupState === "provisioning_quarantined"
-                      ? "Connection Setup needs support review."
-                      : setupState === "number_unavailable"
-                        ? "That WhatsApp Number is already in use."
-                        : setupState === "connection_limit_reached"
-                          ? "Your Personal Account already has three active setup or Connection slots."
-                          : setupState === "invalid"
-                            ? "Enter a valid international WhatsApp Number."
-                            : setupState}
+                : setupState === "qr_available"
+                  ? "Scan this QR code with WhatsApp."
+                  : setupState === "connected"
+                    ? "WhatsApp Connection active."
+                    : setupState === "provisioned"
+                      ? "Connection Setup is ready."
+                      : setupState === "provisioning_failed"
+                        ? "Connection Setup could not be prepared."
+                        : setupState === "provisioning_quarantined"
+                          ? "Connection Setup needs support review."
+                          : setupState === "number_unavailable"
+                            ? "That WhatsApp Number is already in use."
+                            : setupState === "connection_limit_reached"
+                              ? "Your Personal Account already has three active setup or Connection slots."
+                              : setupState === "invalid"
+                                ? "Enter a valid international WhatsApp Number."
+                                : setupState}
           </p>
+          {qrImageUrl === null ? null : (
+            // The object URL is created from the authenticated, non-persisted
+            // SVG response and is revoked as soon as setup completes.
+            // biome-ignore lint/performance/noImgElement: QR bytes are already a complete generated SVG.
+            <img
+              alt="Scan this WhatsApp QR code"
+              className="h-64 w-64 rounded bg-white p-3"
+              src={qrImageUrl}
+            />
+          )}
         </form>
+      ) : null}
+      {state === "ok" ? (
+        <section aria-label="WhatsApp Connections" className="space-y-3">
+          <h2 className="text-xl font-semibold">WhatsApp Connections</h2>
+          {connections.length === 0 ? (
+            <p className="text-sm text-zinc-400">
+              No WhatsApp Connections yet.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {connections.map((connection) => (
+                <li
+                  className="rounded-lg border border-zinc-800 bg-zinc-900 p-4"
+                  data-testid="whatsapp-connection"
+                  key={connection.id}
+                >
+                  <p className="font-medium">
+                    {connection.displayName ?? "WhatsApp Connection"}
+                  </p>
+                  <p className="text-sm text-zinc-300">
+                    Number ending {connection.numberSuffix}
+                  </p>
+                  <p className="text-sm capitalize text-emerald-400">
+                    {connection.state.replace("_", " ")}
+                  </p>
+                  <time
+                    className="text-xs text-zinc-500"
+                    dateTime={connection.stateChangedAt}
+                  >
+                    State changed {connection.stateChangedAt}
+                  </time>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       ) : null}
     </section>
   );

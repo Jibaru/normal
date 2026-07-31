@@ -1,5 +1,8 @@
 import { KMSClient } from "@aws-sdk/client-kms";
-import { makeConnectionSetupId } from "@whatsapp-mcp/contracts/handles";
+import {
+  makeConnectionId,
+  makeConnectionSetupId,
+} from "@whatsapp-mcp/contracts/handles";
 import type {
   ProviderControlFailure,
   ProviderControlService,
@@ -8,6 +11,7 @@ import { makePgConnectionSetupRepository } from "@whatsapp-mcp/db/connection-set
 import { checkDatabaseReadiness } from "@whatsapp-mcp/db/connectivity";
 import { makePgMcpAuthorizationRepository } from "@whatsapp-mcp/db/mcp-authorization";
 import { makePgPersonalAccountRepository } from "@whatsapp-mcp/db/personal-account";
+import { makePgWhatsAppConnectionRepository } from "@whatsapp-mcp/db/whatsapp-connection";
 import { Config, ConfigProvider, Data, Effect, Layer, Redacted } from "effect";
 import { makeClerkHumanIdentity } from "./auth/clerk";
 import { HumanIdentity } from "./auth/human-identity";
@@ -77,6 +81,15 @@ import {
   SafeTelemetry,
   type SafeTelemetryEvent,
 } from "./services";
+import {
+  createWhatsAppConnectionHandler,
+  isWhatsAppConnectionRequest,
+  WhatsAppConnectionClock,
+  WhatsAppConnectionIdentifiers,
+  WhatsAppConnectionPersistence,
+  WhatsAppConnectionPersistenceError,
+  WhatsAppConnectionProvider,
+} from "./whatsapp-connection";
 
 export interface ApiEnvironment {
   readonly AWS_ACCESS_KEY_ID?: string | undefined;
@@ -598,6 +611,77 @@ const connectionSetupProvisioningProviderLayer = (
       }).pipe(Effect.catchAll((failure) => Effect.succeed(failure))),
   });
 
+const whatsAppConnectionProviderLayer = (environment: ApiEnvironment) =>
+  Layer.succeed(WhatsAppConnectionProvider, {
+    connect: (input) =>
+      Effect.tryPromise({
+        try: () =>
+          (
+            environment.PROVIDER_CONTROL as ProviderControlService
+          ).connectSession(input),
+        catch: () => unavailableProviderResult("lifecycle-write"),
+      }).pipe(Effect.catchAll((failure) => Effect.succeed(failure))),
+    getQrCode: (input) =>
+      Effect.tryPromise({
+        try: () =>
+          (environment.PROVIDER_CONTROL as ProviderControlService).getQrCode(
+            input,
+          ),
+        catch: () => unavailableProviderResult("safe-read"),
+      }).pipe(Effect.catchAll((failure) => Effect.succeed(failure))),
+    reconcile: (input) =>
+      Effect.tryPromise({
+        try: () =>
+          (
+            environment.PROVIDER_CONTROL as ProviderControlService
+          ).reconcileSession(input),
+        catch: () => unavailableProviderResult("safe-read"),
+      }).pipe(Effect.catchAll((failure) => Effect.succeed(failure))),
+  });
+
+const whatsAppConnectionPersistenceLayer = (environment: ApiEnvironment) =>
+  Layer.succeed(WhatsAppConnectionPersistence, {
+    activate: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgWhatsAppConnectionRepository(connectionString).activate(
+            input,
+          );
+        },
+        catch: () => new WhatsAppConnectionPersistenceError(),
+      }),
+    list: (clerkUserId) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgWhatsAppConnectionRepository(
+            connectionString,
+          ).listForUser(clerkUserId);
+        },
+        catch: () => new WhatsAppConnectionPersistenceError(),
+      }),
+    loadSetup: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgWhatsAppConnectionRepository(
+            connectionString,
+          ).loadSetupForActivation(input);
+        },
+        catch: () => new WhatsAppConnectionPersistenceError(),
+      }),
+  });
+
 const connectionSetupProvisioningQueueLayer = (environment: ApiEnvironment) =>
   Layer.succeed(ConnectionSetupProvisioningQueue, {
     enqueue: (setupId) =>
@@ -625,6 +709,20 @@ const connectionSetupIdentifiersLayer = Layer.succeed(
 const connectionSetupClockLayer = Layer.succeed(ConnectionSetupClock, {
   now: Effect.sync(() => new Date().toISOString()),
 });
+
+const whatsAppConnectionRuntimeLayer = Layer.mergeAll(
+  Layer.succeed(WhatsAppConnectionClock, {
+    now: Effect.sync(() => new Date().toISOString()),
+  }),
+  Layer.succeed(WhatsAppConnectionIdentifiers, {
+    nextConnectionId: Effect.sync(() => crypto.randomUUID()),
+    nextPublicId: Effect.sync(() => makeConnectionId()),
+    nextWebhookIngressId: Effect.sync(() => crypto.randomUUID()),
+    nextWebhookSecret: Effect.sync(() =>
+      crypto.getRandomValues(new Uint8Array(32)),
+    ),
+  }),
+);
 
 const connectionSetupNumberTokensLayer = (environment: ApiEnvironment) =>
   Layer.effect(
@@ -887,6 +985,9 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     connectionSetupIdentifiersLayer,
     connectionSetupClockLayer,
     connectionSetupNumberTokensLayer(environment),
+    whatsAppConnectionPersistenceLayer(environment),
+    whatsAppConnectionProviderLayer(environment),
+    whatsAppConnectionRuntimeLayer,
     mcpAuthorizationPersistenceLayer(environment),
     mcpAuthorizationRuntimeLayer,
   );
@@ -896,6 +997,10 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     environment.CLERK_AUTHORIZED_PARTY ?? "",
   );
   const connectionSetupHandler = createConnectionSetupHandler(
+    layer,
+    environment.CLERK_AUTHORIZED_PARTY ?? "",
+  );
+  const whatsAppConnectionHandler = createWhatsAppConnectionHandler(
     layer,
     environment.CLERK_AUTHORIZED_PARTY ?? "",
   );
@@ -934,6 +1039,9 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
         }
         if (isConnectionSetupRequest(nextRequest)) {
           return connectionSetupHandler(nextRequest);
+        }
+        if (isWhatsAppConnectionRequest(nextRequest)) {
+          return whatsAppConnectionHandler(nextRequest);
         }
         if (isPersonalAccountRequest(nextRequest)) {
           return personalAccountHandler(nextRequest);

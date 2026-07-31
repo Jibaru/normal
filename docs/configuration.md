@@ -306,6 +306,58 @@ optional normalized failure code, plus recovery candidate counts; it never
 contains setup/account identifiers, number material, provider values, or
 ciphertext.
 
+## WhatsApp Connection activation and QR delivery
+
+The owning signed-in browser reads
+`GET /v1/connection-setups/{connection_setup_id}/qr` directly from the API
+Worker. The API resolves the verified Clerk User through the narrow activation
+bootstrap function before it invokes provider-control. It first reconciles the
+deterministic setup marker, starts QR linking only after that reconciliation
+shows a single non-connected provider session, and then asks provider-control
+for the current generated SVG. An available SVG is streamed directly as
+`image/svg+xml` with `Cache-Control: no-store`, a restrictive content security
+policy, and `X-Content-Type-Options: nosniff`. The bytes exist only in the
+bounded provider-control RPC result, API response, and browser object URL; no
+database, R2, Queue, analytics, trace, snapshot, or telemetry field receives
+them.
+
+Every later observation reconciles again. Only a single provider session in
+trusted `connected` state can activate the Setup. One Neon transaction locks
+the Setup and creates or returns exactly one WhatsApp Connection, changes the
+Setup to `activated`, and persists:
+
+- a fresh `con_` public handle and internal identifier;
+- a new KMS-rooted per-connection key envelope;
+- a random non-enumerable webhook ingress identity;
+- a fresh 32-byte webhook verification secret encrypted under the connection;
+- the provider-neutral locator and per-session authority re-encrypted under
+  the connection; and
+- only the last four digits of the normalized WhatsApp Number as queryable
+  display metadata.
+
+The stable product state vocabulary is `connected`, `connecting`,
+`disconnected`, `reconnect_required`, `degraded`, and `deleting`. Only
+`connected` permits a later new Send Operation. The product reads
+`GET /v1/whatsapp-connections` without pagination and receives only the opaque
+handle, nullable display name, number suffix, normalized state, and state-change
+time. Provider identifiers, credentials, webhook material, setup identifiers,
+full numbers, key metadata, and ciphertext never enter that response.
+
+This behavior adds no environment value or infrastructure authority.
+Provider-control already owns the closed `connectSession`, `getQrCode`, and
+`reconcileSession` lifecycle methods, and the API already has the sole
+same-environment service binding. The Vercel app still calls the API directly
+and receives no Provider API Credential, database binding, KMS authority, or
+provider-control binding. Production cannot select the protocol-observable
+provider used by the acceptance tests.
+
+Safe QR telemetry is limited to `connection_setup.qr.completed`, service, and
+one normalized outcome. Safe listing telemetry adds only the connection count
+to `whatsapp_connection.list.completed`. Neither event contains a User,
+Personal Account, Connection Setup, WhatsApp Connection, number, QR byte,
+provider value, credential, ingress identity, secret, ciphertext, or key
+reference.
+
 ## Wasender media authority
 
 The Wasender media adapter has no hostname, endpoint, redirect, timeout, or

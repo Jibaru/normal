@@ -148,6 +148,7 @@ type ConnectionSetupOutcome =
         readonly expiresAt: string;
         readonly setupId: string;
         readonly state:
+          | "activated"
           | "provisioned"
           | "provisioning_failed"
           | "provisioning_pending"

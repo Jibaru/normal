@@ -149,6 +149,63 @@ describe("public-boundary Worker harness", () => {
     });
   });
 
+  test("streams QR data, observes provider connection, and lists the activated Connection over HTTP", async () => {
+    const started = await exports.default.fetch(
+      new Request("https://api.example.test/v1/connection-setups", {
+        body: JSON.stringify({
+          idempotency_key: "323456789012345678901",
+          whatsapp_number: "+1 (555) 012-3456",
+        }),
+        headers: {
+          authorization: "Bearer signed-test-user",
+          "content-type": "application/json",
+          origin: "http://127.0.0.1:3000",
+        },
+        method: "POST",
+      }),
+    );
+    const body = (await started.json()) as {
+      readonly connection_setup: { readonly id: string };
+    };
+    const qrRequest = () =>
+      new Request(
+        `https://api.example.test/v1/connection-setups/${body.connection_setup.id}/qr`,
+        {
+          headers: {
+            authorization: "Bearer signed-test-user",
+            origin: "http://127.0.0.1:3000",
+          },
+        },
+      );
+
+    const qr = await exports.default.fetch(qrRequest());
+    const connected = await exports.default.fetch(qrRequest());
+    const listed = await exports.default.fetch(
+      new Request("https://api.example.test/v1/whatsapp-connections", {
+        headers: {
+          authorization: "Bearer signed-test-user",
+          origin: "http://127.0.0.1:3000",
+        },
+      }),
+    );
+
+    expect(qr.status).toBe(200);
+    expect(qr.headers.get("content-type")).toBe("image/svg+xml");
+    expect((await qr.arrayBuffer()).byteLength).toBeGreaterThan(0);
+    expect(connected.status).toBe(204);
+    expect(await listed.json()).toEqual({
+      whatsapp_connections: [
+        {
+          display_name: null,
+          id: "con_000000000000000000018",
+          number_suffix: "3456",
+          state: "connected",
+          state_changed_at: "2026-01-02T03:06:00.000Z",
+        },
+      ],
+    });
+  });
+
   test("returns the waitlist outcome through the signed-in public boundary", async () => {
     const response = await exports.default.fetch(
       new Request("https://api.example.test/v1/personal-account/bootstrap", {

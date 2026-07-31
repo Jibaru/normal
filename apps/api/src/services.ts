@@ -76,6 +76,24 @@ export interface ConnectionSetupProvisionRecoveryEnqueuedEvent {
   readonly service: "api";
 }
 
+export interface ConnectionSetupQrCompletedEvent {
+  readonly event: "connection_setup.qr.completed";
+  readonly outcome:
+    | "connected"
+    | "connecting"
+    | "pending"
+    | "provisioning_failed"
+    | "provisioning_quarantined"
+    | "qr_available";
+  readonly service: "api";
+}
+
+export interface WhatsAppConnectionListCompletedEvent {
+  readonly connectionCount: number;
+  readonly event: "whatsapp_connection.list.completed";
+  readonly service: "api";
+}
+
 export interface OAuthAuthorizationRequestCompletedEvent {
   readonly clientClass?: string | undefined;
   readonly event: "oauth.authorization.request.completed";
@@ -111,6 +129,7 @@ export interface SafeTelemetry {
 export type SafeTelemetryEvent =
   | ConnectionSetupProvisionCompletedEvent
   | ConnectionSetupProvisionRecoveryEnqueuedEvent
+  | ConnectionSetupQrCompletedEvent
   | ConnectionSetupStartCompletedEvent
   | HttpCompletedEvent
   | OAuthAuthorizationDecisionCompletedEvent
@@ -118,7 +137,8 @@ export type SafeTelemetryEvent =
   | OAuthProtocolRequestFailedEvent
   | OAuthRefreshCompletedEvent
   | PersonalAccountBootstrapCompletedEvent
-  | StoredMediaContainerEvent;
+  | StoredMediaContainerEvent
+  | WhatsAppConnectionListCompletedEvent;
 
 export const SafeTelemetry = Context.GenericTag<SafeTelemetry>(
   "@whatsapp-mcp/api/SafeTelemetry",
