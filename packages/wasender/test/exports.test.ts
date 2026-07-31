@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import packageManifest from "../package.json";
 import { lifecycleWritePolicy } from "../src/control";
+import * as sessionExports from "../src/session";
 import {
   guardedMediaDownloadPolicy,
   jsonReadPolicy,
@@ -17,6 +18,11 @@ describe("@whatsapp-mcp/wasender boundaries", () => {
       "./webhook",
     ]);
     expect(packageManifest.exports).not.toHaveProperty(".");
+    expect(sessionExports).toHaveProperty("makeWasenderTextSending");
+    expect(sessionExports).toHaveProperty("makeWasenderTextSendingLayer");
+    expect(sessionExports).not.toHaveProperty(
+      "makeWasenderTextSendingWithRuntime",
+    );
   });
 
   test("keeps retry policy operation-specific", () => {
