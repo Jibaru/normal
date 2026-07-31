@@ -13,6 +13,7 @@ import {
 const accountId = "10000000-0000-4000-8000-000000000033";
 const otherAccountId = "10000000-0000-4000-8000-000000000034";
 const connectionId = "20000000-0000-4000-8000-000000000033";
+const otherConnectionId = "20000000-0000-4000-8000-000000000034";
 const publicId = "con_000000000000000000033";
 const firstEventId = "40000000-0000-4000-8000-000000000033";
 const secondEventId = "40000000-0000-4000-8000-000000000034";
@@ -215,6 +216,137 @@ describe("Webhook Event repository", () => {
       event_count: 1,
       source_expires_at: new Date("2026-08-07T12:10:00.000Z"),
     });
+  });
+
+  test("finds only encrypted ingress objects that Queue processing has not claimed", async () => {
+    const repository = makeWebhookEventRepository(webhookProvider);
+    const first = eventInput(firstEventId);
+    const second = eventInput(secondEventId, "2026-07-31T12:11:00.000Z");
+
+    expect(await repository.filterUnclaimed([first, second])).toEqual([
+      first,
+      second,
+    ]);
+    await repository.prepare(first);
+    expect(await repository.filterUnclaimed([first, second])).toEqual([second]);
+  });
+
+  test("records one evidence-based processing gap before DLQ acknowledgement", async () => {
+    const repository = makeWebhookEventRepository(webhookProvider);
+    const input = {
+      ...eventInput(firstEventId),
+      deadLetteredAt: "2026-08-01T09:10:00.000Z",
+    };
+
+    expect(await repository.deadLetter(input)).toBe("gap_recorded");
+    expect(await repository.deadLetter(input)).toBe("gap_recorded");
+
+    const recorded = await database.query<{
+      cause: string;
+      dead_lettered_at: Date;
+      evidence_webhook_event_id: string;
+      gap_count: number;
+      starts_at: Date;
+    }>(
+      `SELECT
+         gaps.cause,
+         events.dead_lettered_at,
+         gaps.evidence_webhook_event_id,
+         count(*) OVER ()::integer AS gap_count,
+         gaps.starts_at
+       FROM app.ingestion_gaps AS gaps
+       JOIN app.webhook_events AS events
+         ON events.id = gaps.evidence_webhook_event_id`,
+    );
+    expect(recorded.rows).toEqual([
+      {
+        cause: "processing_failure",
+        dead_lettered_at: new Date("2026-08-01T09:10:00.000Z"),
+        evidence_webhook_event_id: firstEventId,
+        gap_count: 1,
+        starts_at: new Date(receivedAt),
+      },
+    ]);
+
+    await database.query(
+      `INSERT INTO app.whatsapp_connections (
+         id,
+         personal_account_id,
+         webhook_ingress_id,
+         public_id,
+         number_suffix,
+         state,
+         state_changed_at
+       )
+       VALUES ($1, $2, $3, $4, '0034', 'connecting', $5)`,
+      [
+        otherConnectionId,
+        otherAccountId,
+        "30000000-0000-4000-8000-000000000034",
+        "con_000000000000000000034",
+        receivedAt,
+      ],
+    );
+    await database.query(
+      `INSERT INTO app.webhook_events (
+         personal_account_id,
+         whatsapp_connection_id,
+         id,
+         ciphertext_sha256,
+         payload_bytes,
+         received_at,
+         source_expires_at
+       )
+       VALUES ($1, $2, $3, $4, 128, $5, $5::timestamptz + interval '7 days')`,
+      [
+        otherAccountId,
+        otherConnectionId,
+        secondEventId,
+        "b".repeat(64),
+        receivedAt,
+      ],
+    );
+    await expect(
+      database.query(
+        `INSERT INTO app.ingestion_gaps (
+           personal_account_id,
+           whatsapp_connection_id,
+           cause,
+           starts_at,
+           evidence_webhook_event_id
+         )
+         VALUES ($1, $2, 'processing_failure', $3, $4)`,
+        [accountId, connectionId, receivedAt, secondEventId],
+      ),
+    ).rejects.toThrow();
+
+    await database.query("DELETE FROM app.webhook_events WHERE id = $1", [
+      firstEventId,
+    ]);
+    const retainedGap = await database.query<{
+      evidence_webhook_event_id: string | null;
+    }>("SELECT evidence_webhook_event_id FROM app.ingestion_gaps");
+    expect(retainedGap.rows).toEqual([{ evidence_webhook_event_id: null }]);
+  });
+
+  test("does not create a false gap when a duplicate reaches DLQ after completion", async () => {
+    const repository = makeWebhookEventRepository(webhookProvider);
+    await repository.prepare(eventInput(firstEventId));
+    await repository.complete({
+      completedAt: "2026-07-31T12:10:01.000Z",
+      eventId: firstEventId,
+      personalAccountId: accountId,
+      whatsappConnectionId: connectionId,
+    });
+
+    expect(
+      await repository.deadLetter({
+        ...eventInput(firstEventId),
+        deadLetteredAt: "2026-08-01T09:10:00.000Z",
+      }),
+    ).toBe("already_completed");
+    const gaps = await database.query("SELECT id FROM app.ingestion_gaps");
+    expect(gaps.rows).toEqual([]);
   });
 
   test("keeps Webhook Events tenant-scoped and unavailable to the API role", async () => {

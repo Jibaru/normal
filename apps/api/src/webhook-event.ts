@@ -1,4 +1,5 @@
 import type {
+  DeadLetterWebhookEventOutcome,
   ProjectConnectionStateInput,
   QuarantineWebhookItemInput,
   WebhookEventProcessingMaterial,
@@ -37,6 +38,10 @@ export class WebhookEventNormalizationError extends Data.TaggedError(
   "WebhookEventNormalizationError",
 ) {}
 
+export class WebhookEventPermanentValidationError extends Data.TaggedError(
+  "WebhookEventPermanentValidationError",
+) {}
+
 export interface WebhookEventPersistenceService {
   readonly complete: (input: {
     readonly completedAt: string;
@@ -44,6 +49,18 @@ export interface WebhookEventPersistenceService {
     readonly personalAccountId: string;
     readonly whatsappConnectionId: string;
   }) => Effect.Effect<void, WebhookEventPersistenceError>;
+  readonly deadLetter: (input: {
+    readonly ciphertextSha256: string;
+    readonly deadLetteredAt: string;
+    readonly eventId: string;
+    readonly payloadBytes: number;
+    readonly personalAccountId: string;
+    readonly receivedAt: string;
+    readonly whatsappConnectionId: string;
+  }) => Effect.Effect<
+    DeadLetterWebhookEventOutcome,
+    WebhookEventPersistenceError
+  >;
   readonly prepare: (input: {
     readonly ciphertextSha256: string;
     readonly eventId: string;
@@ -102,6 +119,18 @@ export const WebhookEventClock = Context.GenericTag<WebhookEventClockService>(
   "@whatsapp-mcp/api/WebhookEventClock",
 );
 
+export interface WebhookEventRetryScheduleService {
+  readonly delaySeconds: (attempt: number) => Effect.Effect<number>;
+}
+
+export const WebhookEventRetrySchedule =
+  Context.GenericTag<WebhookEventRetryScheduleService>(
+    "@whatsapp-mcp/api/WebhookEventRetrySchedule",
+  );
+
+export const jitteredWebhookRetryDelaySeconds = (random: number): number =>
+  9_900 + Math.floor(Math.min(1, Math.max(0, random)) * 1_800);
+
 export interface WebhookEventNormalizationService {
   readonly make: (
     identityKey: Uint8Array,
@@ -130,7 +159,8 @@ export type WebhookEventRequirements =
   | WebhookEventClockService
   | WebhookEventNormalizationService
   | WebhookEventObjectStoreService
-  | WebhookEventPersistenceService;
+  | WebhookEventPersistenceService
+  | WebhookEventRetryScheduleService;
 
 const uuid = (value: unknown): value is string =>
   typeof value === "string" &&
@@ -253,11 +283,11 @@ const validateSource = (
       Object.keys(metadata).length !== 6 ||
       sourceHash !== message.ciphertext_sha256
     ) {
-      return yield* Effect.fail(new WebhookEventObjectStoreError());
+      return yield* Effect.fail(new WebhookEventPermanentValidationError());
     }
     const ciphertext = parseCiphertext(source.body);
     if (ciphertext === null) {
-      return yield* Effect.fail(new WebhookEventObjectStoreError());
+      return yield* Effect.fail(new WebhookEventPermanentValidationError());
     }
     return ciphertext;
   });
@@ -394,7 +424,7 @@ const processMessage = (message: WebhookEventQueueMessage) =>
     return yield* withZeroedBytes(payload, (payloadBytes) =>
       Effect.gen(function* () {
         if (payloadBytes.byteLength !== message.payload_bytes) {
-          return yield* Effect.fail(new WebhookEventObjectStoreError());
+          return yield* Effect.fail(new WebhookEventPermanentValidationError());
         }
         const identityKey = yield* encryption.decrypt({
           accountKey: material.accountKey,
@@ -457,20 +487,87 @@ export const handleWebhookEventBatch = (
     Effect.forEach(
       batch.messages,
       (queued) => {
-        if (!isWebhookEventQueueMessage(queued.body)) {
+        const message = queued.body;
+        if (!isWebhookEventQueueMessage(message)) {
           return emit(emptyCounts(), "invalid_message").pipe(
             Effect.tap(() => Effect.sync(() => queued.ack())),
           );
         }
-        return processMessage(queued.body).pipe(
+        return processMessage(message).pipe(
           Effect.flatMap((counts) => emit(counts, "completed")),
           Effect.tap(() => Effect.sync(() => queued.ack())),
-          Effect.catchAll(() =>
-            emit(emptyCounts(), "retry").pipe(
-              Effect.tap(() =>
-                Effect.sync(() => queued.retry({ delaySeconds: 10_800 })),
-              ),
+          Effect.catchTag("WebhookEventPermanentValidationError", () =>
+            recordDeadLetter(message).pipe(
+              Effect.flatMap(emitDeadLetter),
+              Effect.tap(() => Effect.sync(() => queued.ack())),
             ),
+          ),
+          Effect.catchAll(() =>
+            Effect.gen(function* () {
+              const schedule = yield* WebhookEventRetrySchedule;
+              const delaySeconds = yield* schedule.delaySeconds(
+                queued.attempts,
+              );
+              yield* emit(emptyCounts(), "retry");
+              yield* Effect.sync(() => queued.retry({ delaySeconds }));
+            }),
+          ),
+        );
+      },
+      { concurrency: "unbounded", discard: true },
+    ).pipe(Effect.provide(layer)),
+  );
+
+const emitDeadLetter = (
+  outcome:
+    | "already_completed"
+    | "gap_recorded"
+    | "invalid_message"
+    | "source_unavailable",
+) =>
+  Effect.gen(function* () {
+    const telemetry = yield* SafeTelemetry;
+    yield* telemetry.emit({
+      event: "webhook_event.dead_letter.completed",
+      outcome,
+      service: "api",
+    });
+  });
+
+const recordDeadLetter = (message: WebhookEventQueueMessage) =>
+  Effect.gen(function* () {
+    const persistence = yield* WebhookEventPersistence;
+    const clock = yield* WebhookEventClock;
+    return yield* persistence.deadLetter({
+      ciphertextSha256: message.ciphertext_sha256,
+      deadLetteredAt: yield* clock.now,
+      eventId: message.object_id,
+      payloadBytes: message.payload_bytes,
+      personalAccountId: message.personal_account_id,
+      receivedAt: message.received_at,
+      whatsappConnectionId: message.whatsapp_connection_id,
+    });
+  });
+
+export const handleWebhookDeadLetterBatch = (
+  batch: MessageBatch,
+  layer: Layer.Layer<WebhookEventRequirements, unknown>,
+): Promise<void> =>
+  Effect.runPromise(
+    Effect.forEach(
+      batch.messages,
+      (queued) => {
+        const message = queued.body;
+        const work = !isWebhookEventQueueMessage(message)
+          ? emitDeadLetter("invalid_message")
+          : Effect.gen(function* () {
+              const outcome = yield* recordDeadLetter(message);
+              yield* emitDeadLetter(outcome);
+            });
+        return work.pipe(
+          Effect.tap(() => Effect.sync(() => queued.ack())),
+          Effect.catchAll(() =>
+            Effect.sync(() => queued.retry({ delaySeconds: 300 })),
           ),
         );
       },

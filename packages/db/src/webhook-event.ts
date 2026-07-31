@@ -56,6 +56,15 @@ export interface PrepareWebhookEventInput {
   readonly whatsappConnectionId: string;
 }
 
+export interface DeadLetterWebhookEventInput extends PrepareWebhookEventInput {
+  readonly deadLetteredAt: string;
+}
+
+export type DeadLetterWebhookEventOutcome =
+  | "already_completed"
+  | "gap_recorded"
+  | "source_unavailable";
+
 export type WebhookItemQuarantineClassification =
   | "invalid_item_shape"
   | "invalid_top_level_shape"
@@ -104,6 +113,12 @@ export interface WebhookEventRepository {
     readonly personalAccountId: string;
     readonly whatsappConnectionId: string;
   }) => Promise<void>;
+  readonly deadLetter: (
+    input: DeadLetterWebhookEventInput,
+  ) => Promise<DeadLetterWebhookEventOutcome>;
+  readonly filterUnclaimed: <Input extends PrepareWebhookEventInput>(
+    inputs: ReadonlyArray<Input>,
+  ) => Promise<ReadonlyArray<Input>>;
   readonly prepare: (
     input: PrepareWebhookEventInput,
   ) => Promise<WebhookEventProcessingMaterial | null>;
@@ -263,6 +278,15 @@ interface EventRow extends Record<string, unknown> {
   readonly received_at: unknown;
 }
 
+interface EventProcessingRow extends EventRow {
+  readonly processing_completed_at: unknown;
+}
+
+interface RecoveryCandidateRow extends Record<string, unknown> {
+  readonly candidate_index: unknown;
+  readonly status: unknown;
+}
+
 const sameEvent = (
   input: PrepareWebhookEventInput,
   row: EventRow | undefined,
@@ -361,6 +385,146 @@ export const makeWebhookEventRepository = (
         }
       }),
     ),
+
+  deadLetter: (input) =>
+    provider.withConnection((connection) =>
+      withTransaction(connection, async () => {
+        await enterPersonalAccountContext(connection, input.personalAccountId);
+        const active = await connection.query(
+          `SELECT connections.id
+           FROM app.whatsapp_connections AS connections
+           JOIN app.personal_accounts AS accounts
+             ON accounts.id = connections.personal_account_id
+           WHERE connections.personal_account_id = $1
+             AND connections.id = $2
+             AND connections.state <> 'deleting'
+             AND accounts.state = 'active'`,
+          [input.personalAccountId, input.whatsappConnectionId],
+        );
+        if (active.rows.length === 0) return "source_unavailable" as const;
+
+        await connection.query(
+          `INSERT INTO app.webhook_events (
+             personal_account_id,
+             whatsapp_connection_id,
+             id,
+             ciphertext_sha256,
+             payload_bytes,
+             received_at,
+             source_expires_at
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $6::timestamptz + interval '7 days')
+           ON CONFLICT (personal_account_id, whatsapp_connection_id, id)
+           DO NOTHING`,
+          [
+            input.personalAccountId,
+            input.whatsappConnectionId,
+            input.eventId,
+            input.ciphertextSha256,
+            input.payloadBytes,
+            input.receivedAt,
+          ],
+        );
+        const persisted = await connection.query<EventProcessingRow>(
+          `SELECT
+             ciphertext_sha256,
+             payload_bytes,
+             processing_completed_at,
+             received_at
+           FROM app.webhook_events
+           WHERE personal_account_id = $1
+             AND whatsapp_connection_id = $2
+             AND id = $3
+           FOR UPDATE`,
+          [input.personalAccountId, input.whatsappConnectionId, input.eventId],
+        );
+        const event = persisted.rows[0];
+        if (!sameEvent(input, event)) {
+          throw new Error("conflicting dead-letter Webhook Event");
+        }
+        if (event?.processing_completed_at !== null) {
+          return "already_completed" as const;
+        }
+
+        await connection.query(
+          `UPDATE app.webhook_events
+           SET
+             dead_lettered_at = coalesce(dead_lettered_at, $4::timestamptz),
+             updated_at = greatest(updated_at, $4::timestamptz)
+           WHERE personal_account_id = $1
+             AND whatsapp_connection_id = $2
+             AND id = $3`,
+          [
+            input.personalAccountId,
+            input.whatsappConnectionId,
+            input.eventId,
+            input.deadLetteredAt,
+          ],
+        );
+        await connection.query(
+          `INSERT INTO app.ingestion_gaps (
+             personal_account_id,
+             whatsapp_connection_id,
+             cause,
+             starts_at,
+             evidence_webhook_event_id
+           )
+           VALUES ($1, $2, 'processing_failure', $3, $4)
+           ON CONFLICT (evidence_webhook_event_id) DO NOTHING`,
+          [
+            input.personalAccountId,
+            input.whatsappConnectionId,
+            input.receivedAt,
+            input.eventId,
+          ],
+        );
+        return "gap_recorded" as const;
+      }),
+    ),
+
+  filterUnclaimed: <Input extends PrepareWebhookEventInput>(
+    inputs: ReadonlyArray<Input>,
+  ) =>
+    provider.withConnection(async (connection) => {
+      if (inputs.length === 0) return [];
+      const candidates = inputs.map((input, candidateIndex) => ({
+        candidate_index: candidateIndex + 1,
+        ciphertext_sha256: input.ciphertextSha256,
+        event_id: input.eventId,
+        payload_bytes: input.payloadBytes,
+        personal_account_id: input.personalAccountId,
+        received_at: input.receivedAt,
+        whatsapp_connection_id: input.whatsappConnectionId,
+      }));
+      const classified = await connection.query<RecoveryCandidateRow>(
+        `SELECT candidate_index, status
+         FROM app_private.classify_webhook_recovery_candidates($1::jsonb)`,
+        [JSON.stringify(candidates)],
+      );
+      if (classified.rows.length !== inputs.length) {
+        throw new Error("incomplete Webhook Event recovery classification");
+      }
+      const unclaimed: Input[] = [];
+      for (const row of classified.rows) {
+        const candidateIndex = positiveInteger(row.candidate_index);
+        const input =
+          candidateIndex === null ? undefined : inputs[candidateIndex - 1];
+        if (
+          input === undefined ||
+          (row.status !== "claimed" &&
+            row.status !== "conflict" &&
+            row.status !== "source_unavailable" &&
+            row.status !== "unclaimed")
+        ) {
+          throw new Error("invalid Webhook Event recovery classification");
+        }
+        if (row.status === "conflict") {
+          throw new Error("conflicting Webhook Event recovery candidate");
+        }
+        if (row.status === "unclaimed") unclaimed.push(input);
+      }
+      return unclaimed;
+    }),
 
   prepare: (input) =>
     provider.withConnection((connection) =>

@@ -54,6 +54,9 @@ The Worker runtime suite proves:
 - authenticated R2-to-Queue Webhook Event normalization, permanent sibling
   quarantine, deduplication, evidence-ordered connection-state projection, and
   visibility through the signed-in WhatsApp Connection inventory;
+- minute-scheduled orphan discovery from real R2 metadata, republishing through
+  the Queue binding, convergence with later provider redelivery, jittered
+  transient retries, and DLQ acknowledgment after Ingestion Gap persistence;
 - provider-control service-binding calls;
 - scheduled-handler effects through the supported runtime helpers;
 - an OAuth authorization redirect over signed-in HTTP;

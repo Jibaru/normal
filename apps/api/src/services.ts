@@ -126,6 +126,14 @@ export interface WebhookIngressCompletedEvent {
   readonly service: "api";
 }
 
+export interface WebhookIngressRecoveryCompletedEvent {
+  readonly candidateCount: number;
+  readonly enqueuedCount: number;
+  readonly event: "webhook_ingress.recovery.completed";
+  readonly invalidObjectCount: number;
+  readonly service: "api";
+}
+
 export interface WebhookEventProcessingCompletedEvent {
   readonly appliedCount: number;
   readonly duplicateCount: number;
@@ -134,6 +142,16 @@ export interface WebhookEventProcessingCompletedEvent {
   readonly quarantinedCount: number;
   readonly service: "api";
   readonly supersededCount: number;
+}
+
+export interface WebhookEventDeadLetterCompletedEvent {
+  readonly event: "webhook_event.dead_letter.completed";
+  readonly outcome:
+    | "already_completed"
+    | "gap_recorded"
+    | "invalid_message"
+    | "source_unavailable";
+  readonly service: "api";
 }
 
 export interface WhatsAppConnectionLifecycleCompletedEvent {
@@ -202,8 +220,10 @@ export type SafeTelemetryEvent =
   | OAuthRefreshCompletedEvent
   | PersonalAccountBootstrapCompletedEvent
   | StoredMediaContainerEvent
+  | WebhookEventDeadLetterCompletedEvent
   | WebhookEventProcessingCompletedEvent
   | WebhookIngressCompletedEvent
+  | WebhookIngressRecoveryCompletedEvent
   | WhatsAppConnectionLifecycleCompletedEvent
   | WhatsAppConnectionListCompletedEvent;
 

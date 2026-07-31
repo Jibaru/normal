@@ -253,6 +253,7 @@ describe("Connection Setup cleanup saga", () => {
   test("the minute scheduled handler expires setups and publishes cleanup without a browser request", async () => {
     const batches: Array<ReadonlyArray<{ readonly body: unknown }>> = [];
     const observed: Array<string> = [];
+    const sweepObserved: string[] = [];
     const handler = createProductionScheduledHandler(
       {
         CONNECTION_SETUP_PROVISIONING_QUEUE: {
@@ -274,6 +275,9 @@ describe("Connection Setup cleanup saga", () => {
           listCleanupCandidates: async () => [setupId],
           listProvisioningCandidates: async () => [],
         }),
+        sweepWebhookIngress: async (value) => {
+          sweepObserved.push(value);
+        },
       },
     );
 
@@ -283,6 +287,7 @@ describe("Connection Setup cleanup saga", () => {
     } as ScheduledController);
 
     expect(observed).toEqual(["2026-07-31T12:15:00.000Z"]);
+    expect(sweepObserved).toEqual(["2026-07-31T12:15:00.000Z"]);
     expect(batches).toEqual([
       [
         {

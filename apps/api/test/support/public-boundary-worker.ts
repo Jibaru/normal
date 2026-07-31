@@ -46,6 +46,7 @@ import {
   WebhookEventObjectStoreError,
   WebhookEventPersistence,
   WebhookEventPersistenceError,
+  WebhookEventRetrySchedule,
   wasenderWebhookEventNormalizationLayer,
 } from "../../src/webhook-event";
 import {
@@ -59,6 +60,13 @@ import {
   WebhookIngressQueueError,
   type WebhookIngressQueueMessage,
 } from "../../src/webhook-ingress";
+import {
+  WebhookRecoveryCheckpoint,
+  WebhookRecoveryCheckpointError,
+  WebhookRecoveryObjectStore,
+  WebhookRecoveryObjectStoreError,
+  WebhookRecoveryPersistence,
+} from "../../src/webhook-recovery";
 import {
   WhatsAppConnectionClock,
   WhatsAppConnectionIdentifiers,
@@ -113,6 +121,8 @@ const whatsAppConnections: Array<{
 const publishedWebhookMessages: WebhookIngressQueueMessage[] = [];
 const encryptedWebhookPayloads = new Map<string, Uint8Array>();
 const claimedWebhookItems = new Set<string>();
+const claimedWebhookEvents = new Set<string>();
+const deadLetteredWebhookEvents = new Set<string>();
 let projectedConnectionStateVersion: string | null = null;
 let projectedConnectionStateReceivedAt: string | null = null;
 let nextWebhookObjectId = 0;
@@ -138,6 +148,7 @@ const makeTestLayer = (
   failure: FailureTarget | undefined,
   environment?: {
     readonly INGESTION_QUEUE: Queue;
+    readonly OAUTH_KV: KVNamespace;
     readonly WEBHOOK_INGRESS: R2Bucket;
   },
 ) => {
@@ -805,6 +816,9 @@ const makeTestLayer = (
     Layer.succeed(WebhookEventClock, {
       now: Effect.succeed("2026-01-02T03:07:01.000Z"),
     }),
+    Layer.succeed(WebhookEventRetrySchedule, {
+      delaySeconds: () => Effect.succeed(10_123),
+    }),
     Layer.succeed(WebhookEventObjectStore, {
       load: (objectId) =>
         environment === undefined
@@ -823,11 +837,75 @@ const makeTestLayer = (
               catch: () => new WebhookEventObjectStoreError(),
             }),
     }),
+    Layer.succeed(WebhookRecoveryObjectStore, {
+      list: (cursor) =>
+        environment === undefined
+          ? Effect.fail(new WebhookRecoveryObjectStoreError())
+          : Effect.tryPromise({
+              try: async () => {
+                const listed = await environment.WEBHOOK_INGRESS.list({
+                  ...(cursor === null ? {} : { cursor }),
+                  include: ["customMetadata"],
+                  limit: 100,
+                  prefix: "webhook-events/",
+                });
+                return {
+                  cursor: listed.truncated ? (listed.cursor ?? null) : null,
+                  objects: listed.objects.map((object) => ({
+                    customMetadata: { ...(object.customMetadata ?? {}) },
+                    objectKey: object.key,
+                    uploadedAt: object.uploaded.toISOString(),
+                  })),
+                };
+              },
+              catch: () => new WebhookRecoveryObjectStoreError(),
+            }),
+    }),
+    Layer.succeed(WebhookRecoveryCheckpoint, {
+      load:
+        environment === undefined
+          ? Effect.fail(new WebhookRecoveryCheckpointError())
+          : Effect.tryPromise({
+              try: () =>
+                environment.OAUTH_KV.get("maintenance:webhook-recovery-cursor"),
+              catch: () => new WebhookRecoveryCheckpointError(),
+            }),
+      save: (cursor) =>
+        environment === undefined
+          ? Effect.fail(new WebhookRecoveryCheckpointError())
+          : Effect.tryPromise({
+              try: () =>
+                cursor === null
+                  ? environment.OAUTH_KV.delete(
+                      "maintenance:webhook-recovery-cursor",
+                    )
+                  : environment.OAUTH_KV.put(
+                      "maintenance:webhook-recovery-cursor",
+                      cursor,
+                    ),
+              catch: () => new WebhookRecoveryCheckpointError(),
+            }),
+    }),
+    Layer.succeed(WebhookRecoveryPersistence, {
+      filterUnclaimed: (messages) =>
+        Effect.succeed(
+          messages.filter(
+            (message) => !claimedWebhookEvents.has(message.object_id),
+          ),
+        ),
+    }),
     Layer.succeed(WebhookEventPersistence, {
       complete: () => Effect.void,
+      deadLetter: (input) =>
+        Effect.sync(() => {
+          deadLetteredWebhookEvents.add(input.eventId);
+          return "gap_recorded" as const;
+        }),
       prepare: (input) =>
-        Effect.succeed(
-          input.personalAccountId === "10000000-0000-4000-8000-000000000018" &&
+        Effect.sync(() => {
+          claimedWebhookEvents.add(input.eventId);
+          return input.personalAccountId ===
+            "10000000-0000-4000-8000-000000000018" &&
             input.whatsappConnectionId ===
               "20000000-0000-4000-8000-000000000018"
             ? {
@@ -855,8 +933,8 @@ const makeTestLayer = (
                   version: 1 as const,
                 },
               }
-            : null,
-        ),
+            : null;
+        }),
       projectConnectionState: (input, compareVersions) =>
         Effect.tryPromise({
           try: async () => {
@@ -925,26 +1003,36 @@ const worker = createPublicBoundaryWorker({
             },
           }),
         )
-      : new URL(request.url).pathname === "/test/provider-observations"
+      : new URL(request.url).pathname === "/test/webhook-dead-letters"
         ? Promise.resolve(
-            new Response(JSON.stringify(providerObservations), {
+            new Response(JSON.stringify([...deadLetteredWebhookEvents]), {
               headers: {
                 "cache-control": "no-store",
                 "content-type": "application/json; charset=utf-8",
               },
             }),
           )
-        : createProductionHandler({
-            ...environment,
-            WEBHOOK_HYPERDRIVE: {
-              connectionString:
-                "postgresql://webhook-runtime@hyperdrive.test/database",
-            },
-          } as Env)(request),
+        : new URL(request.url).pathname === "/test/provider-observations"
+          ? Promise.resolve(
+              new Response(JSON.stringify(providerObservations), {
+                headers: {
+                  "cache-control": "no-store",
+                  "content-type": "application/json; charset=utf-8",
+                },
+              }),
+            )
+          : createProductionHandler({
+              ...environment,
+              WEBHOOK_HYPERDRIVE: {
+                connectionString:
+                  "postgresql://webhook-runtime@hyperdrive.test/database",
+              },
+            } as Env)(request),
   layerFor: (request, environment) =>
     makeTestLayer(selectedFailure(request), environment),
   provisioningLayer: makeTestLayer(undefined),
   webhookEventLayer: (environment) => makeTestLayer(undefined, environment),
+  webhookRecoveryLayer: (environment) => makeTestLayer(undefined, environment),
 });
 
 export default worker;

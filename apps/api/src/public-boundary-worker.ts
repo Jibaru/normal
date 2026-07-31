@@ -29,6 +29,7 @@ import {
   createPublicBoundaryHandler,
 } from "./public-boundary";
 import {
+  handleWebhookDeadLetterBatch,
   handleWebhookEventBatch,
   type WebhookEventRequirements,
 } from "./webhook-event";
@@ -37,6 +38,10 @@ import {
   isWebhookIngressRequest,
   type WebhookIngressRequirements,
 } from "./webhook-ingress";
+import {
+  handleWebhookIngressSweep,
+  type WebhookRecoveryRequirements,
+} from "./webhook-recovery";
 import {
   createWhatsAppConnectionHandler,
   isWhatsAppConnectionRequest,
@@ -80,6 +85,9 @@ export interface PublicBoundaryWorkerOptions {
   readonly webhookEventLayer: (
     environment: PublicBoundaryEnvironment,
   ) => Layer.Layer<WebhookEventRequirements>;
+  readonly webhookRecoveryLayer: (
+    environment: PublicBoundaryEnvironment,
+  ) => Layer.Layer<WebhookRecoveryRequirements>;
 }
 
 const jsonResponse = (body: unknown, status = 200): Response =>
@@ -189,6 +197,16 @@ export const createPublicBoundaryWorker = (
       _context: ExecutionContext,
     ): Promise<void> {
       if (
+        /^whatsapp-mcp-ingestion-dlq(?:-(?:development|preview))?$/u.test(
+          batch.queue,
+        )
+      ) {
+        return handleWebhookDeadLetterBatch(
+          batch,
+          options.webhookEventLayer(environment),
+        );
+      }
+      if (
         /^whatsapp-mcp-ingestion(?:-(?:development|preview))?$/u.test(
           batch.queue,
         )
@@ -223,6 +241,12 @@ export const createPublicBoundaryWorker = (
       environment: PublicBoundaryEnvironment,
       _context: ExecutionContext,
     ): Promise<void> {
+      if (controller.cron === "* * * * *") {
+        await handleWebhookIngressSweep(
+          new Date(controller.scheduledTime).toISOString(),
+          options.webhookRecoveryLayer(environment),
+        );
+      }
       await environment.OAUTH_KV.put(
         "scheduled:last",
         new Date(controller.scheduledTime).toISOString(),

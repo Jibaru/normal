@@ -97,12 +97,15 @@ import {
   type SafeTelemetryEvent,
 } from "./services";
 import {
+  handleWebhookDeadLetterBatch,
   handleWebhookEventBatch,
+  jitteredWebhookRetryDelaySeconds,
   WebhookEventClock,
   WebhookEventObjectStore,
   WebhookEventObjectStoreError,
   WebhookEventPersistence,
   WebhookEventPersistenceError,
+  WebhookEventRetrySchedule,
   wasenderWebhookEventNormalizationLayer,
 } from "./webhook-event";
 import {
@@ -117,6 +120,15 @@ import {
   WebhookIngressQueue,
   WebhookIngressQueueError,
 } from "./webhook-ingress";
+import {
+  handleWebhookIngressSweep,
+  WebhookRecoveryCheckpoint,
+  WebhookRecoveryCheckpointError,
+  WebhookRecoveryObjectStore,
+  WebhookRecoveryObjectStoreError,
+  WebhookRecoveryPersistence,
+  WebhookRecoveryPersistenceError,
+} from "./webhook-recovery";
 import {
   createWhatsAppConnectionHandler,
   isWhatsAppConnectionRequest,
@@ -367,7 +379,11 @@ const validateCloudflareBindings = (
       environment.STORED_MEDIA,
       ["createMultipartUpload", "delete", "get", "put"],
     ],
-    ["WEBHOOK_INGRESS", environment.WEBHOOK_INGRESS, ["delete", "get", "put"]],
+    [
+      "WEBHOOK_INGRESS",
+      environment.WEBHOOK_INGRESS,
+      ["delete", "get", "list", "put"],
+    ],
   ] as const;
 
   for (const [binding, value, methods] of bindings) {
@@ -949,6 +965,20 @@ const webhookEventPersistenceLayer = (environment: ApiEnvironment) =>
         },
         catch: () => new WebhookEventPersistenceError(),
       }),
+    deadLetter: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString =
+            environment.WEBHOOK_HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("Webhook Hyperdrive unavailable");
+          }
+          return makePgWebhookEventRepository(connectionString).deadLetter(
+            input,
+          );
+        },
+        catch: () => new WebhookEventPersistenceError(),
+      }),
     prepare: (input) =>
       Effect.tryPromise({
         try: () => {
@@ -998,6 +1028,16 @@ const webhookEventRuntimeLayer = (environment: ApiEnvironment) =>
     Layer.succeed(WebhookEventClock, {
       now: Effect.sync(() => new Date().toISOString()),
     }),
+    Layer.succeed(WebhookEventRetrySchedule, {
+      delaySeconds: () =>
+        Effect.sync(() => {
+          const random = new Uint32Array(1);
+          crypto.getRandomValues(random);
+          return jitteredWebhookRetryDelaySeconds(
+            (random[0] ?? 0) / 4_294_967_296,
+          );
+        }),
+    }),
     Layer.succeed(WebhookEventObjectStore, {
       load: (objectId) =>
         Effect.tryPromise({
@@ -1019,6 +1059,123 @@ const webhookEventRuntimeLayer = (environment: ApiEnvironment) =>
             };
           },
           catch: () => new WebhookEventObjectStoreError(),
+        }),
+    }),
+  );
+
+const webhookRecoveryRuntimeLayer = (environment: ApiEnvironment) =>
+  Layer.mergeAll(
+    Layer.succeed(WebhookRecoveryCheckpoint, {
+      load: Effect.tryPromise({
+        try: async () => {
+          const namespace = environment.OAUTH_KV;
+          if (!hasMethods(namespace, ["get"])) {
+            throw new Error("Webhook recovery checkpoint unavailable");
+          }
+          return await (namespace as Pick<KVNamespace, "get">).get(
+            "maintenance:webhook-recovery-cursor",
+          );
+        },
+        catch: () => new WebhookRecoveryCheckpointError(),
+      }),
+      save: (cursor) =>
+        Effect.tryPromise({
+          try: async () => {
+            const namespace = environment.OAUTH_KV;
+            if (!hasMethods(namespace, ["delete", "put"])) {
+              throw new Error("Webhook recovery checkpoint unavailable");
+            }
+            if (cursor === null) {
+              await (namespace as Pick<KVNamespace, "delete">).delete(
+                "maintenance:webhook-recovery-cursor",
+              );
+            } else {
+              await (namespace as Pick<KVNamespace, "put">).put(
+                "maintenance:webhook-recovery-cursor",
+                cursor,
+              );
+            }
+          },
+          catch: () => new WebhookRecoveryCheckpointError(),
+        }),
+    }),
+    Layer.succeed(WebhookRecoveryObjectStore, {
+      list: (cursor) =>
+        Effect.tryPromise({
+          try: async () => {
+            const bucket = environment.WEBHOOK_INGRESS;
+            if (!hasMethods(bucket, ["list"])) {
+              throw new Error("Webhook ingress bucket unavailable");
+            }
+            const listPage = (pageCursor: string | null) =>
+              (bucket as Pick<R2Bucket, "list">).list({
+                ...(pageCursor === null ? {} : { cursor: pageCursor }),
+                include: ["customMetadata"],
+                limit: 100,
+                prefix: "webhook-events/",
+              });
+            let listed: R2Objects;
+            try {
+              listed = await listPage(cursor);
+            } catch (error) {
+              if (cursor === null) throw error;
+              listed = await listPage(null);
+            }
+            if (listed.truncated && listed.cursor === undefined) {
+              throw new Error("Webhook ingress listing cursor unavailable");
+            }
+            return {
+              cursor: listed.truncated ? (listed.cursor ?? null) : null,
+              objects: listed.objects.map((object) => ({
+                customMetadata: { ...(object.customMetadata ?? {}) },
+                objectKey: object.key,
+                uploadedAt: object.uploaded.toISOString(),
+              })),
+            };
+          },
+          catch: () => new WebhookRecoveryObjectStoreError(),
+        }),
+    }),
+    Layer.succeed(WebhookRecoveryPersistence, {
+      filterUnclaimed: (messages) =>
+        Effect.tryPromise({
+          try: async () => {
+            const connectionString =
+              environment.WEBHOOK_HYPERDRIVE?.connectionString;
+            if (typeof connectionString !== "string") {
+              throw new Error("Webhook Hyperdrive unavailable");
+            }
+            const candidates = messages.map((message) => ({
+              ciphertextSha256: message.ciphertext_sha256,
+              eventId: message.object_id,
+              message,
+              payloadBytes: message.payload_bytes,
+              personalAccountId: message.personal_account_id,
+              receivedAt: message.received_at,
+              whatsappConnectionId: message.whatsapp_connection_id,
+            }));
+            const unclaimed =
+              await makePgWebhookEventRepository(
+                connectionString,
+              ).filterUnclaimed(candidates);
+            return unclaimed.map(({ message }) => message);
+          },
+          catch: () => new WebhookRecoveryPersistenceError(),
+        }),
+    }),
+    Layer.succeed(WebhookIngressQueue, {
+      publish: (message) =>
+        Effect.tryPromise({
+          try: async () => {
+            const queue = environment.INGESTION_QUEUE;
+            if (!hasMethods(queue, ["send"])) {
+              throw new Error("ingestion Queue unavailable");
+            }
+            await (queue as Pick<Queue, "send">).send(message, {
+              contentType: "json",
+            });
+          },
+          catch: () => new WebhookIngressQueueError(),
         }),
     }),
   );
@@ -1556,9 +1713,32 @@ const ingestionQueueName = (environment: ApiEnvironment): string | null => {
   return `whatsapp-mcp-ingestion${suffix}`;
 };
 
+const deadLetterQueueName = (environment: ApiEnvironment): string | null => {
+  const deploymentEnvironment = environment.DEPLOYMENT_ENVIRONMENT;
+  if (
+    deploymentEnvironment !== "development" &&
+    deploymentEnvironment !== "preview" &&
+    deploymentEnvironment !== "production"
+  ) {
+    return null;
+  }
+  const suffix =
+    deploymentEnvironment === "production" ? "" : `-${deploymentEnvironment}`;
+  return `whatsapp-mcp-ingestion-dlq${suffix}`;
+};
+
 export const createProductionQueueHandler =
   (environment: ApiEnvironment) =>
   async (batch: MessageBatch): Promise<void> => {
+    if (batch.queue === deadLetterQueueName(environment)) {
+      const layer = Layer.mergeAll(
+        encryptionLayer(environment),
+        telemetryLayer,
+        webhookEventRuntimeLayer(environment),
+      );
+      await handleWebhookDeadLetterBatch(batch, layer);
+      return;
+    }
     if (batch.queue === ingestionQueueName(environment)) {
       const layer = Layer.mergeAll(
         encryptionLayer(environment),
@@ -1624,6 +1804,7 @@ export const createProductionScheduledHandler =
       readonly makeRepository?: (
         connectionString: string,
       ) => ConnectionSetupScheduledRepository;
+      readonly sweepWebhookIngress?: (observedAt: string) => Promise<void>;
     } = {},
   ) =>
   async (controller: ScheduledController): Promise<void> => {
@@ -1640,6 +1821,22 @@ export const createProductionScheduledHandler =
       dependencies.makeRepository ?? makePgConnectionSetupRepository
     )(connectionString);
     const observedAt = new Date(controller.scheduledTime).toISOString();
+    let webhookRecoveryFailure: unknown;
+    try {
+      await (
+        dependencies.sweepWebhookIngress ??
+        ((value) =>
+          handleWebhookIngressSweep(
+            value,
+            Layer.mergeAll(
+              telemetryLayer,
+              webhookRecoveryRuntimeLayer(environment),
+            ),
+          ))
+      )(observedAt);
+    } catch (error) {
+      webhookRecoveryFailure = error;
+    }
     const expired = await repository.expire({
       limit: 100,
       observedAt,
@@ -1681,4 +1878,7 @@ export const createProductionScheduledHandler =
         service: "api",
       }),
     );
+    if (webhookRecoveryFailure !== undefined) {
+      throw webhookRecoveryFailure;
+    }
   };

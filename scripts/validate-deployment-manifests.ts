@@ -79,6 +79,50 @@ for (const deployable of deployables) {
           `API ${configurationName} configuration must require identity, OAuth protocol, and WhatsApp Number reservation secrets.`,
         );
       }
+      const environmentSuffix =
+        configurationName === "top level" || configurationName === "production"
+          ? ""
+          : `-${configurationName}`;
+      const crons = (
+        configuration.triggers as
+          | { readonly crons?: ReadonlyArray<string> }
+          | undefined
+      )?.crons;
+      if (
+        JSON.stringify([...(crons ?? [])].sort()) !==
+        JSON.stringify(["* * * * *", "*/5 * * * *", "0 * * * *"].sort())
+      ) {
+        throw new Error(
+          `API ${configurationName} configuration must schedule minute recovery, five-minute reconciliation, and hourly retention.`,
+        );
+      }
+      const consumers = (
+        configuration.queues as
+          | {
+              readonly consumers?: ReadonlyArray<Record<string, unknown>>;
+            }
+          | undefined
+      )?.consumers;
+      const ingestion = consumers?.find(
+        (consumer) =>
+          consumer.queue === `whatsapp-mcp-ingestion${environmentSuffix}`,
+      );
+      const deadLetter = consumers?.find(
+        (consumer) =>
+          consumer.queue === `whatsapp-mcp-ingestion-dlq${environmentSuffix}`,
+      );
+      if (
+        ingestion?.dead_letter_queue !==
+          `whatsapp-mcp-ingestion-dlq${environmentSuffix}` ||
+        ingestion.max_retries !== 7 ||
+        ingestion.retry_delay !== 10_800 ||
+        deadLetter?.max_retries !== 7 ||
+        deadLetter?.retry_delay !== 300
+      ) {
+        throw new Error(
+          `API ${configurationName} configuration must bound ingestion at seven three-hour retries and actively consume its DLQ.`,
+        );
+      }
     }
     const compatibilityFlags = manifest.compatibility_flags;
     if (
