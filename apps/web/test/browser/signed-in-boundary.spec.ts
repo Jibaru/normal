@@ -21,6 +21,22 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
       if (setupBodies.length === 1) {
         await firstSetupCanContinue;
       }
+      if (setupBodies.length === 3) {
+        await route.fulfill({
+          body: JSON.stringify({
+            connection_setup: {
+              created_at: "2026-07-31T12:00:00.000Z",
+              expires_at: "2026-07-31T12:15:00.000Z",
+              id: "cst_000000000000000000001",
+              idempotent_replay: true,
+              state: "provisioning_quarantined",
+            },
+          }),
+          contentType: "application/json",
+          status: 200,
+        });
+        return;
+      }
     }
     const localUrl = new URL(original.url());
     localUrl.protocol = "http:";
@@ -99,10 +115,15 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(page.getByTestId("connection-setup-status")).toHaveText(
     "Connection Setup already started. Preparing your QR code.",
   );
-  expect(setupBodies).toHaveLength(2);
+  await startConnectionSetup.click();
+  await expect(page.getByTestId("connection-setup-status")).toHaveText(
+    "Connection Setup needs support review.",
+  );
+  expect(setupBodies).toHaveLength(3);
   expect(setupBodies[0]?.whatsapp_number).toBe("+1 (555) 012-3456");
   expect(setupBodies[0]?.idempotency_key).toMatch(/^[A-Za-z0-9_-]{21}$/);
   expect(setupBodies[1]?.idempotency_key).toBe(setupBodies[0]?.idempotency_key);
+  expect(setupBodies[2]?.idempotency_key).toBe(setupBodies[0]?.idempotency_key);
 });
 
 test("waitlists a signed-in User when private-beta capacity is exhausted", async ({

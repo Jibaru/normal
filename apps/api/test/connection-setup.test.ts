@@ -28,6 +28,11 @@ const accountKey = {
   personalAccountId: "10000000-0000-4000-8000-000000000021",
   version: 1 as const,
 };
+type PersistedSetupState =
+  | "provisioned"
+  | "provisioning_failed"
+  | "provisioning_pending"
+  | "provisioning_quarantined";
 
 const makeHarness = (
   options: {
@@ -43,7 +48,7 @@ const makeHarness = (
         readonly createdAt: string;
         readonly expiresAt: string;
         readonly setupId: string;
-        readonly state: "provisioning_pending";
+        readonly state: PersistedSetupState;
       };
     }
   >();
@@ -171,6 +176,16 @@ const makeHarness = (
     events,
     handler: createConnectionSetupHandler(layer, browserOrigin),
     reservations,
+    setSetupState: (state: PersistedSetupState) => {
+      const binding = bindings.get(idempotencyKey);
+      if (binding === undefined) {
+        throw new Error("Connection Setup has not been started");
+      }
+      bindings.set(idempotencyKey, {
+        ...binding,
+        setup: { ...binding.setup, state },
+      });
+    },
     setRetainedConnections: (count: number) => {
       retainedConnections = count;
     },
@@ -245,6 +260,29 @@ describe("Connection Setup HTTP boundary", () => {
     expect(JSON.stringify(harness.events)).not.toContain("+1555");
     expect(JSON.stringify(harness.events)).not.toContain("cst_");
   });
+
+  test.each([
+    "provisioned",
+    "provisioning_failed",
+    "provisioning_quarantined",
+  ] as const)(
+    "returns the visible %s state on an exact replay",
+    async (state) => {
+      const harness = makeHarness();
+      await harness.handler(setupRequest("+15550123456"));
+      harness.setSetupState(state);
+
+      const replay = await harness.handler(setupRequest("+15550123456"));
+
+      expect(replay.status).toBe(200);
+      await expect(replay.json()).resolves.toMatchObject({
+        connection_setup: {
+          idempotent_replay: true,
+          state,
+        },
+      });
+    },
+  );
 
   test("fails safely when a bound idempotency key is reused with changed input", async () => {
     const harness = makeHarness();

@@ -291,6 +291,8 @@ run "production_topology" {
 
   assert {
     condition = (
+      cloudflare_queue.connection_setup_provisioning.settings.message_retention_period == 604800 &&
+      cloudflare_queue_consumer.connection_setup_provisioning.script_name == cloudflare_worker.api.name &&
       cloudflare_queue_consumer.connection_setup_provisioning.settings.batch_size == 1 &&
       cloudflare_queue_consumer.connection_setup_provisioning.settings.max_retries == 10 &&
       cloudflare_queue_consumer.connection_setup_provisioning.settings.retry_delay == 30 &&
@@ -300,7 +302,7 @@ run "production_topology" {
       cloudflare_queue_consumer.ingestion.settings.retry_delay == 10800 &&
       cloudflare_queue.dead_letter.settings.message_retention_period == 345600
     )
-    error_message = "Ingestion must have seven bounded retries over roughly 21 hours before the four-day DLQ."
+    error_message = "Provisioning and ingestion Queues must retain their bounded production delivery policies."
   }
 
   assert {

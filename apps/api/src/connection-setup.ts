@@ -322,7 +322,10 @@ const successResponse = (
         expires_at: result.setup.expiresAt,
         id: result.setup.setupId,
         idempotent_replay: result.outcome === "replay",
-        state: "pending",
+        state:
+          result.setup.state === "provisioning_pending"
+            ? "pending"
+            : result.setup.state,
       },
     },
     result.outcome === "created" ? 201 : 200,
