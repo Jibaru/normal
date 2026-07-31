@@ -659,10 +659,11 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
           try {
             return await Effect.runPromise(
               Effect.gen(function* () {
+                const clock = yield* McpAuthorizationClock;
                 const persistence = yield* McpAuthorizationPersistence;
                 return yield* persistence.isActive({
                   ...input,
-                  observedAt: new Date(),
+                  observedAt: yield* clock.now,
                 });
               }).pipe(Effect.provide(layer)),
             );

@@ -51,7 +51,12 @@ const oauthRequest: AuthRequest = {
 };
 const connectionId = "con_123456789012345678901";
 
-const makeHarness = async (options: { readonly stale?: boolean } = {}) => {
+const makeHarness = async (
+  options: {
+    readonly completionFails?: boolean;
+    readonly stale?: boolean;
+  } = {},
+) => {
   const values = new Map<string, string>();
   const kv = {
     delete: async (key: string) => {
@@ -95,6 +100,9 @@ const makeHarness = async (options: { readonly stale?: boolean } = {}) => {
   const helpers = {
     completeAuthorization: async (input: unknown) => {
       completed.push(input);
+      if (options.completionFails) {
+        throw new Error("OAuth grant unavailable");
+      }
       return {
         redirectTo:
           "https://client.example.test/callback?code=issued-code&state=client-state",
@@ -199,6 +207,34 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
       scopes: ["messages:send"],
     });
     expect(harness.completed).toHaveLength(1);
+  });
+
+  test("does not persist authority when OAuth grant completion fails", async () => {
+    const harness = await makeHarness({ completionFails: true });
+    const inspection = await harness.handler(
+      post("/v1/oauth/consent/inspect", { request: harness.handoff }),
+      harness.helpers,
+    );
+    const { presentation } = (await inspection.json()) as {
+      readonly presentation: string;
+    };
+
+    const response = await harness.handler(
+      post("/v1/oauth/consent/decision", {
+        connection_ids: [connectionId],
+        decision: "approve",
+        presentation,
+        read_confirmed: true,
+        request: harness.handoff,
+        scopes: ["connections:read"],
+        send_confirmed: false,
+      }),
+      harness.helpers,
+    );
+
+    expect(response.status).toBe(503);
+    expect(harness.completed).toHaveLength(1);
+    expect(harness.created).toEqual([]);
   });
 
   test("denies without persisting and safely redirects only to the sealed redirect", async () => {

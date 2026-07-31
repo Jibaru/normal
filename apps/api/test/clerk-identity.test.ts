@@ -99,6 +99,10 @@ describe("Clerk human identity", () => {
   test.each([
     ["missing verification age", { fva: undefined }],
     ["five-minute-old verification", { fva: [5, -1] }],
+    [
+      "token age that makes verification five minutes old",
+      { fva: [4, -1], iat: now - 60, nbf: now - 65 },
+    ],
     ["malformed verification age", { fva: ["0", -1] }],
   ] as const)("rejects %s for consent", async (_name, replacement) => {
     const identity = makeClerkHumanIdentity({

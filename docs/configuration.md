@@ -112,7 +112,8 @@ Approval also requires Clerk's standard first-factor verification-age (`fva`)
 claim to be less than five minutes old. The browser invokes Clerk's
 first-factor reverification flow when needed, clears its cached session token,
 and submits a newly minted short-lived token. The API independently verifies
-the signed `fva` value; missing, malformed, or stale values fail closed.
+the signed `fva` value together with the token's signed issuance time; missing,
+malformed, or stale values fail closed.
 
 Migration 0005 gives each existing WhatsApp Connection an ADR 0023 `con_`
 public handle and creates RLS-protected MCP Authorization and explicit
@@ -125,10 +126,11 @@ application metadata outside those encrypted props is the allowlisted client
 class. Authorization-code and refresh exchanges recheck the active, unexpired
 Neon row through the restricted API role. Access tokens are bound to the exact
 `/mcp` resource and expire after ten minutes. The provider issues a rotating
-refresh credential with 30 days of inactivity and Neon enforces the 90-day
-absolute authorization session. No additional Cloudflare binding or
-infrastructure authority is required beyond the existing OAuth KV and API
-Hyperdrive.
+refresh credential whose current grant expires 30 days after code exchange,
+while Neon independently enforces the 90-day absolute authorization session.
+Sliding inactivity and refresh-reuse containment belong to the refresh-family
+lifecycle rollout. No additional Cloudflare binding or infrastructure
+authority is required beyond the existing OAuth KV and API Hyperdrive.
 
 Consent decision telemetry contains only
 `oauth.authorization.decision.completed`, the allowlisted client class,

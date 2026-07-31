@@ -453,6 +453,24 @@ const decide = async (
   if (generated._tag === "Left") {
     return jsonResponse({ error: "unavailable" }, 503, options.browserOrigin);
   }
+  let completed: Awaited<ReturnType<OAuthHelpers["completeAuthorization"]>>;
+  try {
+    completed = await helpers.completeAuthorization({
+      metadata: {
+        clientClass: opened.client.clientClass,
+      },
+      props: {
+        authorizationId: generated.right.authorizationId,
+        oauthSubject: generated.right.oauthSubject,
+      },
+      request: opened.request,
+      revokeExistingGrants: false,
+      scope: selectedScopes as Array<string>,
+      userId: generated.right.oauthSubject,
+    });
+  } catch {
+    return jsonResponse({ error: "unavailable" }, 503, options.browserOrigin);
+  }
   const persistence = await runEither(
     Effect.gen(function* () {
       const service = yield* McpAuthorizationPersistence;
@@ -483,34 +501,17 @@ const decide = async (
       options.browserOrigin,
     );
   }
-  try {
-    const result = await helpers.completeAuthorization({
-      metadata: {
-        clientClass: opened.client.clientClass,
-      },
-      props: {
-        authorizationId: generated.right.authorizationId,
-        oauthSubject: generated.right.oauthSubject,
-      },
-      request: opened.request,
-      revokeExistingGrants: false,
-      scope: selectedScopes as Array<string>,
-      userId: generated.right.oauthSubject,
-    });
-    options.telemetry?.({
-      clientClass: opened.client.clientClass,
-      event: "oauth.authorization.decision.completed",
-      outcome: "approved",
-      service: "api",
-    });
-    return jsonResponse(
-      { redirect_to: result.redirectTo },
-      200,
-      options.browserOrigin,
-    );
-  } catch {
-    return jsonResponse({ error: "unavailable" }, 503, options.browserOrigin);
-  }
+  options.telemetry?.({
+    clientClass: opened.client.clientClass,
+    event: "oauth.authorization.decision.completed",
+    outcome: "approved",
+    service: "api",
+  });
+  return jsonResponse(
+    { redirect_to: completed.redirectTo },
+    200,
+    options.browserOrigin,
+  );
 };
 
 export const createMcpAuthorizationConsentHandler =

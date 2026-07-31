@@ -64,7 +64,10 @@ const isSafeClaims = (
   claims: ClerkTokenClaims,
   options: ClerkHumanIdentityOptions,
   now: number,
-): claims is ClerkTokenClaims & { readonly sub: string } => {
+): claims is ClerkTokenClaims & {
+  readonly iat: number;
+  readonly sub: string;
+} => {
   const { aud, azp, exp, iat, iss, nbf, sts, sub } = claims;
   return (
     aud === options.audience &&
@@ -113,34 +116,39 @@ export const makeClerkHumanIdentity = (
           clockSkewInMs: CLOCK_SKEW_SECONDS * 1_000,
           jwtKey: options.jwtKey,
         });
-        if (!isSafeClaims(claims, options, now())) {
+        const observedAt = now();
+        if (!isSafeClaims(claims, options, observedAt)) {
           throw new InvalidHumanIdentity();
         }
-        return claims;
+        return { claims, observedAt };
       },
       catch: () => new InvalidHumanIdentity(),
     });
 
   return {
     verify: (request) =>
-      verifiedClaims(request).pipe(Effect.map((claims) => claims.sub)),
+      verifiedClaims(request).pipe(Effect.map(({ claims }) => claims.sub)),
     verifyRecently: (request) =>
       verifiedClaims(request).pipe(
-        Effect.flatMap((claims) => {
+        Effect.flatMap(({ claims, observedAt }) => {
           const firstFactorAge = Array.isArray(claims.fva)
             ? claims.fva[0]
             : undefined;
+          const reverifiedAt =
+            typeof firstFactorAge === "number"
+              ? claims.iat - firstFactorAge * 60
+              : Number.NEGATIVE_INFINITY;
           if (
             typeof firstFactorAge !== "number" ||
             !Number.isSafeInteger(firstFactorAge) ||
             firstFactorAge < 0 ||
-            firstFactorAge >= 5
+            observedAt - reverifiedAt >= 5 * 60
           ) {
             return Effect.fail(new RecentHumanVerificationRequired());
           }
           return Effect.succeed({
             clerkUserId: claims.sub,
-            reverifiedAt: new Date((now() - firstFactorAge * 60) * 1_000),
+            reverifiedAt: new Date(Math.min(reverifiedAt, observedAt) * 1_000),
           });
         }),
       ),
