@@ -362,7 +362,7 @@ export const createMcpRequestHandler =
         name: "WhatsApp MCP",
         version: "0.1.0",
       });
-      const tool = server.registerTool(
+      server.registerTool(
         "list_connections",
         {
           description:
@@ -386,7 +386,7 @@ export const createMcpRequestHandler =
         },
       );
       if (!hasConnectionsRead) {
-        tool.disable();
+        server.server.setRequestHandler("tools/list", () => ({ tools: [] }));
       }
       return server;
     };

@@ -225,6 +225,41 @@ describe("MCP tool repository", () => {
     ]);
   });
 
+  test("reports the reset that restores capacity after a quota reduction", async () => {
+    for (const [index, time] of [
+      [40, "2026-07-31T11:59:10.000Z"],
+      [41, "2026-07-31T11:59:20.000Z"],
+      [42, "2026-07-31T11:59:30.000Z"],
+    ] as const) {
+      await expect(
+        repository.beginToolCall({
+          ...authorization,
+          auditLogId: `50000000-0000-4000-8000-0000000000${index}`,
+          hourLimit: 10,
+          minuteLimit: 3,
+          observedAt: new Date(time),
+          toolName: "list_connections",
+        }),
+      ).resolves.toMatchObject({ outcome: "started" });
+    }
+
+    await expect(
+      repository.beginToolCall({
+        ...authorization,
+        auditLogId: "50000000-0000-4000-8000-000000000043",
+        hourLimit: 10,
+        minuteLimit: 2,
+        observedAt,
+        toolName: "list_connections",
+      }),
+    ).resolves.toEqual({
+      auditLogId: "50000000-0000-4000-8000-000000000043",
+      outcome: "rate_limited",
+      resetsAt: new Date("2026-07-31T12:00:20.000Z"),
+      retryAfterSeconds: 20,
+    });
+  });
+
   test("rechecks scope and revocation at audit and protected-read boundaries", async () => {
     await database.query(
       `UPDATE app.mcp_authorizations

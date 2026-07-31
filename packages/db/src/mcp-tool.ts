@@ -291,12 +291,19 @@ export const makeMcpToolRepository = (
         const exhaustedResets: Array<Date> = [];
         if (minuteStarts.length >= input.minuteLimit) {
           exhaustedResets.push(
-            new Date((minuteStarts[0] as Date).valueOf() + 60_000),
+            new Date(
+              (
+                minuteStarts[minuteStarts.length - input.minuteLimit] as Date
+              ).valueOf() + 60_000,
+            ),
           );
         }
         if (starts.length >= input.hourLimit) {
           exhaustedResets.push(
-            new Date((starts[0] as Date).valueOf() + 3_600_000),
+            new Date(
+              (starts[starts.length - input.hourLimit] as Date).valueOf() +
+                3_600_000,
+            ),
           );
         }
         if (exhaustedResets.length > 0) {

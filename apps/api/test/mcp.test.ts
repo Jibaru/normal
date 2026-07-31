@@ -73,6 +73,26 @@ const responseJson = async (response: Response): Promise<unknown> => {
   return JSON.parse(data ?? "");
 };
 
+const responseMessages = async (
+  response: Response,
+): Promise<Array<Record<string, unknown>>> => {
+  const text = await response.text();
+  const payloads = response.headers
+    .get("content-type")
+    ?.includes("text/event-stream")
+    ? text
+        .split("\n")
+        .filter((line) => line.startsWith("data: "))
+        .map((line) => JSON.parse(line.slice("data: ".length)) as unknown)
+    : [JSON.parse(text) as unknown];
+  return payloads
+    .flatMap((payload) => (Array.isArray(payload) ? payload : [payload]))
+    .filter(
+      (payload): payload is Record<string, unknown> =>
+        typeof payload === "object" && payload !== null,
+    );
+};
+
 const makeHarness = (
   overrides: {
     readonly beginResult?: BeginToolCallResult;
@@ -238,6 +258,59 @@ describe("stateless MCP list_connections boundary", () => {
     expect(await responseJson(response)).toMatchObject({
       result: { tools: [] },
     });
+  });
+
+  test("audits a direct call in a scope-filtered legacy batch", async () => {
+    const harness = makeHarness({ scopes: ["messages:send"] });
+    const request = new Request("https://api.example.test/mcp", {
+      body: JSON.stringify([
+        {
+          id: "discovery-request",
+          jsonrpc: "2.0",
+          method: "tools/list",
+          params: {},
+        },
+        {
+          id: "call-request",
+          jsonrpc: "2.0",
+          method: "tools/call",
+          params: { arguments: {}, name: "list_connections" },
+        },
+      ]),
+      headers: {
+        accept: "application/json, text/event-stream",
+        "content-type": "application/json",
+        host: "api.example.test",
+        "mcp-protocol-version": "2025-06-18",
+      },
+      method: "POST",
+    });
+    const response = await harness.handler(
+      request,
+      {},
+      executionContext,
+      authorization,
+    );
+    const messages = await responseMessages(response);
+
+    expect(messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "discovery-request",
+          result: { tools: [] },
+        }),
+        expect.objectContaining({
+          id: "call-request",
+          result: expect.objectContaining({
+            isError: true,
+            structuredContent: expect.objectContaining({
+              error_code: "authorization_denied",
+            }),
+          }),
+        }),
+      ]),
+    );
+    expect(harness.observations).toEqual(["begin"]);
   });
 
   test("audits before reading and returns structured/text parity without provider data", async () => {
