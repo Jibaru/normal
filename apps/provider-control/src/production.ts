@@ -25,12 +25,14 @@ const productionConfig = Config.all({
   )("DEPLOYMENT_ENVIRONMENT"),
 });
 
+const isProviderApiCredential = (value: string) =>
+  /^[\x21-\x7e]{1,4096}$/u.test(value) &&
+  !/replace|example|placeholder/iu.test(value);
+
 const providerApiCredential = Config.redacted("WASENDER_API_CREDENTIAL").pipe(
   Config.validate({
     message: "WASENDER_API_CREDENTIAL must be a non-placeholder credential",
-    validation: (value) =>
-      /^[A-Za-z0-9._~-]{32,512}$/u.test(Redacted.value(value)) &&
-      !/replace|example|placeholder/iu.test(Redacted.value(value)),
+    validation: (value) => isProviderApiCredential(Redacted.value(value)),
   }),
 );
 

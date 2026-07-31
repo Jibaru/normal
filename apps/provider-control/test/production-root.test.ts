@@ -5,7 +5,7 @@ describe("provider-control production root", () => {
   test("accepts valid production configuration", async () => {
     const response = await createProductionHandler({
       DEPLOYMENT_ENVIRONMENT: "production",
-      WASENDER_API_CREDENTIAL: "pat_0123456789abcdef0123456789abcdef",
+      WASENDER_API_CREDENTIAL: "12|opaque+provider/credential=value",
       WASENDER_REFERENCE_SECRET:
         "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     })(new Request("https://provider-control.internal/health"));

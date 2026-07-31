@@ -61,6 +61,7 @@ interface ProviderSession {
 
 interface BoundedBody {
   readonly bytes: Uint8Array;
+  readonly jsonValid: boolean;
   readonly value: unknown;
 }
 
@@ -172,6 +173,8 @@ const normalizeConnectionState = (
       return "connecting";
     case "disconnected":
       return "disconnected";
+    case "expired":
+    case "logged_out":
     case "reconnect_required":
       return "reconnect_required";
     default:
@@ -196,13 +199,14 @@ const base64Url = (bytes: Uint8Array): string => {
     .replace(/=+$/u, "");
 };
 
+const isProviderApiCredential = (value: string) =>
+  /^[\x21-\x7e]{1,4096}$/u.test(value) &&
+  !/replace|example|placeholder/iu.test(value);
+
 const validateConfig = (config: WasenderLifecycleConfig) => {
   const credential = Redacted.value(config.credential);
   const referenceSecret = Redacted.value(config.referenceSecret);
-  if (
-    !/^[A-Za-z0-9._~-]{32,512}$/u.test(credential) ||
-    /replace|example|placeholder/iu.test(credential)
-  ) {
+  if (!isProviderApiCredential(credential)) {
     throw new RangeError("Provider API Credential is invalid");
   }
   if (!/^[0-9a-f]{64}$/iu.test(referenceSecret)) {
@@ -249,7 +253,9 @@ const isAbort = (cause: unknown): boolean =>
   (isRecord(cause) && cause.name === "AbortError");
 
 const readBoundedJson = async (response: Response): Promise<BoundedBody> => {
-  if (!response.body) return { bytes: new Uint8Array(), value: undefined };
+  if (!response.body) {
+    return { bytes: new Uint8Array(), jsonValid: true, value: undefined };
+  }
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -269,10 +275,13 @@ const readBoundedJson = async (response: Response): Promise<BoundedBody> => {
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  if (bytes.byteLength === 0) return { bytes, value: undefined };
+  if (bytes.byteLength === 0) {
+    return { bytes, jsonValid: true, value: undefined };
+  }
   try {
     return {
       bytes,
+      jsonValid: true,
       value: JSON.parse(
         new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(
           bytes,
@@ -280,7 +289,7 @@ const readBoundedJson = async (response: Response): Promise<BoundedBody> => {
       ),
     };
   } catch {
-    throw safeFailure("invalid_response");
+    return { bytes, jsonValid: false, value: undefined };
   }
 };
 
@@ -380,6 +389,16 @@ export const makeWasenderSessionLifecycle = (
           Math.min(safeReadAttemptTimeoutMs, remaining),
         );
         if (response.ok) {
+          if (!body.jsonValid) {
+            emit({
+              attempt,
+              durationMs: Math.max(0, now() - attemptStartedAt),
+              operation: "safe-read",
+              outcome: "invalid_response",
+              responseBytes: body.bytes.byteLength,
+            });
+            throw safeFailure("invalid_response");
+          }
           emit({
             attempt,
             durationMs: Math.max(0, now() - attemptStartedAt),
@@ -458,6 +477,16 @@ export const makeWasenderSessionLifecycle = (
             response.status >= 500,
         );
       }
+      if (!body.jsonValid) {
+        emit({
+          attempt: 1,
+          durationMs: Math.max(0, now() - startedAt),
+          operation: "lifecycle-write",
+          outcome: "invalid_response",
+          responseBytes: body.bytes.byteLength,
+        });
+        throw writeFailure("invalid_response", true);
+      }
       emit({
         attempt: 1,
         durationMs: Math.max(0, now() - startedAt),
@@ -471,6 +500,20 @@ export const makeWasenderSessionLifecycle = (
         throw cause;
       }
       if (isProviderFailure(cause)) {
+        throw writeFailure(cause.code, true);
+      }
+      throw writeFailure(isAbort(cause) ? "timed_out" : "unavailable", true);
+    }
+  };
+
+  const completeLifecycleWrite = async <Value>(
+    task: () => Promise<Value>,
+  ): Promise<Value> => {
+    try {
+      return await task();
+    } catch (cause) {
+      if (isProviderFailure(cause)) {
+        if (cause.operation === "lifecycle-write") throw cause;
         throw writeFailure(cause.code, true);
       }
       throw writeFailure(isAbort(cause) ? "timed_out" : "unavailable", true);
@@ -561,11 +604,13 @@ export const makeWasenderSessionLifecycle = (
           `/api/whatsapp-sessions/${summary.id}/connect`,
           { body: { linkMethod: "qr" }, method: "POST" },
         );
-        const data = parseData(body.value);
-        if (!isRecord(data) || typeof data.status !== "string") {
-          throw writeFailure("invalid_response", true);
-        }
-        return toLifecycleSession({ ...detail, status: data.status });
+        return completeLifecycleWrite(async () => {
+          const data = parseData(body.value);
+          if (!isRecord(data) || typeof data.status !== "string") {
+            throw writeFailure("invalid_response", true);
+          }
+          return toLifecycleSession({ ...detail, status: data.status });
+        });
       }),
     createSession: ({ phoneNumber, setupMarker }) =>
       effect(async () => {
@@ -597,11 +642,13 @@ export const makeWasenderSessionLifecycle = (
           },
           method: "POST",
         });
-        const created = parseProviderSession(parseData(body.value), true);
-        if (!created || created.name !== marker) {
-          throw writeFailure("invalid_response", true);
-        }
-        return toLifecycleSession(created);
+        return completeLifecycleWrite(async () => {
+          const created = parseProviderSession(parseData(body.value), true);
+          if (!created || created.name !== marker) {
+            throw writeFailure("invalid_response", true);
+          }
+          return toLifecycleSession(created);
+        });
       }),
     deleteSession: ({ session }) =>
       effect(async (): Promise<SessionDeletionObservation> => {
@@ -610,8 +657,10 @@ export const makeWasenderSessionLifecycle = (
         await writeJson(`/api/whatsapp-sessions/${before.id}`, {
           method: "DELETE",
         });
-        const after = await resolveProviderSession(session);
-        return { state: after ? "present" : "absent" };
+        return completeLifecycleWrite(async () => {
+          const after = await resolveProviderSession(session);
+          return { state: after ? "present" : "absent" };
+        });
       }),
     getQrCode: ({ session }) =>
       effect(async (): Promise<QrCodeObservation> => {

@@ -133,6 +133,43 @@ describe("real Wasender lifecycle adapter", () => {
     expect(calls).toBe(5);
   });
 
+  test("normalizes provider states that require a new connection flow", async () => {
+    const responses = [
+      json({
+        success: true,
+        data: [
+          providerSession({ api_key: undefined, status: "LOGGED_OUT" }),
+          providerSession({
+            api_key: undefined,
+            id: 42,
+            status: "expired",
+          }),
+        ],
+      }),
+      json({ success: true, data: providerSession({ status: "LOGGED_OUT" }) }),
+      json({
+        success: true,
+        data: providerSession({ id: 42, status: "expired" }),
+      }),
+    ];
+    let calls = 0;
+    const lifecycle = makeWasenderSessionLifecycle(
+      { credential, referenceSecret },
+      {
+        fetch: async () => responses[calls++] ?? json({}, { status: 500 }),
+      },
+    );
+
+    const sessions = await Effect.runPromise(
+      lifecycle.listSessions({ setupMarker }),
+    );
+
+    expect(sessions.map(({ connectionState }) => connectionState)).toEqual([
+      "reconnect_required",
+      "reconnect_required",
+    ]);
+  });
+
   test("quarantines duplicate markers instead of creating another session", async () => {
     const responses = [
       json({
@@ -201,6 +238,37 @@ describe("real Wasender lifecycle adapter", () => {
     ]);
     expect(JSON.stringify(telemetry)).not.toContain("slow down");
     expect(JSON.stringify(telemetry)).not.toContain(setupMarker);
+  });
+
+  test("retries a retryable status with a malformed provider body", async () => {
+    const sleeps: number[] = [];
+    let calls = 0;
+    let now = 0;
+    const lifecycle = makeWasenderSessionLifecycle(
+      { credential, referenceSecret },
+      {
+        fetch: async () => {
+          calls += 1;
+          return calls === 1
+            ? new Response("<html>temporarily unavailable</html>", {
+                status: 503,
+              })
+            : json({ success: true, data: [] });
+        },
+        now: () => now,
+        random: () => 0,
+        sleep: async (milliseconds) => {
+          sleeps.push(milliseconds);
+          now += milliseconds;
+        },
+      },
+    );
+
+    expect(
+      await Effect.runPromise(lifecycle.listSessions({ setupMarker })),
+    ).toEqual([]);
+    expect(calls).toBe(2);
+    expect(sleeps).toEqual([125]);
   });
 
   test("classifies malformed bounded responses without exposing provider data", async () => {
@@ -365,6 +433,46 @@ describe("real Wasender lifecycle adapter", () => {
       "DELETE",
       "GET",
     ]);
+  });
+
+  test("keeps a failed post-delete reconciliation in the write ambiguity class", async () => {
+    const listPresent = () =>
+      json({
+        success: true,
+        data: [providerSession({ api_key: undefined })],
+      });
+    const responses = [
+      listPresent(),
+      json({ success: true, data: providerSession() }),
+      listPresent(),
+      new Response(null, { status: 204 }),
+      json({ success: true, data: { malformed: true } }),
+    ];
+    let calls = 0;
+    const lifecycle = makeWasenderSessionLifecycle(
+      { credential, referenceSecret },
+      {
+        fetch: async () => responses[calls++] ?? json({}, { status: 500 }),
+      },
+    );
+    const sessions = await Effect.runPromise(
+      lifecycle.listSessions({ setupMarker }),
+    );
+    const session = sessions[0];
+    if (!session) throw new Error("missing session fixture");
+
+    const failure = await runFailure(
+      lifecycle.deleteSession({ session: session.session }),
+    );
+
+    expect(failure).toEqual({
+      _tag: "ProviderNeutralFailure",
+      code: "invalid_response",
+      operation: "lifecycle-write",
+      retryAfterMs: null,
+      retryDecision: "reconcile_before_repeat",
+    });
+    expect(calls).toBe(5);
   });
 
   test("returns ephemeral SVG QR bytes without retaining the provider payload", async () => {
