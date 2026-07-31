@@ -614,6 +614,56 @@ or acknowledge the Queue message. Permanent item quarantine is handled and
 acknowledged; transport or dependency failures remain eligible for the
 configured seven Queue retries and active DLQ path.
 
+### Connection health and Ingestion Gap checks
+
+Wait for the next `*/5 * * * *` trigger and confirm one
+`connection_health.reconciliation.completed` event per due non-production
+WhatsApp Connection. A healthy fixture must report `connected`, `healthy`, and
+`applied`. Change only the reviewed provider fixture to disable or redirect its
+webhook and confirm the next check reports `degraded` with
+`webhook_configuration`; restore the exact webhook configuration and confirm a
+later check reports healthy. Separately disconnect the provider session and
+confirm `disconnected` with `connection_unavailable`.
+
+Using migration-owner inspection in the isolated environment, verify each
+confirmed failure opened one active `app.ingestion_gaps` row at the previous
+`health_last_confirmed_at`, and confirmed recovery set `ends_at` without
+deleting the row. Deliver provider state evidence whose occurrence time
+predates the completed health snapshot and confirm it is superseded. Do not
+send or suppress messages as a test signal: message inactivity must leave the
+gap count unchanged, and an empty active-gap set is not evidence of
+provider-certified completeness.
+
+For a measured ingress or Queue outage, record the affected internal
+Connection IDs, measurement start, recovery time, and safe aggregate evidence
+in the incident record. Supply the restricted API-runtime `DATABASE_URL` only
+to the incident shell, then invoke the production repository path with the
+internal Connection UUID, cause, `open` or `close`, and exact UTC evidence time:
+
+```sh
+bun run db:record-gap -- \
+  00000000-0000-4000-8000-000000000000 \
+  ingress_failure \
+  open \
+  2026-07-31T12:20:00.000Z
+```
+
+Use `processing_failure` after bounded ingestion loss and `restore_loss` after
+a restore comparison proves loss; record each affected Connection before
+enabling reads. Close only causes whose recovery was confirmed. The command
+returns only the cause, action, and recorded-or-rejected outcome and never the
+Connection ID. Never use it for suspected silence, and never insert, update,
+or delete gap rows directly. A rejected or unavailable command must stop the
+recovery gate for that Connection.
+
+Alert when reconciliation has no successful run for ten minutes, when
+`unknown` or `superseded` outcomes grow, when any active gap remains after the
+underlying dependency is reported recovered, or when a reconnect-required or
+degraded Connection persists across two checks. Investigate provider-control,
+Wasender safe-read availability, exact webhook configuration, Hyperdrive, and
+schema version in that order. Telemetry containing any tenant or provider
+identifier is an incident.
+
 From the retained non-production WhatsApp Connection, choose **Disconnect**.
 Confirm the product reports `disconnected`, retained history remains described
 as available under Message Retention Policy, and the same `con_` handle and

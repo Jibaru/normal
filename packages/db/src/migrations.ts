@@ -174,6 +174,17 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 14,
   },
+  {
+    name: "connection health reconciliation and Ingestion Gaps",
+    sql: await readFile(
+      new NodeUrl(
+        "../migrations/0015_connection_health_and_ingestion_gaps.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    version: 15,
+  },
 ];
 
 const checksum = (sql: string): string =>

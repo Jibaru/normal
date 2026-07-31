@@ -276,6 +276,7 @@ interface StateRow extends Record<string, unknown> {
   readonly state_provider_occurred_at: unknown;
   readonly state_provider_version: unknown;
   readonly state_received_at: unknown;
+  readonly state_snapshot_observed_at: unknown;
   readonly state_webhook_event_id: unknown;
 }
 
@@ -287,6 +288,25 @@ const shouldApply = async (
     right: string,
   ) => Promise<WebhookVersionComparison>,
 ): Promise<boolean> => {
+  const snapshotObservedAt = timestamp(current.state_snapshot_observed_at);
+  const incomingOccurredAt =
+    input.evidence.occurredAt === null
+      ? null
+      : timestamp(input.evidence.occurredAt);
+  const incomingReceivedAt = timestamp(input.receivedAt);
+  if (
+    (input.evidence.occurredAt !== null && incomingOccurredAt === null) ||
+    incomingReceivedAt === null
+  ) {
+    throw new Error("invalid incoming connection-state evidence order");
+  }
+  if (
+    snapshotObservedAt !== null &&
+    (incomingOccurredAt ?? incomingReceivedAt) <= snapshotObservedAt
+  ) {
+    return false;
+  }
+
   const currentVersion = current.state_provider_version;
   if (currentVersion !== null && typeof currentVersion !== "string") {
     throw new Error("invalid current connection-state evidence");
@@ -302,7 +322,6 @@ const shouldApply = async (
   }
 
   const currentOccurredAt = timestamp(current.state_provider_occurred_at);
-  const incomingOccurredAt = input.evidence.occurredAt;
   if (
     incomingOccurredAt !== null &&
     currentOccurredAt !== null &&
@@ -323,8 +342,8 @@ const shouldApply = async (
   if (currentReceivedAt === null) {
     throw new Error("invalid current connection-state receive order");
   }
-  if (input.receivedAt !== currentReceivedAt) {
-    return input.receivedAt > currentReceivedAt;
+  if (incomingReceivedAt !== currentReceivedAt) {
+    return incomingReceivedAt > currentReceivedAt;
   }
   const currentEventId = current.state_webhook_event_id;
   return typeof currentEventId !== "string" || input.eventId > currentEventId;
@@ -420,6 +439,7 @@ export const makeWebhookEventRepository = (
              state_provider_occurred_at,
              state_provider_version,
              state_received_at,
+             state_snapshot_observed_at,
              state_webhook_event_id
            FROM app.whatsapp_connections
            WHERE personal_account_id = $1

@@ -7,6 +7,10 @@ import type {
   ProviderControlFailure,
   ProviderControlService,
 } from "@whatsapp-mcp/contracts/provider-control";
+import {
+  type ConnectionHealthRepository,
+  makePgConnectionHealthRepository,
+} from "@whatsapp-mcp/db/connection-health";
 import { makePgConnectionSetupRepository } from "@whatsapp-mcp/db/connection-setup";
 import { checkDatabaseReadiness } from "@whatsapp-mcp/db/connectivity";
 import { makePgMcpAuthorizationRepository } from "@whatsapp-mcp/db/mcp-authorization";
@@ -18,6 +22,13 @@ import { Config, ConfigProvider, Data, Effect, Layer, Redacted } from "effect";
 import { makeClerkHumanIdentity } from "./auth/clerk";
 import { HumanIdentity } from "./auth/human-identity";
 import { createCanaryHandler } from "./canary";
+import {
+  ConnectionHealthClock,
+  ConnectionHealthPersistence,
+  ConnectionHealthPersistenceError,
+  ConnectionHealthProvider,
+  reconcileConnectionHealth,
+} from "./connection-health";
 import {
   ConnectionSetupClock,
   ConnectionSetupIdentifiers,
@@ -1617,16 +1628,83 @@ interface ConnectionSetupScheduledRepository {
   >["listProvisioningCandidates"];
 }
 
+interface ConnectionHealthScheduledRepository
+  extends Pick<
+    ConnectionHealthRepository,
+    "claim" | "finish" | "recordEvidence"
+  > {}
+
 export const createProductionScheduledHandler =
   (
     environment: ApiEnvironment,
     dependencies: {
+      readonly makeConnectionHealthRepository?: (
+        connectionString: string,
+      ) => ConnectionHealthScheduledRepository;
       readonly makeRepository?: (
         connectionString: string,
       ) => ConnectionSetupScheduledRepository;
+      readonly now?: () => string;
     } = {},
   ) =>
   async (controller: ScheduledController): Promise<void> => {
+    if (controller.cron === "*/5 * * * *") {
+      const connectionString = environment.HYPERDRIVE?.connectionString;
+      if (
+        typeof connectionString !== "string" ||
+        typeof environment.OAUTH_ISSUER !== "string" ||
+        !hasMethods(environment.PROVIDER_CONTROL, ["reconcileSession"])
+      ) {
+        throw new Error("Connection health reconciliation unavailable");
+      }
+      const repository = (
+        dependencies.makeConnectionHealthRepository ??
+        makePgConnectionHealthRepository
+      )(connectionString);
+      const now = dependencies.now ?? (() => new Date().toISOString());
+      const layer = Layer.mergeAll(
+        telemetryLayer,
+        Layer.succeed(ConnectionHealthClock, {
+          now: Effect.sync(now),
+        }),
+        Layer.succeed(ConnectionHealthPersistence, {
+          finish: (input) =>
+            Effect.tryPromise({
+              try: () => repository.finish(input),
+              catch: () => new ConnectionHealthPersistenceError(),
+            }),
+        }),
+        Layer.succeed(ConnectionHealthProvider, {
+          reconcile: (input) =>
+            Effect.tryPromise({
+              try: () =>
+                (
+                  environment.PROVIDER_CONTROL as ProviderControlService
+                ).reconcileSession(input),
+              catch: () => unavailableProviderResult("safe-read"),
+            }).pipe(Effect.catchAll((failure) => Effect.succeed(failure))),
+        }),
+      );
+      const claimedAt = now();
+      while (true) {
+        const candidates = await repository.claim({
+          claimedAt,
+          limit: 100,
+        });
+        await Promise.all(
+          candidates.map((candidate) =>
+            Effect.runPromise(
+              reconcileConnectionHealth(
+                candidate,
+                environment.OAUTH_ISSUER as string,
+              ).pipe(Effect.provide(layer)),
+            ),
+          ),
+        );
+        if (candidates.length < 100) break;
+      }
+      return;
+    }
     if (controller.cron !== "* * * * *") return;
     const connectionString = environment.HYPERDRIVE?.connectionString;
     const queue = environment.CONNECTION_SETUP_PROVISIONING_QUEUE;

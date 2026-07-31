@@ -582,6 +582,37 @@ retention/deletion cleanup hourly. Resource names use the
 deployment-environment suffix outside production so development, preview, and
 production never share state by name.
 
+The five-minute reconciliation claims only due, non-deleting WhatsApp
+Connections through a fixed-`search_path` database function executable by the
+restricted API role. Each claim has a four-minute lease so an interrupted cron
+can recover without allowing an older completion to overwrite newer evidence.
+The API calls provider-control's bounded safe `reconcileSession` read with the
+Connection Setup marker and exact persisted webhook ingress URL. No message,
+conversation, or Directory activity timestamp participates in the decision.
+
+A confirmed connected session with the exact disabled-message-logging,
+disabled-auto-read, enabled-webhook URL and event set advances the last
+confirmed healthy point and closes active reconciliation gaps. Confirmed
+absence, disconnection, reconnect requirement, unresolved connecting state,
+degraded state, or duplicate sessions opens `connection_unavailable`; confirmed
+webhook drift opens `webhook_configuration`. Other safe-read failures make the
+Connection `degraded` but preserve existing gaps and do not create one. Gap
+starts use the prior confirmed healthy point, closed rows remain associated
+with the Connection's Message History Window, and no healthy result deletes a
+row or certifies complete provider delivery.
+
+Measured ingress/Queue incidents, bounded processing loss, and restore loss use
+the restricted `record_ingestion_gap_evidence` function with
+`ingress_failure`, `processing_failure`, or `restore_loss`. Only a concrete
+incident measurement or restore report may invoke it; inactivity is not an
+input. Operators invoke the same production repository through
+`bun run db:record-gap -- <internal-connection-uuid> <cause> <open|close>
+<utc-timestamp>` with a restricted API-runtime `DATABASE_URL`; the command
+never prints the Connection identifier. `connection_health.reconciliation.completed` telemetry contains only
+the normalized state, gap evidence class, applied-or-superseded outcome, and
+service name. It must never contain a User, Personal Account, Connection,
+Connection Setup, webhook URL, provider identifier, authority, or payload.
+
 OpenTofu variables `cloudflare_account_id` and `neon_org_id` for
 `infra/production` are supplied through an uncommitted variable file or
 `TF_VAR_` environment values. The checked example contains deliberately invalid

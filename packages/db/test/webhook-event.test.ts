@@ -462,6 +462,87 @@ describe("Webhook Event repository", () => {
     ]);
   });
 
+  test("does not let late provider evidence predate a confirmed health snapshot", async () => {
+    const repository = makeWebhookEventRepository(webhookProvider);
+    await repository.prepare(eventInput(firstEventId));
+    await database.query(
+      `UPDATE app.whatsapp_connections
+       SET
+         state = 'connected',
+         state_changed_at = '2026-07-31T12:20:00.000Z',
+         state_received_at = '2026-07-31T12:20:00.000Z',
+         state_snapshot_observed_at = '2026-07-31T12:20:00.000Z'
+       WHERE id = $1`,
+      [connectionId],
+    );
+
+    const stale = await repository.projectConnectionState(
+      {
+        eventId: firstEventId,
+        evidence: {
+          occurredAt: "2026-07-31T12:19:00.000Z",
+          version: null,
+        },
+        itemIdentity: itemIdentity("before_health_snapshot"),
+        itemIndex: 0,
+        personalAccountId: accountId,
+        receivedAt: "2026-07-31T12:21:00.000Z",
+        state: "disconnected",
+        whatsappConnectionId: connectionId,
+      },
+      compareVersions,
+    );
+    const newer = await repository.projectConnectionState(
+      {
+        eventId: firstEventId,
+        evidence: {
+          occurredAt: "2026-07-31T12:20:01.000Z",
+          version: null,
+        },
+        itemIdentity: itemIdentity("after_health_snapshot"),
+        itemIndex: 1,
+        personalAccountId: accountId,
+        receivedAt: "2026-07-31T12:21:01.000Z",
+        state: "disconnected",
+        whatsappConnectionId: connectionId,
+      },
+      compareVersions,
+    );
+
+    expect([stale, newer]).toEqual(["superseded", "applied"]);
+  });
+
+  test("does not let a version-only webhook received before a health snapshot regress it", async () => {
+    const repository = makeWebhookEventRepository(webhookProvider);
+    await repository.prepare(eventInput(firstEventId));
+    await database.query(
+      `UPDATE app.whatsapp_connections
+       SET
+         state = 'connected',
+         state_changed_at = '2026-07-31T12:20:00.000Z',
+         state_received_at = '2026-07-31T12:20:00.000Z',
+         state_snapshot_observed_at = '2026-07-31T12:20:00.000Z'
+       WHERE id = $1`,
+      [connectionId],
+    );
+
+    const outcome = await repository.projectConnectionState(
+      {
+        eventId: firstEventId,
+        evidence: { occurredAt: null, version: "101" },
+        itemIdentity: itemIdentity("version_before_health_snapshot"),
+        itemIndex: 0,
+        personalAccountId: accountId,
+        receivedAt: "2026-07-31T12:19:59.000Z",
+        state: "disconnected",
+        whatsappConnectionId: connectionId,
+      },
+      compareVersions,
+    );
+
+    expect(outcome).toBe("superseded");
+  });
+
   test("quarantines permanent item failures without blocking valid siblings", async () => {
     const repository = makeWebhookEventRepository(webhookProvider);
     await repository.prepare(eventInput(firstEventId));

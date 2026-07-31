@@ -147,6 +147,22 @@ export interface WhatsAppConnectionLifecycleCompletedEvent {
   readonly service: "api";
 }
 
+export interface ConnectionHealthReconciliationCompletedEvent {
+  readonly event: "connection_health.reconciliation.completed";
+  readonly gapEvidence:
+    | "healthy"
+    | "connection_unavailable"
+    | "webhook_configuration"
+    | "unknown";
+  readonly outcome: "applied" | "superseded";
+  readonly service: "api";
+  readonly state:
+    | "connected"
+    | "degraded"
+    | "disconnected"
+    | "reconnect_required";
+}
+
 export interface OAuthAuthorizationRequestCompletedEvent {
   readonly clientClass?: string | undefined;
   readonly event: "oauth.authorization.request.completed";
@@ -187,6 +203,7 @@ export interface SafeTelemetry {
 }
 
 export type SafeTelemetryEvent =
+  | ConnectionHealthReconciliationCompletedEvent
   | ConnectionSetupCancelCompletedEvent
   | ConnectionSetupCleanupCompletedEvent
   | ConnectionSetupCleanupRecoveryEnqueuedEvent

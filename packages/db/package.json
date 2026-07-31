@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./connection-health": "./src/connection-health.ts",
     "./connection-setup": "./src/connection-setup.ts",
     "./config": "./src/config.ts",
     "./connectivity": "./src/connectivity.ts",
@@ -16,9 +17,10 @@
     "./whatsapp-connection": "./src/whatsapp-connection.ts"
   },
   "scripts": {
-    "build": "bun build src/config.ts src/connection-setup.ts src/connectivity.ts src/mcp-authorization.ts src/migrations.ts src/personal-account.ts src/readiness.ts src/schema-version.ts src/webhook-event.ts src/webhook-ingress.ts src/whatsapp-connection.ts --outdir dist --target bun",
+    "build": "bun build src/config.ts src/connection-health.ts src/connection-setup.ts src/connectivity.ts src/mcp-authorization.ts src/migrations.ts src/personal-account.ts src/readiness.ts src/record-ingestion-gap-cli.ts src/schema-version.ts src/webhook-event.ts src/webhook-ingress.ts src/whatsapp-connection.ts --outdir dist --target bun",
     "db:check": "bun src/check-cli.ts",
     "db:migrate": "bun src/migrate-cli.ts",
+    "db:record-gap": "bun src/record-ingestion-gap-cli.ts",
     "lint": "biome check .",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
