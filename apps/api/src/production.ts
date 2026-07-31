@@ -2,6 +2,7 @@ import { KMSClient } from "@aws-sdk/client-kms";
 import { makeConnectionSetupId } from "@whatsapp-mcp/contracts/handles";
 import { makePgConnectionSetupRepository } from "@whatsapp-mcp/db/connection-setup";
 import { checkDatabaseReadiness } from "@whatsapp-mcp/db/connectivity";
+import { makePgMcpAuthorizationRepository } from "@whatsapp-mcp/db/mcp-authorization";
 import { makePgPersonalAccountRepository } from "@whatsapp-mcp/db/personal-account";
 import { Config, ConfigProvider, Data, Effect, Layer, Redacted } from "effect";
 import { makeClerkHumanIdentity } from "./auth/clerk";
@@ -37,6 +38,14 @@ import {
   makeStoredMediaContainer,
   StoredMediaContainerService,
 } from "./encryption/stored-media-container";
+import {
+  createMcpAuthorizationConsentHandler,
+  isMcpAuthorizationConsentRequest,
+  McpAuthorizationClock,
+  McpAuthorizationIdentifiers,
+  McpAuthorizationPersistence,
+  McpAuthorizationPersistenceError,
+} from "./mcp-authorization";
 import { createOAuthHandler, loadOAuthConfiguration } from "./oauth";
 import {
   createPersonalAccountHandler,
@@ -470,6 +479,68 @@ const connectionSetupNumberTokensLayer = (environment: ApiEnvironment) =>
     ),
   );
 
+const mcpAuthorizationPersistenceLayer = (environment: ApiEnvironment) =>
+  Layer.succeed(McpAuthorizationPersistence, {
+    create: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgMcpAuthorizationRepository(connectionString).create(
+            input,
+          );
+        },
+        catch: () => new McpAuthorizationPersistenceError(),
+      }),
+    isActive: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgMcpAuthorizationRepository(connectionString).isActive(
+            input,
+          );
+        },
+        catch: () => new McpAuthorizationPersistenceError(),
+      }),
+    listConnections: (clerkUserId) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgMcpAuthorizationRepository(
+            connectionString,
+          ).listConnections(clerkUserId);
+        },
+        catch: () => new McpAuthorizationPersistenceError(),
+      }),
+  });
+
+const randomBase64Url = (): string => {
+  const value = new Uint8Array(32);
+  crypto.getRandomValues(value);
+  return btoa(String.fromCharCode(...value))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/u, "");
+};
+
+const mcpAuthorizationRuntimeLayer = Layer.mergeAll(
+  Layer.succeed(McpAuthorizationClock, {
+    now: Effect.sync(() => new Date()),
+  }),
+  Layer.succeed(McpAuthorizationIdentifiers, {
+    authorizationId: Effect.sync(() => crypto.randomUUID()),
+    oauthSubject: Effect.sync(randomBase64Url),
+  }),
+);
+
 const privateBetaConfigLayer = (environment: ApiEnvironment) =>
   Layer.effect(
     PrivateBetaConfig,
@@ -614,6 +685,8 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     connectionSetupIdentifiersLayer,
     connectionSetupClockLayer,
     connectionSetupNumberTokensLayer(environment),
+    mcpAuthorizationPersistenceLayer(environment),
+    mcpAuthorizationRuntimeLayer,
   );
   const handler = createCanaryHandler(layer);
   const personalAccountHandler = createPersonalAccountHandler(
@@ -628,28 +701,65 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     loadOAuthConfiguration(environment as unknown as Record<string, unknown>),
   );
 
-  const applicationHandler = async (request: Request): Promise<Response> => {
-    if (isConnectionSetupRequest(request)) {
-      return connectionSetupHandler(request);
-    }
-    if (isPersonalAccountRequest(request)) {
-      return personalAccountHandler(request);
-    }
-    return handler(request);
-  };
-
   return async (
     request: Request,
     context?: ExecutionContext,
   ): Promise<Response> => {
     try {
       const configuration = await oauthConfiguration;
+      const consentHandler = createMcpAuthorizationConsentHandler({
+        browserOrigin: environment.CLERK_AUTHORIZED_PARTY ?? "",
+        configuration,
+        kv: environment.OAUTH_KV as Parameters<
+          typeof createMcpAuthorizationConsentHandler
+        >[0]["kv"],
+        layer,
+        telemetry: (event) => {
+          Effect.runSync(safeTelemetry.emit(event));
+        },
+      });
+      const applicationHandler = async (
+        nextRequest: Request,
+        nextEnvironment: Parameters<
+          Parameters<typeof createOAuthHandler>[0]["applicationHandler"]
+        >[1],
+      ): Promise<Response> => {
+        if (
+          isMcpAuthorizationConsentRequest(nextRequest) &&
+          nextEnvironment.OAUTH_PROVIDER
+        ) {
+          return consentHandler(nextRequest, nextEnvironment.OAUTH_PROVIDER);
+        }
+        if (isConnectionSetupRequest(nextRequest)) {
+          return connectionSetupHandler(nextRequest);
+        }
+        if (isPersonalAccountRequest(nextRequest)) {
+          return personalAccountHandler(nextRequest);
+        }
+        return handler(nextRequest);
+      };
       const oauthHandler = createOAuthHandler({
-        applicationHandler: (nextRequest) => applicationHandler(nextRequest),
+        applicationHandler,
         configuration,
         environment: environment as Parameters<
           typeof createOAuthHandler
         >[0]["environment"],
+        isAuthorizationActive: async (input) => {
+          try {
+            return await Effect.runPromise(
+              Effect.gen(function* () {
+                const clock = yield* McpAuthorizationClock;
+                const persistence = yield* McpAuthorizationPersistence;
+                return yield* persistence.isActive({
+                  ...input,
+                  observedAt: yield* clock.now,
+                });
+              }).pipe(Effect.provide(layer)),
+            );
+          } catch {
+            return false;
+          }
+        },
         telemetry: (event) => {
           Effect.runSync(safeTelemetry.emit(event));
         },

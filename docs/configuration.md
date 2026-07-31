@@ -99,6 +99,46 @@ encrypts grant props. Per ADR 0003, Neon—not KV—remains authoritative for MC
 Authorization, scopes, selected WhatsApp Connections, account state, and
 revocation.
 
+The web consent page opens only from the opaque handoff. It retrieves the
+allowlisted client name, requested scopes, and current existing WhatsApp
+Connections directly from the API. No scope, Connection, read-sharing
+confirmation, or send-authority confirmation starts selected. Approval requires
+at least one explicit Connection and one independently selected requested
+scope. Any read scope requires the separate read-sharing confirmation;
+`messages:send` requires the separate send-authority confirmation and never
+adds a read scope. A presentation digest bound to the handoff and verified
+Clerk User rejects a changed request before persistence.
+
+Approval also requires Clerk's standard first-factor verification-age (`fva`)
+claim to be less than five minutes old. The browser invokes Clerk's
+first-factor reverification flow when needed, clears its cached session token,
+and submits a newly minted short-lived token. The API independently verifies
+the signed `fva` value together with the token's signed issuance time; missing,
+malformed, or stale values fail closed.
+
+Migration 0006 gives each existing WhatsApp Connection an ADR 0023 `con_`
+public handle and creates RLS-protected MCP Authorization and explicit
+authorization-to-Connection rows. Neon stores exactly the independently
+selected scopes and Connections; a Connection created later has no join row
+and therefore does not expand the grant. OAuth KV protocol records use an
+unlinkable per-authorization subject instead of Clerk identity; encrypted grant
+props contain that subject and the authorization lookup ID. The only
+application metadata outside those encrypted props is the allowlisted client
+class. Authorization-code and refresh exchanges recheck the active, unexpired
+Neon row through the restricted API role. Access tokens are bound to the exact
+`/mcp` resource and expire after ten minutes. The provider issues a rotating
+refresh credential whose current grant expires 30 days after code exchange,
+while Neon independently enforces the 90-day absolute authorization session.
+Sliding inactivity and refresh-reuse containment belong to the refresh-family
+lifecycle rollout. No additional Cloudflare binding or infrastructure
+authority is required beyond the existing OAuth KV and API Hyperdrive.
+
+Consent decision telemetry contains only
+`oauth.authorization.decision.completed`, the allowlisted client class,
+`approved` or `denied`, and the API service name. Never add the User, Personal
+Account, MCP Authorization, Connection, scope set, redirect, token, handoff, or
+presentation digest.
+
 Declare the reviewed per-environment allowlist through `oauth_clients`:
 
 ```hcl
@@ -148,7 +188,8 @@ Each deployment environment uses its own Clerk instance or satellite domain.
 Create the `whatsapp-api` custom JWT template with a 60-second lifetime and an
 `aud` claim equal to that environment's exact API origin. Do not add tenant,
 role, email, name, or other profile claims: the API consumes only Clerk's
-standard `sub`, `iss`, `aud`, `azp`, `iat`, `nbf`, `exp`, and `sts` claims.
+standard `sub`, `iss`, `aud`, `azp`, `iat`, `nbf`, `exp`, `sts`, and `fva`
+claims.
 Configure the Clerk application to allow only the exact web origin represented
 by `CLERK_AUTHORIZED_PARTY`.
 

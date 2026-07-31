@@ -3,6 +3,7 @@ import { Effect } from "effect";
 import {
   type HumanIdentityService,
   InvalidHumanIdentity,
+  RecentHumanVerificationRequired,
 } from "./human-identity";
 
 export { InvalidHumanIdentity } from "./human-identity";
@@ -17,6 +18,7 @@ export interface ClerkTokenClaims {
   readonly aud?: unknown;
   readonly azp?: unknown;
   readonly exp?: unknown;
+  readonly fva?: unknown;
   readonly iat?: unknown;
   readonly iss?: unknown;
   readonly nbf?: unknown;
@@ -62,7 +64,10 @@ const isSafeClaims = (
   claims: ClerkTokenClaims,
   options: ClerkHumanIdentityOptions,
   now: number,
-): claims is ClerkTokenClaims & { readonly sub: string } => {
+): claims is ClerkTokenClaims & {
+  readonly iat: number;
+  readonly sub: string;
+} => {
   const { aud, azp, exp, iat, iss, nbf, sts, sub } = claims;
   return (
     aud === options.audience &&
@@ -95,29 +100,57 @@ export const makeClerkHumanIdentity = (
       }));
   const now = options.now ?? (() => Math.floor(Date.now() / 1_000));
 
+  const verifiedClaims = (request: Request) =>
+    Effect.tryPromise({
+      try: async () => {
+        if (request.headers.get("origin") !== options.authorizedParty) {
+          throw new InvalidHumanIdentity();
+        }
+        const token = bearerToken(request);
+        if (token === null) {
+          throw new InvalidHumanIdentity();
+        }
+        const claims = await verify(token, {
+          audience: options.audience,
+          authorizedParties: [options.authorizedParty],
+          clockSkewInMs: CLOCK_SKEW_SECONDS * 1_000,
+          jwtKey: options.jwtKey,
+        });
+        const observedAt = now();
+        if (!isSafeClaims(claims, options, observedAt)) {
+          throw new InvalidHumanIdentity();
+        }
+        return { claims, observedAt };
+      },
+      catch: () => new InvalidHumanIdentity(),
+    });
+
   return {
     verify: (request) =>
-      Effect.tryPromise({
-        try: async () => {
-          if (request.headers.get("origin") !== options.authorizedParty) {
-            throw new InvalidHumanIdentity();
+      verifiedClaims(request).pipe(Effect.map(({ claims }) => claims.sub)),
+    verifyRecently: (request) =>
+      verifiedClaims(request).pipe(
+        Effect.flatMap(({ claims, observedAt }) => {
+          const firstFactorAge = Array.isArray(claims.fva)
+            ? claims.fva[0]
+            : undefined;
+          const reverifiedAt =
+            typeof firstFactorAge === "number"
+              ? claims.iat - firstFactorAge * 60
+              : Number.NEGATIVE_INFINITY;
+          if (
+            typeof firstFactorAge !== "number" ||
+            !Number.isSafeInteger(firstFactorAge) ||
+            firstFactorAge < 0 ||
+            observedAt - reverifiedAt >= 5 * 60
+          ) {
+            return Effect.fail(new RecentHumanVerificationRequired());
           }
-          const token = bearerToken(request);
-          if (token === null) {
-            throw new InvalidHumanIdentity();
-          }
-          const claims = await verify(token, {
-            audience: options.audience,
-            authorizedParties: [options.authorizedParty],
-            clockSkewInMs: CLOCK_SKEW_SECONDS * 1_000,
-            jwtKey: options.jwtKey,
+          return Effect.succeed({
+            clerkUserId: claims.sub,
+            reverifiedAt: new Date(Math.min(reverifiedAt, observedAt) * 1_000),
           });
-          if (!isSafeClaims(claims, options, now())) {
-            throw new InvalidHumanIdentity();
-          }
-          return claims.sub;
-        },
-        catch: () => new InvalidHumanIdentity(),
-      }),
+        }),
+      ),
   };
 };

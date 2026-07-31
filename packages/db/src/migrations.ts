@@ -78,6 +78,14 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 5,
   },
+  {
+    name: "explicit MCP Authorizations",
+    sql: await readFile(
+      new NodeUrl("../migrations/0006_mcp_authorizations.sql", import.meta.url),
+      "utf8",
+    ),
+    version: 6,
+  },
 ];
 
 const checksum = (sql: string): string =>

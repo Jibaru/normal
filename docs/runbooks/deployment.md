@@ -531,6 +531,26 @@ the reconciled provisioning worker is the only provisioning consumer. Inspect
 only allowlisted outcome telemetry—never print the number, idempotency key,
 reservation token, setup identifier, ciphertext, or key metadata.
 
+In the same non-production environment, start authorization from one reviewed
+allowlisted MCP Client. Confirm the consent page names that client and starts
+with every WhatsApp Connection, requested scope, read-sharing confirmation,
+and send-authority confirmation unselected. Approve one existing Connection
+with a reviewed subset of scopes after Clerk first-factor reverification, then
+exchange the returned code with S256 PKCE. Inspect only protocol metadata: the
+response must report `expires_in: 600`, the exact `$API_ORIGIN/mcp` resource,
+the selected scope string, and one refresh credential. Never print either
+credential.
+
+Repeat with denial and confirm that the client receives `access_denied` with
+its original state and no MCP Authorization row is created. Restart the flow
+before each negative case; verify a five-minute-old factor age is rejected, an
+altered presentation is rejected as a changed request, and an unregistered
+client still fails before consent without a redirect. Query only safe counts
+and scope/Connection cardinalities through an audited restricted-role
+diagnostic. A later test WhatsApp Connection must not change the original
+authorization's selected-Connection count. Safe consent telemetry may contain
+only the allowlisted client class and `approved` or `denied`.
+
 The readiness response proves a restricted Hyperdrive connection can read the
 exact expected schema version. It emits only an allowlisted request outcome;
 database URLs, SQL, tenant identifiers, and migration errors are never logged.

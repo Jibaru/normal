@@ -87,6 +87,7 @@ const makeTestLayer = (failure: FailureTarget | undefined) => {
         }
         return Effect.fail(new InvalidHumanIdentityRequest());
       },
+      verifyRecently: () => Effect.die("not used"),
     }),
     Layer.succeed(BoundaryProvider, {
       observeConnection: failWhenSelected(failure, "provider").pipe(

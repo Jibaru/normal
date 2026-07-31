@@ -6,11 +6,20 @@ export interface BrowserClerkClient {
   readonly loaded: boolean;
   readonly session:
     | {
+        readonly clearCache?: (() => void) | undefined;
+        readonly factorVerificationAge?: [number, number] | null | undefined;
         readonly getToken: (options: {
           readonly template: string;
         }) => Promise<string | null>;
       }
     | null
+    | undefined;
+  readonly __internal_openReverification?:
+    | ((options: {
+        readonly afterVerification: () => void;
+        readonly afterVerificationCancelled: () => void;
+        readonly level: "first_factor";
+      }) => void)
     | undefined;
   readonly openSignIn?: (() => void) | undefined;
 }

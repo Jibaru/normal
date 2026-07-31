@@ -108,6 +108,7 @@ const makeHarness = (
         options.identityValid === false
           ? Effect.fail(new InvalidHumanIdentity())
           : Effect.succeed("user_connection_setup"),
+      verifyRecently: () => Effect.die("not used"),
     }),
     Layer.succeed(ConnectionSetupPersistence, persistence),
     Layer.succeed(ConnectionSetupClock, {
