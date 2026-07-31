@@ -342,6 +342,67 @@ describe("encrypted R2 Stored Media container", () => {
     expect(await read(setupValue, "objects/empty")).toEqual(new Uint8Array());
   });
 
+  test("rejects key versions that cannot be represented by the container header", async () => {
+    const setupValue = await setup({ chunkSize: 16 });
+    const unrepresentableConnectionKey = await Effect.runPromise(
+      setupValue.encryption.createConnectionKey({
+        accountId: setupValue.context.personalAccountId,
+        accountKey: setupValue.accountKey,
+        connectionId: setupValue.context.connectionId,
+        keyVersion: 0x1_0000_0000,
+      }),
+    );
+
+    const result = await Effect.runPromise(
+      Effect.either(
+        setupValue.container.write({
+          accountKey: setupValue.accountKey,
+          connectionKey: unrepresentableConnectionKey,
+          context: setupValue.context,
+          objectKey: "objects/unrepresentable-key-version",
+          plaintext: streamFrom(textEncoder.encode("must not be stored")),
+        }),
+      ),
+    );
+
+    expect(result).toMatchObject({
+      _tag: "Left",
+      left: {
+        _tag: "StoredMediaContainerError",
+        operation: "write",
+        reason: "invalid-input",
+      },
+    });
+    expect(
+      await env.STORED_MEDIA.head("objects/unrepresentable-key-version"),
+    ).toBeNull();
+  });
+
+  test("rejects R2 object keys longer than 1,024 UTF-8 bytes", async () => {
+    const setupValue = await setup({ chunkSize: 16 });
+
+    const result = await Effect.runPromise(
+      Effect.either(
+        setupValue.container.write({
+          accountKey: setupValue.accountKey,
+          connectionKey: setupValue.connectionKey,
+          context: setupValue.context,
+          objectKey: "é".repeat(513),
+          plaintext: streamFrom(textEncoder.encode("must not be stored")),
+        }),
+      ),
+    );
+
+    expect(result).toMatchObject({
+      _tag: "Left",
+      left: {
+        _tag: "StoredMediaContainerError",
+        operation: "write",
+        reason: "invalid-input",
+      },
+    });
+  });
+
   test.each([
     ["truncation", (bytes: Uint8Array) => bytes.slice(0, -1)],
     [

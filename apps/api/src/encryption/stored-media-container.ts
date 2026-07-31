@@ -11,13 +11,15 @@ const AES_GCM_NONCE_BYTES = 12;
 const AES_GCM_TAG_BYTES = 16;
 const AES_KEY_BYTES = 32;
 const ALGORITHM_AES_256_GCM = 1;
-const CONTAINER_MAGIC = new TextEncoder().encode("WAMR2ENC");
+const TEXT_ENCODER = new TextEncoder();
+const CONTAINER_MAGIC = TEXT_ENCODER.encode("WAMR2ENC");
 const CONTAINER_VERSION = 1 as const;
 const DATA_FRAME = 0;
 const FRAME_HEADER_BYTES = 21;
 const HEADER_FIXED_BYTES = 34;
 const MAX_CHUNK_INDEX = 0xffff_ffff;
 const MAX_WRAPPED_KEY_BYTES = 4_096;
+const R2_OBJECT_KEY_MAX_BYTES = 1_024;
 const R2_MULTIPART_PART_BYTES = 5 * 1_048_576;
 const TERMINAL_FRAME = 1;
 
@@ -115,15 +117,18 @@ const hasControlCharacter = (value: string) =>
   });
 
 const isOpaqueObjectKey = (value: string) =>
-  hasText(value) && value.length <= 1_024 && !hasControlCharacter(value);
+  hasText(value) &&
+  value.length <= R2_OBJECT_KEY_MAX_BYTES &&
+  TEXT_ENCODER.encode(value).byteLength <= R2_OBJECT_KEY_MAX_BYTES &&
+  !hasControlCharacter(value);
 
 const isChunkSize = (value: number) =>
   Number.isSafeInteger(value) &&
   value > 0 &&
   value <= STORED_MEDIA_CONTAINER_CHUNK_BYTES;
 
-const isPositiveVersion = (value: number) =>
-  Number.isSafeInteger(value) && value > 0;
+const isContainerKeyVersion = (value: number) =>
+  Number.isSafeInteger(value) && value > 0 && value <= MAX_CHUNK_INDEX;
 
 const toArrayBuffer = (value: Uint8Array): ArrayBuffer =>
   value.buffer.slice(
@@ -179,7 +184,7 @@ const validateInput = (input: StoredMediaInput) =>
   input.connectionKey.personalAccountId === input.context.personalAccountId &&
   input.connectionKey.connectionId === input.context.connectionId &&
   input.connectionKey.accountKeyVersion === input.accountKey.keyVersion &&
-  isPositiveVersion(input.connectionKey.keyVersion);
+  isContainerKeyVersion(input.connectionKey.keyVersion);
 
 const mediaKeyContext = (context: StoredMediaContext): EncryptionContext => ({
   accountId: context.personalAccountId,
@@ -206,7 +211,7 @@ const frameAdditionalData = (
   plaintextLength: number,
   role: "data" | "terminal",
 ) =>
-  new TextEncoder().encode(
+  TEXT_ENCODER.encode(
     JSON.stringify({
       algorithm: "AES-256-GCM",
       chunkIndex,
@@ -395,7 +400,7 @@ const parseHeader = async (
     view.getUint8(9) !== ALGORITHM_AES_256_GCM ||
     view.getUint16(10) !== 0 ||
     !isChunkSize(chunkSize) ||
-    !isPositiveVersion(keyVersion) ||
+    !isContainerKeyVersion(keyVersion) ||
     wrappedKeyLength !== AES_KEY_BYTES + AES_GCM_TAG_BYTES ||
     wrappedKeyLength > MAX_WRAPPED_KEY_BYTES
   ) {
