@@ -74,6 +74,15 @@ describe("API production root", () => {
     });
   });
 
+  test("fails closed before webhook traffic when Webhook Hyperdrive is absent", async () => {
+    const { WEBHOOK_HYPERDRIVE: _missing, ...environment } = validEnvironment();
+    const response = await createProductionHandler(environment)(
+      new Request("https://api.example.test/health"),
+    );
+
+    expect(response.status).toBe(503);
+  });
+
   test("fails closed when deployment configuration is invalid", async () => {
     const response = await createProductionHandler({
       ...validEnvironment(),

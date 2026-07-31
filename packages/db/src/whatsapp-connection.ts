@@ -68,6 +68,7 @@ export type ConnectionSetupActivation =
         readonly personalAccountId: string;
         readonly setupId: string;
         readonly setupKey: ConnectionKeyEnvelope;
+        readonly webhookIngressId: string;
       };
     };
 
@@ -239,6 +240,7 @@ interface ActivationRow extends ConnectionRow {
   readonly setup_key_ciphertext: unknown;
   readonly setup_key_nonce: unknown;
   readonly setup_key_version: unknown;
+  readonly webhook_ingress_id?: unknown;
 }
 
 const versionedCiphertext = (
@@ -306,7 +308,11 @@ const activation = (
     setupKeyVersion === null ||
     setupKeyNonce === null ||
     setupKeyCiphertext === null ||
-    numberCiphertext === null
+    numberCiphertext === null ||
+    typeof row.webhook_ingress_id !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+      row.webhook_ingress_id,
+    )
   ) {
     throw new Error("invalid Connection Setup activation material");
   }
@@ -332,6 +338,7 @@ const activation = (
         personalAccountId: row.personal_account_id,
         version: 1,
       },
+      webhookIngressId: row.webhook_ingress_id,
     },
   };
 };
@@ -420,7 +427,21 @@ export const makeWhatsAppConnectionRepository = (
          FROM app_private.load_connection_setup_for_activation($1, $2, $3)`,
         [input.clerkUserId, input.setupId, input.observedAt],
       );
-      return activation(input.setupId, result.rows[0]);
+      let row = result.rows[0];
+      if (row?.outcome === "provisioned") {
+        const ingress = await connection.query<{ webhook_ingress_id: unknown }>(
+          `SELECT
+             app_private.load_connection_setup_webhook_ingress_for_user(
+               $1, $2
+             ) AS webhook_ingress_id`,
+          [input.clerkUserId, input.setupId],
+        );
+        row = {
+          ...row,
+          webhook_ingress_id: ingress.rows[0]?.webhook_ingress_id,
+        };
+      }
+      return activation(input.setupId, row);
     }),
 });
 

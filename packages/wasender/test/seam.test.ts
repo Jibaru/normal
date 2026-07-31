@@ -6,6 +6,7 @@ import {
   type SessionAuthority,
   SessionLifecycle,
   type SetupMarker,
+  type WebhookEndpoint,
   type WhatsAppNumber,
 } from "../src/control";
 import {
@@ -33,6 +34,9 @@ import {
 
 const setupMarker = "setup-marker" as SetupMarker;
 const phoneNumber = Redacted.make("+15550123456") as WhatsAppNumber;
+const webhookEndpoint = Redacted.make(
+  "https://api.example.test/webhooks/wasender/30000000-0000-4000-8000-000000000041",
+) as WebhookEndpoint;
 const session = "sealed-session" as LifecycleSessionLocator;
 const sessionAuthority = Redacted.make("session-authority") as SessionAuthority;
 const contact = "sealed-contact" as ContactLocator;
@@ -205,6 +209,7 @@ describe("provider-neutral capability seam", () => {
           return yield* lifecycle.createSession({
             phoneNumber,
             setupMarker,
+            webhookEndpoint,
           });
         }
         return null;

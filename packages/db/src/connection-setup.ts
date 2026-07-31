@@ -115,6 +115,7 @@ export type ConnectionSetupProvisioningClaim =
         };
         readonly personalAccountId: string;
         readonly setupId: string;
+        readonly webhookIngressId: string;
       };
     }
   | {
@@ -365,6 +366,7 @@ interface AccountRow extends Record<string, unknown> {
   readonly account_key_version: unknown;
   readonly kms_key_id: unknown;
   readonly personal_account_id: unknown;
+  readonly webhook_ingress_id?: unknown;
   readonly whatsapp_connection_limit: unknown;
 }
 
@@ -473,7 +475,11 @@ const provisioningClaim = (
     numberCiphertext === null ||
     numberCiphertextVersion !== 1 ||
     numberKeyVersion === null ||
-    numberNonce === null
+    numberNonce === null ||
+    typeof row.webhook_ingress_id !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+      row.webhook_ingress_id,
+    )
   ) {
     throw new Error("invalid Connection Setup provisioning claim");
   }
@@ -504,6 +510,7 @@ const provisioningClaim = (
       },
       personalAccountId: row.personal_account_id,
       setupId,
+      webhookIngressId: row.webhook_ingress_id,
     },
   };
 };
@@ -563,7 +570,21 @@ export const makeConnectionSetupRepository = (
          FROM app_private.claim_connection_setup_provisioning($1, $2, $3)`,
         [input.setupId, input.workerId, input.claimedAt],
       );
-      return provisioningClaim(input.setupId, result.rows[0]);
+      let row = result.rows[0];
+      if (row?.outcome === "claimed") {
+        const ingress = await connection.query<{ webhook_ingress_id: unknown }>(
+          `SELECT
+             app_private.load_connection_setup_webhook_ingress_for_worker(
+               $1, $2
+             ) AS webhook_ingress_id`,
+          [input.setupId, input.workerId],
+        );
+        row = {
+          ...row,
+          webhook_ingress_id: ingress.rows[0]?.webhook_ingress_id,
+        };
+      }
+      return provisioningClaim(input.setupId, row);
     }),
   expire: (input) =>
     provider.withConnection(async (connection) => {

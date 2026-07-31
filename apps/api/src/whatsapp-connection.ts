@@ -101,8 +101,7 @@ export const WhatsAppConnectionClock =
 export interface WhatsAppConnectionIdentifiersService {
   readonly nextConnectionId: Effect.Effect<string>;
   readonly nextPublicId: Effect.Effect<string>;
-  readonly nextWebhookIngressId: Effect.Effect<string>;
-  readonly nextWebhookSecret: Effect.Effect<Uint8Array>;
+  readonly nextWebhookIdentityKey: Effect.Effect<Uint8Array>;
 }
 
 export const WhatsAppConnectionIdentifiers =
@@ -197,12 +196,11 @@ const activate = (
     const identifiers = yield* WhatsAppConnectionIdentifiers;
     const connectionId = yield* identifiers.nextConnectionId;
     const publicId = yield* identifiers.nextPublicId;
-    const webhookIngressId = yield* identifiers.nextWebhookIngressId;
-    const webhookSecret = yield* identifiers.nextWebhookSecret;
-    if (webhookSecret.byteLength !== 32) {
+    const webhookIdentityKey = yield* identifiers.nextWebhookIdentityKey;
+    if (webhookIdentityKey.byteLength !== 32) {
       return yield* Effect.fail(new WhatsAppConnectionActivationError());
     }
-    return yield* withZeroedBytes(webhookSecret, (secretPlaintext) =>
+    return yield* withZeroedBytes(webhookIdentityKey, (identityKeyPlaintext) =>
       Effect.gen(function* () {
         const clock = yield* WhatsAppConnectionClock;
         const connectedAt = yield* clock.now;
@@ -252,12 +250,12 @@ const activate = (
               "provider-session-authority",
               new TextEncoder().encode(providerSession.authority),
             );
-            const secret = yield* encryptConnectionValue(
+            const identityKey = yield* encryptConnectionValue(
               setup,
               connectionId,
               connectionKey,
-              "webhook-verification-secret",
-              secretPlaintext,
+              "webhook-identity-key",
+              identityKeyPlaintext,
             );
             const persistence = yield* WhatsAppConnectionPersistence;
             return yield* persistence.activate({
@@ -279,11 +277,11 @@ const activate = (
               personalAccountId: setup.personalAccountId,
               publicId,
               setupId: setup.setupId,
-              webhookIngressId,
-              webhookSecretCiphertext: decodeBase64(secret.ciphertext),
-              webhookSecretCiphertextVersion: secret.version,
-              webhookSecretKeyVersion: secret.keyVersion,
-              webhookSecretNonce: decodeBase64(secret.nonce),
+              webhookIngressId: setup.webhookIngressId,
+              webhookSecretCiphertext: decodeBase64(identityKey.ciphertext),
+              webhookSecretCiphertextVersion: identityKey.version,
+              webhookSecretKeyVersion: identityKey.keyVersion,
+              webhookSecretNonce: decodeBase64(identityKey.nonce),
             });
           }),
         );

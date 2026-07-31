@@ -25,6 +25,7 @@ export type LifecycleSessionLocator =
   AdapterReference<"LifecycleSessionLocator">;
 export type SessionAuthority = ProtectedAdapterValue<"SessionAuthority">;
 export type WhatsAppNumber = ProtectedAdapterValue<"WhatsAppNumber">;
+export type WebhookEndpoint = ProtectedAdapterValue<"WebhookEndpoint">;
 
 export type LifecycleConnectionState =
   | "connected"
@@ -91,6 +92,7 @@ export interface SessionLifecycle {
   readonly createSession: (request: {
     readonly phoneNumber: WhatsAppNumber;
     readonly setupMarker: SetupMarker;
+    readonly webhookEndpoint: WebhookEndpoint;
   }) => AdapterEffect<LifecycleSession>;
   readonly connectSession: (request: {
     readonly session: LifecycleSessionLocator;
@@ -100,6 +102,7 @@ export interface SessionLifecycle {
   }) => AdapterEffect<QrCodeObservation>;
   readonly reconcileSession: (request: {
     readonly setupMarker: SetupMarker;
+    readonly webhookEndpoint?: WebhookEndpoint | undefined;
   }) => AdapterEffect<SessionReconciliation>;
   readonly deleteSession: (request: {
     readonly session: LifecycleSessionLocator;

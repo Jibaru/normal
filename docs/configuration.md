@@ -294,7 +294,8 @@ Neon stores no plaintext number.
 
 The committed row begins in `provisioning_pending` and expires exactly 15
 minutes after creation. It is the durable provisioning intent consumed by the
-reconciled saga; this creation route never invokes provider-control. An exact
+reconciled saga and owns a database-generated random webhook ingress identity;
+this creation route never invokes provider-control. An exact
 retry returns the original Connection Setup, while a changed number with the
 bound browser key returns `idempotency_conflict`. Telemetry contains only
 `connection_setup.start.completed`, service name, and the allowlisted outcome.
@@ -320,6 +321,15 @@ Successful create or adoption encrypts both the opaque provider locator and
 per-session authority under the setup key in one Neon transition to
 `provisioned`. Plaintext WhatsApp Number, provider locator, and session
 authority exist only in worker memory for the bounded attempt.
+
+For a confirmed-absent setup, the create request also supplies the exact API
+origin plus the setup's persisted ingress identity to provider-control as a
+protected webhook endpoint. The Wasender adapter enables only the reviewed
+message, receipt, Directory, and connection-state events, keeps provider
+message logging and incoming-message reads disabled, and requires the create
+response to contain a unique webhook secret before the session can become
+`provisioned`. Reconciliation after an ambiguous create adopts the same
+deterministic provider marker; it never invents a second endpoint or secret.
 
 Lifecycle write failure, timeout, or a crash never authorizes a repeated
 create. The lease is released with only an allowlisted failure code when
@@ -390,8 +400,9 @@ Setup to `activated`, and persists:
 
 - a fresh `con_` public handle and internal identifier;
 - a new KMS-rooted per-connection key envelope;
-- a random non-enumerable webhook ingress identity;
-- a fresh 32-byte webhook verification secret encrypted under the connection;
+- the Setup's random non-enumerable webhook ingress identity;
+- a fresh 32-byte webhook normalization identity key encrypted under the
+  connection;
 - the provider-neutral locator and per-session authority re-encrypted under
   the connection; and
 - only the last four digits of the normalized WhatsApp Number as queryable
@@ -564,3 +575,46 @@ normalization Layer. Do not introduce a shared `WASENDER_WEBHOOK_IDENTITY_KEY`
 environment value, place plaintext key material in Neon or OpenTofu state, or
 reuse the key across WhatsApp Connections. Key import fails closed when the
 decoded value is shorter than 256 bits.
+
+## Authenticated Webhook Event ingress
+
+Wasender delivers to
+`POST /webhooks/wasender/{webhook_ingress_id}` on the exact API origin. The
+ingress ID is the random UUID retained with one WhatsApp Connection; it is
+neither a public Connection handle nor authority by itself. The API accepts
+only `application/json`, reads at most 1 MiB even when `Content-Length` is
+absent or false, and resolves the ingress through `WEBHOOK_HYPERDRIVE` under
+the restricted `whatsapp_webhook_runtime` role. That role receives only the
+fixed-search-path bootstrap needed to obtain encrypted material for an active
+Personal Account and non-deleting WhatsApp Connection. It cannot query the
+connection key or provider-authority tables directly.
+
+The Wasender adapter compares `X-Webhook-Signature` with the unique secret in
+the connection's envelope-encrypted provider authority. If a documented
+`sessionId`, `session_id`, `data.sessionId`, or `data.session_id` is present,
+every supplied value must also match the encrypted per-session credential.
+Missing authority, unavailable keys, an invalid secret, or a mismatched
+session fails closed. There is no deployment-wide webhook authentication
+secret and neither authentication value may enter a log, trace, metric, Queue
+message, R2 metadata, or database plaintext.
+
+After authentication, the exact original request bytes are AES-256-GCM
+encrypted with context bound to the Personal Account, WhatsApp Connection,
+random Webhook Event object ID, and `original-request` purpose. The private
+`WEBHOOK_INGRESS` bucket receives only the versioned ciphertext envelope and
+safe receipt metadata: version, internal Personal Account and WhatsApp
+Connection context, SHA-256 ciphertext hash, payload byte count, and receipt
+time. `INGESTION_QUEUE` receives exactly the opaque object ID and the same
+connection context and receipt metadata. A `200` response is emitted only
+after the R2 write and Queue publication both finish. R2 failure publishes
+nothing; Queue failure returns `503` and intentionally leaves the encrypted
+object with enough safe metadata for the orphan recovery workflow to
+reconstruct the same Queue reference. Unknown or unauthenticated ingress
+returns the same `404` boundary, malformed authenticated JSON returns `400`,
+and an oversized delivery returns `413`.
+
+Safe telemetry is limited to `webhook_ingress.completed`, service name, and
+one of `accepted`, `authentication_failed`, `invalid_payload`, `not_found`,
+`too_large`, or `unavailable`. Never add an ingress ID, object ID, Personal
+Account, WhatsApp Connection, network address, header, session identity,
+payload, ciphertext, hash, key metadata, or object path.

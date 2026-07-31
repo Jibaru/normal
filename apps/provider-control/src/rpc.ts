@@ -21,6 +21,7 @@ import {
   type ProviderNeutralFailure,
   type SessionLifecycle,
   type SetupMarker,
+  type WebhookEndpoint,
   type WhatsAppNumber,
 } from "@whatsapp-mcp/wasender/control";
 import { Effect, Either, Redacted } from "effect";
@@ -361,6 +362,9 @@ export const makeProviderControlRpc = (
           lifecycle.createSession({
             phoneNumber: Redacted.make(request.phoneNumber) as WhatsAppNumber,
             setupMarker: request.setupMarker as SetupMarker,
+            webhookEndpoint: Redacted.make(
+              request.webhookUrl,
+            ) as WebhookEndpoint,
           }),
         (value) => lifecycleSession(value, "lifecycle-write"),
       ),
@@ -416,6 +420,13 @@ export const makeProviderControlRpc = (
         (lifecycle, request) =>
           lifecycle.reconcileSession({
             setupMarker: request.setupMarker as SetupMarker,
+            ...(request.webhookUrl === undefined
+              ? {}
+              : {
+                  webhookEndpoint: Redacted.make(
+                    request.webhookUrl,
+                  ) as WebhookEndpoint,
+                }),
           }),
         reconciliationObservation,
       ),

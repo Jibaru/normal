@@ -6,6 +6,7 @@ import {
   type SessionAuthority,
   type SetupMarker,
   type WasenderLifecycleTelemetryEvent,
+  type WebhookEndpoint,
   type WhatsAppNumber,
 } from "../src/control";
 
@@ -15,6 +16,24 @@ const referenceSecret = Redacted.make(
 );
 const setupMarker = "cst_0123456789abcdefghijk" as SetupMarker;
 const phoneNumber = Redacted.make("+15550123456") as WhatsAppNumber;
+const webhookEndpoint = Redacted.make(
+  "https://api.example.test/webhooks/wasender/30000000-0000-4000-8000-000000000041",
+) as WebhookEndpoint;
+const webhookEvents = [
+  "contacts.update",
+  "contacts.upsert",
+  "groups.update",
+  "groups.upsert",
+  "message-receipt.update",
+  "message.sent",
+  "messages-group.received",
+  "messages-personal.received",
+  "messages.delete",
+  "messages.received",
+  "messages.update",
+  "messages.upsert",
+  "session.status",
+];
 
 const providerSession = (overrides: Record<string, unknown> = {}) => ({
   account_protection: true,
@@ -24,11 +43,12 @@ const providerSession = (overrides: Record<string, unknown> = {}) => ({
   log_messages: false,
   name: setupMarker,
   phone_number: "+15550123456",
+  read_incoming_messages: false,
   status: "NEED_SCAN",
   updated_at: "2026-07-30T12:00:00Z",
-  webhook_enabled: false,
-  webhook_events: null,
-  webhook_url: null,
+  webhook_enabled: true,
+  webhook_events: webhookEvents,
+  webhook_url: Redacted.value(webhookEndpoint),
   webhook_secret: "webhook_secret",
   ...overrides,
 });
@@ -59,7 +79,7 @@ describe("real Wasender lifecycle adapter", () => {
     );
 
     const result = await Effect.runPromise(
-      lifecycle.createSession({ phoneNumber, setupMarker }),
+      lifecycle.createSession({ phoneNumber, setupMarker, webhookEndpoint }),
     );
 
     expect(requests).toHaveLength(2);
@@ -77,6 +97,9 @@ describe("real Wasender lifecycle adapter", () => {
       name: setupMarker,
       phone_number: "+15550123456",
       read_incoming_messages: false,
+      webhook_enabled: true,
+      webhook_events: webhookEvents,
+      webhook_url: Redacted.value(webhookEndpoint),
     });
     expect(result.connectionState).toBe("connecting");
     expect(JSON.stringify(result)).not.toContain("41");
@@ -116,7 +139,7 @@ describe("real Wasender lifecycle adapter", () => {
     );
 
     const adopted = await Effect.runPromise(
-      lifecycle.createSession({ phoneNumber, setupMarker }),
+      lifecycle.createSession({ phoneNumber, setupMarker, webhookEndpoint }),
     );
     const duplicates = await Effect.runPromise(
       lifecycle.reconcileSession({ setupMarker }),
@@ -131,6 +154,68 @@ describe("real Wasender lifecycle adapter", () => {
       );
     }
     expect(calls).toBe(5);
+  });
+
+  test("rejects a reconciled marker with a different webhook configuration", async () => {
+    const responses = [
+      json({
+        success: true,
+        data: [providerSession({ api_key: undefined })],
+      }),
+      json({
+        success: true,
+        data: providerSession({
+          webhook_url:
+            "https://api.example.test/webhooks/wasender/30000000-0000-4000-8000-000000000099",
+        }),
+      }),
+    ];
+    let calls = 0;
+    const lifecycle = makeWasenderSessionLifecycle(
+      { credential, referenceSecret },
+      {
+        fetch: async () => responses[calls++] ?? json({}, { status: 500 }),
+      },
+    );
+
+    const failure = await runFailure(
+      lifecycle.reconcileSession({ setupMarker, webhookEndpoint }),
+    );
+
+    expect(failure.code).toBe("integrity_failed");
+    expect(failure.retryDecision).toBe("do_not_retry");
+  });
+
+  test("rejects a reconciled marker with broader provider retention or read settings", async () => {
+    for (const unsafeSetting of [
+      { log_messages: true },
+      { read_incoming_messages: true },
+    ]) {
+      const responses = [
+        json({
+          success: true,
+          data: [providerSession({ api_key: undefined })],
+        }),
+        json({
+          success: true,
+          data: providerSession(unsafeSetting),
+        }),
+      ];
+      let calls = 0;
+      const lifecycle = makeWasenderSessionLifecycle(
+        { credential, referenceSecret },
+        {
+          fetch: async () => responses[calls++] ?? json({}, { status: 500 }),
+        },
+      );
+
+      const failure = await runFailure(
+        lifecycle.reconcileSession({ setupMarker, webhookEndpoint }),
+      );
+
+      expect(failure.code).toBe("integrity_failed");
+      expect(failure.retryDecision).toBe("do_not_retry");
+    }
   });
 
   test("normalizes provider states that require a new connection flow", async () => {
@@ -195,7 +280,7 @@ describe("real Wasender lifecycle adapter", () => {
     );
 
     const failure = await runFailure(
-      lifecycle.createSession({ phoneNumber, setupMarker }),
+      lifecycle.createSession({ phoneNumber, setupMarker, webhookEndpoint }),
     );
 
     expect(failure.code).toBe("integrity_failed");
@@ -305,7 +390,7 @@ describe("real Wasender lifecycle adapter", () => {
     );
 
     const failure = await runFailure(
-      lifecycle.createSession({ phoneNumber, setupMarker }),
+      lifecycle.createSession({ phoneNumber, setupMarker, webhookEndpoint }),
     );
 
     expect(calls).toBe(2);
@@ -341,7 +426,7 @@ describe("real Wasender lifecycle adapter", () => {
       },
     );
     const created = await Effect.runPromise(
-      lifecycle.createSession({ phoneNumber, setupMarker }),
+      lifecycle.createSession({ phoneNumber, setupMarker, webhookEndpoint }),
     );
 
     const connected = await Effect.runPromise(

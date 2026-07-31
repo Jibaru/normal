@@ -272,6 +272,9 @@ describe("Connection Setup repository", () => {
         },
         personalAccountId: accountA,
         setupId: "cst_000000000000000000001",
+        webhookIngressId: expect.stringMatching(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+        ),
       },
     });
     expect(concurrent).toEqual({ outcome: "leased" });

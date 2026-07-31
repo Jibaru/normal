@@ -570,6 +570,29 @@ credential-handling incident. No infrastructure apply should add a new public
 provider-control route or binding for this flow: the existing API-only closed
 service binding is the complete lifecycle authority delta.
 
+Trigger one reviewed non-production Wasender event for the activated
+WhatsApp Connection and confirm the provider receives `200`. Inspect only
+aggregate R2 object and Queue publication counts: one accepted delivery must
+add one object under the private Webhook Event prefix and publish one ingestion
+message after the object exists. The Queue body must have only version, opaque
+object identity, internal connection context, ciphertext SHA-256, payload byte
+count, and receipt time. Do not download the object, print R2 metadata, copy
+the ingress URL or `X-Webhook-Signature`, or inspect the provider payload as
+deployment evidence.
+
+In an isolated test environment, verify that an unknown ingress, changed
+signature, changed payload session identity, and body above 1 MiB receive
+non-success and change neither the Webhook Event object count nor the Queue
+publication count. Then deny R2 writes and confirm Queue publication does not
+occur; deny Queue publication and confirm the request returns `503` while one
+encrypted unclaimed object remains. Restore both bindings before continuing.
+Do not delete that object manually: the orphan recovery workflow owns safe
+republication. Repeated `webhook_ingress.completed` outcomes other than
+`accepted` require checking restricted database readiness, KMS, R2, Queue, and
+provider configuration in that order. Telemetry containing any ingress,
+connection, object, network, header, session, payload, ciphertext, hash, or key
+value is a credential-handling incident.
+
 Exercise the reviewed provider-control test fixture for an ambiguous create
 timeout and confirm the next Queue delivery reconciles before any create
 decision. Exercise its duplicate fixture and confirm Neon exposes only the

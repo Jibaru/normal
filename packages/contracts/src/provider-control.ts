@@ -7,14 +7,37 @@ const SessionLocator = Schema.String.pipe(
   Schema.pattern(/^wsl_[A-Za-z0-9_-]{43}$/u),
 );
 const WhatsAppNumber = Schema.String.pipe(Schema.pattern(/^\+[1-9]\d{7,14}$/u));
+const WebhookUrl = Schema.String.pipe(
+  Schema.filter((value) => {
+    try {
+      const url = new URL(value);
+      return (
+        url.protocol === "https:" &&
+        url.username === "" &&
+        url.password === "" &&
+        /^\/webhooks\/wasender\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+          url.pathname,
+        ) &&
+        url.search === "" &&
+        url.hash === ""
+      );
+    } catch {
+      return false;
+    }
+  }),
+);
 
 const ReconcileSessionRequest = Schema.Struct({
   setupMarker: SetupMarker,
+  webhookUrl: Schema.optional(WebhookUrl),
 });
-const ListSessionsRequest = ReconcileSessionRequest;
+const ListSessionsRequest = Schema.Struct({
+  setupMarker: SetupMarker,
+});
 const CreateSessionRequest = Schema.Struct({
   phoneNumber: WhatsAppNumber,
   setupMarker: SetupMarker,
+  webhookUrl: WebhookUrl,
 });
 const SessionRequest = Schema.Struct({
   session: SessionLocator,
@@ -34,6 +57,7 @@ export const decodeDeleteSessionRequest = strictDecode(SessionRequest);
 
 export interface ReconcileSessionRequest {
   readonly setupMarker: string;
+  readonly webhookUrl?: string | undefined;
 }
 
 export interface ListSessionsRequest {
@@ -43,6 +67,7 @@ export interface ListSessionsRequest {
 export interface CreateSessionRequest {
   readonly phoneNumber: string;
   readonly setupMarker: string;
+  readonly webhookUrl: string;
 }
 
 export interface SessionRequest {

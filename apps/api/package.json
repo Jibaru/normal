@@ -17,6 +17,7 @@
     "@whatsapp-mcp/contracts": "workspace:*",
     "@whatsapp-mcp/db": "workspace:*",
     "@whatsapp-mcp/domain": "workspace:*",
+    "@whatsapp-mcp/wasender": "workspace:*",
     "effect": "3.22.1"
   },
   "devDependencies": {

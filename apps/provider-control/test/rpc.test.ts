@@ -15,6 +15,8 @@ import { describe, expect, test } from "vitest";
 import { makeProviderControlRpc } from "../src/rpc";
 
 const setupMarker = "cst_0123456789abcdefghijk" as SetupMarker;
+const webhookUrl =
+  "https://api.example.test/webhooks/wasender/30000000-0000-4000-8000-000000000041";
 const lifecycleSession: AdapterLifecycleSession = {
   authority: Redacted.make(
     JSON.stringify({
@@ -53,6 +55,7 @@ describe("provider-control RPC authority", () => {
     const result = await rpc.createSession({
       phoneNumber: "+15550123456",
       setupMarker,
+      webhookUrl,
     });
 
     expect(result.ok).toBe(true);
@@ -74,6 +77,30 @@ describe("provider-control RPC authority", () => {
     expect(JSON.stringify(events)).not.toContain("session-credential");
     expect(JSON.stringify(events)).not.toContain("+15550123456");
     expect(JSON.stringify(events)).not.toContain(setupMarker);
+  });
+
+  test("passes the expected webhook endpoint into reconciliation as a protected value", async () => {
+    let reconciledWebhookEndpoint: string | null = null;
+    const rpc = makeProviderControlRpc({
+      loadLifecycle: async () =>
+        makeLifecycle({
+          reconcileSession: ({ webhookEndpoint }) => {
+            reconciledWebhookEndpoint =
+              webhookEndpoint === undefined
+                ? null
+                : Redacted.value(webhookEndpoint);
+            return Effect.succeed({
+              outcome: "present",
+              session: lifecycleSession,
+            });
+          },
+        }),
+    });
+
+    const result = await rpc.reconcileSession({ setupMarker, webhookUrl });
+
+    expect(result.ok).toBe(true);
+    expect(reconciledWebhookEndpoint).toBe(webhookUrl);
   });
 
   test("rejects excess properties without constructing production authority", async () => {
@@ -319,6 +346,7 @@ describe("provider-control RPC authority", () => {
       rpc.createSession({
         phoneNumber: "15550123456",
         setupMarker,
+        webhookUrl,
       }),
       rpc.connectSession({ session: "41" }),
     ]);

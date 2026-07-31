@@ -136,4 +136,8 @@ export const validEnvironment = () => ({
     get: async () => null,
     put: async () => null,
   },
+  WEBHOOK_HYPERDRIVE: {
+    connectionString:
+      "postgresql://webhook-runtime@hyperdrive.internal/database",
+  },
 });

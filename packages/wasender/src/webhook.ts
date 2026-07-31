@@ -1,4 +1,4 @@
-import { Context } from "effect";
+import { Context, Effect, Redacted } from "effect";
 import type { AdapterEffect, AdapterReference, UtcTimestamp } from "./common";
 import type { LifecycleConnectionState } from "./control";
 import type {
@@ -163,6 +163,129 @@ export const webhookNormalizationPolicy = {
   maximumPayloadBytes: 1_048_576,
   operationClass: "webhook-normalization",
 } as const;
+
+export type WasenderWebhookAuthenticationResult =
+  | "authenticated"
+  | "authentication_failed"
+  | "invalid_authority"
+  | "invalid_payload"
+  | "session_mismatch";
+
+interface WasenderWebhookAuthority {
+  readonly sessionCredential: string;
+  readonly webhookVerificationSecret: string;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const protectedValue = (value: unknown): value is string =>
+  typeof value === "string" &&
+  /^[\x21-\x7e]{1,4096}$/u.test(value) &&
+  value.trim() === value;
+
+const parseWebhookAuthority = (
+  authority: Redacted.Redacted<string>,
+): WasenderWebhookAuthority | null => {
+  try {
+    const value = JSON.parse(Redacted.value(authority)) as unknown;
+    if (
+      !isRecord(value) ||
+      !protectedValue(value.sessionCredential) ||
+      !protectedValue(value.webhookVerificationSecret)
+    ) {
+      return null;
+    }
+    return {
+      sessionCredential: value.sessionCredential,
+      webhookVerificationSecret: value.webhookVerificationSecret,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const sha256 = (value: string): Promise<Uint8Array> =>
+  crypto.subtle
+    .digest("SHA-256", new TextEncoder().encode(value))
+    .then((digest) => new Uint8Array(digest));
+
+const constantTimeEqual = async (
+  left: string,
+  right: string,
+): Promise<boolean> => {
+  const [leftDigest, rightDigest] = await Promise.all([
+    sha256(left),
+    sha256(right),
+  ]);
+  let difference = 0;
+  for (let index = 0; index < leftDigest.byteLength; index += 1) {
+    difference |= (leftDigest[index] ?? 0) ^ (rightDigest[index] ?? 0);
+  }
+  return difference === 0;
+};
+
+const payloadSessionIdentities = (
+  value: Record<string, unknown>,
+): ReadonlyArray<unknown> => {
+  const identities: unknown[] = [];
+  for (const container of [
+    value,
+    isRecord(value.data) ? value.data : undefined,
+  ]) {
+    if (container === undefined) continue;
+    for (const field of ["sessionId", "session_id"] as const) {
+      if (Object.hasOwn(container, field)) identities.push(container[field]);
+    }
+  }
+  return identities;
+};
+
+/**
+ * Keeps Wasender credential and payload field names inside the adapter seam.
+ * Callers receive only a safe classification and must never log either input.
+ */
+export const authenticateWasenderWebhook = (input: {
+  readonly authority: Redacted.Redacted<string>;
+  readonly payload: Uint8Array;
+  readonly signature: string;
+}): Effect.Effect<WasenderWebhookAuthenticationResult> =>
+  Effect.promise(async () => {
+    const authority = parseWebhookAuthority(input.authority);
+    if (authority === null) return "invalid_authority";
+
+    if (
+      !protectedValue(input.signature) ||
+      !(await constantTimeEqual(
+        authority.webhookVerificationSecret,
+        input.signature,
+      ))
+    ) {
+      return "authentication_failed";
+    }
+
+    let payloadValue: unknown;
+    try {
+      payloadValue = JSON.parse(
+        new TextDecoder("utf-8", {
+          fatal: true,
+          ignoreBOM: false,
+        }).decode(input.payload),
+      ) as unknown;
+    } catch {
+      return "invalid_payload";
+    }
+    if (!isRecord(payloadValue)) return "invalid_payload";
+
+    const identities = payloadSessionIdentities(payloadValue);
+    for (const identity of identities) {
+      if (!protectedValue(identity)) return "invalid_payload";
+      if (!(await constantTimeEqual(identity, authority.sessionCredential))) {
+        return "session_mismatch";
+      }
+    }
+    return "authenticated";
+  });
 
 export {
   importWebhookIdentityKey,

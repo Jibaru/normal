@@ -11,6 +11,7 @@ import { makePgConnectionSetupRepository } from "@whatsapp-mcp/db/connection-set
 import { checkDatabaseReadiness } from "@whatsapp-mcp/db/connectivity";
 import { makePgMcpAuthorizationRepository } from "@whatsapp-mcp/db/mcp-authorization";
 import { makePgPersonalAccountRepository } from "@whatsapp-mcp/db/personal-account";
+import { makePgWebhookIngressRepository } from "@whatsapp-mcp/db/webhook-ingress";
 import { makePgWhatsAppConnectionRepository } from "@whatsapp-mcp/db/whatsapp-connection";
 import { Config, ConfigProvider, Data, Effect, Layer, Redacted } from "effect";
 import { makeClerkHumanIdentity } from "./auth/clerk";
@@ -44,6 +45,7 @@ import {
   ConnectionSetupProvisioningProvider,
   ConnectionSetupProvisioningQueue,
   ConnectionSetupProvisioningQueueError,
+  ConnectionSetupProvisioningWebhook,
   connectionSetupProvisioningMessage,
   handleConnectionSetupProvisioningBatch,
 } from "./connection-setup-provisioning";
@@ -94,6 +96,18 @@ import {
   type SafeTelemetryEvent,
 } from "./services";
 import {
+  createWebhookIngressHandler,
+  isWebhookIngressRequest,
+  WebhookIngressClock,
+  WebhookIngressIdentifiers,
+  WebhookIngressObjectStore,
+  WebhookIngressObjectStoreError,
+  WebhookIngressPersistence,
+  WebhookIngressPersistenceError,
+  WebhookIngressQueue,
+  WebhookIngressQueueError,
+} from "./webhook-ingress";
+import {
   createWhatsAppConnectionHandler,
   isWhatsAppConnectionRequest,
   WhatsAppConnectionClock,
@@ -134,6 +148,11 @@ export interface ApiEnvironment {
   readonly PROVIDER_CONTROL?: unknown;
   readonly STORED_MEDIA?: unknown;
   readonly WEBHOOK_INGRESS?: unknown;
+  readonly WEBHOOK_HYPERDRIVE?:
+    | {
+        readonly connectionString: string;
+      }
+    | undefined;
   readonly WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET?: string | undefined;
 }
 
@@ -345,6 +364,11 @@ const validateCloudflareBindings = (
     if (!hasMethods(value, methods)) {
       return Effect.fail(new MissingCloudflareBinding({ binding }));
     }
+  }
+  if (typeof environment.WEBHOOK_HYPERDRIVE?.connectionString !== "string") {
+    return Effect.fail(
+      new MissingCloudflareBinding({ binding: "WEBHOOK_HYPERDRIVE" }),
+    );
   }
 
   return Effect.void;
@@ -796,6 +820,76 @@ const whatsAppConnectionPersistenceLayer = (environment: ApiEnvironment) =>
       }),
   });
 
+const webhookIngressPersistenceLayer = (environment: ApiEnvironment) =>
+  Layer.succeed(WebhookIngressPersistence, {
+    resolve: (webhookIngressId) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString =
+            environment.WEBHOOK_HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("Webhook Hyperdrive unavailable");
+          }
+          return makePgWebhookIngressRepository(connectionString).resolve(
+            webhookIngressId,
+          );
+        },
+        catch: () => new WebhookIngressPersistenceError(),
+      }),
+  });
+
+const webhookIngressCloudflareLayer = (environment: ApiEnvironment) =>
+  Layer.mergeAll(
+    Layer.succeed(WebhookIngressObjectStore, {
+      put: (object) =>
+        Effect.tryPromise({
+          try: async () => {
+            const bucket = environment.WEBHOOK_INGRESS;
+            if (!hasMethods(bucket, ["put"])) {
+              throw new Error("Webhook ingress bucket unavailable");
+            }
+            const stored = await (bucket as Pick<R2Bucket, "put">).put(
+              object.objectKey,
+              object.body,
+              {
+                customMetadata: { ...object.customMetadata },
+                httpMetadata: {
+                  contentType:
+                    "application/vnd.whatsapp-mcp.webhook-ciphertext+json",
+                },
+                onlyIf: { etagDoesNotMatch: "*" },
+              },
+            );
+            if (stored === null) {
+              throw new Error("Webhook Event object already exists");
+            }
+          },
+          catch: () => new WebhookIngressObjectStoreError(),
+        }),
+    }),
+    Layer.succeed(WebhookIngressQueue, {
+      publish: (message) =>
+        Effect.tryPromise({
+          try: async () => {
+            const queue = environment.INGESTION_QUEUE;
+            if (!hasMethods(queue, ["send"])) {
+              throw new Error("ingestion Queue unavailable");
+            }
+            await (queue as Pick<Queue, "send">).send(message, {
+              contentType: "json",
+            });
+          },
+          catch: () => new WebhookIngressQueueError(),
+        }),
+    }),
+    Layer.succeed(WebhookIngressClock, {
+      now: Effect.sync(() => new Date().toISOString()),
+    }),
+    Layer.succeed(WebhookIngressIdentifiers, {
+      nextObjectId: Effect.sync(() => crypto.randomUUID()),
+    }),
+  );
+
 const connectionSetupProvisioningQueueLayer = (environment: ApiEnvironment) =>
   Layer.succeed(ConnectionSetupProvisioningQueue, {
     enqueue: (setupId) =>
@@ -844,8 +938,7 @@ const whatsAppConnectionRuntimeLayer = Layer.mergeAll(
   Layer.succeed(WhatsAppConnectionIdentifiers, {
     nextConnectionId: Effect.sync(() => crypto.randomUUID()),
     nextPublicId: Effect.sync(() => makeConnectionId()),
-    nextWebhookIngressId: Effect.sync(() => crypto.randomUUID()),
-    nextWebhookSecret: Effect.sync(() =>
+    nextWebhookIdentityKey: Effect.sync(() =>
       crypto.getRandomValues(new Uint8Array(32)),
     ),
   }),
@@ -972,14 +1065,28 @@ const randomBase64Url = (): string => {
     .replace(/=+$/u, "");
 };
 
-const connectionSetupProvisioningRuntimeLayer = Layer.mergeAll(
-  Layer.succeed(ConnectionSetupProvisioningClock, {
-    now: Effect.sync(() => new Date().toISOString()),
-  }),
-  Layer.succeed(ConnectionSetupProvisioningIdentifiers, {
-    nextWorkerId: Effect.sync(() => `cspw_${randomBase64Url()}`),
-  }),
-);
+const connectionSetupProvisioningRuntimeLayer = (environment: ApiEnvironment) =>
+  Layer.mergeAll(
+    Layer.succeed(ConnectionSetupProvisioningClock, {
+      now: Effect.sync(() => new Date().toISOString()),
+    }),
+    Layer.succeed(ConnectionSetupProvisioningIdentifiers, {
+      nextWorkerId: Effect.sync(() => `cspw_${randomBase64Url()}`),
+    }),
+    Layer.succeed(ConnectionSetupProvisioningWebhook, {
+      urlFor: (webhookIngressId) =>
+        Effect.sync(() => {
+          if (
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+              webhookIngressId,
+            )
+          ) {
+            throw new Error("invalid webhook ingress identity");
+          }
+          return `${environment.OAUTH_ISSUER}/webhooks/wasender/${webhookIngressId}`;
+        }),
+    }),
+  );
 
 const connectionSetupCleanupRuntimeLayer = Layer.mergeAll(
   Layer.succeed(ConnectionSetupCleanupClock, {
@@ -1144,7 +1251,7 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     connectionSetupProvisioningPersistenceLayer(environment),
     connectionSetupProvisioningProviderLayer(environment),
     connectionSetupProvisioningQueueLayer(environment),
-    connectionSetupProvisioningRuntimeLayer,
+    connectionSetupProvisioningRuntimeLayer(environment),
     connectionSetupIdentifiersLayer,
     connectionSetupClockLayer,
     connectionSetupNumberTokensLayer(environment),
@@ -1153,6 +1260,8 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     whatsAppConnectionRuntimeLayer,
     mcpAuthorizationPersistenceLayer(environment),
     mcpAuthorizationRuntimeLayer,
+    webhookIngressPersistenceLayer(environment),
+    webhookIngressCloudflareLayer(environment),
   );
   const handler = createCanaryHandler(layer);
   const personalAccountHandler = createPersonalAccountHandler(
@@ -1172,6 +1281,7 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     layer,
     environment.CLERK_AUTHORIZED_PARTY ?? "",
   );
+  const webhookIngressHandler = createWebhookIngressHandler(layer);
   const oauthConfiguration = Effect.runPromise(
     loadOAuthConfiguration(environment as unknown as Record<string, unknown>),
   );
@@ -1182,6 +1292,9 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
   ): Promise<Response> => {
     try {
       const configuration = await oauthConfiguration;
+      if (isWebhookIngressRequest(request)) {
+        return webhookIngressHandler(request);
+      }
       const consentHandler = createMcpAuthorizationConsentHandler({
         browserOrigin: environment.CLERK_AUTHORIZED_PARTY ?? "",
         configuration,
@@ -1328,7 +1441,7 @@ export const createProductionQueueHandler =
         telemetryLayer,
         connectionSetupProvisioningPersistenceLayer(environment),
         connectionSetupProvisioningProviderLayer(environment),
-        connectionSetupProvisioningRuntimeLayer,
+        connectionSetupProvisioningRuntimeLayer(environment),
       );
       await handleConnectionSetupProvisioningBatch(
         { ...batch, messages: provisioningMessages },

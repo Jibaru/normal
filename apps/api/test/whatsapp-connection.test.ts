@@ -116,6 +116,7 @@ const makeHarness = (
                     personalAccountId: accountKey.personalAccountId,
                     setupId,
                     setupKey,
+                    webhookIngressId: "30000000-0000-4000-8000-000000000041",
                   },
                 }
               : { outcome: setupState },
@@ -177,10 +178,7 @@ const makeHarness = (
     Layer.succeed(WhatsAppConnectionIdentifiers, {
       nextConnectionId: Effect.succeed("20000000-0000-4000-8000-000000000041"),
       nextPublicId: Effect.succeed("con_000000000000000000041"),
-      nextWebhookIngressId: Effect.succeed(
-        "30000000-0000-4000-8000-000000000041",
-      ),
-      nextWebhookSecret: Effect.succeed(new Uint8Array(32).fill(41)),
+      nextWebhookIdentityKey: Effect.succeed(new Uint8Array(32).fill(41)),
     }),
     Layer.succeed(EnvelopeEncryptionService, {
       createConnectionKey: ({ accountId, connectionId, keyVersion }) =>
@@ -273,7 +271,7 @@ describe("WhatsApp Connection HTTP boundary", () => {
     expect(harness.encryptedPurposes).toEqual([
       "provider-session-locator",
       "provider-session-authority",
-      "webhook-verification-secret",
+      "webhook-identity-key",
     ]);
     expect(listed.status).toBe(200);
     const listedText = await listed.text();

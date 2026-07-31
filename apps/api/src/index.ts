@@ -33,6 +33,7 @@ export interface Env {
   readonly PROVIDER_CONTROL: Fetcher & ProviderControlService;
   readonly STORED_MEDIA: R2Bucket;
   readonly WEBHOOK_INGRESS: R2Bucket;
+  readonly WEBHOOK_HYPERDRIVE: Hyperdrive;
   readonly WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET: string;
 }
 

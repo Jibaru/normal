@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { readdir, readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import {
   EXPECTED_SCHEMA_VERSION,
@@ -49,6 +50,95 @@ describe("production migrations", () => {
     expect(
       result.rows.every(({ checksum }) => /^[a-f0-9]{64}$/.test(checksum)),
     ).toBe(true);
+  });
+
+  test("preserves an activated connection ingress identity when upgrading from version 11", async () => {
+    const migrationsDirectory = new URL("../migrations/", import.meta.url);
+    const migrationFiles = (await readdir(migrationsDirectory))
+      .filter((name) => /^\d{4}_.+\.sql$/u.test(name))
+      .sort();
+    await database.exec(`
+      CREATE SCHEMA app_private;
+      CREATE TABLE app_private.schema_migrations (
+        version integer PRIMARY KEY CHECK (version > 0),
+        name text NOT NULL,
+        checksum text NOT NULL CHECK (checksum ~ '^[a-f0-9]{64}$'),
+        applied_at timestamptz NOT NULL DEFAULT transaction_timestamp()
+      );
+    `);
+    for (const migrationFile of migrationFiles.slice(0, 11)) {
+      await database.exec(
+        await readFile(new URL(migrationFile, migrationsDirectory), "utf8"),
+      );
+    }
+
+    const setupId = "cst_000000000000000000001";
+    await database.query(
+      `INSERT INTO app.personal_accounts (id, state)
+       VALUES ($1, 'active')`,
+      [accountA],
+    );
+    await database.query(
+      `INSERT INTO app.connection_setups (
+        id,
+        personal_account_id,
+        idempotency_key,
+        state,
+        number_ciphertext_version,
+        number_key_version,
+        number_nonce,
+        number_ciphertext,
+        created_at,
+        expires_at,
+        updated_at
+      )
+      VALUES (
+        $1, $2, '000000000000000000001', 'activated', 1, 1,
+        decode(repeat('01', 12), 'hex'),
+        decode(repeat('02', 17), 'hex'),
+        '2026-07-31T12:00:00.000Z',
+        '2026-07-31T12:15:00.000Z',
+        '2026-07-31T12:01:00.000Z'
+      )`,
+      [setupId, accountA],
+    );
+    await database.query(
+      `INSERT INTO app.whatsapp_connections (
+        id,
+        personal_account_id,
+        webhook_ingress_id,
+        connection_setup_id
+      )
+      VALUES ($1, $2, $3, $4)`,
+      [connectionA, accountA, ingressA, setupId],
+    );
+
+    const migration12 = migrationFiles[11];
+    if (migration12 === undefined) throw new Error("migration 12 is missing");
+    await database.exec(
+      await readFile(new URL(migration12, migrationsDirectory), "utf8"),
+    );
+
+    const upgraded = await database.query<{
+      connection_ingress_id: string;
+      setup_ingress_id: string;
+    }>(
+      `SELECT
+         connections.webhook_ingress_id AS connection_ingress_id,
+         setups.webhook_ingress_id AS setup_ingress_id
+       FROM app.whatsapp_connections AS connections
+       JOIN app.connection_setups AS setups
+         ON setups.personal_account_id = connections.personal_account_id
+        AND setups.id = connections.connection_setup_id
+       WHERE connections.id = $1`,
+      [connectionA],
+    );
+    expect(upgraded.rows).toEqual([
+      {
+        connection_ingress_id: ingressA,
+        setup_ingress_id: ingressA,
+      },
+    ]);
   });
 
   test("refuses an applied migration whose checksum has changed", async () => {
@@ -448,6 +538,8 @@ describe("production migrations", () => {
           'bootstrap_mcp_refresh_authorization',
           'bootstrap_mcp_refresh_credential',
           'admit_personal_account_for_clerk',
+          'load_connection_setup_webhook_ingress_for_user',
+          'load_connection_setup_webhook_ingress_for_worker',
           'resolve_personal_account_for_clerk'
         )
       ORDER BY proname
@@ -486,6 +578,16 @@ describe("production migrations", () => {
       {
         config: ["search_path=pg_catalog, pg_temp"],
         proname: "bootstrap_whatsapp_connection_for_ingress",
+        prosecdef: true,
+      },
+      {
+        config: ["search_path=pg_catalog, pg_temp"],
+        proname: "load_connection_setup_webhook_ingress_for_user",
+        prosecdef: true,
+      },
+      {
+        config: ["search_path=pg_catalog, pg_temp"],
+        proname: "load_connection_setup_webhook_ingress_for_worker",
         prosecdef: true,
       },
       {
@@ -532,12 +634,7 @@ describe("production migrations", () => {
         "SELECT * FROM app_private.bootstrap_whatsapp_connection_for_ingress($1)",
         [ingressA],
       );
-      expect(ingressLookup.rows).toEqual([
-        {
-          personal_account_id: accountA,
-          whatsapp_connection_id: connectionA,
-        },
-      ]);
+      expect(ingressLookup.rows).toEqual([]);
       await expect(
         database.query(
           "SELECT app_private.bootstrap_personal_account_for_clerk($1)",
@@ -560,6 +657,25 @@ describe("production migrations", () => {
       ).rejects.toThrow();
       await expect(
         database.query(
+          `SELECT app_private.load_connection_setup_webhook_ingress_for_user(
+            $1, $2
+          )`,
+          ["clerk_user_a", "cst_000000000000000000001"],
+        ),
+      ).rejects.toThrow();
+      await expect(
+        database.query(
+          `SELECT app_private.load_connection_setup_webhook_ingress_for_worker(
+            $1, $2
+          )`,
+          [
+            "cst_000000000000000000001",
+            "cspw_0000000000000000000000000000000000000000000",
+          ],
+        ),
+      ).rejects.toThrow();
+      await expect(
+        database.query(
           `SELECT app_private.bootstrap_mcp_access_authorization(
             $1, $2, transaction_timestamp()
           )`,
@@ -578,6 +694,112 @@ describe("production migrations", () => {
           ],
         ),
       ).rejects.toThrow();
+    } finally {
+      await database.exec("RESET ROLE");
+    }
+  });
+
+  test("resolves only an active ingress to encrypted connection material for the webhook role", async () => {
+    await runMigrations(database);
+    await seedTenants(database);
+    await seedKeyEnvelopes(database);
+    await database.query(
+      `INSERT INTO app.whatsapp_connection_provider_sessions (
+        personal_account_id,
+        whatsapp_connection_id,
+        locator_ciphertext_version,
+        locator_key_version,
+        locator_nonce,
+        locator_ciphertext,
+        authority_ciphertext_version,
+        authority_key_version,
+        authority_nonce,
+        authority_ciphertext,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        $1, $2,
+        1, 1, decode(repeat('11', 12), 'hex'), decode(repeat('12', 32), 'hex'),
+        1, 1, decode(repeat('13', 12), 'hex'), decode(repeat('14', 32), 'hex'),
+        transaction_timestamp(), transaction_timestamp()
+      )`,
+      [accountA, connectionA],
+    );
+
+    await database.exec("SET ROLE whatsapp_webhook_runtime");
+    try {
+      const resolved = await database.query(
+        `SELECT
+          ingress.personal_account_id,
+          ingress.whatsapp_connection_id,
+          ingress.account_key_version,
+          ingress.account_kms_key_id,
+          encode(ingress.account_key_ciphertext, 'hex')
+            AS account_key_ciphertext,
+          ingress.connection_key_account_version,
+          ingress.connection_key_version,
+          encode(ingress.connection_key_nonce, 'hex')
+            AS connection_key_nonce,
+          encode(ingress.connection_key_ciphertext, 'hex')
+            AS connection_key_ciphertext,
+          ingress.authority_ciphertext_version,
+          ingress.authority_key_version,
+          encode(ingress.authority_nonce, 'hex') AS authority_nonce,
+          encode(ingress.authority_ciphertext, 'hex')
+            AS authority_ciphertext
+        FROM app_private.bootstrap_whatsapp_connection_for_ingress($1)
+          AS ingress`,
+        [ingressA],
+      );
+      const unknown = await database.query(
+        "SELECT * FROM app_private.bootstrap_whatsapp_connection_for_ingress($1)",
+        ["30000000-0000-4000-8000-000000000099"],
+      );
+
+      expect(resolved.rows).toEqual([
+        {
+          account_key_ciphertext: "0102",
+          account_key_version: 1,
+          account_kms_key_id: "kms-content-root",
+          authority_ciphertext: "14".repeat(32),
+          authority_ciphertext_version: 1,
+          authority_key_version: 1,
+          authority_nonce: "13".repeat(12),
+          connection_key_account_version: 1,
+          connection_key_ciphertext: "0405",
+          connection_key_nonce: "010203",
+          connection_key_version: 1,
+          personal_account_id: accountA,
+          whatsapp_connection_id: connectionA,
+        },
+      ]);
+      expect(unknown.rows).toEqual([]);
+      await expect(
+        database.query(
+          "SELECT authority_ciphertext FROM app.whatsapp_connection_provider_sessions",
+        ),
+      ).rejects.toThrow();
+      await expect(
+        database.query(
+          "SELECT ciphertext FROM app.whatsapp_connection_key_envelopes",
+        ),
+      ).rejects.toThrow();
+    } finally {
+      await database.exec("RESET ROLE");
+    }
+
+    await database.query(
+      "UPDATE app.whatsapp_connections SET state = 'deleting' WHERE id = $1",
+      [connectionA],
+    );
+    await database.exec("SET ROLE whatsapp_webhook_runtime");
+    try {
+      const deleting = await database.query(
+        "SELECT * FROM app_private.bootstrap_whatsapp_connection_for_ingress($1)",
+        [ingressA],
+      );
+      expect(deleting.rows).toEqual([]);
     } finally {
       await database.exec("RESET ROLE");
     }

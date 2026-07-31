@@ -29,6 +29,11 @@ import {
   createPublicBoundaryHandler,
 } from "./public-boundary";
 import {
+  createWebhookIngressHandler,
+  isWebhookIngressRequest,
+  type WebhookIngressRequirements,
+} from "./webhook-ingress";
+import {
   createWhatsAppConnectionHandler,
   isWhatsAppConnectionRequest,
   type WhatsAppConnectionRequirements,
@@ -47,6 +52,7 @@ type PublicBoundaryRequirements =
   | McpAuthorizationClockService
   | McpAuthorizationPersistenceService
   | PersonalAccountRequirements
+  | WebhookIngressRequirements
   | WhatsAppConnectionRequirements;
 
 export interface PublicBoundaryEnvironment {
@@ -64,6 +70,7 @@ export interface PublicBoundaryWorkerOptions {
   ) => Promise<Response>;
   readonly layerFor: (
     request: Request,
+    environment: PublicBoundaryEnvironment,
   ) => Layer.Layer<PublicBoundaryRequirements>;
   readonly provisioningLayer: Layer.Layer<ConnectionSetupProvisioningRequirements>;
 }
@@ -117,30 +124,36 @@ export const createPublicBoundaryWorker = (
         return bindingResponse(environment);
       }
 
+      if (isWebhookIngressRequest(request)) {
+        return createWebhookIngressHandler(
+          options.layerFor(request, environment),
+        )(request);
+      }
+
       if (isPersonalAccountRequest(request)) {
         return createPersonalAccountHandler(
-          options.layerFor(request),
+          options.layerFor(request, environment),
           options.browserOrigin,
         )(request);
       }
 
       if (isConnectionSetupRequest(request)) {
         return createConnectionSetupHandler(
-          options.layerFor(request),
+          options.layerFor(request, environment),
           options.browserOrigin,
         )(request);
       }
 
       if (isMcpAuthorizationManagementRequest(request)) {
         return createMcpAuthorizationManagementHandler(
-          options.layerFor(request),
+          options.layerFor(request, environment),
           options.browserOrigin,
         )(request);
       }
 
       if (isWhatsAppConnectionRequest(request)) {
         return createWhatsAppConnectionHandler(
-          options.layerFor(request),
+          options.layerFor(request, environment),
           options.browserOrigin,
         )(request);
       }
@@ -155,7 +168,7 @@ export const createPublicBoundaryWorker = (
         (request.method === "POST" && path === "/mcp")
       ) {
         return createPublicBoundaryHandler(
-          options.layerFor(request),
+          options.layerFor(request, environment),
           options.browserOrigin,
         )(request);
       }

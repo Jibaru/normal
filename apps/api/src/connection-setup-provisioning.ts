@@ -91,15 +91,26 @@ export interface ConnectionSetupProvisioningProviderService {
   readonly create: (input: {
     readonly phoneNumber: string;
     readonly setupMarker: string;
+    readonly webhookUrl: string;
   }) => Effect.Effect<ProviderControlResult<LifecycleSession>>;
   readonly reconcile: (input: {
     readonly setupMarker: string;
+    readonly webhookUrl: string;
   }) => Effect.Effect<ProviderControlResult<SessionReconciliation>>;
 }
 
 export const ConnectionSetupProvisioningProvider =
   Context.GenericTag<ConnectionSetupProvisioningProviderService>(
     "@whatsapp-mcp/api/ConnectionSetupProvisioningProvider",
+  );
+
+export interface ConnectionSetupProvisioningWebhookService {
+  readonly urlFor: (webhookIngressId: string) => Effect.Effect<string>;
+}
+
+export const ConnectionSetupProvisioningWebhook =
+  Context.GenericTag<ConnectionSetupProvisioningWebhookService>(
+    "@whatsapp-mcp/api/ConnectionSetupProvisioningWebhook",
   );
 
 export interface ConnectionSetupProvisioningClockService {
@@ -125,6 +136,7 @@ export type ConnectionSetupProvisioningRequirements =
   | ConnectionSetupProvisioningIdentifiersService
   | ConnectionSetupProvisioningPersistenceService
   | ConnectionSetupProvisioningProviderService
+  | ConnectionSetupProvisioningWebhookService
   | EnvelopeEncryption
   | SafeTelemetryService;
 
@@ -362,10 +374,20 @@ const reconcileClaimedSetup = (
 ) =>
   Effect.gen(function* () {
     const provider = yield* ConnectionSetupProvisioningProvider;
+    const webhooks = yield* ConnectionSetupProvisioningWebhook;
+    const webhookUrl = yield* webhooks.urlFor(setup.webhookIngressId);
     const reconciliation = yield* provider.reconcile({
       setupMarker: setup.setupId,
+      webhookUrl,
     });
     if (!reconciliation.ok) {
+      if (reconciliation.error.retryDecision === "do_not_retry") {
+        return yield* failDefinitively(
+          setup.setupId,
+          workerId,
+          reconciliation.error.code,
+        );
+      }
       return yield* releaseForRetry(
         setup.setupId,
         workerId,
@@ -400,6 +422,7 @@ const reconcileClaimedSetup = (
           provider.create({
             phoneNumber,
             setupMarker: setup.setupId,
+            webhookUrl,
           }),
         );
         if (!created.ok) {

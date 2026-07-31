@@ -114,6 +114,18 @@ export interface WhatsAppConnectionListCompletedEvent {
   readonly service: "api";
 }
 
+export interface WebhookIngressCompletedEvent {
+  readonly event: "webhook_ingress.completed";
+  readonly outcome:
+    | "accepted"
+    | "authentication_failed"
+    | "invalid_payload"
+    | "not_found"
+    | "too_large"
+    | "unavailable";
+  readonly service: "api";
+}
+
 export interface OAuthAuthorizationRequestCompletedEvent {
   readonly clientClass?: string | undefined;
   readonly event: "oauth.authorization.request.completed";
@@ -169,6 +181,7 @@ export type SafeTelemetryEvent =
   | OAuthRefreshCompletedEvent
   | PersonalAccountBootstrapCompletedEvent
   | StoredMediaContainerEvent
+  | WebhookIngressCompletedEvent
   | WhatsAppConnectionListCompletedEvent;
 
 export const SafeTelemetry = Context.GenericTag<SafeTelemetry>(

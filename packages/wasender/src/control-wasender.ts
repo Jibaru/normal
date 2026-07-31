@@ -25,6 +25,21 @@ const safeReadMaximumAttempts = 3;
 const safeReadTotalTimeoutMs = 25_000;
 const lifecycleWriteTimeoutMs = 15_000;
 const referenceDomain = "whatsapp-mcp:wasender:lifecycle-session:v1:";
+const webhookEvents = [
+  "contacts.update",
+  "contacts.upsert",
+  "groups.update",
+  "groups.upsert",
+  "message-receipt.update",
+  "message.sent",
+  "messages-group.received",
+  "messages-personal.received",
+  "messages.delete",
+  "messages.received",
+  "messages.update",
+  "messages.upsert",
+  "session.status",
+] as const;
 
 type Fetch = (request: Request) => Promise<Response>;
 
@@ -54,9 +69,14 @@ export interface WasenderLifecycleDependencies {
 interface ProviderSession {
   readonly apiKey: string | null;
   readonly id: number;
+  readonly logMessages: boolean | null;
   readonly name: string;
+  readonly readIncomingMessages: boolean | null;
   readonly status: string;
+  readonly webhookEnabled: boolean | null;
+  readonly webhookEvents: ReadonlyArray<string> | null;
   readonly webhookSecret: string | null;
+  readonly webhookUrl: string | null;
 }
 
 interface BoundedBody {
@@ -108,9 +128,14 @@ const parseProviderSession = (
   const {
     api_key: apiKey,
     id,
+    log_messages: logMessages,
     name,
+    read_incoming_messages: readIncomingMessages,
     status,
+    webhook_enabled: webhookEnabled,
+    webhook_events: webhookEvents,
     webhook_secret: webhookSecret,
+    webhook_url: webhookUrl,
   } = value;
   if (
     !Number.isSafeInteger(id) ||
@@ -123,6 +148,22 @@ const parseProviderSession = (
     (webhookSecret !== undefined &&
       webhookSecret !== null &&
       typeof webhookSecret !== "string") ||
+    (logMessages !== undefined &&
+      logMessages !== null &&
+      typeof logMessages !== "boolean") ||
+    (readIncomingMessages !== undefined &&
+      readIncomingMessages !== null &&
+      typeof readIncomingMessages !== "boolean") ||
+    (webhookEnabled !== undefined &&
+      webhookEnabled !== null &&
+      typeof webhookEnabled !== "boolean") ||
+    (webhookEvents !== undefined &&
+      webhookEvents !== null &&
+      (!Array.isArray(webhookEvents) ||
+        webhookEvents.some((event) => typeof event !== "string"))) ||
+    (webhookUrl !== undefined &&
+      webhookUrl !== null &&
+      typeof webhookUrl !== "string") ||
     (requireAuthority && (typeof apiKey !== "string" || apiKey.length === 0))
   ) {
     return null;
@@ -130,12 +171,20 @@ const parseProviderSession = (
   return {
     apiKey: typeof apiKey === "string" && apiKey.length > 0 ? apiKey : null,
     id: id as number,
+    logMessages: typeof logMessages === "boolean" ? logMessages : null,
     name,
+    readIncomingMessages:
+      typeof readIncomingMessages === "boolean" ? readIncomingMessages : null,
     status,
+    webhookEnabled: typeof webhookEnabled === "boolean" ? webhookEnabled : null,
+    webhookEvents: Array.isArray(webhookEvents)
+      ? (webhookEvents as ReadonlyArray<string>)
+      : null,
     webhookSecret:
       typeof webhookSecret === "string" && webhookSecret.length > 0
         ? webhookSecret
         : null,
+    webhookUrl: typeof webhookUrl === "string" ? webhookUrl : null,
   };
 };
 
@@ -554,7 +603,13 @@ export const makeWasenderSessionLifecycle = (
   const toLifecycleSession = async (
     providerSession: ProviderSession,
   ): Promise<LifecycleSession> => {
-    if (!providerSession.apiKey) throw safeFailure("invalid_response");
+    if (
+      !providerSession.apiKey ||
+      !providerSession.webhookSecret ||
+      !/^[\x21-\x7e]{1,4096}$/u.test(providerSession.webhookSecret)
+    ) {
+      throw safeFailure("invalid_response");
+    }
     const authority = Redacted.make(
       JSON.stringify({
         sessionCredential: providerSession.apiKey,
@@ -568,9 +623,9 @@ export const makeWasenderSessionLifecycle = (
     };
   };
 
-  const listSessions = async (
+  const loadSessionsForMarker = async (
     setupMarker: SetupMarker,
-  ): Promise<ReadonlyArray<LifecycleSession>> => {
+  ): Promise<ReadonlyArray<ProviderSession>> => {
     const marker = String(setupMarker);
     if (marker.length === 0 || marker.length > 128) {
       throw safeFailure("invalid_response");
@@ -578,14 +633,37 @@ export const makeWasenderSessionLifecycle = (
     const matching = (await loadProviderSessions()).filter(
       (session) => session.name === marker,
     );
-    const result: LifecycleSession[] = [];
+    const result: ProviderSession[] = [];
     for (const summary of matching) {
       const detail = await loadDetail(summary.id);
       if (detail.name !== marker) throw safeFailure("invalid_response");
-      result.push(await toLifecycleSession(detail));
+      result.push(detail);
     }
     return result;
   };
+
+  const listSessions = async (
+    setupMarker: SetupMarker,
+  ): Promise<ReadonlyArray<LifecycleSession>> => {
+    const sessions = await loadSessionsForMarker(setupMarker);
+    const result: LifecycleSession[] = [];
+    for (const session of sessions) {
+      result.push(await toLifecycleSession(session));
+    }
+    return result;
+  };
+
+  const hasWebhookConfiguration = (
+    session: ProviderSession,
+    webhookUrl: string,
+  ): boolean =>
+    session.logMessages === false &&
+    session.readIncomingMessages === false &&
+    session.webhookEnabled === true &&
+    session.webhookUrl === webhookUrl &&
+    session.webhookEvents !== null &&
+    session.webhookEvents.length === webhookEvents.length &&
+    webhookEvents.every((event) => session.webhookEvents?.includes(event));
 
   const effect = <Value>(task: () => Promise<Value>) =>
     Effect.tryPromise({
@@ -612,22 +690,41 @@ export const makeWasenderSessionLifecycle = (
           return toLifecycleSession({ ...detail, status: data.status });
         });
       }),
-    createSession: ({ phoneNumber, setupMarker }) =>
+    createSession: ({ phoneNumber, setupMarker, webhookEndpoint }) =>
       effect(async () => {
         const number = Redacted.value(phoneNumber);
         const marker = String(setupMarker);
+        const webhookUrl = Redacted.value(webhookEndpoint);
+        let validWebhookUrl = false;
+        try {
+          const parsed = new URL(webhookUrl);
+          validWebhookUrl =
+            parsed.protocol === "https:" &&
+            parsed.username === "" &&
+            parsed.password === "" &&
+            /^\/webhooks\/wasender\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+              parsed.pathname,
+            ) &&
+            parsed.search === "" &&
+            parsed.hash === "";
+        } catch {
+          validWebhookUrl = false;
+        }
         if (
           !/^\+[1-9]\d{7,14}$/u.test(number) ||
           marker.length === 0 ||
-          marker.length > 128
+          marker.length > 128 ||
+          !validWebhookUrl
         ) {
           throw writeFailure("invalid_response", false);
         }
-        const existing = await listSessions(setupMarker);
+        const existing = await loadSessionsForMarker(setupMarker);
         if (existing.length === 1) {
           const adopted = existing[0];
-          if (!adopted) throw writeFailure("integrity_failed", false);
-          return adopted;
+          if (!adopted || !hasWebhookConfiguration(adopted, webhookUrl)) {
+            throw writeFailure("integrity_failed", false);
+          }
+          return toLifecycleSession(adopted);
         }
         if (existing.length > 1) {
           throw writeFailure("integrity_failed", false);
@@ -639,12 +736,19 @@ export const makeWasenderSessionLifecycle = (
             name: marker,
             phone_number: number,
             read_incoming_messages: false,
+            webhook_enabled: true,
+            webhook_events: webhookEvents,
+            webhook_url: webhookUrl,
           },
           method: "POST",
         });
         return completeLifecycleWrite(async () => {
           const created = parseProviderSession(parseData(body.value), true);
-          if (!created || created.name !== marker) {
+          if (
+            !created ||
+            created.name !== marker ||
+            !hasWebhookConfiguration(created, webhookUrl)
+          ) {
             throw writeFailure("invalid_response", true);
           }
           return toLifecycleSession(created);
@@ -692,14 +796,30 @@ export const makeWasenderSessionLifecycle = (
         }
       }),
     listSessions: ({ setupMarker }) => effect(() => listSessions(setupMarker)),
-    reconcileSession: ({ setupMarker }) =>
+    reconcileSession: ({ setupMarker, webhookEndpoint }) =>
       effect(async (): Promise<SessionReconciliation> => {
-        const sessions = await listSessions(setupMarker);
-        if (sessions.length === 0) return { outcome: "absent" };
-        if (sessions.length === 1) {
-          const session = sessions[0];
-          if (!session) throw safeFailure("invalid_response");
-          return { outcome: "present", session };
+        const providerSessions = await loadSessionsForMarker(setupMarker);
+        if (providerSessions.length === 0) return { outcome: "absent" };
+        if (providerSessions.length === 1) {
+          const providerSession = providerSessions[0];
+          if (!providerSession) throw safeFailure("invalid_response");
+          if (
+            webhookEndpoint !== undefined &&
+            !hasWebhookConfiguration(
+              providerSession,
+              Redacted.value(webhookEndpoint),
+            )
+          ) {
+            throw safeFailure("integrity_failed");
+          }
+          return {
+            outcome: "present",
+            session: await toLifecycleSession(providerSession),
+          };
+        }
+        const sessions: LifecycleSession[] = [];
+        for (const providerSession of providerSessions) {
+          sessions.push(await toLifecycleSession(providerSession));
         }
         return {
           outcome: "duplicates",

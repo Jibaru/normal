@@ -15,6 +15,7 @@ import {
   ConnectionSetupProvisioningPersistence,
   ConnectionSetupProvisioningProvider,
   ConnectionSetupProvisioningQueue,
+  ConnectionSetupProvisioningWebhook,
 } from "../../src/connection-setup-provisioning";
 import { EnvelopeEncryptionService } from "../../src/encryption/envelope";
 import type { Env } from "../../src/index";
@@ -39,6 +40,17 @@ import {
 } from "../../src/public-boundary";
 import { createPublicBoundaryWorker } from "../../src/public-boundary-worker";
 import { SafeTelemetry } from "../../src/services";
+import {
+  WebhookIngressClock,
+  WebhookIngressIdentifiers,
+  WebhookIngressObjectStore,
+  WebhookIngressObjectStoreError,
+  WebhookIngressPersistence,
+  WebhookIngressPersistenceError,
+  WebhookIngressQueue,
+  WebhookIngressQueueError,
+  type WebhookIngressQueueMessage,
+} from "../../src/webhook-ingress";
 import {
   WhatsAppConnectionClock,
   WhatsAppConnectionIdentifiers,
@@ -78,20 +90,33 @@ const whatsAppConnections: Array<{
   readonly state: "connected";
   readonly stateChangedAt: string;
 }> = [];
+const publishedWebhookMessages: WebhookIngressQueueMessage[] = [];
+let nextWebhookObjectId = 0;
 
 const tokenKey = (value: Uint8Array) => Array.from(value).join(",");
 
-type FailureTarget = "identity" | "provider";
+type FailureTarget =
+  | "identity"
+  | "provider"
+  | "webhook-database"
+  | "webhook-queue"
+  | "webhook-r2";
 
 const failWhenSelected = (
   selected: FailureTarget | undefined,
-  target: FailureTarget,
+  target: "identity" | "provider",
 ) =>
   selected === target
     ? Effect.fail(new ControlledBoundaryFailure({ target }))
     : Effect.void;
 
-const makeTestLayer = (failure: FailureTarget | undefined) => {
+const makeTestLayer = (
+  failure: FailureTarget | undefined,
+  environment?: {
+    readonly INGESTION_QUEUE: Queue;
+    readonly WEBHOOK_INGRESS: R2Bucket;
+  },
+) => {
   void TEST_LAYER_SENTINEL;
   void TEST_FAULT_INJECTOR_SENTINEL;
 
@@ -214,6 +239,12 @@ const makeTestLayer = (failure: FailureTarget | undefined) => {
         "cspw_0000000000000000000000000000000000000000000",
       ),
     }),
+    Layer.succeed(ConnectionSetupProvisioningWebhook, {
+      urlFor: (webhookIngressId) =>
+        Effect.succeed(
+          `https://api.example.test/webhooks/wasender/${webhookIngressId}`,
+        ),
+    }),
     Layer.succeed(ConnectionSetupProvisioningPersistence, {
       claim: ({ setupId, workerId }) =>
         Effect.sync(() => {
@@ -252,6 +283,7 @@ const makeTestLayer = (failure: FailureTarget | undefined) => {
               },
               personalAccountId: "10000000-0000-4000-8000-000000000018",
               setupId,
+              webhookIngressId: "30000000-0000-4000-8000-000000000018",
             },
           };
         }),
@@ -409,10 +441,7 @@ const makeTestLayer = (failure: FailureTarget | undefined) => {
     Layer.succeed(WhatsAppConnectionIdentifiers, {
       nextConnectionId: Effect.succeed("20000000-0000-4000-8000-000000000018"),
       nextPublicId: Effect.succeed("con_000000000000000000018"),
-      nextWebhookIngressId: Effect.succeed(
-        "30000000-0000-4000-8000-000000000018",
-      ),
-      nextWebhookSecret: Effect.succeed(new Uint8Array(32).fill(18)),
+      nextWebhookIdentityKey: Effect.succeed(new Uint8Array(32).fill(18)),
     }),
     Layer.succeed(WhatsAppConnectionPersistence, {
       activate: (input) =>
@@ -474,6 +503,7 @@ const makeTestLayer = (failure: FailureTarget | undefined) => {
                 personalAccountId: "10000000-0000-4000-8000-000000000018",
                 version: 1 as const,
               },
+              webhookIngressId: "30000000-0000-4000-8000-000000000018",
             },
           };
         }),
@@ -548,7 +578,16 @@ const makeTestLayer = (failure: FailureTarget | undefined) => {
       decrypt: ({ context }) =>
         context.fieldOrObjectPurpose === "whatsapp-number"
           ? Effect.succeed(new TextEncoder().encode("+15550123456"))
-          : Effect.die("not used"),
+          : context.fieldOrObjectPurpose === "provider-session-authority"
+            ? Effect.succeed(
+                new TextEncoder().encode(
+                  JSON.stringify({
+                    sessionCredential: "test-session-credential",
+                    webhookVerificationSecret: "test-webhook-secret",
+                  }),
+                ),
+              )
+            : Effect.die("not used"),
       encrypt: () =>
         Effect.succeed({
           ciphertext: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcY",
@@ -560,28 +599,123 @@ const makeTestLayer = (failure: FailureTarget | undefined) => {
     Layer.succeed(SafeTelemetry, {
       emit: () => Effect.void,
     }),
+    Layer.succeed(WebhookIngressPersistence, {
+      resolve: (webhookIngressId) =>
+        failure === "webhook-database"
+          ? Effect.fail(new WebhookIngressPersistenceError())
+          : Effect.succeed(
+              webhookIngressId === "30000000-0000-4000-8000-000000000018"
+                ? {
+                    accountKey: {
+                      ciphertext: "AQID",
+                      keyVersion: 1,
+                      kmsKeyId:
+                        "arn:aws:kms:us-east-1:111122223333:key/test-content-root",
+                      personalAccountId: "10000000-0000-4000-8000-000000000018",
+                      version: 1 as const,
+                    },
+                    connectionKey: {
+                      accountKeyVersion: 1,
+                      ciphertext: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcY",
+                      connectionId: "20000000-0000-4000-8000-000000000018",
+                      keyVersion: 1,
+                      nonce: "AQIDBAUGBwgJCgsM",
+                      personalAccountId: "10000000-0000-4000-8000-000000000018",
+                      version: 1 as const,
+                    },
+                    personalAccountId: "10000000-0000-4000-8000-000000000018",
+                    providerAuthority: {
+                      ciphertext: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcY",
+                      keyVersion: 1,
+                      nonce: "AQIDBAUGBwgJCgsM",
+                      version: 1 as const,
+                    },
+                    whatsappConnectionId:
+                      "20000000-0000-4000-8000-000000000018",
+                  }
+                : null,
+            ),
+    }),
+    Layer.succeed(WebhookIngressClock, {
+      now: Effect.succeed("2026-01-02T03:07:00.000Z"),
+    }),
+    Layer.succeed(WebhookIngressIdentifiers, {
+      nextObjectId: Effect.sync(() => {
+        nextWebhookObjectId += 1;
+        return `40000000-0000-4000-8000-${String(nextWebhookObjectId).padStart(
+          12,
+          "0",
+        )}`;
+      }),
+    }),
+    Layer.succeed(WebhookIngressObjectStore, {
+      put: (object) =>
+        failure === "webhook-r2" || environment === undefined
+          ? Effect.fail(new WebhookIngressObjectStoreError())
+          : Effect.tryPromise({
+              try: () =>
+                environment.WEBHOOK_INGRESS.put(object.objectKey, object.body, {
+                  customMetadata: { ...object.customMetadata },
+                }).then(() => undefined),
+              catch: () => new WebhookIngressObjectStoreError(),
+            }),
+    }),
+    Layer.succeed(WebhookIngressQueue, {
+      publish: (message) =>
+        failure === "webhook-queue" || environment === undefined
+          ? Effect.fail(new WebhookIngressQueueError())
+          : Effect.tryPromise({
+              try: async () => {
+                await environment.INGESTION_QUEUE.send(message);
+                publishedWebhookMessages.push(message);
+              },
+              catch: () => new WebhookIngressQueueError(),
+            }),
+    }),
   );
 };
 
 const selectedFailure = (request: Request): FailureTarget | undefined => {
   const value = request.headers.get("x-test-failure");
-  return value === "identity" || value === "provider" ? value : undefined;
+  return value === "identity" ||
+    value === "provider" ||
+    value === "webhook-database" ||
+    value === "webhook-queue" ||
+    value === "webhook-r2"
+    ? value
+    : undefined;
 };
 
 const worker = createPublicBoundaryWorker({
   browserOrigin,
   fallback: (request, environment) =>
-    new URL(request.url).pathname === "/test/provider-observations"
+    new URL(request.url).pathname === "/test/webhook-queue"
       ? Promise.resolve(
-          new Response(JSON.stringify(providerObservations), {
+          new Response(JSON.stringify(publishedWebhookMessages), {
             headers: {
               "cache-control": "no-store",
               "content-type": "application/json; charset=utf-8",
             },
           }),
         )
-      : createProductionHandler(environment as Env)(request),
-  layerFor: (request) => makeTestLayer(selectedFailure(request)),
+      : new URL(request.url).pathname === "/test/provider-observations"
+        ? Promise.resolve(
+            new Response(JSON.stringify(providerObservations), {
+              headers: {
+                "cache-control": "no-store",
+                "content-type": "application/json; charset=utf-8",
+              },
+            }),
+          )
+        : createProductionHandler({
+            ...environment,
+            WEBHOOK_HYPERDRIVE: {
+              connectionString:
+                "postgresql://webhook-runtime@hyperdrive.test/database",
+            },
+          } as Env)(request),
+  layerFor: (request, environment) =>
+    makeTestLayer(selectedFailure(request), environment),
   provisioningLayer: makeTestLayer(undefined),
 });
 

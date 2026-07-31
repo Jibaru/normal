@@ -7,6 +7,7 @@ declare namespace Cloudflare {
     readonly PROVIDER_CONTROL: Fetcher;
     readonly STORED_MEDIA: R2Bucket;
     readonly WEBHOOK_INGRESS: R2Bucket;
+    readonly WEBHOOK_HYPERDRIVE: Hyperdrive;
   }
 
   interface GlobalProps {

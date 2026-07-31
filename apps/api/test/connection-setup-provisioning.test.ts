@@ -13,6 +13,7 @@ import {
   type ConnectionSetupProvisioningPersistenceService,
   ConnectionSetupProvisioningProvider,
   type ConnectionSetupProvisioningProviderService,
+  ConnectionSetupProvisioningWebhook,
   provisionConnectionSetup,
 } from "../src/connection-setup-provisioning";
 import {
@@ -82,6 +83,15 @@ const makeHarness = (options: {
     [];
   const events: Array<SafeTelemetryEvent> = [];
   const encryptedPlaintexts: Array<string> = [];
+  const createInputs: Array<{
+    readonly phoneNumber: string;
+    readonly setupMarker: string;
+    readonly webhookUrl: string;
+  }> = [];
+  const reconcileInputs: Array<{
+    readonly setupMarker: string;
+    readonly webhookUrl: string;
+  }> = [];
   const persisted: Array<{
     readonly outcome: "provisioned" | "quarantined";
     readonly sessions: ReadonlyArray<object>;
@@ -111,6 +121,7 @@ const makeHarness = (options: {
             numberCiphertext,
             personalAccountId,
             setupId,
+            webhookIngressId: "30000000-0000-4000-8000-000000000021",
           },
         };
       }),
@@ -146,18 +157,20 @@ const makeHarness = (options: {
   };
 
   const provider: ConnectionSetupProvisioningProviderService = {
-    create: () =>
+    create: (input) =>
       Effect.promise(async () => {
         calls.push("create");
+        createInputs.push(input);
         createAttempts += 1;
         return (
           (await options.create?.(createAttempts)) ??
           success(session("created"))
         );
       }),
-    reconcile: () =>
+    reconcile: (input) =>
       Effect.promise(async () => {
         calls.push("reconcile");
+        reconcileInputs.push(input);
         reconcileAttempts += 1;
         return options.reconcile(reconcileAttempts);
       }),
@@ -171,6 +184,12 @@ const makeHarness = (options: {
     }),
     Layer.succeed(ConnectionSetupProvisioningIdentifiers, {
       nextWorkerId: Effect.succeed(workerId),
+    }),
+    Layer.succeed(ConnectionSetupProvisioningWebhook, {
+      urlFor: (webhookIngressId) =>
+        Effect.succeed(
+          `https://api.example.test/webhooks/wasender/${webhookIngressId}`,
+        ),
     }),
     Layer.succeed(EnvelopeEncryptionService, {
       createConnectionKey: () => Effect.die("not used"),
@@ -209,10 +228,12 @@ const makeHarness = (options: {
   return {
     calls,
     createAttempts: () => createAttempts,
+    createInputs,
     encryptedPlaintexts,
     events,
     layer,
     persisted,
+    reconcileInputs,
   };
 };
 
@@ -234,7 +255,22 @@ describe("Connection Setup provisioning saga", () => {
       "create",
       "finish",
     ]);
+    expect(harness.reconcileInputs).toEqual([
+      {
+        setupMarker: setupId,
+        webhookUrl:
+          "https://api.example.test/webhooks/wasender/30000000-0000-4000-8000-000000000021",
+      },
+    ]);
     expect(harness.persisted).toHaveLength(1);
+    expect(harness.createInputs).toEqual([
+      {
+        phoneNumber: "+15550123456",
+        setupMarker: setupId,
+        webhookUrl:
+          "https://api.example.test/webhooks/wasender/30000000-0000-4000-8000-000000000021",
+      },
+    ]);
     expect(harness.persisted[0]).toMatchObject({
       outcome: "provisioned",
       sessions: [{ ordinal: 0 }],
@@ -341,6 +377,30 @@ describe("Connection Setup provisioning saga", () => {
     expect(first).toEqual({ outcome: "failed" });
     expect(replayedMessage).toEqual({ outcome: "ignored" });
     expect(harness.createAttempts()).toBe(1);
+  });
+
+  test("records a definitive webhook reconciliation failure instead of retrying forever", async () => {
+    const definitiveFailure: ProviderControlFailure = {
+      _tag: "ProviderControlFailure",
+      code: "integrity_failed",
+      operation: "safe-read",
+      retryAfterMs: null,
+      retryDecision: "do_not_retry",
+    };
+    const harness = makeHarness({
+      reconcile: async () => ({ error: definitiveFailure, ok: false }),
+    });
+
+    const first = await Effect.runPromise(
+      provisionConnectionSetup(setupId).pipe(Effect.provide(harness.layer)),
+    );
+    const replayedMessage = await Effect.runPromise(
+      provisionConnectionSetup(setupId).pipe(Effect.provide(harness.layer)),
+    );
+
+    expect(first).toEqual({ outcome: "failed" });
+    expect(replayedMessage).toEqual({ outcome: "ignored" });
+    expect(harness.createAttempts()).toBe(0);
   });
 
   test("lets only one concurrent worker hold the provisioning lease", async () => {

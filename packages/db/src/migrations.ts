@@ -141,6 +141,17 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 11,
   },
+  {
+    name: "authenticated Webhook Event ingress",
+    sql: await readFile(
+      new NodeUrl(
+        "../migrations/0012_authenticated_webhook_ingress.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    version: 12,
+  },
 ];
 
 const checksum = (sql: string): string =>

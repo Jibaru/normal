@@ -407,6 +407,121 @@ describe("public-boundary Worker harness", () => {
     ).toBe("stored");
   });
 
+  test("acknowledges authenticated webhooks only after real R2 and Queue boundaries succeed", async () => {
+    const ingress =
+      "https://api.example.test/webhooks/wasender/30000000-0000-4000-8000-000000000018";
+    const payload = (sessionId = "test-session-credential") =>
+      JSON.stringify({
+        data: { messages: [] },
+        event: "messages.upsert",
+        sessionId,
+      });
+    const deliver = (
+      url: string,
+      options: {
+        readonly body?: BodyInit;
+        readonly failure?: string;
+        readonly signature?: string;
+      } = {},
+    ) =>
+      exports.default.fetch(
+        new Request(url, {
+          body: options.body ?? payload(),
+          headers: {
+            "content-type": "application/json",
+            "x-test-failure": options.failure ?? "",
+            "x-webhook-signature": options.signature ?? "test-webhook-secret",
+          },
+          method: "POST",
+        }),
+      );
+    const objectsBefore = await env.WEBHOOK_INGRESS.list({
+      prefix: "webhook-events/",
+    });
+    const queueBefore = (await (
+      await exports.default.fetch("https://api.example.test/test/webhook-queue")
+    ).json()) as ReadonlyArray<unknown>;
+
+    const unknown = await deliver(
+      "https://api.example.test/webhooks/wasender/30000000-0000-4000-8000-000000000099",
+    );
+    const wrongSecret = await deliver(ingress, { signature: "wrong-secret" });
+    const wrongSession = await deliver(ingress, {
+      body: payload("another-session"),
+    });
+    const oversized = await deliver(ingress, {
+      body: new Uint8Array(1_048_577).fill(32),
+    });
+    const databaseFailure = await deliver(ingress, {
+      failure: "webhook-database",
+    });
+    const r2Failure = await deliver(ingress, { failure: "webhook-r2" });
+    const queueFailure = await deliver(ingress, {
+      failure: "webhook-queue",
+    });
+    const accepted = await deliver(ingress);
+
+    expect([
+      unknown.status,
+      wrongSecret.status,
+      wrongSession.status,
+      oversized.status,
+      databaseFailure.status,
+      r2Failure.status,
+      queueFailure.status,
+      accepted.status,
+    ]).toEqual([404, 404, 404, 413, 503, 503, 503, 200]);
+    expect(await accepted.json()).toEqual({ accepted: true });
+
+    const objectsAfter = await env.WEBHOOK_INGRESS.list({
+      prefix: "webhook-events/",
+    });
+    const newObjects = objectsAfter.objects.filter(
+      ({ key }) => !objectsBefore.objects.some((before) => before.key === key),
+    );
+    expect(newObjects).toHaveLength(2);
+    for (const object of newObjects) {
+      const stored = await env.WEBHOOK_INGRESS.get(object.key);
+      expect(stored).not.toBeNull();
+      expect(await stored?.json()).toEqual({
+        ciphertext: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcY",
+        key_version: 1,
+        nonce: "AQIDBAUGBwgJCgsM",
+        version: 1,
+      });
+      expect(stored?.customMetadata).toEqual({
+        ciphertextSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        payloadBytes: String(new TextEncoder().encode(payload()).byteLength),
+        personalAccountId: "10000000-0000-4000-8000-000000000018",
+        receivedAt: "2026-01-02T03:07:00.000Z",
+        version: "1",
+        whatsappConnectionId: "20000000-0000-4000-8000-000000000018",
+      });
+    }
+
+    const queueAfter = (await (
+      await exports.default.fetch("https://api.example.test/test/webhook-queue")
+    ).json()) as ReadonlyArray<Record<string, unknown>>;
+    expect(queueAfter).toHaveLength(queueBefore.length + 1);
+    const published = queueAfter.at(-1);
+    expect(Object.keys(published ?? {}).sort()).toEqual([
+      "ciphertext_sha256",
+      "object_id",
+      "payload_bytes",
+      "personal_account_id",
+      "received_at",
+      "version",
+      "whatsapp_connection_id",
+    ]);
+    expect(published).toMatchObject({
+      payload_bytes: new TextEncoder().encode(payload()).byteLength,
+      personal_account_id: "10000000-0000-4000-8000-000000000018",
+      received_at: "2026-01-02T03:07:00.000Z",
+      version: 1,
+      whatsapp_connection_id: "20000000-0000-4000-8000-000000000018",
+    });
+  });
+
   test("runs Queue handlers with explicit acknowledgement against real bindings", async () => {
     const batch = createMessageBatch("whatsapp-mcp-ingestion", [
       {

@@ -78,7 +78,10 @@ const readBoundedBody = async (response: Response): Promise<BoundedBody> => {
   try {
     return {
       bytes,
-      text: new TextDecoder("utf-8", { fatal: true }).decode(body),
+      text: new TextDecoder("utf-8", {
+        fatal: true,
+        ignoreBOM: false,
+      }).decode(body),
     };
   } catch {
     return { bytes, text: null };

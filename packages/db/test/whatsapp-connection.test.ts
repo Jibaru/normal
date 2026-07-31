@@ -84,6 +84,12 @@ describe("WhatsApp Connection repository", () => {
       personalAccountId: accountA,
       setupId,
     });
+    await database.query(
+      `UPDATE app.connection_setups
+       SET webhook_ingress_id = $1
+       WHERE id = $2`,
+      ["30000000-0000-4000-8000-000000000031", setupId],
+    );
     await setups.claimProvisioning({
       claimedAt: "2026-07-31T12:01:00.000Z",
       setupId,
@@ -168,6 +174,9 @@ describe("WhatsApp Connection repository", () => {
           personalAccountId: accountA,
           version: 1,
         },
+        webhookIngressId: expect.stringMatching(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+        ),
       },
     });
     expect(otherTenant).toBeNull();
@@ -246,6 +255,23 @@ describe("WhatsApp Connection repository", () => {
         webhook_secret_count: 1,
       },
     ]);
+  });
+
+  test("rejects activation when the ingress does not belong to the Setup", async () => {
+    const repository = makeWhatsAppConnectionRepository(provider);
+
+    await expect(
+      repository.activate({
+        ...activationInput,
+        webhookIngressId: "30000000-0000-4000-8000-000000000099",
+      }),
+    ).rejects.toThrow();
+
+    const counts = await database.query<{ connection_count: number }>(`
+      SELECT count(*)::integer AS connection_count
+      FROM app.whatsapp_connections
+    `);
+    expect(counts.rows).toEqual([{ connection_count: 0 }]);
   });
 
   test("lists only safe normalized fields under the restricted tenant role", async () => {

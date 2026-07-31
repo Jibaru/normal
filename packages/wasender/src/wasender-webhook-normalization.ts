@@ -26,7 +26,10 @@ import {
 type JsonRecord = Record<string, unknown>;
 
 const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder("utf-8", { fatal: true });
+const textDecoder = new TextDecoder("utf-8", {
+  fatal: true,
+  ignoreBOM: false,
+});
 
 const isRecord = (value: unknown): value is JsonRecord =>
   typeof value === "object" && value !== null && !Array.isArray(value);
