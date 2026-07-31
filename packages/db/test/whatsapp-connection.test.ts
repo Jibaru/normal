@@ -439,6 +439,44 @@ describe("WhatsApp Connection repository", () => {
     ]);
   });
 
+  test("does not regress the state-change time when a later claim has an older timestamp", async () => {
+    const repository = makeWhatsAppConnectionRepository(provider);
+    await repository.activate(activationInput);
+
+    await repository.claimLifecycle({
+      action: "disconnect",
+      claimId: "40000000-0000-4000-8000-000000000037",
+      clerkUserId: "user_connectiona",
+      publicId,
+      requestedAt: "2026-07-31T12:07:00.000Z",
+    });
+    await repository.finishLifecycle({
+      claimId: "40000000-0000-4000-8000-000000000037",
+      clerkUserId: "user_connectiona",
+      observedAt: "2026-07-31T12:07:01.000Z",
+      publicId,
+      state: "disconnected",
+    });
+
+    const reconnect = await repository.claimLifecycle({
+      action: "reconnect",
+      claimId: "40000000-0000-4000-8000-000000000038",
+      clerkUserId: "user_connectiona",
+      publicId,
+      requestedAt: "2026-07-31T12:06:59.000Z",
+    });
+
+    expect(reconnect).toMatchObject({
+      action: "reconnect",
+      connection: {
+        publicId,
+        state: "connecting",
+        stateChangedAt: "2026-07-31T12:07:01.000Z",
+      },
+      outcome: "claimed",
+    });
+  });
+
   test("counts an activated Setup and its Connection as one retained slot", async () => {
     const connections = makeWhatsAppConnectionRepository(provider);
     const setups = makeConnectionSetupRepository(provider);

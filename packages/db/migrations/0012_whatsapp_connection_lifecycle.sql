@@ -116,7 +116,7 @@ BEGIN
     state_changed_at = CASE
       WHEN connections.state = next_state
         THEN connections.state_changed_at
-      ELSE requested_at
+      ELSE greatest(connections.state_changed_at, requested_at)
     END,
     updated_at = greatest(connections.updated_at, requested_at)
   WHERE connections.id = connection.id
