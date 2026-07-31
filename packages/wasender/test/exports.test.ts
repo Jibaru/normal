@@ -10,9 +10,10 @@ import {
 import { webhookNormalizationPolicy } from "../src/webhook";
 
 describe("@whatsapp-mcp/wasender boundaries", () => {
-  test("exports control, session, and webhook seams without a catch-all barrel", () => {
+  test("exports focused provider seams without a catch-all barrel", () => {
     expect(Object.keys(packageManifest.exports).sort()).toEqual([
       "./control",
+      "./media",
       "./session",
       "./webhook",
     ]);
