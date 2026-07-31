@@ -211,6 +211,7 @@ export function PublicBoundaryJourney({
             <input
               autoComplete="tel"
               className="w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2"
+              disabled={setupState === "loading"}
               id="whatsapp-number"
               inputMode="tel"
               onChange={(event) => {

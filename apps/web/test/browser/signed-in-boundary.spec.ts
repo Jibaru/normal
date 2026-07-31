@@ -9,11 +9,18 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     readonly idempotency_key: string;
     readonly whatsapp_number: string;
   }> = [];
+  let releaseFirstSetup: (() => void) | undefined;
+  const firstSetupCanContinue = new Promise<void>((resolve) => {
+    releaseFirstSetup = resolve;
+  });
   await page.route("https://api.example.test/**", async (route) => {
     const original = route.request();
     apiMethod = original.method();
     if (new URL(original.url()).pathname === "/v1/connection-setups") {
       setupBodies.push(original.postDataJSON());
+      if (setupBodies.length === 1) {
+        await firstSetupCanContinue;
+      }
     }
     const localUrl = new URL(original.url());
     localUrl.protocol = "http:";
@@ -76,12 +83,19 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   ).toEqual({ template: "whatsapp-api" });
   expect(apiMethod).toBe("POST");
 
-  await page.getByLabel("WhatsApp Number").fill("+1 (555) 012-3456");
-  await page.getByRole("button", { name: "Start Connection Setup" }).click();
+  const whatsappNumber = page.getByLabel("WhatsApp Number");
+  const startConnectionSetup = page.getByRole("button", {
+    name: "Start Connection Setup",
+  });
+  await whatsappNumber.fill("+1 (555) 012-3456");
+  await startConnectionSetup.click();
+  await expect(whatsappNumber).toBeDisabled();
+  await expect(startConnectionSetup).toBeDisabled();
+  releaseFirstSetup?.();
   await expect(page.getByTestId("connection-setup-status")).toHaveText(
     "Connection Setup started. Preparing your QR code.",
   );
-  await page.getByRole("button", { name: "Start Connection Setup" }).click();
+  await startConnectionSetup.click();
   await expect(page.getByTestId("connection-setup-status")).toHaveText(
     "Connection Setup already started. Preparing your QR code.",
   );

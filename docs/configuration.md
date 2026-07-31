@@ -191,7 +191,7 @@ addresses, key identifiers, ciphertext, or profile data to this event.
 The signed-in browser creates a fresh 21-character NanoID idempotency key for
 each WhatsApp Number intent and retains it for exact transport retries. It sends
 the key and explicitly international number directly to `POST
-/v1/connection-setups`; neither value is displayed after submission. The API
+/v1/connection-setups`; the response does not echo either value. The API
 accepts only the configured browser Origin and a valid audience-bound Clerk
 token, removes permitted visual formatting from the number, and validates the
 result as E.164 before persistence.
