@@ -677,12 +677,25 @@ const parseTokenRequest = async (
     }
     const grantTypes = body.getAll("grant_type");
     const clientIds = body.getAll("client_id");
+    const authorization = request.headers.get("authorization");
+    let clientId: string | undefined;
+    if (authorization?.startsWith("Basic ")) {
+      if (clientIds.length !== 0 || body.has("client_secret")) return null;
+      const credentials = atob(authorization.slice("Basic ".length));
+      const separator = credentials.indexOf(":");
+      if (separator === -1) return null;
+      clientId = decodeURIComponent(
+        credentials.slice(0, separator).replace(/\+/gu, " "),
+      );
+    } else if (clientIds.length === 1) {
+      clientId = clientIds[0];
+    }
     if (
       grantTypes.length !== 1 ||
-      clientIds.length !== 1 ||
+      clientId === undefined ||
       !["authorization_code", "refresh_token"].includes(grantTypes[0] ?? "") ||
       !configuration.clients.some(
-        (candidate) => candidate.clientId === clientIds[0],
+        (candidate) => candidate.clientId === clientId,
       )
     ) {
       return null;
@@ -696,7 +709,7 @@ const parseTokenRequest = async (
       return null;
     }
     return {
-      clientId: clientIds[0] ?? "",
+      clientId,
       grantType,
       refreshToken:
         grantType === "refresh_token" ? refreshTokens[0] : undefined,

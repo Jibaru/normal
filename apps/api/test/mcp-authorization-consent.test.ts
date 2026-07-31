@@ -475,7 +475,6 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
     const tokenResponse = await oauth(
       new Request("https://api.example.test/oauth/token", {
         body: new URLSearchParams({
-          client_id: "approved-client",
           code: code ?? "",
           code_verifier: verifier,
           grant_type: "authorization_code",
@@ -483,6 +482,7 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
           resource: "https://api.example.test/mcp",
         }),
         headers: {
+          authorization: `Basic ${btoa("approved-client:")}`,
           "content-type": "Application/X-Www-Form-Urlencoded; Charset=UTF-8",
         },
         method: "POST",
@@ -502,22 +502,31 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
     expect(JSON.stringify(token)).not.toContain("clerk");
     expect(currentCredentialHash).toBeDefined();
 
-    const refreshRequest = () =>
-      new Request("https://api.example.test/oauth/token", {
-        body: new URLSearchParams({
-          client_id: "approved-client",
-          grant_type: "refresh_token",
-          refresh_token: String(token.refresh_token),
-          resource: "https://api.example.test/mcp",
-        }),
+    const refreshRequest = (
+      clientAuthentication: "basic" | "body" = "body",
+    ) => {
+      const body = new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: String(token.refresh_token),
+        resource: "https://api.example.test/mcp",
+      });
+      if (clientAuthentication === "body") {
+        body.set("client_id", "approved-client");
+      }
+      return new Request("https://api.example.test/oauth/token", {
+        body,
         headers: {
+          ...(clientAuthentication === "basic"
+            ? { authorization: `Basic ${btoa("approved-client:")}` }
+            : {}),
           "content-type": "application/x-www-form-urlencoded",
         },
         method: "POST",
       });
+    };
     const concurrent = await Promise.all([
       oauth(refreshRequest(), context),
-      oauth(refreshRequest(), context),
+      oauth(refreshRequest("basic"), context),
     ]);
     const rotatedResponse = concurrent.find(
       (response) => response.status === 200,
