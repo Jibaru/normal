@@ -1,4 +1,4 @@
-import { Effect, Redacted } from "effect";
+import { Effect, Encoding, Redacted } from "effect";
 import { makeBoundedRetryAfterMs, maximumJsonResponseBytes } from "./common";
 import type {
   ContactLocator,
@@ -9,6 +9,7 @@ import type {
   GroupLocator,
   ProviderNeutralFailure,
   SessionDirectory,
+  WasenderIdentityProtectionKey,
 } from "./session";
 
 const wasenderApiOrigin = "https://www.wasenderapi.com";
@@ -59,6 +60,8 @@ export interface WasenderDirectoryTelemetryEvent {
 export interface WasenderSessionDirectoryConfig {
   /** One WhatsApp Connection's session-specific Wasender API key. */
   readonly authority: DirectorySessionAuthority;
+  /** Connection-scoped protected identity key shared with webhook normalization. */
+  readonly identityKey: WasenderIdentityProtectionKey;
   /** Receives only the allowlisted, content-free adapter event above. */
   readonly emitTelemetry?:
     | ((event: WasenderDirectoryTelemetryEvent) => void)
@@ -385,82 +388,52 @@ const contactPhoneNumber = (jid: string): string | null => {
     return null;
   }
   const phone = local.split(":", 1)[0];
-  return phone !== undefined && /^[1-9]\d{1,14}$/.test(phone)
+  return phone !== undefined && /^[1-9]\d{6,14}$/.test(phone)
     ? `+${phone}`
     : null;
 };
 
-interface LocatorKeys {
-  readonly encryption: CryptoKey;
-  readonly nonce: CryptoKey;
-}
-
-const deriveLocatorKeys = async (credential: string): Promise<LocatorKeys> => {
-  const [encryptionSeed, nonceSeed] = await Promise.all([
-    crypto.subtle.digest(
-      "SHA-256",
-      textEncoder.encode(`directory-locator-encryption-v1\0${credential}`),
-    ),
-    crypto.subtle.digest(
-      "SHA-256",
-      textEncoder.encode(`directory-locator-nonce-v1\0${credential}`),
-    ),
-  ]);
-  return {
-    encryption: await crypto.subtle.importKey(
-      "raw",
-      encryptionSeed,
-      { name: "AES-GCM" },
-      false,
-      ["encrypt"],
-    ),
-    nonce: await crypto.subtle.importKey(
-      "raw",
-      nonceSeed,
-      { hash: "SHA-256", name: "HMAC" },
-      false,
-      ["sign"],
-    ),
-  };
+const importIdentityKey = (value: WasenderIdentityProtectionKey) => {
+  const bytes = Redacted.value(value);
+  if (bytes.byteLength < 32) {
+    throw new TypeError("Invalid Directory identity key");
+  }
+  return crypto.subtle.importKey(
+    "raw",
+    bytes,
+    { hash: "SHA-256", name: "HMAC" },
+    false,
+    ["sign"],
+  );
 };
 
-const base64Url = (bytes: Uint8Array): string => {
-  let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary)
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/u, "");
+const canonicalContactIdentity = (raw: string): string => {
+  const separator = raw.indexOf("@");
+  const local = separator === -1 ? raw : raw.slice(0, separator);
+  const domain = separator === -1 ? null : raw.slice(separator + 1);
+  return (domain === null || domain === "s.whatsapp.net") &&
+    /^[1-9]\d{6,14}$/u.test(local)
+    ? `pn:${local}`
+    : raw;
 };
 
 const sealLocator = async (
-  keys: LocatorKeys,
+  key: CryptoKey,
   kind: "contact" | "group",
   providerIdentifier: string,
 ): Promise<string> => {
-  const context = textEncoder.encode(`directory-locator-v1:${kind}`);
-  const plaintext = textEncoder.encode(providerIdentifier);
-  const nonceMaterial = new Uint8Array(
-    await crypto.subtle.sign(
-      "HMAC",
-      keys.nonce,
-      textEncoder.encode(`${kind}\0${providerIdentifier}`),
-    ),
+  const namespace =
+    kind === "contact" ? "contact-recipient" : "group-recipient";
+  const identity =
+    kind === "contact"
+      ? canonicalContactIdentity(providerIdentifier)
+      : providerIdentifier;
+  const signature = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    textEncoder.encode(`${namespace}\0${JSON.stringify(identity)}`),
   );
-  const iv = nonceMaterial.slice(0, 12);
-  const ciphertext = new Uint8Array(
-    await crypto.subtle.encrypt(
-      { additionalData: context, iv, name: "AES-GCM" },
-      keys.encryption,
-      plaintext,
-    ),
-  );
-  const sealed = new Uint8Array(iv.byteLength + ciphertext.byteLength);
-  sealed.set(iv);
-  sealed.set(ciphertext, iv.byteLength);
-  return `loc_v1_${kind === "contact" ? "c" : "g"}_${base64Url(sealed)}`;
+  return `wi1_${Encoding.encodeBase64Url(new Uint8Array(signature))}`;
 };
 
 const outputBytes = (value: unknown): number =>
@@ -480,7 +453,7 @@ const emitTelemetry = (
 const readDirectory = async (
   kind: DirectoryKind,
   credential: string,
-  locatorKeys: Promise<LocatorKeys>,
+  identityKey: Promise<CryptoKey>,
   emit: WasenderSessionDirectoryConfig["emitTelemetry"],
 ): Promise<DirectoryObservation<DirectoryContact | DirectoryGroup>> => {
   const startedAt = performance.now();
@@ -608,7 +581,7 @@ const readDirectory = async (
       }
       validatedPages += 1;
       observedAt = new Date().toISOString();
-      const keys = await locatorKeys;
+      const key = await identityKey;
       for (const entry of parsed.entries) {
         const normalized =
           kind === "contacts"
@@ -617,7 +590,7 @@ const readDirectory = async (
                 displayName: displayName(entry),
                 phoneNumber: contactPhoneNumber(entry.jid),
                 recipient: (await sealLocator(
-                  keys,
+                  key,
                   "contact",
                   entry.jid,
                 )) as ContactLocator,
@@ -626,7 +599,7 @@ const readDirectory = async (
                 displayName: displayName(entry),
                 joined: true,
                 recipient: (await sealLocator(
-                  keys,
+                  key,
                   "group",
                   entry.jid,
                 )) as GroupLocator,
@@ -709,7 +682,7 @@ export const makeWasenderSessionDirectory = (
   config: WasenderSessionDirectoryConfig,
 ): SessionDirectory => {
   const credential = validateCredential(config.authority);
-  const locatorKeys = deriveLocatorKeys(credential);
+  const identityKey = importIdentityKey(config.identityKey);
   return {
     readContacts: () =>
       Effect.tryPromise({
@@ -717,7 +690,7 @@ export const makeWasenderSessionDirectory = (
           readDirectory(
             "contacts",
             credential,
-            locatorKeys,
+            identityKey,
             config.emitTelemetry,
           ) as Promise<DirectoryObservation<DirectoryContact>>,
         catch: (cause) =>
@@ -731,7 +704,7 @@ export const makeWasenderSessionDirectory = (
           readDirectory(
             "groups",
             credential,
-            locatorKeys,
+            identityKey,
             config.emitTelemetry,
           ) as Promise<DirectoryObservation<DirectoryGroup>>,
         catch: (cause) =>

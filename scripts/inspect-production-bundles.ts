@@ -68,6 +68,7 @@ await Promise.all([
     "WASENDER_API_CREDENTIAL",
     "WASENDER_REFERENCE_SECRET",
     "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
+    "MCP_CURSOR_HMAC_SECRET",
   ]),
   inspectForForbiddenAuthority("apps/provider-control/dist", [
     "AWS_ACCESS_KEY_ID",
@@ -79,6 +80,7 @@ await Promise.all([
     "STORED_MEDIA",
     "WEBHOOK_INGRESS",
     "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
+    "MCP_CURSOR_HMAC_SECRET",
   ]),
 ]);
 console.info(

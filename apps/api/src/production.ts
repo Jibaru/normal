@@ -1,7 +1,9 @@
 import { KMSClient } from "@aws-sdk/client-kms";
+import { importCursorSigningKey } from "@whatsapp-mcp/contracts/cursor";
 import {
   makeConnectionId,
   makeConnectionSetupId,
+  makeContactId,
 } from "@whatsapp-mcp/contracts/handles";
 import type {
   ProviderControlFailure,
@@ -13,6 +15,10 @@ import {
 } from "@whatsapp-mcp/db/connection-health";
 import { makePgConnectionSetupRepository } from "@whatsapp-mcp/db/connection-setup";
 import { checkDatabaseReadiness } from "@whatsapp-mcp/db/connectivity";
+import {
+  type DirectoryRepository,
+  makePgDirectoryRepository,
+} from "@whatsapp-mcp/db/directory";
 import { makePgMcpAuthorizationRepository } from "@whatsapp-mcp/db/mcp-authorization";
 import { makePgMcpToolRepository } from "@whatsapp-mcp/db/mcp-tool";
 import { makePgPersonalAccountRepository } from "@whatsapp-mcp/db/personal-account";
@@ -63,6 +69,13 @@ import {
   handleConnectionSetupProvisioningBatch,
 } from "./connection-setup-provisioning";
 import {
+  ContactReconciliationClock,
+  ContactReconciliationIdentifiers,
+  ContactReconciliationPersistence,
+  ContactReconciliationPersistenceError,
+  reconcileContacts,
+} from "./contact-reconciliation";
+import {
   type DeletionCapsuleWriteBucket,
   makeDeletionCapsuleWriter,
 } from "./deletion/capsule";
@@ -84,10 +97,12 @@ import {
 } from "./encryption/stored-media-container";
 import {
   createMcpRequestHandler,
+  McpCursorCodec,
   McpToolClock,
   McpToolIdentifiers,
   McpToolPersistence,
   McpToolPersistenceError,
+  makeMcpCursorCodec,
 } from "./mcp";
 import {
   createMcpAuthorizationConsentHandler,
@@ -124,6 +139,7 @@ import {
   handleWebhookEventBatch,
   jitteredWebhookRetryDelaySeconds,
   WebhookEventClock,
+  WebhookEventIdentifiers,
   WebhookEventObjectStore,
   WebhookEventObjectStoreError,
   WebhookEventPersistence,
@@ -185,6 +201,7 @@ export interface ApiEnvironment {
   readonly KMS_DELETION_COORDINATOR_KEY_ARN?: string | undefined;
   readonly MCP_REQUESTS_PER_HOUR?: string | undefined;
   readonly MCP_REQUESTS_PER_MINUTE?: string | undefined;
+  readonly MCP_CURSOR_HMAC_SECRET?: string | undefined;
   readonly INGESTION_QUEUE?: unknown;
   readonly OAUTH_CLIENT_REGISTRY?: string | undefined;
   readonly OAUTH_ISSUER?: string | undefined;
@@ -1051,6 +1068,20 @@ const webhookEventPersistenceLayer = (environment: ApiEnvironment) =>
         },
         catch: () => new WebhookEventPersistenceError(),
       }),
+    projectDirectoryContact: (input, compareVersions) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString =
+            environment.WEBHOOK_HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("Webhook Hyperdrive unavailable");
+          }
+          return makePgWebhookEventRepository(
+            connectionString,
+          ).projectDirectoryContact(input, compareVersions);
+        },
+        catch: () => new WebhookEventPersistenceError(),
+      }),
     quarantine: (input) =>
       Effect.tryPromise({
         try: () => {
@@ -1073,6 +1104,9 @@ const webhookEventRuntimeLayer = (environment: ApiEnvironment) =>
     wasenderWebhookEventNormalizationLayer,
     Layer.succeed(WebhookEventClock, {
       now: Effect.sync(() => new Date().toISOString()),
+    }),
+    Layer.succeed(WebhookEventIdentifiers, {
+      nextContactId: Effect.sync(() => makeContactId()),
     }),
     Layer.succeed(WebhookEventRetrySchedule, {
       delaySeconds: () =>
@@ -1445,16 +1479,60 @@ const mcpToolPersistenceLayer = (environment: ApiEnvironment) =>
         },
         catch: () => new McpToolPersistenceError(),
       }),
+    loadContactReadMaterial: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgMcpToolRepository(
+            connectionString,
+          ).loadContactReadMaterial(input);
+        },
+        catch: () => new McpToolPersistenceError(),
+      }),
+    listEncryptedContacts: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgMcpToolRepository(
+            connectionString,
+          ).listEncryptedContacts(input);
+        },
+        catch: () => new McpToolPersistenceError(),
+      }),
   });
 
-const mcpToolRuntimeLayer = Layer.mergeAll(
-  Layer.succeed(McpToolClock, {
-    now: Effect.sync(() => new Date()),
-  }),
-  Layer.succeed(McpToolIdentifiers, {
-    nextAuditLogId: Effect.sync(() => crypto.randomUUID()),
-  }),
-);
+const mcpToolRuntimeLayer = (environment: ApiEnvironment) =>
+  Layer.mergeAll(
+    Layer.succeed(McpToolClock, {
+      now: Effect.sync(() => new Date()),
+    }),
+    Layer.succeed(McpToolIdentifiers, {
+      nextAuditLogId: Effect.sync(() => crypto.randomUUID()),
+    }),
+    Layer.effect(
+      McpCursorCodec,
+      Effect.gen(function* () {
+        const secret = environment.MCP_CURSOR_HMAC_SECRET;
+        if (typeof secret !== "string" || !/^[a-f0-9]{64}$/u.test(secret)) {
+          return yield* Effect.fail(
+            new Error("MCP_CURSOR_HMAC_SECRET must be a 32-byte hex secret"),
+          );
+        }
+        const key = yield* importCursorSigningKey(
+          Uint8Array.from(secret.match(/../gu) ?? [], (byte) =>
+            Number.parseInt(byte, 16),
+          ),
+        );
+        return makeMcpCursorCodec(key);
+      }),
+    ),
+  );
 
 const randomBase64Url = (): string => {
   const value = new Uint8Array(32);
@@ -1663,7 +1741,7 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     webhookIngressPersistenceLayer(environment),
     webhookIngressCloudflareLayer(environment),
     mcpToolPersistenceLayer(environment),
-    mcpToolRuntimeLayer,
+    mcpToolRuntimeLayer(environment),
   );
   const handler = createCanaryHandler(layer);
   const personalAccountHandler = createPersonalAccountHandler(
@@ -1950,6 +2028,14 @@ export const createProductionScheduledHandler =
       readonly makeConnectionHealthRepository?: (
         connectionString: string,
       ) => ConnectionHealthScheduledRepository;
+      readonly makeDirectoryRepository?: (
+        connectionString: string,
+      ) => Pick<
+        DirectoryRepository,
+        | "claimContactReconciliations"
+        | "failContactReconciliation"
+        | "finishContactReconciliation"
+      >;
       readonly makeRepository?: (
         connectionString: string,
       ) => ConnectionSetupScheduledRepository;
@@ -2012,6 +2098,65 @@ export const createProductionScheduledHandler =
           ),
         );
         if (candidates.length < 100) break;
+      }
+      const directoryFactory =
+        dependencies.makeDirectoryRepository ??
+        (dependencies.makeConnectionHealthRepository === undefined
+          ? makePgDirectoryRepository
+          : null);
+      if (directoryFactory === null) return;
+      const directoryRepository = directoryFactory(connectionString);
+      const directoryLayer = Layer.mergeAll(
+        encryptionLayer(environment),
+        telemetryLayer,
+        Layer.succeed(ContactReconciliationClock, {
+          now: Effect.sync(now),
+        }),
+        Layer.succeed(ContactReconciliationIdentifiers, {
+          nextContactId: Effect.sync(() => makeContactId()),
+        }),
+        Layer.succeed(ContactReconciliationPersistence, {
+          fail: (input) =>
+            Effect.tryPromise({
+              try: async () => {
+                if (
+                  !(await directoryRepository.failContactReconciliation(input))
+                ) {
+                  throw new Error("stale contact reconciliation failure");
+                }
+              },
+              catch: () => new ContactReconciliationPersistenceError(),
+            }),
+          finish: (input) =>
+            Effect.tryPromise({
+              try: async () => {
+                if (
+                  !(await directoryRepository.finishContactReconciliation(
+                    input,
+                  ))
+                ) {
+                  throw new Error("stale contact reconciliation completion");
+                }
+              },
+              catch: () => new ContactReconciliationPersistenceError(),
+            }),
+        }),
+      );
+      const directoryClaimedAt = now();
+      while (true) {
+        const directoryCandidates =
+          await directoryRepository.claimContactReconciliations({
+            claimedAt: directoryClaimedAt,
+            limit: 100,
+          });
+        await Promise.all(
+          directoryCandidates.map((candidate) =>
+            Effect.runPromise(
+              reconcileContacts(candidate).pipe(Effect.provide(directoryLayer)),
+            ),
+          ),
+        );
+        if (directoryCandidates.length < 100) break;
       }
       return;
     }

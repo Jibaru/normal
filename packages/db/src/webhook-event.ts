@@ -41,6 +41,8 @@ interface VersionedCiphertext {
   readonly version: 1;
 }
 
+export interface PersistedDirectoryCiphertext extends VersionedCiphertext {}
+
 export interface WebhookEventProcessingMaterial {
   readonly accountKey: AccountKeyEnvelope;
   readonly connectionKey: ConnectionKeyEnvelope;
@@ -91,13 +93,30 @@ interface WebhookItemBase {
   readonly whatsappConnectionId: string;
 }
 
-export interface ProjectConnectionStateInput extends WebhookItemBase {
+interface EvidenceOrderedProjectionInput extends WebhookItemBase {
   readonly evidence: {
     readonly occurredAt: string | null;
     readonly version: string | null;
   };
   readonly itemIdentity: string;
+}
+
+export interface ProjectConnectionStateInput
+  extends EvidenceOrderedProjectionInput {
   readonly state: Exclude<WhatsAppConnectionState, "deleting">;
+}
+
+export interface ProjectDirectoryContactInput
+  extends EvidenceOrderedProjectionInput {
+  readonly active: boolean;
+  readonly displayNameCiphertext: PersistedDirectoryCiphertext | null;
+  readonly displayNameSort: string;
+  readonly namePrefixIndexes: ReadonlyArray<string>;
+  readonly phoneCiphertext: PersistedDirectoryCiphertext | null;
+  readonly phoneIndex: string | null;
+  readonly providerIdentityCiphertext: PersistedDirectoryCiphertext;
+  readonly providerIdentityIndex: string;
+  readonly publicId: string;
 }
 
 export interface QuarantineWebhookItemInput extends WebhookItemBase {
@@ -124,6 +143,13 @@ export interface WebhookEventRepository {
   ) => Promise<WebhookEventProcessingMaterial | null>;
   readonly projectConnectionState: (
     input: ProjectConnectionStateInput,
+    compareVersions: (
+      left: string,
+      right: string,
+    ) => Promise<WebhookVersionComparison>,
+  ) => Promise<WebhookItemProjectionOutcome>;
+  readonly projectDirectoryContact: (
+    input: ProjectDirectoryContactInput,
     compareVersions: (
       left: string,
       right: string,
@@ -304,8 +330,54 @@ interface StateRow extends Record<string, unknown> {
   readonly state_webhook_event_id: unknown;
 }
 
+interface ContactOrderRow extends Record<string, unknown> {
+  readonly provider_occurred_at: unknown;
+  readonly provider_version: unknown;
+  readonly received_at: unknown;
+  readonly snapshot_observed_at: unknown;
+  readonly webhook_event_id: unknown;
+}
+
+const shouldApplyContact = async (
+  input: ProjectDirectoryContactInput,
+  current: ContactOrderRow,
+  compareVersions: (
+    left: string,
+    right: string,
+  ) => Promise<WebhookVersionComparison>,
+): Promise<boolean> =>
+  shouldApply(
+    input,
+    {
+      state_provider_occurred_at: current.provider_occurred_at,
+      state_provider_version: current.provider_version,
+      state_received_at: current.received_at,
+      state_snapshot_observed_at: current.snapshot_observed_at,
+      state_webhook_event_id: current.webhook_event_id,
+    },
+    compareVersions,
+  );
+
+const decodeCiphertext = (value: PersistedDirectoryCiphertext): Uint8Array => {
+  const ciphertext = Buffer.from(value.ciphertext, "base64");
+  const nonce = Buffer.from(value.nonce, "base64");
+  if (
+    value.version !== 1 ||
+    !Number.isSafeInteger(value.keyVersion) ||
+    value.keyVersion < 1 ||
+    ciphertext.byteLength <= 16 ||
+    nonce.byteLength !== 12
+  ) {
+    throw new Error("invalid Directory ciphertext");
+  }
+  return new Uint8Array(ciphertext);
+};
+
+const decodeNonce = (value: PersistedDirectoryCiphertext): Uint8Array =>
+  new Uint8Array(Buffer.from(value.nonce, "base64"));
+
 const shouldApply = async (
-  input: ProjectConnectionStateInput,
+  input: EvidenceOrderedProjectionInput,
   current: StateRow,
   compareVersions: (
     left: string,
@@ -699,6 +771,278 @@ export const makeWebhookEventRepository = (
       }),
     );
   },
+
+  projectDirectoryContact: (input, compareVersions) =>
+    provider.withConnection((connection) =>
+      withTransaction(connection, async () => {
+        if (
+          !/^ctc_[A-Za-z0-9_-]{21}$/u.test(input.publicId) ||
+          !/^di1_[A-Za-z0-9_-]{43}$/u.test(input.providerIdentityIndex) ||
+          (input.phoneIndex !== null &&
+            !/^di1_[A-Za-z0-9_-]{43}$/u.test(input.phoneIndex)) ||
+          input.namePrefixIndexes.some(
+            (value) => !/^di1_[A-Za-z0-9_-]{43}$/u.test(value),
+          ) ||
+          new TextEncoder().encode(input.displayNameSort).byteLength > 1_024 ||
+          (!input.active &&
+            (input.displayNameCiphertext !== null ||
+              input.displayNameSort !== "" ||
+              input.phoneCiphertext !== null ||
+              input.phoneIndex !== null ||
+              input.namePrefixIndexes.length !== 0))
+        ) {
+          throw new Error("invalid Directory contact projection");
+        }
+        const providerCiphertext = decodeCiphertext(
+          input.providerIdentityCiphertext,
+        );
+        const providerNonce = decodeNonce(input.providerIdentityCiphertext);
+        const displayNameCiphertext =
+          input.displayNameCiphertext === null
+            ? null
+            : decodeCiphertext(input.displayNameCiphertext);
+        const displayNameNonce =
+          input.displayNameCiphertext === null
+            ? null
+            : decodeNonce(input.displayNameCiphertext);
+        const phoneCiphertext =
+          input.phoneCiphertext === null
+            ? null
+            : decodeCiphertext(input.phoneCiphertext);
+        const phoneNonce =
+          input.phoneCiphertext === null
+            ? null
+            : decodeNonce(input.phoneCiphertext);
+
+        await enterPersonalAccountContext(connection, input.personalAccountId);
+        const lockedConnection = await connection.query(
+          `SELECT id
+           FROM app.whatsapp_connections
+           WHERE personal_account_id = $1
+             AND id = $2
+           FOR UPDATE`,
+          [input.personalAccountId, input.whatsappConnectionId],
+        );
+        if (lockedConnection.rows.length !== 1) {
+          throw new Error("Directory contact projection target unavailable");
+        }
+        const currentResult = await connection.query<ContactOrderRow>(
+          `SELECT
+             contacts.provider_occurred_at,
+             contacts.provider_version,
+             contacts.received_at,
+             contacts.webhook_event_id,
+             (
+               SELECT projections.snapshot_observed_at
+               FROM app.directory_contact_projections AS projections
+               WHERE projections.personal_account_id = $1
+                 AND projections.whatsapp_connection_id = $2
+             ) AS snapshot_observed_at
+           FROM app.directory_contacts AS contacts
+           WHERE contacts.personal_account_id = $1
+             AND contacts.whatsapp_connection_id = $2
+             AND contacts.provider_identity_index = $3
+             AND EXISTS (
+               SELECT 1
+               FROM app.webhook_events AS events
+               WHERE events.personal_account_id = $1
+                 AND events.whatsapp_connection_id = $2
+                 AND events.id = $4
+             )
+           FOR UPDATE`,
+          [
+            input.personalAccountId,
+            input.whatsappConnectionId,
+            input.providerIdentityIndex,
+            input.eventId,
+          ],
+        );
+        const eventExists = await connection.query(
+          `SELECT id
+           FROM app.webhook_events
+           WHERE personal_account_id = $1
+             AND whatsapp_connection_id = $2
+             AND id = $3`,
+          [input.personalAccountId, input.whatsappConnectionId, input.eventId],
+        );
+        if (eventExists.rows.length !== 1) {
+          throw new Error("Directory contact projection target unavailable");
+        }
+        const claimed = await connection.query(
+          `INSERT INTO app.webhook_items (
+             personal_account_id,
+             whatsapp_connection_id,
+             deduplication_identity,
+             first_webhook_event_id,
+             item_index,
+             item_kind,
+             outcome,
+             provider_occurred_at,
+             provider_version,
+             received_at
+           ) VALUES (
+             $1, $2, $3, $4, $5, 'directory_contact', 'superseded', $6, $7, $8
+           )
+           ON CONFLICT (
+             personal_account_id,
+             whatsapp_connection_id,
+             deduplication_identity
+           ) DO NOTHING
+           RETURNING deduplication_identity`,
+          [
+            input.personalAccountId,
+            input.whatsappConnectionId,
+            input.itemIdentity,
+            input.eventId,
+            input.itemIndex,
+            input.evidence.occurredAt,
+            input.evidence.version,
+            input.receivedAt,
+          ],
+        );
+        if (claimed.rows.length === 0) return "duplicate" as const;
+        const current = currentResult.rows[0];
+        if (
+          current !== undefined &&
+          !(await shouldApplyContact(input, current, compareVersions))
+        ) {
+          return "superseded" as const;
+        }
+
+        await connection.query(
+          `INSERT INTO app.directory_contact_projections (
+             personal_account_id,
+             whatsapp_connection_id,
+             as_of,
+             stale,
+             partial,
+             updated_at
+           ) VALUES ($1, $2, $3, false, true, $3)
+           ON CONFLICT (personal_account_id, whatsapp_connection_id)
+           DO UPDATE SET
+             as_of = greatest(
+               app.directory_contact_projections.as_of,
+               excluded.as_of
+             ),
+             updated_at = greatest(
+               app.directory_contact_projections.updated_at,
+               excluded.updated_at
+             )`,
+          [
+            input.personalAccountId,
+            input.whatsappConnectionId,
+            input.receivedAt,
+          ],
+        );
+        await connection.query(
+          `INSERT INTO app.directory_contacts (
+             personal_account_id,
+             whatsapp_connection_id,
+             public_id,
+             provider_identity_index,
+             provider_identity_ciphertext_version,
+             provider_identity_key_version,
+             provider_identity_nonce,
+             provider_identity_ciphertext,
+             display_name_ciphertext_version,
+             display_name_key_version,
+             display_name_nonce,
+             display_name_ciphertext,
+             display_name_sort,
+             phone_ciphertext_version,
+             phone_key_version,
+             phone_nonce,
+             phone_ciphertext,
+             name_prefix_indexes,
+             phone_index,
+             active,
+             provider_occurred_at,
+             provider_version,
+             received_at,
+             webhook_event_id,
+             webhook_item_identity,
+             updated_at
+           ) VALUES (
+             $1, $2, $3, $4, $5, $6, $7, $8,
+             $9, $10, $11, $12, $13, $14, $15, $16, $17,
+             ARRAY(
+               SELECT value::app.directory_blind_index
+               FROM jsonb_array_elements_text($18::jsonb) AS value
+             ),
+             $19, $20, $21, $22, $23,
+             $24, $25, $23
+           )
+           ON CONFLICT (
+             personal_account_id,
+             whatsapp_connection_id,
+             provider_identity_index
+           ) DO UPDATE SET
+             provider_identity_ciphertext_version =
+               excluded.provider_identity_ciphertext_version,
+             provider_identity_key_version = excluded.provider_identity_key_version,
+             provider_identity_nonce = excluded.provider_identity_nonce,
+             provider_identity_ciphertext = excluded.provider_identity_ciphertext,
+             display_name_ciphertext_version = excluded.display_name_ciphertext_version,
+             display_name_key_version = excluded.display_name_key_version,
+             display_name_nonce = excluded.display_name_nonce,
+             display_name_ciphertext = excluded.display_name_ciphertext,
+             display_name_sort = excluded.display_name_sort,
+             phone_ciphertext_version = excluded.phone_ciphertext_version,
+             phone_key_version = excluded.phone_key_version,
+             phone_nonce = excluded.phone_nonce,
+             phone_ciphertext = excluded.phone_ciphertext,
+             name_prefix_indexes = excluded.name_prefix_indexes,
+             phone_index = excluded.phone_index,
+             active = excluded.active,
+             provider_occurred_at = excluded.provider_occurred_at,
+             provider_version = excluded.provider_version,
+             received_at = excluded.received_at,
+             webhook_event_id = excluded.webhook_event_id,
+             webhook_item_identity = excluded.webhook_item_identity,
+             updated_at = excluded.updated_at`,
+          [
+            input.personalAccountId,
+            input.whatsappConnectionId,
+            input.publicId,
+            input.providerIdentityIndex,
+            input.providerIdentityCiphertext.version,
+            input.providerIdentityCiphertext.keyVersion,
+            providerNonce,
+            providerCiphertext,
+            input.displayNameCiphertext?.version ?? null,
+            input.displayNameCiphertext?.keyVersion ?? null,
+            displayNameNonce,
+            displayNameCiphertext,
+            input.displayNameSort,
+            input.phoneCiphertext?.version ?? null,
+            input.phoneCiphertext?.keyVersion ?? null,
+            phoneNonce,
+            phoneCiphertext,
+            JSON.stringify(input.namePrefixIndexes),
+            input.phoneIndex,
+            input.active,
+            input.evidence.occurredAt,
+            input.evidence.version,
+            input.receivedAt,
+            input.eventId,
+            input.itemIdentity,
+          ],
+        );
+        await connection.query(
+          `UPDATE app.webhook_items
+           SET outcome = 'applied'
+           WHERE personal_account_id = $1
+             AND whatsapp_connection_id = $2
+             AND deduplication_identity = $3`,
+          [
+            input.personalAccountId,
+            input.whatsappConnectionId,
+            input.itemIdentity,
+          ],
+        );
+        return "applied" as const;
+      }),
+    ),
 
   quarantine: (input) =>
     provider.withConnection((connection) =>

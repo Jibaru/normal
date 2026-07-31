@@ -20,6 +20,7 @@ request is accepted. Production roots accept only `development`, `preview`, or
 | `OAUTH_PROTOCOL_ENCRYPTION_KEY` | Secret | API OAuth provider | Dedicated 32-byte hex AES key for short-lived consent handoff records. Generate with `openssl rand -hex 32`; never reuse another platform key. |
 | `MCP_REQUESTS_PER_MINUTE` | Non-secret approved quota | API MCP resource server | Authoritative per-Personal-Account request reservations allowed in an exact rolling minute. Set the reviewed positive integer through `mcp_requests_per_minute`; there is no production default. |
 | `MCP_REQUESTS_PER_HOUR` | Non-secret approved quota | API MCP resource server | Authoritative per-Personal-Account request reservations allowed in an exact rolling hour. Set the reviewed integer through `mcp_requests_per_hour`; it must be at least the minute value and has no production default. |
+| `MCP_CURSOR_HMAC_SECRET` | Secret | API MCP resource server | Dedicated 32-byte hex HMAC key for short-lived, authorization-bound pagination cursors. Generate independently with `openssl rand -hex 32`; rotation invalidates every outstanding cursor and must not reuse an OAuth, Directory, webhook, deletion, provider-reference, or content key. |
 | `PROVIDER_APPROVED_SESSION_CAPACITY` | Non-secret operational limit | API | Vendor-approved session ceiling for the environment. Set the reviewed integer through `provider_approved_session_capacity`; missing, placeholder, fractional, or values below three fail closed. Increase only after written provider approval. |
 | `DATABASE_URL` | Secret | Database tooling that consumes `@whatsapp-mcp/db/config` | Issue a restricted Neon role URL, store it in the deployment secret store, and rotate it through Neon plus the deployment platform. API production traffic uses Hyperdrive instead. |
 | `MIGRATION_DATABASE_URL` | Secret | `bun run db:migrate` and `bun run db:check` | Obtain the direct, unpooled owner URL from the sensitive OpenTofu output. It must be a TLS Neon URL and must never be configured on a Worker or web deployable. Rotate it by rotating the Neon migration-owner password. |
@@ -48,6 +49,18 @@ redacted value. The constructor rejects empty, oversized, or control-character
 authority values before network access. Its provider origin is fixed in the
 production adapter, so configuration cannot redirect credentials to another
 host or select a fake implementation.
+
+Directory contact provider identities, display names, and phone numbers are
+stored only as connection-scoped envelope ciphertext. The approved derived
+normalized display-name sort value and HMAC blind indexes for provider
+identity, normalized name prefixes, and exact E.164 lookup are the only query
+material. Webhook projection is idempotent and evidence ordered;
+the five-minute provider snapshot is authoritative for removals only when it
+is complete. `list_contacts` rechecks the live authorization, selected
+connection, and contact state, decrypts only inside the API Worker, and returns
+at most a nullable display name plus the final four phone digits. A projection
+older than ten minutes is reported as stale even if the last provider read had
+succeeded.
 
 The API Worker receives `PROVIDER_CONTROL`, `HYPERDRIVE`,
 `WEBHOOK_HYPERDRIVE`, `OAUTH_KV`, `WEBHOOK_INGRESS`, `STORED_MEDIA`,

@@ -55,6 +55,7 @@ for (const deployable of deployables) {
   } else {
     const requiredSecretNames = [
       "CLERK_JWT_KEY",
+      "MCP_CURSOR_HMAC_SECRET",
       "OAUTH_PROTOCOL_ENCRYPTION_KEY",
       "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
     ];
@@ -76,7 +77,7 @@ for (const deployable of deployables) {
         JSON.stringify(requiredSecretNames)
       ) {
         throw new Error(
-          `API ${configurationName} configuration must require identity, OAuth protocol, and WhatsApp Number reservation secrets.`,
+          `API ${configurationName} configuration must require identity, cursor, OAuth protocol, and WhatsApp Number reservation secrets.`,
         );
       }
       const environmentSuffix =

@@ -307,6 +307,7 @@ describe("five-minute connection health reconciliation", () => {
     const providerInputs: Array<unknown> = [];
     const finishes: Array<unknown> = [];
     const claims: Array<unknown> = [];
+    const directoryClaims: Array<unknown> = [];
     const handler = createProductionScheduledHandler(
       {
         DEPLOYMENT_ENVIRONMENT: "development",
@@ -333,6 +334,14 @@ describe("five-minute connection health reconciliation", () => {
             return true;
           },
         }),
+        makeDirectoryRepository: () => ({
+          claimContactReconciliations: async (input) => {
+            directoryClaims.push(input);
+            return [];
+          },
+          failContactReconciliation: async () => true,
+          finishContactReconciliation: async () => true,
+        }),
         now: () => checkedAt,
       },
     );
@@ -344,6 +353,7 @@ describe("five-minute connection health reconciliation", () => {
 
     expect(providerInputs).toHaveLength(1);
     expect(claims).toEqual([{ claimedAt: checkedAt, limit: 100 }]);
+    expect(directoryClaims).toEqual([{ claimedAt: checkedAt, limit: 100 }]);
     expect(finishes).toEqual([
       {
         checkedAt,

@@ -5,6 +5,7 @@ import {
   makeWasenderSessionDirectory,
   type ProviderNeutralFailure,
   type WasenderDirectoryTelemetryEvent,
+  type WasenderIdentityProtectionKey,
 } from "../src/session";
 import {
   changedPaginatedContactsSecondPage,
@@ -26,6 +27,9 @@ const originalRandom = Math.random;
 const credential =
   "session-directory-authority-for-reviewed-fixtures" as string;
 const authority = Redacted.make(credential) as DirectorySessionAuthority;
+const identityKey = Redacted.make(
+  new Uint8Array(32).fill(37),
+) as WasenderIdentityProtectionKey;
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
@@ -60,7 +64,7 @@ describe("real Wasender Directory adapter", () => {
       return jsonResponse(contactsDirectoryResponse);
     }) as unknown as typeof fetch;
 
-    const directory = makeWasenderSessionDirectory({ authority });
+    const directory = makeWasenderSessionDirectory({ authority, identityKey });
     const observation = await Effect.runPromise(directory.readContacts());
 
     expect(requests).toHaveLength(1);
@@ -95,7 +99,9 @@ describe("real Wasender Directory adapter", () => {
     );
     expect(JSON.stringify(observation)).not.toContain("98555123@lid");
     expect(JSON.stringify(observation)).not.toContain("provider.invalid");
-    expect(observation.entries[0]?.recipient).toMatch(/^loc_v1_c_/u);
+    expect(observation.entries[0]?.recipient).toMatch(
+      /^wi1_[A-Za-z0-9_-]{43}$/u,
+    );
   });
 
   test("returns currently joined groups without provider identifiers or roster data", async () => {
@@ -103,7 +109,7 @@ describe("real Wasender Directory adapter", () => {
       jsonResponse(groupsDirectoryResponse)) as unknown as typeof fetch;
 
     const observation = await Effect.runPromise(
-      makeWasenderSessionDirectory({ authority }).readGroups(),
+      makeWasenderSessionDirectory({ authority, identityKey }).readGroups(),
     );
 
     expect(observation).toMatchObject({
@@ -125,7 +131,7 @@ describe("real Wasender Directory adapter", () => {
       jsonResponse(emptyDirectoryResponse)) as unknown as typeof fetch;
 
     const observation = await Effect.runPromise(
-      makeWasenderSessionDirectory({ authority }).readContacts(),
+      makeWasenderSessionDirectory({ authority, identityKey }).readContacts(),
     );
 
     expect(observation.entries).toEqual([]);
@@ -140,7 +146,7 @@ describe("real Wasender Directory adapter", () => {
       })) as unknown as typeof fetch;
 
     const failure = await readFailure(
-      makeWasenderSessionDirectory({ authority }).readContacts(),
+      makeWasenderSessionDirectory({ authority, identityKey }).readContacts(),
     );
 
     expect(failure).toEqual({
@@ -157,7 +163,7 @@ describe("real Wasender Directory adapter", () => {
       jsonResponse(malformedDirectoryResponse)) as unknown as typeof fetch;
 
     const failure = await readFailure(
-      makeWasenderSessionDirectory({ authority }).readContacts(),
+      makeWasenderSessionDirectory({ authority, identityKey }).readContacts(),
     );
 
     expect(failure).toEqual({
@@ -185,7 +191,7 @@ describe("real Wasender Directory adapter", () => {
     }) as unknown as typeof fetch;
 
     const failure = await readFailure(
-      makeWasenderSessionDirectory({ authority }).readContacts(),
+      makeWasenderSessionDirectory({ authority, identityKey }).readContacts(),
     );
 
     expect(attempts).toBe(3);
@@ -217,6 +223,7 @@ describe("real Wasender Directory adapter", () => {
     const observation = await Effect.runPromise(
       makeWasenderSessionDirectory({
         authority,
+        identityKey,
         emitTelemetry: (event) => events.push(event),
       }).readGroups(),
     );
@@ -243,7 +250,7 @@ describe("real Wasender Directory adapter", () => {
     }) as unknown as typeof fetch;
 
     const observation = await Effect.runPromise(
-      makeWasenderSessionDirectory({ authority }).readContacts(),
+      makeWasenderSessionDirectory({ authority, identityKey }).readContacts(),
     );
 
     expect(attempts).toBe(2);
@@ -270,7 +277,7 @@ describe("real Wasender Directory adapter", () => {
     }) as unknown as typeof fetch;
 
     const observation = await Effect.runPromise(
-      makeWasenderSessionDirectory({ authority }).readContacts(),
+      makeWasenderSessionDirectory({ authority, identityKey }).readContacts(),
     );
 
     expect(observation).toMatchObject({
@@ -299,7 +306,7 @@ describe("real Wasender Directory adapter", () => {
     }) as unknown as typeof fetch;
 
     const observation = await Effect.runPromise(
-      makeWasenderSessionDirectory({ authority }).readGroups(),
+      makeWasenderSessionDirectory({ authority, identityKey }).readGroups(),
     );
 
     expect(attempts).toBe(2);
@@ -327,7 +334,7 @@ describe("real Wasender Directory adapter", () => {
     }) as unknown as typeof fetch;
 
     const observation = await Effect.runPromise(
-      makeWasenderSessionDirectory({ authority }).readContacts(),
+      makeWasenderSessionDirectory({ authority, identityKey }).readContacts(),
     );
 
     expect(observation).toMatchObject({
@@ -350,7 +357,7 @@ describe("real Wasender Directory adapter", () => {
     }) as unknown as typeof fetch;
 
     const observation = await Effect.runPromise(
-      makeWasenderSessionDirectory({ authority }).readContacts(),
+      makeWasenderSessionDirectory({ authority, identityKey }).readContacts(),
     );
 
     expect(observation).toMatchObject({
@@ -365,7 +372,7 @@ describe("real Wasender Directory adapter", () => {
       jsonResponse(duplicateContactsFirstPage)) as unknown as typeof fetch;
 
     const failure = await readFailure(
-      makeWasenderSessionDirectory({ authority }).readContacts(),
+      makeWasenderSessionDirectory({ authority, identityKey }).readContacts(),
     );
 
     expect(failure).toMatchObject({
@@ -378,7 +385,7 @@ describe("real Wasender Directory adapter", () => {
   test("uses the larger complete representation for the aggregate byte bound", async () => {
     const contactCount = 250;
     const baseNameLength = 3_000;
-    const locatorLength = 67;
+    const locatorLength = 47;
     const rawContacts = Array.from({ length: contactCount }, (_, index) => ({
       jid: String(100_000_000_000_000 + index),
       name: "x".repeat(baseNameLength),
@@ -444,7 +451,7 @@ describe("real Wasender Directory adapter", () => {
     }) as unknown as typeof fetch;
 
     const observation = await Effect.runPromise(
-      makeWasenderSessionDirectory({ authority }).readContacts(),
+      makeWasenderSessionDirectory({ authority, identityKey }).readContacts(),
     );
 
     expect(observation.entries).toHaveLength(contactCount);
@@ -465,6 +472,7 @@ describe("real Wasender Directory adapter", () => {
     expect(() =>
       makeWasenderSessionDirectory({
         authority: Redacted.make("  ") as DirectorySessionAuthority,
+        identityKey,
       }),
     ).toThrow("session authority");
     expect(requests).toBe(0);

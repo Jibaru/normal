@@ -187,13 +187,16 @@ wrangler secret put CLERK_JWT_KEY \
 openssl rand -hex 32 | wrangler secret put OAUTH_PROTOCOL_ENCRYPTION_KEY \
   --cwd apps/api \
   --env "$DEPLOYMENT_ENVIRONMENT"
+openssl rand -hex 32 | wrangler secret put MCP_CURSOR_HMAC_SECRET \
+  --cwd apps/api \
+  --env "$DEPLOYMENT_ENVIRONMENT"
 wrangler secret list \
   --cwd apps/api \
   --env "$DEPLOYMENT_ENVIRONMENT"
 ```
 
-The API list must include `CLERK_JWT_KEY` and
-`OAUTH_PROTOCOL_ENCRYPTION_KEY`; values are never printed. Keeping
+The API list must include `CLERK_JWT_KEY`, `OAUTH_PROTOCOL_ENCRYPTION_KEY`, and
+`MCP_CURSOR_HMAC_SECRET`; values are never printed. Keeping
 the public verification key in the secret store prevents unreviewed copying
 into source, browser bundles, plans, or state. Apply this external Clerk
 dashboard gate independently in development, preview, and production. The
@@ -468,8 +471,10 @@ Worker manifests set `AWS_KMS_REGION` explicitly. Set
 `KMS_CONTENT_ROOT_KEY_ARN` and `KMS_DELETION_COORDINATOR_KEY_ARN` in the API
 deployment configuration and populate the marker HMAC plus three AWS credential
 secrets before deployment. `CLERK_JWT_KEY` and
-`OAUTH_PROTOCOL_ENCRYPTION_KEY` must already exist on the selected API Worker
-and are preserved as inherited secret bindings. Rendering fails unless the
+`OAUTH_PROTOCOL_ENCRYPTION_KEY` and `MCP_CURSOR_HMAC_SECRET` must already exist
+on the selected API Worker and are preserved as inherited secret bindings.
+Rotating the cursor secret invalidates all outstanding pagination cursors but
+does not require a data migration. Rendering fails unless the
 Clerk audience, authorized party, Clerk issuer, OAuth issuer, exact MCP
 resource, non-empty reviewed client registry, and provider-approved session
 capacity and approved MCP minute and hour request quotas are valid.
@@ -880,14 +885,25 @@ same connection and HMAC-protected stable message identity.
 
 ### Wasender Directory
 
-When the authenticated Directory workflow is available, perform its provider
-smoke check with a non-production WhatsApp Connection containing a reviewed
-empty or disposable contact/group set. Confirm one contacts read and one groups
-read succeed, telemetry contains only operation class, normalized outcome,
-attempt count, duration, and bounded byte counts, and no session credential,
-JID, full phone number, name, response body, or URL appears in Worker logs.
-Remove the disposable connection through the normal Connection Deletion flow;
-do not print or pass its session API key on a command line.
+Perform the Directory smoke check with a non-production WhatsApp Connection
+containing a reviewed disposable contact set. Wait for the five-minute
+reconciliation schedule, then call `list_contacts` with an authorization that
+has `directory:read` and selects only that connection. Verify deterministic
+name ordering, opaque `ctc_` handles, nullable display names, phone suffixes
+only, and `as_of`, `stale`, and `partial` metadata. Exercise one exact E.164
+lookup and one normalized display-name prefix lookup without printing either
+search value.
+
+Confirm the provider contacts read succeeds and telemetry contains only the
+operation class, normalized outcome, attempt count, duration, and bounded byte
+counts. No session credential, provider identity, full phone number, contact
+name, response body, URL, ciphertext, or blind index may appear in Worker logs.
+An overdue snapshot (more than ten minutes old), a failed provider read, or a
+partial provider response must remain visible through `stale` or `partial`;
+do not clear those indicators manually. Webhook contact changes may advance a
+partial projection between complete snapshots. Remove the disposable
+connection through the normal Connection Deletion flow; do not print or pass
+its session API key on a command line.
 
 ## Rollback
 

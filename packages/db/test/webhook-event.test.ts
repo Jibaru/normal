@@ -480,6 +480,92 @@ describe("Webhook Event repository", () => {
     ]);
   });
 
+  test("idempotently projects encrypted contact upserts and removals", async () => {
+    const repository = makeWebhookEventRepository(webhookProvider);
+    await repository.prepare(eventInput(firstEventId));
+    const encrypted = (byte: string) => ({
+      ciphertext: Buffer.from(byte.repeat(32), "hex").toString("base64"),
+      keyVersion: 1,
+      nonce: Buffer.from("09".repeat(12), "hex").toString("base64"),
+      version: 1 as const,
+    });
+    const common = {
+      displayNameCiphertext: encrypted("07"),
+      displayNameSort: "ada",
+      eventId: firstEventId,
+      evidence: {
+        occurredAt: "2026-07-31T12:05:00.000Z",
+        version: version("2026-07-31T12:05:00.000Z"),
+      },
+      itemIdentity: itemIdentity("contact-upsert"),
+      itemIndex: 0,
+      namePrefixIndexes: [`di1_${"n".repeat(43)}`],
+      personalAccountId: accountId,
+      phoneCiphertext: encrypted("08"),
+      phoneIndex: `di1_${"p".repeat(43)}`,
+      providerIdentityCiphertext: encrypted("06"),
+      providerIdentityIndex: `di1_${"i".repeat(43)}`,
+      publicId: "ctc_123456789012345678901",
+      receivedAt,
+      whatsappConnectionId: connectionId,
+    } as const;
+
+    expect(
+      await repository.projectDirectoryContact(
+        { ...common, active: true },
+        compareVersions,
+      ),
+    ).toBe("applied");
+    expect(
+      await repository.projectDirectoryContact(
+        { ...common, active: true },
+        compareVersions,
+      ),
+    ).toBe("duplicate");
+    expect(
+      await repository.projectDirectoryContact(
+        {
+          ...common,
+          active: false,
+          displayNameCiphertext: null,
+          displayNameSort: "",
+          evidence: {
+            occurredAt: "2026-07-31T12:06:00.000Z",
+            version: version("2026-07-31T12:06:00.000Z"),
+          },
+          itemIdentity: itemIdentity("contact-remove"),
+          itemIndex: 1,
+          namePrefixIndexes: [],
+          phoneCiphertext: null,
+          phoneIndex: null,
+          receivedAt: "2026-07-31T12:11:00.000Z",
+        },
+        compareVersions,
+      ),
+    ).toBe("applied");
+
+    const contacts = await database.query<{
+      active: boolean;
+      display_name_ciphertext: Uint8Array | null;
+      phone_ciphertext: Uint8Array | null;
+      provider_identity_ciphertext: Uint8Array;
+      public_id: string;
+    }>(
+      `SELECT active, display_name_ciphertext, phone_ciphertext,
+              provider_identity_ciphertext, public_id
+       FROM app.directory_contacts`,
+    );
+    expect(contacts.rows).toEqual([
+      {
+        active: false,
+        display_name_ciphertext: null,
+        phone_ciphertext: null,
+        provider_identity_ciphertext: expect.any(Uint8Array),
+        public_id: "ctc_123456789012345678901",
+      },
+    ]);
+  });
+
   test("converges regrouped and concurrent deliveries on one later state", async () => {
     const repository = makeWebhookEventRepository(webhookProvider);
     await repository.prepare(eventInput(firstEventId));

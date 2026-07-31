@@ -1,5 +1,5 @@
 import { JSONSchema, Schema } from "effect";
-import { ConnectionId } from "./handles";
+import { ConnectionId, ContactId } from "./handles";
 
 const utcTimestampPattern =
   /^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?Z(?![\s\S])/;
@@ -73,3 +73,21 @@ export const ListConnectionsOutputContract = makePublicObjectContract({
 });
 export type ListConnectionsOutput =
   typeof ListConnectionsOutputContract.schema.Type;
+
+export const ListContactsOutputContract = makePublicObjectContract({
+  contacts: Schema.Array(
+    Schema.Struct({
+      contact_id: ContactId,
+      display_name: Schema.NullOr(Schema.String),
+      phone_last_four: Schema.NullOr(
+        Schema.String.pipe(Schema.pattern(/^[0-9]{4}$/)),
+      ),
+    }),
+  ).pipe(Schema.maxItems(50)),
+  has_more: Schema.Boolean,
+  next_cursor: Schema.NullOr(Schema.String.pipe(Schema.minLength(1))),
+  as_of: UtcTimestamp,
+  stale: Schema.Boolean,
+  partial: Schema.Boolean,
+});
+export type ListContactsOutput = typeof ListContactsOutputContract.schema.Type;

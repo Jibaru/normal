@@ -42,6 +42,7 @@ import { createPublicBoundaryWorker } from "../../src/public-boundary-worker";
 import { SafeTelemetry } from "../../src/services";
 import {
   WebhookEventClock,
+  WebhookEventIdentifiers,
   WebhookEventObjectStore,
   WebhookEventObjectStoreError,
   WebhookEventPersistence,
@@ -816,6 +817,9 @@ const makeTestLayer = (
     Layer.succeed(WebhookEventClock, {
       now: Effect.succeed("2026-01-02T03:07:01.000Z"),
     }),
+    Layer.succeed(WebhookEventIdentifiers, {
+      nextContactId: Effect.succeed("ctc_123456789012345678901"),
+    }),
     Layer.succeed(WebhookEventRetrySchedule, {
       delaySeconds: () => Effect.succeed(10_123),
     }),
@@ -975,6 +979,7 @@ const makeTestLayer = (
           },
           catch: () => new WebhookEventPersistenceError(),
         }),
+      projectDirectoryContact: () => Effect.succeed("applied" as const),
       quarantine: () => Effect.void,
     }),
   );

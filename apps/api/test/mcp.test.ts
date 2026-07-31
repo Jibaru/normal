@@ -1,8 +1,10 @@
 import type { BeginToolCallResult } from "@whatsapp-mcp/db/mcp-tool";
 import { Effect, Layer } from "effect";
 import { describe, expect, test } from "vitest";
+import { EnvelopeEncryptionService } from "../src/encryption/envelope";
 import {
   createMcpRequestHandler,
+  McpCursorCodec,
   McpToolClock,
   McpToolIdentifiers,
   McpToolPersistence,
@@ -113,8 +115,29 @@ const makeHarness = (
     Layer.succeed(McpToolIdentifiers, {
       nextAuditLogId: Effect.succeed("50000000-0000-4000-8000-000000000030"),
     }),
+    Layer.succeed(McpCursorCodec, {
+      decode: ({ cursor }) => {
+        try {
+          return Effect.succeed(JSON.parse(atob(cursor)) as [string, string]);
+        } catch {
+          return Effect.fail({ _tag: "InvalidCursorError" } as never);
+        }
+      },
+      encode: ({ boundary }) => Effect.succeed(btoa(JSON.stringify(boundary))),
+    }),
+    Layer.succeed(EnvelopeEncryptionService, {
+      createConnectionKey: () => Effect.die("not used"),
+      createPersonalAccountKey: () => Effect.die("not used"),
+      decrypt: ({ ciphertext }) =>
+        Effect.succeed(
+          Uint8Array.from(atob(ciphertext.ciphertext), (value) =>
+            value.charCodeAt(0),
+          ),
+        ),
+      encrypt: () => Effect.die("not used"),
+    }),
     Layer.succeed(McpToolPersistence, {
-      beginToolCall: () => {
+      beginToolCall: (input) => {
         observations.push("begin");
         if (overrides.failBegin) {
           return Effect.fail(new McpToolPersistenceError());
@@ -122,9 +145,13 @@ const makeHarness = (
         if (overrides.beginResult !== undefined) {
           return Effect.succeed(overrides.beginResult);
         }
+        const requiredScope =
+          input.toolName === "list_contacts"
+            ? "directory:read"
+            : "connections:read";
         if (
           overrides.scopes !== undefined &&
-          !overrides.scopes.includes("connections:read")
+          !overrides.scopes.includes(requiredScope)
         ) {
           return Effect.succeed({
             auditLogId: "50000000-0000-4000-8000-000000000030",
@@ -159,6 +186,78 @@ const makeHarness = (
             stateChangedAt: "2026-07-30T12:00:00.000Z",
           },
         ]);
+      },
+      loadContactReadMaterial: () => {
+        observations.push("material");
+        return Effect.succeed({
+          accountKey: {
+            ciphertext: "AQI=",
+            keyVersion: 1,
+            kmsKeyId: "kms-content-root",
+            personalAccountId: "10000000-0000-4000-8000-000000000030",
+            version: 1 as const,
+          },
+          asOf: "2026-07-30T12:00:00.000Z",
+          connectionKey: {
+            accountKeyVersion: 1,
+            ciphertext: "AQI=",
+            connectionId: "20000000-0000-4000-8000-000000000030",
+            keyVersion: 1,
+            nonce: "AQIDBAUGBwgJCgsM",
+            personalAccountId: "10000000-0000-4000-8000-000000000030",
+            version: 1 as const,
+          },
+          identityKey: {
+            ciphertext: btoa(
+              String.fromCharCode(...new Uint8Array(32).fill(7)),
+            ),
+            keyVersion: 1,
+            nonce: "AQIDBAUGBwgJCgsM",
+            version: 1 as const,
+          },
+          partial: false,
+          personalAccountId: "10000000-0000-4000-8000-000000000030",
+          stale: false,
+          whatsappConnectionId: "20000000-0000-4000-8000-000000000030",
+        });
+      },
+      listEncryptedContacts: (input) => {
+        observations.push("contacts");
+        const encrypted = (value: string) => ({
+          ciphertext: btoa(value),
+          keyVersion: 1,
+          nonce: "AQIDBAUGBwgJCgsM",
+          version: 1 as const,
+        });
+        const contacts = [
+          {
+            displayNameCiphertext: encrypted("Grace"),
+            displayNameSort: "grace",
+            phoneCiphertext: null,
+            providerIdentityIndex: `di1_${"g".repeat(43)}`,
+            publicId: "ctc_123456789012345678902",
+          },
+          {
+            displayNameCiphertext: encrypted("Ada"),
+            displayNameSort: "ada",
+            phoneCiphertext: encrypted("+15550199"),
+            providerIdentityIndex: `di1_${"a".repeat(43)}`,
+            publicId: "ctc_123456789012345678901",
+          },
+        ].sort((left, right) =>
+          left.displayNameSort.localeCompare(right.displayNameSort),
+        );
+        return Effect.succeed(
+          contacts
+            .filter(
+              (contact) =>
+                input.cursorDisplayNameSort === null ||
+                contact.displayNameSort > input.cursorDisplayNameSort ||
+                (contact.displayNameSort === input.cursorDisplayNameSort &&
+                  contact.publicId > (input.cursorPublicId ?? "")),
+            )
+            .slice(0, input.limit),
+        );
       },
     }),
     Layer.succeed(SafeTelemetry, {
@@ -499,6 +598,134 @@ describe("stateless MCP list_connections boundary", () => {
     expect(serialized).toContain("audit_unavailable");
     expect(serialized).not.toContain("con_123456789012345678901");
     expect(harness.observations).toEqual(["begin", "list", "complete"]);
+  });
+
+  test("discovers list_contacts only with directory scope and returns deterministic suffix-only pages", async () => {
+    const harness = makeHarness({ scopes: ["directory:read"] });
+    const discovery = await harness.handler(
+      jsonRpcRequest("tools/list"),
+      {},
+      executionContext,
+      authorization,
+    );
+    expect(await discovery.json()).toMatchObject({
+      result: {
+        tools: [
+          {
+            inputSchema: expect.objectContaining({
+              additionalProperties: false,
+            }),
+            name: "list_contacts",
+            outputSchema: expect.objectContaining({
+              additionalProperties: false,
+            }),
+          },
+        ],
+      },
+    });
+
+    const first = await harness.handler(
+      jsonRpcRequest("tools/call", {
+        arguments: {
+          connection_id: "con_123456789012345678901",
+          limit: 1,
+        },
+        name: "list_contacts",
+      }),
+      {},
+      executionContext,
+      authorization,
+    );
+    const firstBody = (await first.json()) as {
+      result: { structuredContent: Record<string, unknown> };
+    };
+    expect(firstBody.result.structuredContent).toEqual({
+      as_of: "2026-07-30T12:00:00.000Z",
+      contacts: [
+        {
+          contact_id: "ctc_123456789012345678901",
+          display_name: "Ada",
+          phone_last_four: "0199",
+        },
+      ],
+      has_more: true,
+      next_cursor: expect.any(String),
+      partial: false,
+      stale: true,
+    });
+    expect(JSON.stringify(firstBody)).not.toContain("+15550199");
+    expect(harness.observations).toEqual([
+      "begin",
+      "material",
+      "contacts",
+      "complete",
+    ]);
+
+    const second = await harness.handler(
+      jsonRpcRequest("tools/call", {
+        arguments: {
+          connection_id: "con_123456789012345678901",
+          cursor: firstBody.result.structuredContent.next_cursor,
+          limit: 1,
+        },
+        name: "list_contacts",
+      }),
+      {},
+      executionContext,
+      authorization,
+    );
+    expect(await second.json()).toMatchObject({
+      result: {
+        structuredContent: {
+          contacts: [
+            {
+              contact_id: "ctc_123456789012345678902",
+              display_name: "Grace",
+              phone_last_four: null,
+            },
+          ],
+          has_more: false,
+          next_cursor: null,
+        },
+      },
+    });
+  });
+
+  test("audits direct list_contacts calls and withholds Directory data when completion fails", async () => {
+    const unauthorized = makeHarness({ scopes: ["connections:read"] });
+    const denied = await unauthorized.handler(
+      jsonRpcRequest("tools/call", {
+        arguments: { connection_id: "con_123456789012345678901" },
+        name: "list_contacts",
+      }),
+      {},
+      executionContext,
+      authorization,
+    );
+    expect(await denied.json()).toMatchObject({
+      result: {
+        isError: true,
+        structuredContent: { error_code: "authorization_denied" },
+      },
+    });
+    expect(unauthorized.observations).toEqual(["begin"]);
+
+    const unavailable = makeHarness({
+      failComplete: true,
+      scopes: ["directory:read"],
+    });
+    const response = await unavailable.handler(
+      jsonRpcRequest("tools/call", {
+        arguments: { connection_id: "con_123456789012345678901" },
+        name: "list_contacts",
+      }),
+      {},
+      executionContext,
+      authorization,
+    );
+    const serialized = JSON.stringify(await response.json());
+    expect(serialized).toContain("audit_unavailable");
+    expect(serialized).not.toContain("Ada");
   });
 
   test("supports the legacy-stateless 2025 protocol lane", async () => {

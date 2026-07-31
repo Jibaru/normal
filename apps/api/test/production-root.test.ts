@@ -179,6 +179,7 @@ describe("API production root", () => {
     "OAUTH_RESOURCE",
     "MCP_REQUESTS_PER_HOUR",
     "MCP_REQUESTS_PER_MINUTE",
+    "MCP_CURSOR_HMAC_SECRET",
     "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
   ] as const)("fails closed when %s is absent", async (configuration) => {
     const { [configuration]: _missing, ...environment } = validEnvironment();
@@ -203,6 +204,15 @@ describe("API production root", () => {
     const response = await createProductionHandler({
       ...validEnvironment(),
       WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET: "not-a-32-byte-key",
+    })(new Request("https://api.example.test/health"));
+
+    expect(response.status).toBe(503);
+  });
+
+  test("fails closed when the MCP cursor secret is malformed", async () => {
+    const response = await createProductionHandler({
+      ...validEnvironment(),
+      MCP_CURSOR_HMAC_SECRET: "not-a-32-byte-key",
     })(new Request("https://api.example.test/health"));
 
     expect(response.status).toBe(503);
