@@ -442,4 +442,204 @@ describe("Connection Setup repository", () => {
       }),
     ).resolves.toEqual({ outcome: "not_pending" });
   });
+
+  test("cancels idempotently, waits out provisioning, and releases the number only after confirmed absence", async () => {
+    const repository = makeConnectionSetupRepository(provider);
+    const setupId = "cst_000000000000000000001";
+    await repository.start(
+      startInput(accountA, setupId, "123456789012345678901", 1),
+    );
+    await repository.claimProvisioning({
+      claimedAt: "2026-07-31T12:01:00.000Z",
+      setupId,
+      workerId: "cspw_0000000000000000000000000000000000000000000",
+    });
+
+    const first = await repository.cancel({
+      cancelledAt: "2026-07-31T12:01:01.000Z",
+      clerkUserId: "user_setupa",
+      setupId,
+    });
+    const replay = await repository.cancel({
+      cancelledAt: "2026-07-31T12:01:02.000Z",
+      clerkUserId: "user_setupa",
+      setupId,
+    });
+
+    expect(first).toEqual({
+      cleanupState: "pending",
+      outcome: "cancelled",
+      setupId,
+      state: "cancelled",
+    });
+    expect(replay).toEqual({
+      cleanupState: "pending",
+      outcome: "replay",
+      setupId,
+      state: "cancelled",
+    });
+    await expect(
+      repository.cancel({
+        cancelledAt: "2026-07-31T12:01:03.000Z",
+        clerkUserId: "user_setupb",
+        setupId,
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      repository.claimCleanup({
+        claimedAt: "2026-07-31T12:01:04.000Z",
+        setupId,
+        workerId: "cscw_0000000000000000000000000000000000000000000",
+      }),
+    ).resolves.toEqual({ outcome: "leased" });
+    await expect(
+      repository.start(
+        startInput(
+          accountB,
+          "cst_000000000000000000002",
+          "223456789012345678901",
+          1,
+        ),
+      ),
+    ).resolves.toEqual({ outcome: "number_unavailable" });
+
+    await expect(
+      repository.claimCleanup({
+        claimedAt: "2026-07-31T12:03:01.000Z",
+        setupId,
+        workerId: "cscw_0000000000000000000000000000000000000000000",
+      }),
+    ).resolves.toEqual({ outcome: "claimed" });
+    await expect(
+      repository.releaseCleanupLease({
+        failureCode: "timed_out",
+        observedAt: "2026-07-31T12:03:02.000Z",
+        setupId,
+        workerId: "cscw_0000000000000000000000000000000000000000000",
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      repository.cancel({
+        cancelledAt: "2026-07-31T12:03:03.000Z",
+        clerkUserId: "user_setupa",
+        setupId,
+      }),
+    ).resolves.toMatchObject({
+      cleanupState: "retrying",
+      outcome: "replay",
+      state: "cancelled",
+    });
+    await expect(
+      repository.claimCleanup({
+        claimedAt: "2026-07-31T12:03:04.000Z",
+        setupId,
+        workerId: "cscw_1111111111111111111111111111111111111111111",
+      }),
+    ).resolves.toEqual({ outcome: "claimed" });
+    await expect(
+      repository.finishCleanup({
+        observedAt: "2026-07-31T12:03:05.000Z",
+        setupId,
+        workerId: "cscw_1111111111111111111111111111111111111111111",
+      }),
+    ).resolves.toBe(true);
+
+    const replacement = await repository.start(
+      startInput(
+        accountB,
+        "cst_000000000000000000002",
+        "223456789012345678901",
+        1,
+      ),
+    );
+    expect(replacement.outcome).toBe("created");
+    await expect(
+      repository.cancel({
+        cancelledAt: "2026-07-31T12:03:06.000Z",
+        clerkUserId: "user_setupa",
+        setupId,
+      }),
+    ).resolves.toEqual({
+      cleanupState: "complete",
+      outcome: "replay",
+      setupId,
+      state: "cancelled",
+    });
+
+    const sensitiveRows = await database.query<{
+      key_count: number;
+      provider_session_count: number;
+      released_at: Date | null;
+    }>(
+      `SELECT
+         reservations.released_at,
+         (
+           SELECT count(*)::integer
+           FROM app.connection_setup_key_envelopes
+           WHERE connection_setup_id = $1
+         ) AS key_count,
+         (
+           SELECT count(*)::integer
+           FROM app.connection_setup_provider_sessions
+           WHERE connection_setup_id = $1
+         ) AS provider_session_count
+       FROM app.whatsapp_number_reservations AS reservations
+       WHERE reservations.connection_setup_id = $1`,
+      [setupId],
+    );
+    expect(sensitiveRows.rows).toEqual([
+      {
+        key_count: 0,
+        provider_session_count: 0,
+        released_at: new Date("2026-07-31T12:03:05.000Z"),
+      },
+    ]);
+  });
+
+  test("expires incomplete setups exactly at 15 minutes and recovers cleanup work", async () => {
+    const repository = makeConnectionSetupRepository(provider);
+    const setupId = "cst_000000000000000000001";
+    await repository.start(
+      startInput(accountA, setupId, "123456789012345678901", 1),
+    );
+
+    await expect(
+      repository.expire({
+        limit: 100,
+        observedAt: "2026-07-31T12:14:59.999Z",
+      }),
+    ).resolves.toEqual([]);
+    await expect(
+      repository.expire({
+        limit: 100,
+        observedAt: "2026-07-31T12:15:00.000Z",
+      }),
+    ).resolves.toEqual([setupId]);
+    await expect(
+      repository.claimProvisioning({
+        claimedAt: "2026-07-31T12:15:01.000Z",
+        setupId,
+        workerId: "cspw_0000000000000000000000000000000000000000000",
+      }),
+    ).resolves.toEqual({ outcome: "not_pending" });
+    await expect(
+      repository.listCleanupCandidates({
+        limit: 100,
+        observedAt: "2026-07-31T12:15:01.000Z",
+      }),
+    ).resolves.toEqual([setupId]);
+
+    const persisted = await database.query<{
+      cleanup_state: string;
+      state: string;
+    }>(
+      `SELECT state, cleanup_state
+       FROM app.connection_setups
+       WHERE id = $1`,
+      [setupId],
+    );
+    expect(persisted.rows).toEqual([
+      { cleanup_state: "pending", state: "expired" },
+    ]);
+  });
 });

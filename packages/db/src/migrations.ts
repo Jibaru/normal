@@ -108,6 +108,17 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 8,
   },
+  {
+    name: "cancelled and expired Connection Setup cleanup",
+    sql: await readFile(
+      new NodeUrl(
+        "../migrations/0009_connection_setup_cleanup.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    version: 9,
+  },
 ];
 
 const checksum = (sql: string): string =>

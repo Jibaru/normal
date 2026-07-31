@@ -29,6 +29,8 @@ const accountKey = {
   version: 1 as const,
 };
 type PersistedSetupState =
+  | "cancelled"
+  | "expired"
   | "provisioned"
   | "provisioning_failed"
   | "provisioning_pending"
@@ -60,6 +62,32 @@ const makeHarness = (
   let retainedConnections = 0;
 
   const persistence: ConnectionSetupPersistenceService = {
+    cancel: ({ clerkUserId, setupId }) =>
+      options.persistenceFailure
+        ? Effect.fail(new ConnectionSetupPersistenceError())
+        : Effect.sync(() => {
+            if (clerkUserId !== "user_connection_setup") return null;
+            const entry = [...bindings.entries()].find(
+              ([, binding]) => binding.setup.setupId === setupId,
+            );
+            if (entry === undefined) return null;
+            const [key, binding] = entry;
+            const replay =
+              binding.setup.state === "cancelled" ||
+              binding.setup.state === "expired";
+            const state =
+              binding.setup.state === "expired" ? "expired" : "cancelled";
+            bindings.set(key, {
+              ...binding,
+              setup: { ...binding.setup, state },
+            });
+            return {
+              cleanupState: "pending" as const,
+              outcome: replay ? ("replay" as const) : ("cancelled" as const),
+              setupId,
+              state,
+            };
+          }),
     prepare: ({ idempotencyKey: key, numberToken }) =>
       options.persistenceFailure
         ? Effect.fail(new ConnectionSetupPersistenceError())
@@ -133,6 +161,10 @@ const makeHarness = (
     }),
     Layer.succeed(ConnectionSetupProvisioningQueue, {
       enqueue: (setupId) =>
+        Effect.sync(() => {
+          enqueuedSetups.push(setupId);
+        }),
+      enqueueCleanup: (setupId) =>
         Effect.sync(() => {
           enqueuedSetups.push(setupId);
         }),
@@ -210,6 +242,18 @@ const setupRequest = (
       origin: overrides.origin ?? browserOrigin,
     },
     method: "POST",
+  });
+
+const cancelRequest = (
+  setupId = "cst_000000000000000000001",
+  overrides: { readonly origin?: string } = {},
+) =>
+  new Request(`${endpoint}/${setupId}`, {
+    headers: {
+      authorization: "Bearer signed-clerk-token",
+      origin: overrides.origin ?? browserOrigin,
+    },
+    method: "DELETE",
   });
 
 describe("Connection Setup HTTP boundary", () => {
@@ -294,6 +338,56 @@ describe("Connection Setup HTTP boundary", () => {
     expect(await response.json()).toEqual({ error: "idempotency_conflict" });
     expect(harness.bindings).toHaveLength(1);
     expect(harness.encryptedNumbers).toEqual(["+15550123456"]);
+  });
+
+  test("lets only the owning User idempotently cancel through the signed-in HTTP boundary", async () => {
+    const harness = makeHarness();
+    await harness.handler(setupRequest("+15550123456"));
+
+    const first = await harness.handler(cancelRequest());
+    const replay = await harness.handler(cancelRequest());
+
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual({
+      connection_setup: {
+        cleanup_state: "pending",
+        id: "cst_000000000000000000001",
+        idempotent_replay: false,
+        state: "cancelled",
+      },
+    });
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toEqual({
+      connection_setup: {
+        cleanup_state: "pending",
+        id: "cst_000000000000000000001",
+        idempotent_replay: true,
+        state: "cancelled",
+      },
+    });
+    expect(harness.enqueuedSetups).toEqual([
+      "cst_000000000000000000001",
+      "cst_000000000000000000001",
+      "cst_000000000000000000001",
+    ]);
+    expect(harness.events).toContainEqual({
+      event: "connection_setup.cancel.completed",
+      outcome: "cancelled",
+      service: "api",
+    });
+    expect(harness.events).toContainEqual({
+      event: "connection_setup.cancel.completed",
+      outcome: "replay",
+      service: "api",
+    });
+  });
+
+  test("does not disclose another User's Connection Setup during cancellation", async () => {
+    const harness = makeHarness({ identityValid: false });
+    const response = await harness.handler(cancelRequest());
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "not_found" });
   });
 
   test("reserves a number globally and enforces the three-Connection limit", async () => {

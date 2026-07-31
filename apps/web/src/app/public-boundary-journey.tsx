@@ -20,6 +20,8 @@ type JourneyState =
   | "ok";
 
 type SetupState =
+  | "cancelled"
+  | "cancelling"
   | "idle"
   | "loading"
   | "pending"
@@ -30,7 +32,10 @@ type SetupState =
   | "invalid"
   | "number_unavailable"
   | "connection_limit_reached"
+  | "expired"
   | "unavailable";
+
+type SetupCleanupState = "complete" | "pending" | "retrying";
 
 export function PublicBoundaryJourney({
   clerkJwtTemplate,
@@ -40,6 +45,9 @@ export function PublicBoundaryJourney({
 }: PublicBoundaryJourneyProps) {
   const [state, setState] = useState<JourneyState>("idle");
   const [setupState, setSetupState] = useState<SetupState>("idle");
+  const [setupCleanupState, setSetupCleanupState] =
+    useState<SetupCleanupState | null>(null);
+  const [setupId, setSetupId] = useState<string | null>(null);
   const [whatsappNumber, setWhatsappNumber] = useState("");
   const setupIntent = useRef<{
     readonly idempotencyKey: string;
@@ -111,6 +119,7 @@ export function PublicBoundaryJourney({
   const startSetup = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSetupState("loading");
+    setSetupCleanupState(null);
 
     const intent =
       setupIntent.current?.whatsappNumber === whatsappNumber
@@ -154,6 +163,7 @@ export function PublicBoundaryJourney({
           typeof setup.id === "string" &&
           /^cst_[A-Za-z0-9_-]{21}$/u.test(setup.id)
         ) {
+          setSetupId(setup.id);
           if (setup.state === "pending") {
             setSetupState(
               setup.idempotent_replay === true ? "replayed" : "pending",
@@ -161,6 +171,8 @@ export function PublicBoundaryJourney({
             return;
           }
           if (
+            setup.state === "cancelled" ||
+            setup.state === "expired" ||
             setup.state === "provisioned" ||
             setup.state === "provisioning_failed" ||
             setup.state === "provisioning_quarantined"
@@ -183,6 +195,49 @@ export function PublicBoundaryJourney({
             ? "number_unavailable"
             : body.error,
         );
+        return;
+      }
+      setSetupState("unavailable");
+    } catch {
+      setSetupState("unavailable");
+    }
+  };
+
+  const cancelSetup = async () => {
+    if (setupId === null) return;
+    setSetupState("cancelling");
+
+    try {
+      const token = await getToken();
+      if (token === null) {
+        setSetupState("unavailable");
+        return;
+      }
+      const response = await fetch(`${connectionSetupEndpoint}/${setupId}`, {
+        headers: {
+          authorization: `Bearer ${token}`,
+        },
+        method: "DELETE",
+      });
+      const body = (await response.json()) as {
+        readonly connection_setup?: {
+          readonly cleanup_state?: unknown;
+          readonly id?: unknown;
+          readonly state?: unknown;
+        };
+      };
+      if (
+        response.ok &&
+        body.connection_setup?.id === setupId &&
+        (body.connection_setup.cleanup_state === "pending" ||
+          body.connection_setup.cleanup_state === "retrying" ||
+          body.connection_setup.cleanup_state === "complete") &&
+        (body.connection_setup.state === "cancelled" ||
+          body.connection_setup.state === "expired")
+      ) {
+        setupIntent.current = null;
+        setSetupCleanupState(body.connection_setup.cleanup_state);
+        setSetupState(body.connection_setup.state);
         return;
       }
       setSetupState("unavailable");
@@ -228,6 +283,8 @@ export function PublicBoundaryJourney({
               inputMode="tel"
               onChange={(event) => {
                 setWhatsappNumber(event.target.value);
+                setSetupCleanupState(null);
+                setSetupId(null);
                 setSetupState("idle");
               }}
               placeholder="+1 555 012 3456"
@@ -246,6 +303,20 @@ export function PublicBoundaryJourney({
           >
             Start Connection Setup
           </button>
+          {setupId !== null &&
+          (setupState === "pending" ||
+            setupState === "replayed" ||
+            setupState === "provisioned" ||
+            setupState === "provisioning_failed" ||
+            setupState === "provisioning_quarantined") ? (
+            <button
+              className="ml-2 rounded border border-zinc-600 px-4 py-2 font-medium disabled:opacity-60"
+              onClick={cancelSetup}
+              type="button"
+            >
+              Cancel Connection Setup
+            </button>
+          ) : null}
           <p aria-live="polite" data-testid="connection-setup-status">
             {setupState === "pending"
               ? "Connection Setup started. Preparing your QR code."
@@ -257,13 +328,27 @@ export function PublicBoundaryJourney({
                     ? "Connection Setup could not be prepared."
                     : setupState === "provisioning_quarantined"
                       ? "Connection Setup needs support review."
-                      : setupState === "number_unavailable"
-                        ? "That WhatsApp Number is already in use."
-                        : setupState === "connection_limit_reached"
-                          ? "Your Personal Account already has three active setup or Connection slots."
-                          : setupState === "invalid"
-                            ? "Enter a valid international WhatsApp Number."
-                            : setupState}
+                      : setupState === "cancelling"
+                        ? "Cancelling Connection Setup."
+                        : setupState === "cancelled"
+                          ? setupCleanupState === "complete"
+                            ? "Connection Setup cancelled. Provider cleanup is complete."
+                            : setupCleanupState === "retrying"
+                              ? "Connection Setup cancelled. Provider cleanup is retrying."
+                              : "Connection Setup cancelled. Provider cleanup is in progress."
+                          : setupState === "expired"
+                            ? setupCleanupState === "complete"
+                              ? "Connection Setup expired. Provider cleanup is complete."
+                              : setupCleanupState === "retrying"
+                                ? "Connection Setup expired. Provider cleanup is retrying."
+                                : "Connection Setup expired. Provider cleanup is in progress."
+                            : setupState === "number_unavailable"
+                              ? "That WhatsApp Number is already in use."
+                              : setupState === "connection_limit_reached"
+                                ? "Your Personal Account already has three active setup or Connection slots."
+                                : setupState === "invalid"
+                                  ? "Enter a valid international WhatsApp Number."
+                                  : setupState}
           </p>
         </form>
       ) : null}

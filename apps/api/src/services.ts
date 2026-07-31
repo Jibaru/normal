@@ -58,6 +58,26 @@ export interface ConnectionSetupStartCompletedEvent {
   readonly service: "api";
 }
 
+export interface ConnectionSetupCancelCompletedEvent {
+  readonly event: "connection_setup.cancel.completed";
+  readonly outcome: "cancelled" | "replay";
+  readonly service: "api";
+}
+
+export interface ConnectionSetupCleanupCompletedEvent {
+  readonly event: "connection_setup.cleanup.completed";
+  readonly failureCode?: string | undefined;
+  readonly outcome: "complete" | "ignored" | "retry";
+  readonly service: "api";
+}
+
+export interface ConnectionSetupCleanupRecoveryEnqueuedEvent {
+  readonly candidateCount: number;
+  readonly event: "connection_setup.cleanup.recovery_enqueued";
+  readonly expiredCount: number;
+  readonly service: "api";
+}
+
 export interface ConnectionSetupProvisionCompletedEvent {
   readonly event: "connection_setup.provision.completed";
   readonly failureCode?: string | undefined;
@@ -109,6 +129,9 @@ export interface SafeTelemetry {
 }
 
 export type SafeTelemetryEvent =
+  | ConnectionSetupCancelCompletedEvent
+  | ConnectionSetupCleanupCompletedEvent
+  | ConnectionSetupCleanupRecoveryEnqueuedEvent
   | ConnectionSetupProvisionCompletedEvent
   | ConnectionSetupProvisionRecoveryEnqueuedEvent
   | ConnectionSetupStartCompletedEvent

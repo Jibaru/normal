@@ -9,6 +9,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     readonly idempotency_key: string;
     readonly whatsapp_number: string;
   }> = [];
+  const cancelledSetups: Array<string> = [];
   let releaseFirstSetup: (() => void) | undefined;
   const firstSetupCanContinue = new Promise<void>((resolve) => {
     releaseFirstSetup = resolve;
@@ -16,7 +17,11 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await page.route("https://api.example.test/**", async (route) => {
     const original = route.request();
     apiMethod = original.method();
-    if (new URL(original.url()).pathname === "/v1/connection-setups") {
+    const requestPath = new URL(original.url()).pathname;
+    if (
+      requestPath === "/v1/connection-setups" &&
+      original.method() === "POST"
+    ) {
       setupBodies.push(original.postDataJSON());
       if (setupBodies.length === 1) {
         await firstSetupCanContinue;
@@ -37,6 +42,25 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
         });
         return;
       }
+    }
+    if (
+      requestPath === "/v1/connection-setups/cst_000000000000000000001" &&
+      original.method() === "DELETE"
+    ) {
+      cancelledSetups.push(requestPath);
+      await route.fulfill({
+        body: JSON.stringify({
+          connection_setup: {
+            cleanup_state: "pending",
+            id: "cst_000000000000000000001",
+            idempotent_replay: false,
+            state: "cancelled",
+          },
+        }),
+        contentType: "application/json",
+        status: 200,
+      });
+      return;
     }
     const localUrl = new URL(original.url());
     localUrl.protocol = "http:";
@@ -119,11 +143,25 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(page.getByTestId("connection-setup-status")).toHaveText(
     "Connection Setup needs support review.",
   );
-  expect(setupBodies).toHaveLength(3);
+  await page.getByRole("button", { name: "Cancel Connection Setup" }).click();
+  await expect(page.getByTestId("connection-setup-status")).toHaveText(
+    "Connection Setup cancelled. Provider cleanup is in progress.",
+  );
+  expect(cancelledSetups).toEqual([
+    "/v1/connection-setups/cst_000000000000000000001",
+  ]);
+  await startConnectionSetup.click();
+  await expect(page.getByTestId("connection-setup-status")).toHaveText(
+    "Connection Setup started. Preparing your QR code.",
+  );
+  expect(setupBodies).toHaveLength(4);
   expect(setupBodies[0]?.whatsapp_number).toBe("+1 (555) 012-3456");
   expect(setupBodies[0]?.idempotency_key).toMatch(/^[A-Za-z0-9_-]{21}$/);
   expect(setupBodies[1]?.idempotency_key).toBe(setupBodies[0]?.idempotency_key);
   expect(setupBodies[2]?.idempotency_key).toBe(setupBodies[0]?.idempotency_key);
+  expect(setupBodies[3]?.idempotency_key).not.toBe(
+    setupBodies[0]?.idempotency_key,
+  );
 });
 
 test("waitlists a signed-in User when private-beta capacity is exhausted", async ({
