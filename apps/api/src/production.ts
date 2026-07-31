@@ -1159,29 +1159,37 @@ export const createProductionQueueHandler =
       }
       return;
     }
-    if (
-      batch.messages.length > 0 &&
-      batch.messages.every((message) =>
-        isConnectionSetupCleanupMessage(message.body),
-      )
-    ) {
+    const cleanupMessages = batch.messages.filter((message) =>
+      isConnectionSetupCleanupMessage(message.body),
+    );
+    const provisioningMessages = batch.messages.filter(
+      (message) => !isConnectionSetupCleanupMessage(message.body),
+    );
+    if (cleanupMessages.length > 0) {
       const cleanupLayer = Layer.mergeAll(
         telemetryLayer,
         connectionSetupCleanupPersistenceLayer(environment),
         connectionSetupCleanupProviderLayer(environment),
         connectionSetupCleanupRuntimeLayer,
       );
-      await handleConnectionSetupCleanupBatch(batch, cleanupLayer);
-      return;
+      await handleConnectionSetupCleanupBatch(
+        { ...batch, messages: cleanupMessages },
+        cleanupLayer,
+      );
     }
-    const provisioningLayer = Layer.mergeAll(
-      encryptionLayer(environment),
-      telemetryLayer,
-      connectionSetupProvisioningPersistenceLayer(environment),
-      connectionSetupProvisioningProviderLayer(environment),
-      connectionSetupProvisioningRuntimeLayer,
-    );
-    await handleConnectionSetupProvisioningBatch(batch, provisioningLayer);
+    if (provisioningMessages.length > 0) {
+      const provisioningLayer = Layer.mergeAll(
+        encryptionLayer(environment),
+        telemetryLayer,
+        connectionSetupProvisioningPersistenceLayer(environment),
+        connectionSetupProvisioningProviderLayer(environment),
+        connectionSetupProvisioningRuntimeLayer,
+      );
+      await handleConnectionSetupProvisioningBatch(
+        { ...batch, messages: provisioningMessages },
+        provisioningLayer,
+      );
+    }
   };
 
 interface ConnectionSetupScheduledRepository {

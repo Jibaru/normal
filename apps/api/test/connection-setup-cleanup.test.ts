@@ -16,7 +16,10 @@ import {
   type ConnectionSetupCleanupProviderService,
   cleanupConnectionSetup,
 } from "../src/connection-setup-cleanup";
-import { createProductionScheduledHandler } from "../src/production";
+import {
+  createProductionQueueHandler,
+  createProductionScheduledHandler,
+} from "../src/production";
 import { SafeTelemetry, type SafeTelemetryEvent } from "../src/services";
 
 const setupId = "cst_000000000000000000001";
@@ -190,6 +193,61 @@ describe("Connection Setup cleanup saga", () => {
     });
     expect(JSON.stringify(harness.events)).not.toContain(setupId);
     expect(JSON.stringify(harness.events)).not.toContain("wsl_");
+  });
+
+  test("dispatches cleanup and provisioning independently in a mixed Queue batch", async () => {
+    const outcomes = {
+      cleanup: { acknowledgements: 0, retries: 0 },
+      provisioning: { acknowledgements: 0, retries: 0 },
+    };
+    const message = (
+      kind: "cleanup" | "provisioning",
+      body: unknown,
+    ): Message<unknown> =>
+      ({
+        ack: () => {
+          outcomes[kind].acknowledgements += 1;
+        },
+        attempts: 1,
+        body,
+        id: kind,
+        retry: () => {
+          outcomes[kind].retries += 1;
+        },
+        timestamp: new Date(observedAt),
+      }) as Message<unknown>;
+    const handler = createProductionQueueHandler({
+      DEPLOYMENT_ENVIRONMENT: "development",
+    });
+
+    await handler({
+      ackAll: () => undefined,
+      messages: [
+        message("cleanup", {
+          kind: "connection_setup.cleanup",
+          setup_id: setupId,
+          version: 1,
+        }),
+        message("provisioning", {
+          kind: "connection_setup.provision",
+          setup_id: setupId,
+          version: 1,
+        }),
+      ],
+      metadata: {
+        metrics: {
+          backlogBytes: 0,
+          backlogCount: 0,
+        },
+      },
+      queue: "whatsapp-mcp-connection-setup-provisioning-development",
+      retryAll: () => undefined,
+    });
+
+    expect(outcomes).toEqual({
+      cleanup: { acknowledgements: 0, retries: 1 },
+      provisioning: { acknowledgements: 0, retries: 1 },
+    });
   });
 
   test("the minute scheduled handler expires setups and publishes cleanup without a browser request", async () => {
