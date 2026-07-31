@@ -2,8 +2,8 @@ import { Effect, Layer } from "effect";
 import {
   ApplicationConfig,
   DatabaseReadiness,
-  type HttpCompletedEvent,
   SafeTelemetry,
+  type SafeTelemetryEvent,
 } from "../../src/services";
 
 export const TEST_LAYER_SENTINEL =
@@ -11,7 +11,7 @@ export const TEST_LAYER_SENTINEL =
 
 export const makeTestRoot = () => {
   const databaseChecks = { count: 0 };
-  const events: Array<HttpCompletedEvent> = [];
+  const events: Array<SafeTelemetryEvent> = [];
 
   return {
     get databaseChecks() {

@@ -97,6 +97,14 @@ const validEnvironment = () => ({
     }),
   },
   STORED_MEDIA: {
+    createMultipartUpload: async () => ({
+      abort: async () => undefined,
+      complete: async () => ({}),
+      uploadPart: async (partNumber: number) => ({
+        etag: "test-etag",
+        partNumber,
+      }),
+    }),
     delete: async () => undefined,
     get: async () => null,
     put: async () => null,
@@ -148,6 +156,19 @@ describe("API production root", () => {
       PROVIDER_CONTROL: {
         fetch: async () => new Response(null, { status: 204 }),
       },
+    })(new Request("https://api.example.test/health"));
+
+    expect(response.status).toBe(503);
+  });
+
+  test("fails closed when Stored Media cannot start multipart uploads", async () => {
+    const environment = validEnvironment();
+    const { createMultipartUpload: _missing, ...storedMediaWithoutMultipart } =
+      environment.STORED_MEDIA;
+
+    const response = await createProductionHandler({
+      ...environment,
+      STORED_MEDIA: storedMediaWithoutMultipart,
     })(new Request("https://api.example.test/health"));
 
     expect(response.status).toBe(503);

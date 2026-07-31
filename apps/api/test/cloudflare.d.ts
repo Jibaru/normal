@@ -3,6 +3,7 @@ declare namespace Cloudflare {
     readonly INGESTION_QUEUE: Queue;
     readonly OAUTH_KV: KVNamespace;
     readonly PROVIDER_CONTROL: Fetcher;
+    readonly STORED_MEDIA: R2Bucket;
     readonly WEBHOOK_INGRESS: R2Bucket;
   }
 

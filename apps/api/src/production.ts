@@ -19,11 +19,15 @@ import {
   makeEnvelopeEncryption,
 } from "./encryption/envelope";
 import {
+  makeStoredMediaContainer,
+  StoredMediaContainerService,
+} from "./encryption/stored-media-container";
+import {
   ApplicationConfig,
   DatabaseReadiness,
-  type HttpCompletedEvent,
   RestoreSafeDeletion,
   SafeTelemetry,
+  type SafeTelemetryEvent,
 } from "./services";
 
 export interface ApiEnvironment {
@@ -134,7 +138,11 @@ const validateCloudflareBindings = (
     ["DELETION_MARKERS", environment.DELETION_MARKERS, ["get", "list", "put"]],
     ["INGESTION_QUEUE", environment.INGESTION_QUEUE, ["send"]],
     ["OAUTH_KV", environment.OAUTH_KV, ["delete", "get", "put"]],
-    ["STORED_MEDIA", environment.STORED_MEDIA, ["delete", "get", "put"]],
+    [
+      "STORED_MEDIA",
+      environment.STORED_MEDIA,
+      ["createMultipartUpload", "delete", "get", "put"],
+    ],
     ["WEBHOOK_INGRESS", environment.WEBHOOK_INGRESS, ["delete", "get", "put"]],
   ] as const;
 
@@ -247,10 +255,60 @@ const deletionLayer = (environment: ApiEnvironment) =>
     ),
   );
 
-const telemetryLayer = Layer.succeed(SafeTelemetry, {
-  emit: (event: HttpCompletedEvent) =>
+const safeTelemetry = {
+  emit: (event: SafeTelemetryEvent) =>
     Effect.sync(() => console.info(JSON.stringify(event))),
-});
+} satisfies SafeTelemetry;
+
+const telemetryLayer = Layer.succeed(SafeTelemetry, safeTelemetry);
+
+const storedMediaContainerLayer = (environment: ApiEnvironment) =>
+  Layer.effect(
+    StoredMediaContainerService,
+    Config.all({
+      application: productionConfig,
+      kms: kmsConfig,
+    }).pipe(
+      Effect.flatMap(({ application, kms }) => {
+        if (
+          !hasMethods(environment.STORED_MEDIA, [
+            "createMultipartUpload",
+            "get",
+          ])
+        ) {
+          return Effect.fail(
+            new MissingCloudflareBinding({ binding: "STORED_MEDIA" }),
+          );
+        }
+        const client = new KMSClient({
+          credentials: {
+            accessKeyId: Redacted.value(kms.accessKeyId),
+            secretAccessKey: Redacted.value(kms.secretAccessKey),
+            sessionToken: Redacted.value(kms.sessionToken),
+          },
+          region: kms.region,
+        });
+        return Effect.succeed(
+          makeStoredMediaContainer({
+            bucket: environment.STORED_MEDIA as Pick<
+              R2Bucket,
+              "createMultipartUpload" | "get"
+            >,
+            encryption: makeEnvelopeEncryption({
+              contentRootKeyId: kms.contentRootKeyArn,
+              environment: application.environment,
+              kms: makeAwsKmsKeyService(client),
+            }),
+            environment: application.environment,
+            telemetry: (event) => {
+              Effect.runSync(safeTelemetry.emit(event));
+            },
+          }),
+        );
+      }),
+      Effect.withConfigProvider(environmentConfigProvider(environment)),
+    ),
+  );
 
 class MissingHyperdriveBinding extends Data.TaggedError(
   "MissingHyperdriveBinding",
@@ -287,6 +345,7 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
       telemetryLayer,
       encryptionLayer(environment),
       deletionLayer(environment),
+      storedMediaContainerLayer(environment),
     ),
   );
 

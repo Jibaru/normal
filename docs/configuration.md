@@ -104,6 +104,22 @@ Connection; it is decrypted only to construct that connection's adapter Layer
 and is not a deploy-time environment variable. This fixed configuration keeps
 an environment change from broadening the media SSRF boundary.
 
+## Encrypted Stored Media container
+
+The API production root constructs the versioned Stored Media container from
+the `STORED_MEDIA` R2 binding and the same real AWS KMS-rooted envelope
+encryption authority described above. Startup requires the R2 binding to
+support `get`, `put`, `delete`, and `createMultipartUpload`; the last capability
+allows an unknown-length encrypted stream to be written without pre-buffering
+the plaintext to calculate a total object length.
+
+The production plaintext encryption chunk ceiling is fixed at 1 MiB and R2
+multipart transport parts are bounded at 5 MiB. Neither value has an
+environment override. R2 receives no filename, MIME type, identity, plaintext
+hash, or other Stored Media metadata. The complete format and authenticated
+context are documented in [the encrypted Stored Media container
+specification](stored-media-container.md).
+
 ## Wasender text-send authority
 
 Text sending does not add an account-level Provider API Credential, endpoint
