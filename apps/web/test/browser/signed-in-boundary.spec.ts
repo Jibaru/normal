@@ -20,6 +20,12 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   const firstQrCanContinue = new Promise<void>((resolve) => {
     releaseFirstQr = resolve;
   });
+  let reconnectRequests = 0;
+  let resumeReconnectPolling = false;
+  let releaseReconnectPoll: (() => void) | undefined;
+  const reconnectPollCanContinue = new Promise<void>((resolve) => {
+    releaseReconnectPoll = resolve;
+  });
   await page.route("https://api.example.test/**", async (route) => {
     const original = route.request();
     const requestPath = new URL(original.url()).pathname;
@@ -42,6 +48,17 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
       original.method() === "GET"
     ) {
       await firstQrCanContinue;
+    }
+    if (
+      /^\/v1\/whatsapp-connections\/con_[A-Za-z0-9_-]{21}\/reconnect$/u.test(
+        requestPath,
+      ) &&
+      original.method() === "POST"
+    ) {
+      reconnectRequests += 1;
+      if (reconnectRequests > 1 && !resumeReconnectPolling) {
+        await reconnectPollCanContinue;
+      }
     }
     const localUrl = new URL(original.url());
     localUrl.protocol = "http:";
@@ -181,13 +198,26 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
       name: "Reconnect this WhatsApp Connection QR code",
     }),
   ).toBeVisible();
-  await expect(connection).toContainText("connected");
+  await page.reload();
+  await page
+    .getByRole("button", { name: "Bootstrap Personal Account" })
+    .click();
+  const resumedConnection = page.getByTestId("whatsapp-connection");
+  await expect(resumedConnection).toContainText("connecting");
+  resumeReconnectPolling = true;
+  releaseReconnectPoll?.();
+  await resumedConnection
+    .getByRole("button", {
+      name: "Reconnect WhatsApp Connection ending 3456",
+    })
+    .click();
+  await expect(resumedConnection).toContainText("connected");
   await expect(
-    connection.getByRole("img", {
+    resumedConnection.getByRole("img", {
       name: "Reconnect this WhatsApp Connection QR code",
     }),
   ).toHaveCount(0);
-  await expect(connection).toContainText("Number ending 3456");
+  await expect(resumedConnection).toContainText("Number ending 3456");
   expect(setupBodies).toHaveLength(1);
   expect(setupBodies[0]?.whatsapp_number).toBe("+1 (555) 012-3456");
   expect(setupBodies[0]?.idempotency_key).toMatch(/^[A-Za-z0-9_-]{21}$/);

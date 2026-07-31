@@ -1101,7 +1101,8 @@ export function PublicBoundaryJourney({
                       >
                         Disconnect
                       </button>
-                    ) : connection.state === "disconnected" ||
+                    ) : connection.state === "connecting" ||
+                      connection.state === "disconnected" ||
                       connection.state === "degraded" ||
                       connection.state === "reconnect_required" ? (
                       <button
