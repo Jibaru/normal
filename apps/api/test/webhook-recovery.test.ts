@@ -92,6 +92,15 @@ const makeHarness = (
                   "webhook-events/40000000-0000-4000-8000-000000000037",
                 uploadedAt: "2026-07-31T12:14:31.000Z",
               },
+              {
+                customMetadata: metadataFor({
+                  ...orphan,
+                  object_id: "40000000-0000-4000-8000-000000000038",
+                }),
+                objectKey:
+                  "webhook-events/40000000-0000-4000-8000-000000000038",
+                uploadedAt: "2026-07-31T12:14:30.000Z",
+              },
             ],
           };
         }),

@@ -132,12 +132,13 @@ export const handleWebhookIngressSweep = (
       let invalidObjectCount = 0;
       for (const object of listed.objects) {
         const message = messageFromObject(object);
-        if (message === null) {
+        const uploadedAtMilliseconds = Date.parse(object.uploadedAt);
+        if (message === null || !Number.isFinite(uploadedAtMilliseconds)) {
           invalidObjectCount += 1;
           continue;
         }
         if (
-          Date.parse(message.received_at) <=
+          uploadedAtMilliseconds <=
           observedAtMilliseconds - recoveryGraceMilliseconds
         ) {
           candidates.push(message);

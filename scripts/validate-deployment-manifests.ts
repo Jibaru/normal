@@ -116,11 +116,11 @@ for (const deployable of deployables) {
           `whatsapp-mcp-ingestion-dlq${environmentSuffix}` ||
         ingestion.max_retries !== 7 ||
         ingestion.retry_delay !== 10_800 ||
-        deadLetter?.max_retries !== 7 ||
+        deadLetter?.max_retries !== 100 ||
         deadLetter?.retry_delay !== 300
       ) {
         throw new Error(
-          `API ${configurationName} configuration must bound ingestion at seven three-hour retries and actively consume its DLQ.`,
+          `API ${configurationName} configuration must bound ingestion at seven three-hour retries and give active DLQ handling the maximum retry budget.`,
         );
       }
     }

@@ -718,8 +718,11 @@ source reference, marks it dead-lettered, and inserts one connection-scoped
 `processing_failure` Ingestion Gap beginning at the verified receipt time. A
 duplicate already completed by another delivery creates no false gap. Only
 after the transaction and the safe `webhook_event.dead_letter.completed`
-alert event succeed is the DLQ message acknowledged. The source ciphertext
-remains in R2 for the existing seven-day diagnostic and immutable-replay
-window. Recovery telemetry contains only bounded counts and normalized
-outcomes; it never contains object, tenant, connection, provider, payload,
-ciphertext, or key identifiers.
+alert event succeed is the DLQ message acknowledged. The DLQ consumer uses
+Cloudflare's maximum 100 retries at five-minute intervals, keeping failed gap
+recording eligible beyond the four-hour recovery objective rather than reusing
+the ingestion consumer's seven-retry exhaustion policy. The source ciphertext
+remains in R2 for the existing seven-day diagnostic and immutable-replay window.
+Recovery telemetry contains only bounded counts and normalized outcomes; it
+never contains object, tenant, connection, provider, payload, ciphertext, or
+key identifiers.

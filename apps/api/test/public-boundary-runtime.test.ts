@@ -724,15 +724,15 @@ describe("public-boundary Worker harness", () => {
     const objectsAfter = await env.WEBHOOK_INGRESS.list({
       prefix: "webhook-events/",
     });
-    const orphanKey = objectsAfter.objects.find(
+    const orphan = objectsAfter.objects.find(
       ({ key }) => !objectsBefore.objects.some((before) => before.key === key),
-    )?.key;
-    if (orphanKey === undefined) throw new Error("missing orphaned ingress");
-    const orphanId = orphanKey.slice("webhook-events/".length);
+    );
+    if (orphan === undefined) throw new Error("missing orphaned ingress");
+    const orphanId = orphan.key.slice("webhook-events/".length);
 
     const controller = createScheduledController({
       cron: "* * * * *",
-      scheduledTime: new Date("2026-01-02T03:09:00.000Z").valueOf(),
+      scheduledTime: orphan.uploaded.valueOf() + 60_000,
     });
     const context = createExecutionContext();
     await worker.scheduled?.(controller, env, context);
