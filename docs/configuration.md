@@ -11,9 +11,10 @@ request is accepted. Production roots accept only `development`, `preview`, or
 | `DATABASE_URL` | Secret | Database tooling that consumes `@whatsapp-mcp/db/config` | Issue a restricted Neon role URL, store it in the deployment secret store, and rotate it through Neon plus the deployment platform. API production traffic uses Hyperdrive instead. |
 | `MIGRATION_DATABASE_URL` | Secret | `bun run db:migrate` and `bun run db:check` | Obtain the direct, unpooled owner URL from the sensitive OpenTofu output. It must be a TLS Neon URL and must never be configured on a Worker or web deployable. Rotate it by rotating the Neon migration-owner password. |
 | `NEON_API_KEY` | Secret | OpenTofu Neon provider | Issue an organization-scoped automation key, keep it only in the infrastructure runner, and rotate it in Neon. |
-| `CLOUDFLARE_API_TOKEN` | Secret | OpenTofu Cloudflare provider and Wrangler | Scope it to Hyperdrive and the two Workers in the current environment's account. Rotate it in Cloudflare. |
+| `CLOUDFLARE_API_TOKEN` | Secret | OpenTofu Cloudflare provider and Wrangler | Scope it to the declared Workers, R2, KV, Queues, schedules, Hyperdrive, and API custom domain in the current environment's account. Rotate it in Cloudflare. |
 | `CLOUDFLARE_ACCOUNT_ID` | Sensitive identifier | Wrangler | Cloudflare account selected for Worker deployment. |
 | `CLOUDFLARE_HYPERDRIVE_ID` | Sensitive identifier | API Wrangler config renderer | Set from OpenTofu output `api_hyperdrive_id`; it is rendered into a mode-0600 generated config, not committed. |
+| `CLOUDFLARE_OAUTH_KV_ID` | Sensitive identifier | API Wrangler config renderer | Set from the sensitive `infra/compute` output `oauth_kv_namespace_id`; the renderer rejects a missing or malformed identifier. |
 | `CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID` | Sensitive identifier | API Wrangler config renderer | Set from OpenTofu output `webhook_hyperdrive_id`; it is rendered into a mode-0600 generated config, not committed. |
 | `AWS_KMS_REGION` | Non-secret | API | Must be exactly `us-east-1`, matching ADR 0013 and the KMS stack region. |
 | `KMS_CONTENT_ROOT_KEY_ARN` | Non-secret | API | The environment's `ContentRootKeyArn` CloudFormation output. The production root accepts only a `us-east-1` KMS key ARN. |
@@ -21,15 +22,22 @@ request is accepted. Production roots accept only `development`, `preview`, or
 | `AWS_SECRET_ACCESS_KEY` | Secret | API | Short-lived secret paired with `AWS_ACCESS_KEY_ID`; never log or commit it. |
 | `AWS_SESSION_TOKEN` | Secret | API | Required role-session token. Its absence prevents the API composition root from serving requests. |
 
-The API Worker receives `PROVIDER_CONTROL`, `HYPERDRIVE`, and
-`WEBHOOK_HYPERDRIVE` bindings. They are not string environment values and
-cannot be supplied by a public request. `/health` remains a non-sensitive
-liveness endpoint; every other API route passes the database readiness gate,
-and `/ready` returns unavailable unless `HYPERDRIVE` can report exactly the
-compiled schema version. Provider-control has no route or custom domain and has
-both `workers_dev` and preview URLs disabled, so the service binding is its only
-declared ingress. The API also disables generated Cloudflare hostnames and is
-public only on its declared custom domain.
+The API Worker receives `PROVIDER_CONTROL`, `HYPERDRIVE`,
+`WEBHOOK_HYPERDRIVE`, `OAUTH_KV`, `WEBHOOK_INGRESS`, `STORED_MEDIA`,
+`DELETION_MARKERS`, and the `INGESTION_QUEUE` producer binding. These are not
+string environment values and cannot be supplied by a public request. The
+production composition root fails closed when any required binding is absent
+or has the wrong runtime capability. `/health` remains a non-sensitive liveness
+endpoint; every other API route passes the database readiness gate, and
+`/ready` returns unavailable unless `HYPERDRIVE` can report exactly the compiled
+schema version.
+
+The API Worker is also the declared consumer for the ingestion Queue and its
+dead-letter Queue. It receives no DLQ producer binding. Provider-control has no
+KV, R2, Queue, route, or custom-domain authority and has both `workers_dev` and
+preview URLs disabled, so the service binding is its only declared ingress.
+The API also disables generated Cloudflare hostnames and is public only on its
+declared custom domain.
 
 The web production root requires `NEXT_PUBLIC_API_ORIGIN` to be a bare HTTPS
 origin with no credentials, path, query, or fragment. The Vercel manifest has
@@ -55,15 +63,35 @@ Provider and backend credentials are ambient only:
 
 | Value | Sensitivity | Scope |
 | --- | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | Secret | The current environment's account and only Workers Scripts read/write, custom-domain, and Hyperdrive permissions. |
+| `CLOUDFLARE_API_TOKEN` | Secret | The current environment's account and only the Worker, R2 bucket configuration, KV, Queue, schedule, custom-domain, and Hyperdrive permissions required by the declared plan. |
 | `VERCEL_API_TOKEN` | Secret | The current environment's Vercel team. |
 | AWS workload identity or short-lived credentials | Secret | The current environment's exact state object/lock and state KMS key. |
 
 Never pass provider credentials as OpenTofu variables or write them into a
 backend file. Cloudflare Worker bindings and Vercel environment values declared
-by the compute topology are non-secret. Future secret bindings must be populated
+by the compute topology are non-secret. Secret bindings must be populated
 through the platform secret stores, not through OpenTofu resource arguments
 that would serialize them into state.
+
+Each environment declares three separate R2 buckets. Encrypted Webhook Events
+expire after seven days and incomplete multipart uploads abort after one day.
+Stored Media has no blanket object-expiry rule because Message Retention Policy
+can be shorter or explicitly retain content until deletion; application
+retention jobs own object deletion, while incomplete multipart uploads still
+abort after one day. Deletion markers cover every object path with an
+indefinite bucket lock and the bucket is protected from OpenTofu destroy. All
+three explicitly disable the public `r2.dev` managed domain, declare no custom
+domain or CORS exposure, and are reachable only through the API Worker binding.
+
+The ingestion Queue retains unconsumed messages for seven days. Its consumer
+allows exactly seven retries and uses a three-hour default delay, giving the
+roughly 21-hour bound required by ADR 0005; ingestion code may select a jittered
+per-message delay inside that cap. Exhausted items move to the actively consumed
+DLQ, whose unconsumed retention is four days. API cron triggers run durable
+maintenance each minute, connection and webhook health reconciliation every
+five minutes, and retention/deletion cleanup hourly. Resource names use the
+deployment-environment suffix outside production so development, preview, and
+production never share state by name.
 
 OpenTofu variables `cloudflare_account_id` and `neon_org_id` for
 `infra/production` are supplied through an uncommitted variable file or

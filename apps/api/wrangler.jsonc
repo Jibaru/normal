@@ -10,6 +10,9 @@
     "enabled": true,
     "head_sampling_rate": 1
   },
+  "triggers": {
+    "crons": ["* * * * *", "*/5 * * * *", "0 * * * *"]
+  },
   "vars": {
     "AWS_KMS_REGION": "us-east-1",
     "DEPLOYMENT_ENVIRONMENT": "production"
@@ -20,9 +23,59 @@
       "service": "whatsapp-mcp-provider-control"
     }
   ],
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "replace-with-rendered-oauth-kv-id"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "WEBHOOK_INGRESS",
+      "bucket_name": "whatsapp-mcp-webhook-ingress"
+    },
+    {
+      "binding": "STORED_MEDIA",
+      "bucket_name": "whatsapp-mcp-stored-media"
+    },
+    {
+      "binding": "DELETION_MARKERS",
+      "bucket_name": "whatsapp-mcp-deletion-markers"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "INGESTION_QUEUE",
+        "queue": "whatsapp-mcp-ingestion"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "whatsapp-mcp-ingestion",
+        "dead_letter_queue": "whatsapp-mcp-ingestion-dlq",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 7,
+        "retry_delay": 10800,
+        "visibility_timeout_ms": 900000
+      },
+      {
+        "queue": "whatsapp-mcp-ingestion-dlq",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 7,
+        "retry_delay": 300,
+        "visibility_timeout_ms": 900000
+      }
+    ]
+  },
   "env": {
     "development": {
       "name": "whatsapp-mcp-api-development",
+      "triggers": {
+        "crons": ["* * * * *", "*/5 * * * *", "0 * * * *"]
+      },
       "vars": {
         "AWS_KMS_REGION": "us-east-1",
         "DEPLOYMENT_ENVIRONMENT": "development"
@@ -32,10 +85,60 @@
           "binding": "PROVIDER_CONTROL",
           "service": "whatsapp-mcp-provider-control-development"
         }
-      ]
+      ],
+      "kv_namespaces": [
+        {
+          "binding": "OAUTH_KV",
+          "id": "replace-with-rendered-oauth-kv-id"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "WEBHOOK_INGRESS",
+          "bucket_name": "whatsapp-mcp-webhook-ingress-development"
+        },
+        {
+          "binding": "STORED_MEDIA",
+          "bucket_name": "whatsapp-mcp-stored-media-development"
+        },
+        {
+          "binding": "DELETION_MARKERS",
+          "bucket_name": "whatsapp-mcp-deletion-markers-development"
+        }
+      ],
+      "queues": {
+        "producers": [
+          {
+            "binding": "INGESTION_QUEUE",
+            "queue": "whatsapp-mcp-ingestion-development"
+          }
+        ],
+        "consumers": [
+          {
+            "queue": "whatsapp-mcp-ingestion-development",
+            "dead_letter_queue": "whatsapp-mcp-ingestion-dlq-development",
+            "max_batch_size": 10,
+            "max_batch_timeout": 5,
+            "max_retries": 7,
+            "retry_delay": 10800,
+            "visibility_timeout_ms": 900000
+          },
+          {
+            "queue": "whatsapp-mcp-ingestion-dlq-development",
+            "max_batch_size": 10,
+            "max_batch_timeout": 5,
+            "max_retries": 7,
+            "retry_delay": 300,
+            "visibility_timeout_ms": 900000
+          }
+        ]
+      }
     },
     "preview": {
       "name": "whatsapp-mcp-api-preview",
+      "triggers": {
+        "crons": ["* * * * *", "*/5 * * * *", "0 * * * *"]
+      },
       "vars": {
         "AWS_KMS_REGION": "us-east-1",
         "DEPLOYMENT_ENVIRONMENT": "preview"
@@ -45,10 +148,60 @@
           "binding": "PROVIDER_CONTROL",
           "service": "whatsapp-mcp-provider-control-preview"
         }
-      ]
+      ],
+      "kv_namespaces": [
+        {
+          "binding": "OAUTH_KV",
+          "id": "replace-with-rendered-oauth-kv-id"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "WEBHOOK_INGRESS",
+          "bucket_name": "whatsapp-mcp-webhook-ingress-preview"
+        },
+        {
+          "binding": "STORED_MEDIA",
+          "bucket_name": "whatsapp-mcp-stored-media-preview"
+        },
+        {
+          "binding": "DELETION_MARKERS",
+          "bucket_name": "whatsapp-mcp-deletion-markers-preview"
+        }
+      ],
+      "queues": {
+        "producers": [
+          {
+            "binding": "INGESTION_QUEUE",
+            "queue": "whatsapp-mcp-ingestion-preview"
+          }
+        ],
+        "consumers": [
+          {
+            "queue": "whatsapp-mcp-ingestion-preview",
+            "dead_letter_queue": "whatsapp-mcp-ingestion-dlq-preview",
+            "max_batch_size": 10,
+            "max_batch_timeout": 5,
+            "max_retries": 7,
+            "retry_delay": 10800,
+            "visibility_timeout_ms": 900000
+          },
+          {
+            "queue": "whatsapp-mcp-ingestion-dlq-preview",
+            "max_batch_size": 10,
+            "max_batch_timeout": 5,
+            "max_retries": 7,
+            "retry_delay": 300,
+            "visibility_timeout_ms": 900000
+          }
+        ]
+      }
     },
     "production": {
       "name": "whatsapp-mcp-api",
+      "triggers": {
+        "crons": ["* * * * *", "*/5 * * * *", "0 * * * *"]
+      },
       "vars": {
         "AWS_KMS_REGION": "us-east-1",
         "DEPLOYMENT_ENVIRONMENT": "production"
@@ -58,7 +211,54 @@
           "binding": "PROVIDER_CONTROL",
           "service": "whatsapp-mcp-provider-control"
         }
-      ]
+      ],
+      "kv_namespaces": [
+        {
+          "binding": "OAUTH_KV",
+          "id": "replace-with-rendered-oauth-kv-id"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "WEBHOOK_INGRESS",
+          "bucket_name": "whatsapp-mcp-webhook-ingress"
+        },
+        {
+          "binding": "STORED_MEDIA",
+          "bucket_name": "whatsapp-mcp-stored-media"
+        },
+        {
+          "binding": "DELETION_MARKERS",
+          "bucket_name": "whatsapp-mcp-deletion-markers"
+        }
+      ],
+      "queues": {
+        "producers": [
+          {
+            "binding": "INGESTION_QUEUE",
+            "queue": "whatsapp-mcp-ingestion"
+          }
+        ],
+        "consumers": [
+          {
+            "queue": "whatsapp-mcp-ingestion",
+            "dead_letter_queue": "whatsapp-mcp-ingestion-dlq",
+            "max_batch_size": 10,
+            "max_batch_timeout": 5,
+            "max_retries": 7,
+            "retry_delay": 10800,
+            "visibility_timeout_ms": 900000
+          },
+          {
+            "queue": "whatsapp-mcp-ingestion-dlq",
+            "max_batch_size": 10,
+            "max_batch_timeout": 5,
+            "max_retries": 7,
+            "retry_delay": 300,
+            "visibility_timeout_ms": 900000
+          }
+        ]
+      }
     }
   }
 }

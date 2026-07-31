@@ -18,6 +18,29 @@ output "provider_control_service" {
   value       = cloudflare_worker.provider_control.name
 }
 
+output "oauth_kv_namespace_id" {
+  description = "OAuth KV namespace identifier consumed by the API Wrangler config renderer."
+  value       = cloudflare_workers_kv_namespace.oauth.id
+  sensitive   = true
+}
+
+output "r2_bucket_names" {
+  description = "Private R2 buckets bound only to the API Worker."
+  value = {
+    deletion_markers = cloudflare_r2_bucket.deletion_markers.name
+    stored_media     = cloudflare_r2_bucket.stored_media.name
+    webhook_ingress  = cloudflare_r2_bucket.webhook_ingress.name
+  }
+}
+
+output "queue_names" {
+  description = "Ingestion Queue and its actively consumed dead-letter Queue."
+  value = {
+    dead_letter = cloudflare_queue.dead_letter.queue_name
+    ingestion   = cloudflare_queue.ingestion.queue_name
+  }
+}
+
 output "vercel_project_id" {
   description = "Vercel project identifier used by the explicit web deployment."
   value       = vercel_project.web.id

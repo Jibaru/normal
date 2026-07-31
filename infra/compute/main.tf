@@ -3,8 +3,139 @@ locals {
   api_worker_name              = "whatsapp-mcp-api${local.environment_suffix}"
   provider_control_worker_name = "whatsapp-mcp-provider-control${local.environment_suffix}"
   web_project_name             = "whatsapp-mcp-web${local.environment_suffix}"
+  webhook_ingress_bucket_name  = "whatsapp-mcp-webhook-ingress${local.environment_suffix}"
+  stored_media_bucket_name     = "whatsapp-mcp-stored-media${local.environment_suffix}"
+  deletion_markers_bucket_name = "whatsapp-mcp-deletion-markers${local.environment_suffix}"
+  oauth_kv_namespace_name      = "whatsapp-mcp-oauth${local.environment_suffix}"
+  ingestion_queue_name         = "whatsapp-mcp-ingestion${local.environment_suffix}"
+  dead_letter_queue_name       = "whatsapp-mcp-ingestion-dlq${local.environment_suffix}"
   api_bundle_path              = abspath("${path.root}/../../apps/api/dist/index.js")
   provider_control_bundle_path = abspath("${path.root}/../../apps/provider-control/dist/index.js")
+}
+
+resource "cloudflare_r2_bucket" "webhook_ingress" {
+  account_id    = var.cloudflare_account_id
+  name          = local.webhook_ingress_bucket_name
+  storage_class = "Standard"
+}
+
+resource "cloudflare_r2_bucket_lifecycle" "webhook_ingress" {
+  account_id  = var.cloudflare_account_id
+  bucket_name = cloudflare_r2_bucket.webhook_ingress.name
+
+  rules = [{
+    id      = "expire-encrypted-webhook-events"
+    enabled = true
+    conditions = {
+      prefix = ""
+    }
+    abort_multipart_uploads_transition = {
+      condition = {
+        max_age = 86400
+        type    = "Age"
+      }
+    }
+    delete_objects_transition = {
+      condition = {
+        max_age = 604800
+        type    = "Age"
+      }
+    }
+  }]
+}
+
+resource "cloudflare_r2_bucket" "stored_media" {
+  account_id    = var.cloudflare_account_id
+  name          = local.stored_media_bucket_name
+  storage_class = "Standard"
+}
+
+resource "cloudflare_r2_bucket_lifecycle" "stored_media" {
+  account_id  = var.cloudflare_account_id
+  bucket_name = cloudflare_r2_bucket.stored_media.name
+
+  rules = [{
+    id      = "abort-incomplete-stored-media-uploads"
+    enabled = true
+    conditions = {
+      prefix = ""
+    }
+    abort_multipart_uploads_transition = {
+      condition = {
+        max_age = 86400
+        type    = "Age"
+      }
+    }
+  }]
+}
+
+resource "cloudflare_r2_bucket" "deletion_markers" {
+  account_id    = var.cloudflare_account_id
+  name          = local.deletion_markers_bucket_name
+  storage_class = "Standard"
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "cloudflare_r2_bucket_lock" "deletion_markers" {
+  account_id  = var.cloudflare_account_id
+  bucket_name = cloudflare_r2_bucket.deletion_markers.name
+
+  rules = [{
+    id      = "retain-deletion-markers"
+    enabled = true
+    prefix  = ""
+    condition = {
+      type = "Indefinite"
+    }
+  }]
+}
+
+resource "cloudflare_r2_managed_domain" "webhook_ingress" {
+  account_id  = var.cloudflare_account_id
+  bucket_name = cloudflare_r2_bucket.webhook_ingress.name
+  enabled     = false
+}
+
+resource "cloudflare_r2_managed_domain" "stored_media" {
+  account_id  = var.cloudflare_account_id
+  bucket_name = cloudflare_r2_bucket.stored_media.name
+  enabled     = false
+}
+
+resource "cloudflare_r2_managed_domain" "deletion_markers" {
+  account_id  = var.cloudflare_account_id
+  bucket_name = cloudflare_r2_bucket.deletion_markers.name
+  enabled     = false
+}
+
+resource "cloudflare_workers_kv_namespace" "oauth" {
+  account_id = var.cloudflare_account_id
+  title      = local.oauth_kv_namespace_name
+}
+
+resource "cloudflare_queue" "ingestion" {
+  account_id = var.cloudflare_account_id
+  queue_name = local.ingestion_queue_name
+
+  settings = {
+    delivery_delay           = 0
+    delivery_paused          = false
+    message_retention_period = 604800
+  }
+}
+
+resource "cloudflare_queue" "dead_letter" {
+  account_id = var.cloudflare_account_id
+  queue_name = local.dead_letter_queue_name
+
+  settings = {
+    delivery_delay           = 0
+    delivery_paused          = false
+    message_retention_period = 345600
+  }
 }
 
 resource "cloudflare_worker" "provider_control" {
@@ -116,6 +247,31 @@ resource "cloudflare_worker_version" "api" {
       type = "plain_text"
     },
     {
+      name         = "OAUTH_KV"
+      namespace_id = cloudflare_workers_kv_namespace.oauth.id
+      type         = "kv_namespace"
+    },
+    {
+      bucket_name = cloudflare_r2_bucket.webhook_ingress.name
+      name        = "WEBHOOK_INGRESS"
+      type        = "r2_bucket"
+    },
+    {
+      bucket_name = cloudflare_r2_bucket.stored_media.name
+      name        = "STORED_MEDIA"
+      type        = "r2_bucket"
+    },
+    {
+      bucket_name = cloudflare_r2_bucket.deletion_markers.name
+      name        = "DELETION_MARKERS"
+      type        = "r2_bucket"
+    },
+    {
+      name       = "INGESTION_QUEUE"
+      queue_name = cloudflare_queue.ingestion.queue_name
+      type       = "queue"
+    },
+    {
       name    = "PROVIDER_CONTROL"
       service = cloudflare_worker.provider_control.name
       type    = "service"
@@ -136,6 +292,54 @@ resource "cloudflare_workers_deployment" "api" {
       version_id = cloudflare_worker_version.api.id
     }
   ]
+}
+
+resource "cloudflare_queue_consumer" "ingestion" {
+  account_id        = var.cloudflare_account_id
+  queue_id          = cloudflare_queue.ingestion.queue_id
+  script_name       = cloudflare_worker.api.name
+  type              = "worker"
+  dead_letter_queue = cloudflare_queue.dead_letter.queue_name
+
+  settings = {
+    batch_size            = 10
+    max_retries           = 7
+    max_wait_time_ms      = 5000
+    retry_delay           = 10800
+    visibility_timeout_ms = 900000
+  }
+
+  depends_on = [cloudflare_workers_deployment.api]
+}
+
+resource "cloudflare_queue_consumer" "dead_letter" {
+  account_id  = var.cloudflare_account_id
+  queue_id    = cloudflare_queue.dead_letter.queue_id
+  script_name = cloudflare_worker.api.name
+  type        = "worker"
+
+  settings = {
+    batch_size            = 10
+    max_retries           = 7
+    max_wait_time_ms      = 5000
+    retry_delay           = 300
+    visibility_timeout_ms = 900000
+  }
+
+  depends_on = [cloudflare_workers_deployment.api]
+}
+
+resource "cloudflare_workers_cron_trigger" "api" {
+  account_id  = var.cloudflare_account_id
+  script_name = cloudflare_worker.api.name
+
+  schedules = [
+    { cron = "* * * * *" },
+    { cron = "*/5 * * * *" },
+    { cron = "0 * * * *" },
+  ]
+
+  depends_on = [cloudflare_workers_deployment.api]
 }
 
 resource "cloudflare_workers_custom_domain" "api" {
