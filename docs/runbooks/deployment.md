@@ -16,9 +16,14 @@
 - Short-lived `NEON_API_KEY`, `CLOUDFLARE_API_TOKEN`, `VERCEL_API_TOKEN`, and
   AWS credentials for exactly the environment being changed
 
-No Clerk tenant or Wasender account is required for this foundation. The API
-does require its environment-specific AWS KMS stack and short-lived
-`ContentRuntimeRole` credentials before it becomes healthy.
+No Clerk tenant or Wasender account is required to build and verify the
+source-controlled platform. A real Directory smoke check additionally requires
+one vendor-approved Wasender account and one connected non-production WhatsApp
+Connection whose session API key is stored through the normal envelope-
+encrypted connection-authority path. Never substitute a PAT, committed key, or
+production-selectable fake. The API requires its environment-specific AWS KMS
+stack and short-lived `ContentRuntimeRole` credentials before it becomes
+healthy.
 
 Production authority must not be available to development or preview jobs.
 Use a separate production Cloudflare account and Vercel team, and a separate
@@ -281,6 +286,15 @@ Verify provider-control through the API's service binding from an authenticated
 operator canary once that endpoint is introduced; do not enable `workers.dev`
 or preview URLs for provider-control.
 
+When the authenticated Directory workflow is available, perform its provider
+smoke check with a non-production WhatsApp Connection containing a reviewed
+empty or disposable contact/group set. Confirm one contacts read and one groups
+read succeed, telemetry contains only operation class, normalized outcome,
+attempt count, duration, and bounded byte counts, and no session credential,
+JID, full phone number, name, response body, or URL appears in Worker logs.
+Remove the disposable connection through the normal Connection Deletion flow;
+do not print or pass its session API key on a command line.
+
 ## Rollback
 
 Vercel uses immutable deployment history. Worker rollback is a reviewed
@@ -307,6 +321,13 @@ accounts/zones, Vercel teams, state buckets/KMS keys, provider tokens, domain
 ownership, and DNS approval. These values are intentionally absent from source.
 No code substitution, fake provider, public provider-control route, or
 production fallback is needed when the external values become available.
+
+External onboarding and any live Directory rollout remain gated on the written
+Wasender terms required by ADR 0004, including approved capacity, data
+processing and subprocessors, deletion and backup erasure, security controls,
+webhook authentication, and retry behavior. The real adapter remains in the
+production bundle while that business gate is closed; do not route production
+traffic to a test Layer or alternate origin.
 
 Roll application code back without rolling back, replacing, disabling, or
 deleting either KMS key.

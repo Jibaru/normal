@@ -21,6 +21,15 @@ request is accepted. Production roots accept only `development`, `preview`, or
 | `AWS_SECRET_ACCESS_KEY` | Secret | API | Short-lived secret paired with `AWS_ACCESS_KEY_ID`; never log or commit it. |
 | `AWS_SESSION_TOKEN` | Secret | API | Required role-session token. Its absence prevents the API composition root from serving requests. |
 
+Wasender Directory reads do not add a platform-wide environment secret. The
+owning API workflow decrypts the selected WhatsApp Connection's envelope-
+encrypted session authority only for the duration of that connection-scoped
+operation and constructs `makeWasenderSessionDirectory` with the resulting
+redacted value. The constructor rejects empty, oversized, or control-character
+authority values before network access. Its provider origin is fixed in the
+production adapter, so configuration cannot redirect credentials to another
+host or select a fake implementation.
+
 The API Worker receives `PROVIDER_CONTROL`, `HYPERDRIVE`, and
 `WEBHOOK_HYPERDRIVE` bindings. They are not string environment values and
 cannot be supplied by a public request. `/health` remains a non-sensitive

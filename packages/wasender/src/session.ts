@@ -27,6 +27,8 @@ export type GroupLocator = AdapterReference<"GroupLocator">;
 export type MediaSource = ProtectedAdapterValue<"MediaSource">;
 export type StableMessageIdentity = AdapterReference<"StableMessageIdentity">;
 export type RecipientLocator = ContactLocator | GroupLocator;
+export type DirectorySessionAuthority =
+  ProtectedAdapterValue<"SessionAuthority">;
 
 export interface DirectoryContact {
   readonly active: boolean;
@@ -229,3 +231,9 @@ export const guardedMediaDownloadPolicy = {
   operationClass: "media-download",
   reconciliation: "restart-from-byte-zero",
 } as const;
+
+export {
+  makeWasenderSessionDirectory,
+  type WasenderDirectoryTelemetryEvent,
+  type WasenderSessionDirectoryConfig,
+} from "./directory";

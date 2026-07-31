@@ -11,8 +11,10 @@ Effect capabilities:
 - `WebhookNormalization` turns one authenticated delivery into independently
   processable provider-neutral items.
 
-Production implementations arrive in issues 12 through 16. This contract does
-not add network access, configuration, credentials, or a selectable fake.
+The real Directory implementation is exported as
+`makeWasenderSessionDirectory` from `@whatsapp-mcp/wasender/session`. The other
+production implementations arrive in issues 12 and 14 through 16. This
+contract does not add runtime provider selection or a selectable fake.
 The production lifecycle Layer will close over the account-level Provider API
 Credential, which is never a capability input or output. Newly provisioned
 per-session authority is returned only as a log-safe `Redacted` value so the
@@ -69,3 +71,40 @@ Adapter telemetry may contain only the operation class, normalized outcome,
 attempt count, duration, and bounded byte counts. It never contains capability
 inputs or outputs, message text, full phone numbers, opaque references,
 encrypted adapter values, raw response data, URLs, or credentials.
+
+## Wasender Directory implementation
+
+The production Directory adapter calls Wasender's documented paginated
+`GET /api/contacts` and `GET /api/groups` endpoints at the fixed
+`https://www.wasenderapi.com` origin. It closes over exactly one redacted
+session API key and sends that value only as the Bearer credential for those
+per-session requests. No account-level PAT is accepted by the constructor or
+read methods.
+
+Each HTTP body and the aggregate normalized observation are limited to the
+safe-read 1 MiB bound. The adapter validates the documented success envelope,
+item shapes, and pagination evidence before normalizing names, available phone
+numbers, and current membership. Provider JIDs, profile URLs, statuses, and
+other provider-only fields are discarded. Recipient locators are stable,
+authenticated sealed values derived within the per-session adapter; the raw
+JID is not the locator runtime value and does not cross the seam.
+
+An observation is `complete` and fresh only after every provider-declared page
+fits within the three-attempt, 25-second operation budget and passes validation.
+If at least one page is valid but a later page fails, exceeds the aggregate
+bound, or cannot fit in that budget, the available entries are returned as a
+`partial`, stale observation. A failure before any trustworthy page, or an
+authentication or integrity failure on any page, fails the Effect with the
+closed provider-neutral classification. This uses only evidence Wasender
+actually supplies and does not claim provider-certified completeness.
+
+The reviewed fixtures reflect Wasender's contacts and groups documentation as
+observed on 2026-07-30: paginated responses use `data.items` plus
+`data.pagination` with `total`, `page`, `limit`, and `totalPages`. Because the
+vendor does not publish a Directory snapshot timestamp, `observedAt` records
+the local receipt time of the latest validated page. A later reconciliation
+persists and compares that observation under the domain's projection rules.
+No infrastructure binding or platform-wide provider secret is added: ordinary
+Directory egress stays in the public API Worker and per-session authority stays
+in the existing connection-key envelope boundary required by ADRs 0002, 0004,
+and 0007.
