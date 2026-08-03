@@ -26,7 +26,10 @@ import { makePgGroupRepository } from "@whatsapp-mcp/db/group";
 import { makePgMcpAuthorizationRepository } from "@whatsapp-mcp/db/mcp-authorization";
 import { makePgMcpToolRepository } from "@whatsapp-mcp/db/mcp-tool";
 import { makePgPersonalAccountRepository } from "@whatsapp-mcp/db/personal-account";
-import { makePgAtomicSendRepositoryFromConnectionString } from "@whatsapp-mcp/db/send";
+import {
+  type AtomicSendRepository,
+  makePgAtomicSendRepositoryFromConnectionString,
+} from "@whatsapp-mcp/db/send";
 import { makePgWebhookEventRepository } from "@whatsapp-mcp/db/webhook-event";
 import { makePgWebhookIngressRepository } from "@whatsapp-mcp/db/webhook-ingress";
 import { makePgWebhookReplayRepository } from "@whatsapp-mcp/db/webhook-replay";
@@ -2497,6 +2500,9 @@ export const createProductionScheduledHandler =
       readonly makeRepository?: (
         connectionString: string,
       ) => ConnectionSetupScheduledRepository;
+      readonly makeSendRepository?: (
+        connectionString: string,
+      ) => Pick<AtomicSendRepository, "expireLeases">;
       readonly now?: () => string;
       readonly retainWebhookSources?: (observedAt: string) => Promise<void>;
       readonly sweepWebhookIngress?: (observedAt: string) => Promise<void>;
@@ -2674,6 +2680,17 @@ export const createProductionScheduledHandler =
       dependencies.makeRepository ?? makePgConnectionSetupRepository
     )(connectionString);
     const observedAt = new Date(controller.scheduledTime).toISOString();
+    const expiredSendCount = await (
+      dependencies.makeSendRepository ??
+      makePgAtomicSendRepositoryFromConnectionString
+    )(connectionString).expireLeases(new Date(observedAt));
+    Effect.runSync(
+      safeTelemetry.emit({
+        event: "send.dispatch_lease.sweep_completed",
+        expiredCount: expiredSendCount,
+        service: "api",
+      }),
+    );
     let webhookRecoveryFailure: unknown;
     try {
       await (

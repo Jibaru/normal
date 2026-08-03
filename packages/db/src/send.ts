@@ -88,6 +88,7 @@ export interface AtomicSendRepository {
     },
     encrypt: (material: SendEncryptionMaterial) => Promise<SendCiphertext>,
   ) => Promise<CommitSendResult>;
+  readonly expireLeases: (observedAt: Date) => Promise<number>;
   readonly recordProviderOutcome: (input: {
     readonly changedAt: Date;
     readonly sendId: string;
@@ -456,6 +457,17 @@ export const makePgAtomicSendRepository = (
         throw error;
       }
     }),
+  expireLeases: (observedAt) =>
+    provider.withConnection(async (connection) => {
+      const result = await connection.query<{ expired_count: unknown }>(
+        "SELECT app_private.expire_send_dispatch_leases($1) AS expired_count",
+        [observedAt],
+      );
+      const count = Number(result.rows[0]?.expired_count);
+      if (!Number.isSafeInteger(count) || count < 0)
+        throw new Error("invalid expired send lease count");
+      return count;
+    }),
   recordProviderOutcome: (input) =>
     provider.withConnection(async (connection) => {
       await connection.query("BEGIN");
@@ -474,14 +486,32 @@ export const makePgAtomicSendRepository = (
       );
       const result = await connection.query<Record<string, unknown>>(
         `UPDATE app.send_operations SET status=$2,status_changed_at=$3
-         WHERE id=$1 RETURNING *`,
+         WHERE id=$1 AND status='processing' AND $3::timestamptz < lease_expires_at
+         RETURNING *`,
         [input.sendId, input.status, input.changedAt],
       );
-      if (result.rows[0] === undefined) {
+      const operation =
+        result.rows[0] ??
+        (
+          await connection.query<Record<string, unknown>>(
+            `UPDATE app.send_operations
+             SET status='unknown',status_changed_at=lease_expires_at
+             WHERE id=$1 AND status='processing' AND lease_expires_at <= $2
+             RETURNING *`,
+            [input.sendId, input.changedAt],
+          )
+        ).rows[0] ??
+        (
+          await connection.query<Record<string, unknown>>(
+            "SELECT * FROM app.send_operations WHERE id=$1 FOR UPDATE",
+            [input.sendId],
+          )
+        ).rows[0];
+      if (operation === undefined) {
         await connection.query("ROLLBACK");
         throw new Error("send operation unavailable");
       }
-      if (input.status === "failed") {
+      if (result.rows[0] !== undefined && input.status === "failed") {
         await connection.query(
           "DELETE FROM app.pending_send_contents WHERE send_operation_id=$1",
           [input.sendId],
@@ -504,7 +534,7 @@ export const makePgAtomicSendRepository = (
       } catch {
         await connection.query("ROLLBACK");
       }
-      return receipt(result.rows[0]);
+      return receipt(operation);
     }),
 });
 

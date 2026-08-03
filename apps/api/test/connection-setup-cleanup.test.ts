@@ -254,6 +254,7 @@ describe("Connection Setup cleanup saga", () => {
     const batches: Array<ReadonlyArray<{ readonly body: unknown }>> = [];
     const observed: Array<string> = [];
     const sweepObserved: string[] = [];
+    const sendLeaseSweeps: Date[] = [];
     const handler = createProductionScheduledHandler(
       {
         CONNECTION_SETUP_PROVISIONING_QUEUE: {
@@ -275,6 +276,12 @@ describe("Connection Setup cleanup saga", () => {
           listCleanupCandidates: async () => [setupId],
           listProvisioningCandidates: async () => [],
         }),
+        makeSendRepository: () => ({
+          expireLeases: async (value) => {
+            sendLeaseSweeps.push(value);
+            return 2;
+          },
+        }),
         sweepWebhookIngress: async (value) => {
           sweepObserved.push(value);
         },
@@ -288,6 +295,7 @@ describe("Connection Setup cleanup saga", () => {
 
     expect(observed).toEqual(["2026-07-31T12:15:00.000Z"]);
     expect(sweepObserved).toEqual(["2026-07-31T12:15:00.000Z"]);
+    expect(sendLeaseSweeps).toEqual([new Date("2026-07-31T12:15:00.000Z")]);
     expect(batches).toEqual([
       [
         {

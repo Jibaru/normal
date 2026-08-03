@@ -304,6 +304,12 @@ export interface ProviderTextSendCompletedEvent {
   readonly service: "api";
 }
 
+export interface SendDispatchLeaseSweepCompletedEvent {
+  readonly event: "send.dispatch_lease.sweep_completed";
+  readonly expiredCount: number;
+  readonly service: "api";
+}
+
 export interface SafeTelemetry {
   readonly emit: (event: SafeTelemetryEvent) => Effect.Effect<void>;
 }
@@ -330,6 +336,7 @@ export type SafeTelemetryEvent =
   | PersonalAccountBootstrapCompletedEvent
   | ProviderDirectoryCompletedEvent
   | ProviderTextSendCompletedEvent
+  | SendDispatchLeaseSweepCompletedEvent
   | StoredMediaContainerEvent
   | WebhookEventDeadLetterCompletedEvent
   | WebhookEventReplayCompletedEvent

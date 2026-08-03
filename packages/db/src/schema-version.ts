@@ -1,1 +1,1 @@
-export const EXPECTED_SCHEMA_VERSION = 25;
+export const EXPECTED_SCHEMA_VERSION = 26;

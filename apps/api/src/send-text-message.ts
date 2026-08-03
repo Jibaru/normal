@@ -116,7 +116,7 @@ export const makeAtomicSendTextMessageService = (
   options: AtomicSendServiceOptions,
 ): SendTextMessageService => ({
   send: (input) =>
-    Effect.promise(async (): Promise<SendTextMessageResult> => {
+    Effect.tryPromise(async (): Promise<SendTextMessageResult> => {
       const observedAt = options.now();
       const send = options.nextSend();
       const requestFingerprint = await fingerprint(options.fingerprintKey, {

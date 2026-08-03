@@ -431,6 +431,44 @@ describe("MCP tool repository", () => {
       { error_code: null, outcome: "success", quota_reserved: false },
       { error_code: null, outcome: "success", quota_reserved: false },
     ]);
+
+    await expect(
+      sends.recordProviderOutcome({
+        changedAt: new Date(observedAt.valueOf() + 15_000),
+        sendId: input.sendId,
+        status: "accepted",
+      }),
+    ).resolves.toMatchObject({ status: "accepted" });
+  });
+
+  test("atomically expires unresolved leases and rejects late direct responses", async () => {
+    await database.query(
+      `INSERT INTO app.tool_call_logs (id,personal_account_id,mcp_authorization_id,tool_name,started_at,outcome,quota_reserved,expires_at)
+       VALUES ('50000000-0000-4000-8000-000000000089',$1,$2,'send_text_message',$3,'started',true,$3::timestamptz+interval '90 days')`,
+      [accountId, authorizationId, observedAt],
+    );
+    await database.query(
+      `INSERT INTO app.send_operations (id,public_id,personal_account_id,mcp_authorization_id,tool_call_log_id,whatsapp_connection_id,recipient_type,recipient_public_id,status,created_at,status_changed_at,attempt_claimed_at,lease_expires_at,expires_at)
+       VALUES ('60000000-0000-4000-8000-000000000089','snd_123456789012345678929',$1,$2,'50000000-0000-4000-8000-000000000089','20000000-0000-4000-8000-000000000030','contact','ctc_123456789012345678930','processing',$3,$3,$3,$3::timestamptz+interval '30 seconds',$3::timestamptz+interval '90 days')`,
+      [accountId, authorizationId, observedAt],
+    );
+
+    await expect(
+      sends.expireLeases(new Date(observedAt.valueOf() + 30_000)),
+    ).resolves.toBe(1);
+    await expect(
+      sends.recordProviderOutcome({
+        changedAt: new Date(observedAt.valueOf() + 31_000),
+        sendId: "60000000-0000-4000-8000-000000000089",
+        status: "accepted",
+      }),
+    ).resolves.toMatchObject({ status: "unknown" });
+    await expect(
+      sends.expireLeases(new Date(observedAt.valueOf() + 60_000)),
+    ).resolves.toBe(0);
+    await expect(
+      sends.expireLeases(new Date(Date.now() + 120_000)),
+    ).rejects.toThrow("send dispatch lease sweep cutoff is in the future");
   });
 
   test("atomically audits rate-limit rejection without another reservation", async () => {

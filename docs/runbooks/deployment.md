@@ -945,10 +945,13 @@ same connection and HMAC-protected stable message identity.
 
 If a Worker terminates after the durable transaction but before a complete
 provider response is recorded, allow the 30-second dispatch lease to expire.
-The next exact replay observes `unknown` and must not dispatch. Do not delete a
-Send Operation, idempotency binding, fingerprint, lease, or quota reservation
-to force a retry. A post-attempt Tool Call Log update failure is investigated
-as audit degradation; the Send Operation remains authoritative.
+The minute schedule atomically changes unresolved operations to `unknown`; an
+exact replay can perform the same convergence before the schedule runs and
+must never dispatch. Monitor `send.dispatch_lease.sweep_completed` by its count
+only; a sustained nonzero count indicates interrupted or overlong attempts.
+Do not delete a Send Operation, idempotency binding, fingerprint, lease, or
+quota reservation to force a retry. A post-attempt Tool Call Log update failure
+is investigated as audit degradation; the Send Operation remains authoritative.
 
 During the send smoke check, repeat the exact authorization, Connection,
 WhatsApp Recipient, text bytes, and idempotency key after marking the test

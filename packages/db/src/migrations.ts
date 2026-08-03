@@ -277,6 +277,17 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 25,
   },
+  {
+    name: "contained send dispatch leases",
+    sql: await readFile(
+      new NodeUrl(
+        "../migrations/0026_send_dispatch_leases.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    version: 26,
+  },
 ];
 
 const checksum = (sql: string): string =>

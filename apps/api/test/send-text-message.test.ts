@@ -73,6 +73,7 @@ describe("atomic send workflow", () => {
           },
         };
       },
+      expireLeases: vi.fn(),
       recordProviderOutcome: async ({ status }) => {
         order.push("record-outcome");
         return {
@@ -176,6 +177,7 @@ describe("atomic send workflow", () => {
           },
         };
       },
+      expireLeases: vi.fn(),
       recordProviderOutcome: vi.fn(),
     };
     const encryption: EnvelopeEncryption = {
@@ -215,6 +217,204 @@ describe("atomic send workflow", () => {
     });
     expect(providerAttempt).not.toHaveBeenCalled();
     expect(repository.recordProviderOutcome).not.toHaveBeenCalled();
+  });
+
+  test("distinguishes a crash before the durable boundary from one after it", async () => {
+    const encryption: EnvelopeEncryption = {
+      createConnectionKey: () => Effect.die("unused"),
+      createPersonalAccountKey: () => Effect.die("unused"),
+      decrypt: ({ context }) =>
+        Effect.succeed(
+          new TextEncoder().encode(
+            context.fieldOrObjectPurpose === "webhook-identity-key"
+              ? "x".repeat(32)
+              : context.fieldOrObjectPurpose === "provider-session-authority"
+                ? "session-authority"
+                : "15551234567@s.whatsapp.net",
+          ),
+        ),
+      encrypt: () =>
+        Effect.succeed({
+          ciphertext: btoa("encrypted-pending-content"),
+          keyVersion: 1,
+          nonce: btoa(String.fromCharCode(...new Uint8Array(12))),
+          version: 1,
+        }),
+    };
+    const baseOptions = {
+      encryption,
+      fingerprintKey: await importSendFingerprintKey("47".repeat(32)),
+      hourRequestLimit: 600,
+      minuteRequestLimit: 60,
+      nextAuditLogId: () => "50000000-0000-4000-8000-000000000049",
+      nextSend: () => ({
+        id: "60000000-0000-4000-8000-000000000049",
+        publicId: "snd_123456789012345678949",
+      }),
+      now: () => new Date("2026-08-03T12:00:01.000Z"),
+      sendDailyLimit: 200,
+      sendPerMinuteLimit: 10,
+      telemetry: () => undefined,
+    };
+    const providerAttempt = vi.fn(async () => {
+      throw new Error("worker crashed after dispatch");
+    });
+    vi.stubGlobal("fetch", providerAttempt);
+    const beforeBoundary: AtomicSendRepository = {
+      commit: async () => {
+        throw new Error("transaction rolled back");
+      },
+      expireLeases: vi.fn(),
+      recordProviderOutcome: vi.fn(),
+    };
+    await expect(
+      Effect.runPromise(
+        makeAtomicSendTextMessageService({
+          ...baseOptions,
+          repository: beforeBoundary,
+        }).send(input),
+      ),
+    ).resolves.toEqual({ outcome: "service_unavailable" });
+    expect(providerAttempt).not.toHaveBeenCalled();
+
+    const recordProviderOutcome = vi.fn(async ({ status }) => ({
+      createdAt: new Date("2026-08-03T12:00:00.000Z"),
+      publicId: "snd_123456789012345678949",
+      status,
+      statusChangedAt: new Date("2026-08-03T12:00:01.000Z"),
+    }));
+    const afterBoundary: AtomicSendRepository = {
+      commit: async () => ({
+        outcome: "created",
+        provider: {
+          ...material,
+          authority: protectedValue("session-authority"),
+          identityKey: protectedValue("x".repeat(32)),
+          recipient: protectedValue("15551234567@s.whatsapp.net"),
+          recipientRecordId: `di1_${"B".repeat(43)}`,
+          recipientType: "contact",
+        },
+        receipt: {
+          createdAt: new Date("2026-08-03T12:00:00.000Z"),
+          publicId: "snd_123456789012345678949",
+          status: "processing",
+          statusChangedAt: new Date("2026-08-03T12:00:00.000Z"),
+        },
+      }),
+      expireLeases: vi.fn(),
+      recordProviderOutcome,
+    };
+    await expect(
+      Effect.runPromise(
+        makeAtomicSendTextMessageService({
+          ...baseOptions,
+          repository: afterBoundary,
+        }).send(input),
+      ),
+    ).resolves.toMatchObject({
+      outcome: "receipt",
+      receipt: { status: "unknown" },
+    });
+    expect(providerAttempt).toHaveBeenCalledTimes(1);
+    expect(recordProviderOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "unknown" }),
+    );
+  });
+
+  test("returns high-concurrency replays while one timed provider attempt is in flight", async () => {
+    const providerStarted = Promise.withResolvers<void>();
+    const releaseProvider = Promise.withResolvers<void>();
+    const operationReceipt = {
+      createdAt: new Date("2026-08-03T12:00:00.000Z"),
+      publicId: "snd_123456789012345678947",
+      status: "processing" as const,
+      statusChangedAt: new Date("2026-08-03T12:00:00.000Z"),
+    };
+    let committed = false;
+    const repository: AtomicSendRepository = {
+      commit: async () => {
+        if (committed)
+          return { outcome: "replay" as const, receipt: operationReceipt };
+        committed = true;
+        return {
+          outcome: "created" as const,
+          provider: {
+            ...material,
+            authority: protectedValue("session-authority"),
+            identityKey: protectedValue("x".repeat(32)),
+            recipient: protectedValue("15551234567@s.whatsapp.net"),
+            recipientRecordId: `di1_${"B".repeat(43)}`,
+            recipientType: "contact" as const,
+          },
+          receipt: operationReceipt,
+        };
+      },
+      expireLeases: vi.fn(),
+      recordProviderOutcome: async ({ status }) => ({
+        ...operationReceipt,
+        status,
+        statusChangedAt: new Date("2026-08-03T12:00:15.000Z"),
+      }),
+    };
+    const encryption: EnvelopeEncryption = {
+      createConnectionKey: () => Effect.die("unused"),
+      createPersonalAccountKey: () => Effect.die("unused"),
+      decrypt: ({ context }) =>
+        Effect.succeed(
+          new TextEncoder().encode(
+            context.fieldOrObjectPurpose === "webhook-identity-key"
+              ? "x".repeat(32)
+              : context.fieldOrObjectPurpose === "provider-session-authority"
+                ? "session-authority"
+                : "15551234567@s.whatsapp.net",
+          ),
+        ),
+      encrypt: () => Effect.die("repository controls this test"),
+    };
+    const providerAttempt = vi.fn(async () => {
+      providerStarted.resolve();
+      await releaseProvider.promise;
+      throw new DOMException("timed out", "TimeoutError");
+    });
+    vi.stubGlobal("fetch", providerAttempt);
+    let sequence = 0;
+    const service = makeAtomicSendTextMessageService({
+      encryption,
+      fingerprintKey: await importSendFingerprintKey("47".repeat(32)),
+      hourRequestLimit: 600,
+      minuteRequestLimit: 60,
+      nextAuditLogId: () =>
+        `50000000-0000-4000-8000-${String(sequence++).padStart(12, "0")}`,
+      nextSend: () => ({
+        id: "60000000-0000-4000-8000-000000000047",
+        publicId: "snd_123456789012345678947",
+      }),
+      now: () => new Date("2026-08-03T12:00:15.000Z"),
+      repository,
+      sendDailyLimit: 200,
+      sendPerMinuteLimit: 10,
+      telemetry: () => undefined,
+    });
+
+    const original = Effect.runPromise(service.send(input));
+    await providerStarted.promise;
+    const replays = await Promise.all(
+      Array.from({ length: 31 }, () => Effect.runPromise(service.send(input))),
+    );
+    expect(replays).toHaveLength(31);
+    expect(
+      replays.every(
+        (result) =>
+          result.outcome === "receipt" && result.receipt.idempotent_replay,
+      ),
+    ).toBe(true);
+    expect(providerAttempt).toHaveBeenCalledTimes(1);
+    releaseProvider.resolve();
+    await expect(original).resolves.toMatchObject({
+      outcome: "receipt",
+      receipt: { status: "unknown" },
+    });
+    expect(providerAttempt).toHaveBeenCalledTimes(1);
   });
 
   test("accepts an uppercase hexadecimal fingerprint key", async () => {
