@@ -299,6 +299,17 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 27,
   },
+  {
+    name: "encrypted Stored Media ingestion",
+    sql: await readFile(
+      new NodeUrl(
+        "../migrations/0028_stored_media_ingestion.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    version: 28,
+  },
 ];
 
 const checksum = (sql: string): string =>

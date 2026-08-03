@@ -1,6 +1,6 @@
 import type { WebhookEventProcessingMaterial } from "@whatsapp-mcp/db/webhook-event";
 import type { NormalizedWebhookDelivery } from "@whatsapp-mcp/wasender/webhook";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Redacted } from "effect";
 import { describe, expect, test } from "vitest";
 import {
   EncryptionError,
@@ -200,6 +200,14 @@ const makeHarness = (options: HarnessOptions = {}) => {
           ).toBe("equal");
           return "applied" as const;
         }),
+      projectStoredMessage: (input) =>
+        Effect.sync(() => {
+          calls.push(`project-message:${input.media?.publicId ?? "none"}`);
+          expect(input.media?.source.ciphertext).not.toContain(
+            "provider-media-key",
+          );
+          return "applied" as const;
+        }),
       projectStoredMessageEdit: (input, compareVersions) =>
         Effect.promise(async () => {
           calls.push("project-message-edit");
@@ -233,6 +241,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
       nextContactId: Effect.succeed("ctc_123456789012345678901"),
       nextConversationId: Effect.succeed("cvs_123456789012345678901"),
       nextMessageId: Effect.succeed("msg_123456789012345678901"),
+      nextMediaId: Effect.succeed("med_123456789012345678901"),
     }),
     Layer.succeed(WebhookEventRetrySchedule, {
       delaySeconds: (attempt) =>
@@ -301,6 +310,48 @@ const queueMessage = (body: unknown) => {
 };
 
 describe("Webhook Event processing", () => {
+  test("projects media-bearing messages with a separately encrypted pending source", async () => {
+    const identity = `wi1_${"media-message".padEnd(43, "0")}` as never;
+    const recipient = `wi1_${"contact".padEnd(43, "0")}` as never;
+    const harness = makeHarness({
+      delivery: {
+        items: [
+          {
+            content: {
+              mediaSource: Redacted.make("provider-media-key") as never,
+              text: "caption",
+              type: "image",
+            },
+            direction: "inbound",
+            evidence: { occurredAt: "2026-07-31T12:09:00.000Z", version: null },
+            itemIdentity: identity,
+            itemIndex: 0,
+            kind: "message_upsert",
+            messageIdentity: identity,
+            recipient,
+            recipientKind: "direct",
+            sender: null,
+            sentAt: "2026-07-31T12:09:00.000Z" as never,
+          },
+        ],
+      },
+    });
+    const queued = queueMessage(message);
+
+    await handleWebhookEventBatch(
+      {
+        messages: [queued.message],
+        queue: "whatsapp-mcp-ingestion",
+      } as unknown as MessageBatch,
+      harness.layer,
+    );
+
+    expect(harness.calls).toContain(
+      "project-message:med_123456789012345678901",
+    );
+    expect(queued.acknowledgements).toEqual(["ack"]);
+  });
+
   test("independently quarantines permanent siblings and projects connection state", async () => {
     const harness = makeHarness();
     const queued = queueMessage(message);

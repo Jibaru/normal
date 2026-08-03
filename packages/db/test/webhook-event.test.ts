@@ -668,7 +668,7 @@ describe("Webhook Event repository", () => {
     const upsert = {
       ...base,
       content: content(1),
-      contentType: "text" as const,
+      contentType: "image" as const,
       conversationId: "50000000-0000-4000-8000-000000000044",
       conversationPublicId: "cvs_000000000000000000044",
       direction: "inbound" as const,
@@ -680,6 +680,11 @@ describe("Webhook Event repository", () => {
       messageId: "60000000-0000-4000-8000-000000000044",
       messageIdentity,
       messagePublicId: "msg_000000000000000000044",
+      media: {
+        id: "70000000-0000-4000-8000-000000000044",
+        publicId: "med_000000000000000000044",
+        source: content(4),
+      },
       recipientKind: "group" as const,
       recipientLocator: itemIdentity("group"),
       recipientPublicId: "grp_000000000000000000044",
@@ -688,6 +693,13 @@ describe("Webhook Event repository", () => {
     expect(await repository.projectStoredMessage(upsert, compareVersions)).toBe(
       "applied",
     );
+    expect(
+      await database.query(
+        `SELECT state,media_type,source_ciphertext IS NOT NULL AS protected FROM app.stored_media`,
+      ),
+    ).toMatchObject({
+      rows: [{ state: "pending", media_type: "image", protected: true }],
+    });
     expect(
       await repository.projectStoredMessageEdit(
         {
