@@ -300,6 +300,66 @@ describe("WhatsApp Connection repository", () => {
     expect(qrColumns.rows).toEqual([{ count: 0 }]);
   });
 
+  test("makes Connection Deletion terminal and revokes keys and inventory atomically", async () => {
+    const repository = makeWhatsAppConnectionRepository(provider);
+    await repository.activate(activationInput);
+
+    const prepared = await repository.prepareDeletion({
+      clerkUserId: "user_connectiona",
+      publicId,
+    });
+    expect(prepared).toMatchObject({
+      outcome: "prepared",
+      connectionId,
+      personalAccountId: accountA,
+      providerLocator: { keyVersion: 1, version: 1 },
+    });
+
+    const deleted = await repository.finishDeletion({
+      clerkUserId: "user_connectiona",
+      deletionMarkerId: "a".repeat(64),
+      publicId,
+      requestedAt: "2026-07-31T12:08:00.000Z",
+    });
+    expect(deleted).toEqual({
+      deletionMarkerId: "a".repeat(64),
+      publicId,
+      requestedAt: "2026-07-31T12:08:00.000Z",
+    });
+    await expect(repository.listForUser("user_connectiona")).resolves.toEqual(
+      [],
+    );
+    await expect(
+      repository.prepareDeletion({ clerkUserId: "user_connectiona", publicId }),
+    ).resolves.toEqual({
+      deletionMarkerId: "a".repeat(64),
+      outcome: "complete",
+      publicId,
+      requestedAt: "2026-07-31T12:08:00.000Z",
+    });
+
+    const state = await database.query<{
+      grant_count: number;
+      key_ciphertext: Uint8Array | null;
+      key_unavailable_at: Date | null;
+      state: string;
+    }>(`SELECT connections.state,
+          keys.ciphertext AS key_ciphertext,
+          keys.unavailable_at AS key_unavailable_at,
+          (SELECT count(*)::integer FROM app.mcp_authorization_connections
+           WHERE whatsapp_connection_id = connections.id) AS grant_count
+        FROM app.whatsapp_connections connections
+        JOIN app.whatsapp_connection_key_envelopes keys
+          ON keys.whatsapp_connection_id = connections.id
+        WHERE connections.id = '${connectionId}'`);
+    expect(state.rows[0]).toMatchObject({
+      grant_count: 0,
+      key_ciphertext: null,
+      state: "deleting",
+    });
+    expect(state.rows[0]?.key_unavailable_at).not.toBeNull();
+  });
+
   test("serializes disconnect and reconnect claims while preserving retained identity", async () => {
     const repository = makeWhatsAppConnectionRepository(provider);
     await repository.activate(activationInput);

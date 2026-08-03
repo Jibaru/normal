@@ -45,7 +45,7 @@ import {
   InvalidBoundaryIdentity,
 } from "../../src/public-boundary";
 import { createPublicBoundaryWorker } from "../../src/public-boundary-worker";
-import { SafeTelemetry } from "../../src/services";
+import { RestoreSafeDeletion, SafeTelemetry } from "../../src/services";
 import {
   WebhookEventClock,
   WebhookEventIdentifiers,
@@ -620,6 +620,8 @@ const makeTestLayer = (
             ? whatsAppConnections
             : [],
         ),
+      prepareDeletion: () => Effect.die("not used"),
+      finishDeletion: () => Effect.die("not used"),
       loadSetup: ({ clerkUserId, setupId }) =>
         Effect.sync(() => {
           if (clerkUserId !== "user_test_public_boundary") return null;
@@ -728,6 +730,13 @@ const makeTestLayer = (
             },
           };
         }),
+    }),
+    Layer.succeed(RestoreSafeDeletion, {
+      markers: {
+        create: () => Effect.die("not used"),
+        enumerate: () => Effect.succeed([]),
+      },
+      capsules: { create: () => Effect.die("not used") },
     }),
     Layer.succeed(EnvelopeEncryptionService, {
       createPersonalAccountKey: ({ accountId, keyVersion }) =>

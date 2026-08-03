@@ -5,7 +5,11 @@ import {
   InvalidHumanIdentity,
 } from "../src/auth/human-identity";
 import { EnvelopeEncryptionService } from "../src/encryption/envelope";
-import { SafeTelemetry, type SafeTelemetryEvent } from "../src/services";
+import {
+  RestoreSafeDeletion,
+  SafeTelemetry,
+  type SafeTelemetryEvent,
+} from "../src/services";
 import {
   createWhatsAppConnectionHandler,
   WhatsAppConnectionClock,
@@ -23,6 +27,7 @@ const listEndpoint = "https://api.example.test/v1/whatsapp-connections";
 const connectionId = "con_000000000000000000041";
 const disconnectEndpoint = `${listEndpoint}/${connectionId}/disconnect`;
 const reconnectEndpoint = `${listEndpoint}/${connectionId}/reconnect`;
+const deleteEndpoint = `${listEndpoint}/${connectionId}/delete`;
 const accountKey = {
   ciphertext: "AQID",
   keyVersion: 1,
@@ -85,6 +90,11 @@ const makeHarness = (
   let disconnectFailed = false;
   let lifecycleClaimId: string | null = null;
   let setupState = options.initialSetupState ?? "provisioned";
+  let deletionReceipt: {
+    deletionMarkerId: string;
+    publicId: string;
+    requestedAt: string;
+  } | null = null;
 
   const persistence: WhatsAppConnectionPersistenceService = {
     activate: (input) =>
@@ -155,6 +165,38 @@ const makeHarness = (
         return { ...connection };
       }),
     list: () => Effect.succeed(connections),
+    prepareDeletion: ({ clerkUserId, publicId }) =>
+      Effect.succeed(
+        clerkUserId !== "user_connectionowner" || publicId !== connectionId
+          ? null
+          : deletionReceipt === null
+            ? {
+                outcome: "prepared" as const,
+                publicId,
+                personalAccountId: accountKey.personalAccountId,
+                connectionId: "20000000-0000-4000-8000-000000000041",
+                accountKey,
+                connectionKey: {
+                  ...setupKey,
+                  connectionId: "20000000-0000-4000-8000-000000000041",
+                },
+                providerLocator: versionedCiphertext,
+              }
+            : { outcome: "complete" as const, ...deletionReceipt },
+      ),
+    finishDeletion: ({
+      clerkUserId,
+      publicId,
+      deletionMarkerId,
+      requestedAt,
+    }) =>
+      Effect.sync(() => {
+        if (clerkUserId !== "user_connectionowner" || publicId !== connectionId)
+          return null;
+        deletionReceipt = { deletionMarkerId, publicId, requestedAt };
+        connections.splice(0);
+        return deletionReceipt;
+      }),
     loadSetup: ({ clerkUserId }) =>
       Effect.succeed(
         clerkUserId !== "user_connectionowner"
@@ -288,7 +330,9 @@ const makeHarness = (
       decrypt: ({ context }) =>
         context.fieldOrObjectPurpose === "whatsapp-number"
           ? Effect.succeed(new TextEncoder().encode("+15550123456"))
-          : Effect.die("unexpected decryption"),
+          : context.fieldOrObjectPurpose === "provider-session-locator"
+            ? Effect.succeed(new TextEncoder().encode(lifecycleSession.session))
+            : Effect.die("unexpected decryption"),
       encrypt: ({ context }) =>
         Effect.sync(() => {
           encryptedPurposes.push(context.fieldOrObjectPurpose);
@@ -305,6 +349,32 @@ const makeHarness = (
         Effect.sync(() => {
           events.push(event);
         }),
+    }),
+    Layer.succeed(RestoreSafeDeletion, {
+      markers: {
+        create: (input) =>
+          Effect.succeed({
+            markerId: "a".repeat(64),
+            objectKey: `markers/v1/${"a".repeat(64)}.json`,
+            marker: {
+              version: 1,
+              deletionKind: input.deletionKind,
+              requestedAt: input.requestedAt,
+              keyUnavailableAt: input.keyUnavailableAt,
+            },
+          }),
+        enumerate: () => Effect.succeed([]),
+      },
+      capsules: {
+        create: ({ deletionMarkerId, keyVersion }) =>
+          Effect.succeed({
+            ciphertext: new Uint8Array([1]),
+            deletionMarkerId,
+            encryptionContext: {},
+            keyId: "deletion-key",
+            keyVersion,
+          }),
+      },
     }),
   );
 
@@ -390,6 +460,22 @@ describe("WhatsApp Connection HTTP boundary", () => {
     expect(response.status).toBe(202);
     expect(response.headers.get("x-connection-setup-state")).toBe("pending");
     expect(harness.providerCalls).toEqual([]);
+  });
+
+  test("makes deletion immediately terminal and idempotent at the authenticated boundary", async () => {
+    const harness = makeHarness();
+    harness.scanQr();
+    await harness.handler(request(qrEndpoint));
+    const deleted = await harness.handler(request(deleteEndpoint, "POST"));
+    const replay = await harness.handler(request(deleteEndpoint, "POST"));
+    const listed = await harness.handler(request(listEndpoint));
+    expect(deleted.status).toBe(200);
+    expect(await deleted.json()).toMatchObject({
+      deletion: { outcome: "complete" },
+      whatsapp_connection_id: connectionId,
+    });
+    expect(replay.status).toBe(200);
+    expect(await listed.json()).toEqual({ whatsapp_connections: [] });
   });
 
   test("disconnects and reconnects the retained Connection through reconciled lifecycle writes", async () => {

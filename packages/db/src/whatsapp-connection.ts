@@ -49,6 +49,29 @@ export interface WhatsAppConnectionRecord {
   readonly stateChangedAt: string;
 }
 
+export type WhatsAppConnectionDeletionPreparation =
+  | {
+      readonly outcome: "complete";
+      readonly publicId: string;
+      readonly requestedAt: string;
+      readonly deletionMarkerId: string;
+    }
+  | {
+      readonly outcome: "prepared";
+      readonly publicId: string;
+      readonly personalAccountId: string;
+      readonly connectionId: string;
+      readonly accountKey: AccountKeyEnvelope;
+      readonly connectionKey: ConnectionKeyEnvelope;
+      readonly providerLocator: VersionedCiphertext;
+    };
+
+export interface WhatsAppConnectionDeletionReceipt {
+  readonly publicId: string;
+  readonly requestedAt: string;
+  readonly deletionMarkerId: string;
+}
+
 export type WhatsAppConnectionLifecycleAction = "disconnect" | "reconnect";
 
 export type WhatsAppConnectionLifecycleClaim =
@@ -119,6 +142,16 @@ export interface WhatsAppConnectionRepository {
   readonly listForUser: (
     clerkUserId: string,
   ) => Promise<ReadonlyArray<WhatsAppConnectionRecord>>;
+  readonly prepareDeletion: (input: {
+    readonly clerkUserId: string;
+    readonly publicId: string;
+  }) => Promise<WhatsAppConnectionDeletionPreparation | null>;
+  readonly finishDeletion: (input: {
+    readonly clerkUserId: string;
+    readonly publicId: string;
+    readonly deletionMarkerId: string;
+    readonly requestedAt: string;
+  }) => Promise<WhatsAppConnectionDeletionReceipt | null>;
   readonly claimLifecycle: (input: {
     readonly action: WhatsAppConnectionLifecycleAction;
     readonly claimId: string;
@@ -229,6 +262,108 @@ interface LifecycleClaimRow extends ConnectionRow {
   readonly outcome: unknown;
   readonly setup_marker: unknown;
 }
+
+interface DeletionRow extends Record<string, unknown> {
+  readonly outcome?: unknown;
+  readonly public_id: unknown;
+  readonly deletion_requested_at: unknown;
+  readonly deletion_marker_id: unknown;
+  readonly personal_account_id?: unknown;
+  readonly whatsapp_connection_id?: unknown;
+  readonly account_key_version?: unknown;
+  readonly account_kms_key_id?: unknown;
+  readonly account_key_ciphertext?: unknown;
+  readonly connection_key_account_version?: unknown;
+  readonly connection_key_version?: unknown;
+  readonly connection_key_nonce?: unknown;
+  readonly connection_key_ciphertext?: unknown;
+  readonly locator_ciphertext_version?: unknown;
+  readonly locator_key_version?: unknown;
+  readonly locator_nonce?: unknown;
+  readonly locator_ciphertext?: unknown;
+}
+
+const deletionReceipt = (
+  row: DeletionRow | undefined,
+): WhatsAppConnectionDeletionReceipt | null => {
+  const requestedAt = timestamp(row?.deletion_requested_at);
+  if (
+    typeof row?.public_id !== "string" ||
+    requestedAt === null ||
+    typeof row.deletion_marker_id !== "string"
+  )
+    return null;
+  return {
+    publicId: row.public_id,
+    requestedAt,
+    deletionMarkerId: row.deletion_marker_id,
+  };
+};
+
+const deletionPreparation = (
+  row: DeletionRow | undefined,
+): WhatsAppConnectionDeletionPreparation | null => {
+  if (row === undefined) return null;
+  if (row.outcome === "complete") {
+    const receipt = deletionReceipt(row);
+    if (receipt === null)
+      throw new Error("invalid Connection Deletion receipt");
+    return { outcome: "complete", ...receipt };
+  }
+  const accountCiphertext = bytes(row.account_key_ciphertext);
+  const connectionNonce = bytes(row.connection_key_nonce);
+  const connectionCiphertext = bytes(row.connection_key_ciphertext);
+  const accountVersion = positiveInteger(row.account_key_version);
+  const connectionAccountVersion = positiveInteger(
+    row.connection_key_account_version,
+  );
+  const connectionVersion = positiveInteger(row.connection_key_version);
+  const providerLocator = versionedCiphertext(
+    row.locator_ciphertext_version,
+    row.locator_key_version,
+    row.locator_nonce,
+    row.locator_ciphertext,
+  );
+  if (
+    row.outcome !== "prepared" ||
+    typeof row.public_id !== "string" ||
+    typeof row.personal_account_id !== "string" ||
+    typeof row.whatsapp_connection_id !== "string" ||
+    typeof row.account_kms_key_id !== "string" ||
+    accountCiphertext === null ||
+    accountVersion === null ||
+    connectionAccountVersion === null ||
+    connectionVersion === null ||
+    connectionNonce === null ||
+    connectionCiphertext === null ||
+    providerLocator === null
+  ) {
+    throw new Error("invalid Connection Deletion preparation");
+  }
+  return {
+    outcome: "prepared",
+    publicId: row.public_id,
+    personalAccountId: row.personal_account_id,
+    connectionId: row.whatsapp_connection_id,
+    accountKey: {
+      ciphertext: encodeBase64(accountCiphertext),
+      keyVersion: accountVersion,
+      kmsKeyId: row.account_kms_key_id,
+      personalAccountId: row.personal_account_id,
+      version: 1,
+    },
+    connectionKey: {
+      accountKeyVersion: connectionAccountVersion,
+      ciphertext: encodeBase64(connectionCiphertext),
+      connectionId: row.whatsapp_connection_id,
+      keyVersion: connectionVersion,
+      nonce: encodeBase64(connectionNonce),
+      personalAccountId: row.personal_account_id,
+      version: 1,
+    },
+    providerLocator,
+  };
+};
 
 const connectionRecord = (
   row: ConnectionRow | undefined,
@@ -487,6 +622,27 @@ export const makeWhatsAppConnectionRepository = (
         ? null
         : connectionRecord(result.rows[0]);
     }),
+  prepareDeletion: (input) =>
+    provider.withConnection(async (connection) => {
+      const result = await connection.query<DeletionRow>(
+        "SELECT * FROM app_private.prepare_whatsapp_connection_deletion($1,$2)",
+        [input.clerkUserId, input.publicId],
+      );
+      return deletionPreparation(result.rows[0]);
+    }),
+  finishDeletion: (input) =>
+    provider.withConnection(async (connection) => {
+      const result = await connection.query<DeletionRow>(
+        "SELECT * FROM app_private.finish_whatsapp_connection_deletion($1,$2,$3,$4)",
+        [
+          input.clerkUserId,
+          input.publicId,
+          input.deletionMarkerId,
+          input.requestedAt,
+        ],
+      );
+      return deletionReceipt(result.rows[0]);
+    }),
   listForUser: (clerkUserId) =>
     provider.withConnection((connection) =>
       withTransaction(connection, async () => {
@@ -506,7 +662,7 @@ export const makeWhatsAppConnectionRepository = (
              state,
              state_changed_at
            FROM app.whatsapp_connections
-           WHERE number_suffix IS NOT NULL
+           WHERE number_suffix IS NOT NULL AND state <> 'deleting'
            ORDER BY created_at, public_id`,
         );
         return result.rows.map((row) => {

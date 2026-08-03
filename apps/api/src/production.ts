@@ -1023,6 +1023,30 @@ const whatsAppConnectionPersistenceLayer = (environment: ApiEnvironment) =>
         },
         catch: () => new WhatsAppConnectionPersistenceError(),
       }),
+    prepareDeletion: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string")
+            throw new Error("database unavailable");
+          return makePgWhatsAppConnectionRepository(
+            connectionString,
+          ).prepareDeletion(input);
+        },
+        catch: () => new WhatsAppConnectionPersistenceError(),
+      }),
+    finishDeletion: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string")
+            throw new Error("database unavailable");
+          return makePgWhatsAppConnectionRepository(
+            connectionString,
+          ).finishDeletion(input);
+        },
+        catch: () => new WhatsAppConnectionPersistenceError(),
+      }),
     list: (clerkUserId) =>
       Effect.tryPromise({
         try: () => {

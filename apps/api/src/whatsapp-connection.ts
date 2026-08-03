@@ -7,6 +7,8 @@ import type {
 import type {
   ActivateWhatsAppConnectionInput,
   ConnectionSetupActivation,
+  WhatsAppConnectionDeletionPreparation,
+  WhatsAppConnectionDeletionReceipt,
   WhatsAppConnectionLifecycleAction,
   WhatsAppConnectionLifecycleClaim,
   WhatsAppConnectionRecord,
@@ -23,6 +25,7 @@ import {
   EnvelopeEncryptionService,
 } from "./encryption/envelope";
 import {
+  RestoreSafeDeletion,
   SafeTelemetry,
   type SafeTelemetry as SafeTelemetryService,
 } from "./services";
@@ -31,7 +34,7 @@ const CONNECTIONS_ROUTE = "/v1/whatsapp-connections";
 const qrRoutePattern =
   /^\/v1\/connection-setups\/(cst_[A-Za-z0-9_-]{21})\/qr$/u;
 const lifecycleRoutePattern =
-  /^\/v1\/whatsapp-connections\/(con_[A-Za-z0-9_-]{21})\/(disconnect|reconnect)$/u;
+  /^\/v1\/whatsapp-connections\/(con_[A-Za-z0-9_-]{21})\/(disconnect|reconnect|delete)$/u;
 
 export class WhatsAppConnectionPersistenceError extends Data.TaggedError(
   "WhatsAppConnectionPersistenceError",
@@ -60,6 +63,22 @@ export interface WhatsAppConnectionPersistenceService {
     clerkUserId: string,
   ) => Effect.Effect<
     ReadonlyArray<WhatsAppConnectionRecord>,
+    WhatsAppConnectionPersistenceError
+  >;
+  readonly prepareDeletion: (input: {
+    readonly clerkUserId: string;
+    readonly publicId: string;
+  }) => Effect.Effect<
+    WhatsAppConnectionDeletionPreparation | null,
+    WhatsAppConnectionPersistenceError
+  >;
+  readonly finishDeletion: (input: {
+    readonly clerkUserId: string;
+    readonly publicId: string;
+    readonly deletionMarkerId: string;
+    readonly requestedAt: string;
+  }) => Effect.Effect<
+    WhatsAppConnectionDeletionReceipt | null,
     WhatsAppConnectionPersistenceError
   >;
   readonly claimLifecycle: (input: {
@@ -145,7 +164,8 @@ export type WhatsAppConnectionRequirements =
   | WhatsAppConnectionClockService
   | WhatsAppConnectionIdentifiersService
   | WhatsAppConnectionPersistenceService
-  | WhatsAppConnectionProviderService;
+  | WhatsAppConnectionProviderService
+  | RestoreSafeDeletion;
 
 type SetupObservation =
   | {
@@ -577,6 +597,59 @@ export const reconcileWhatsAppConnectionLifecycle = (
     };
   });
 
+const deleteWhatsAppConnection = (clerkUserId: string, publicId: string) =>
+  Effect.gen(function* () {
+    const persistence = yield* WhatsAppConnectionPersistence;
+    const prepared = yield* persistence.prepareDeletion({
+      clerkUserId,
+      publicId,
+    });
+    if (prepared === null)
+      return yield* Effect.fail(new WhatsAppConnectionNotAccessible());
+    if (prepared.outcome === "complete") return prepared;
+    const encryption = yield* EnvelopeEncryptionService;
+    const locatorBytes = yield* encryption.decrypt({
+      accountKey: prepared.accountKey,
+      connectionKey: prepared.connectionKey,
+      ciphertext: prepared.providerLocator,
+      context: {
+        accountId: prepared.personalAccountId,
+        connectionId: prepared.connectionId,
+        entity: "whatsapp-connection",
+        fieldOrObjectPurpose: "provider-session-locator",
+        recordId: prepared.connectionId,
+      },
+    });
+    return yield* withZeroedBytes(locatorBytes, (bytes) =>
+      Effect.gen(function* () {
+        const sessionLocator = new TextDecoder().decode(bytes);
+        const clock = yield* WhatsAppConnectionClock;
+        const requestedAt = yield* clock.now;
+        const deletion = yield* RestoreSafeDeletion;
+        const marker = yield* deletion.markers.create({
+          deletionKind: "whatsapp_connection",
+          keyUnavailableAt: requestedAt,
+          opaqueEntityId: prepared.connectionId,
+          requestedAt,
+        });
+        yield* deletion.capsules.create({
+          deletionMarkerId: marker.markerId,
+          keyVersion: 1,
+          providerCleanupIdentifiers: { sessionLocator },
+        });
+        const receipt = yield* persistence.finishDeletion({
+          clerkUserId,
+          publicId,
+          requestedAt,
+          deletionMarkerId: marker.markerId,
+        });
+        if (receipt === null)
+          return yield* Effect.fail(new WhatsAppConnectionNotAccessible());
+        return { outcome: "complete" as const, ...receipt };
+      }),
+    );
+  });
+
 const corsHeaders = (browserOrigin: string): HeadersInit => ({
   "access-control-allow-headers": "authorization",
   "access-control-allow-methods": "GET,POST,OPTIONS",
@@ -699,9 +772,24 @@ export const createWhatsAppConnectionHandler =
           const action = lifecycleMatch[2];
           if (
             publicId === undefined ||
-            (action !== "disconnect" && action !== "reconnect")
+            (action !== "disconnect" &&
+              action !== "reconnect" &&
+              action !== "delete")
           ) {
             return yield* Effect.fail(new WhatsAppConnectionNotAccessible());
+          }
+          if (action === "delete") {
+            const receipt = yield* deleteWhatsAppConnection(
+              clerkUserId,
+              publicId,
+            );
+            const telemetry = yield* SafeTelemetry;
+            yield* telemetry.emit({
+              event: "whatsapp_connection.deletion.completed",
+              outcome: "complete",
+              service: "api",
+            });
+            return { kind: "deletion" as const, receipt };
           }
           const observation = yield* reconcileWhatsAppConnectionLifecycle(
             clerkUserId,
@@ -755,6 +843,19 @@ export const createWhatsAppConnectionHandler =
               ? notFound(browserOrigin)
               : jsonResponse({ error: "unavailable" }, 503, browserOrigin),
           onSuccess: (result) => {
+            if (result.kind === "deletion") {
+              return jsonResponse(
+                {
+                  deletion: {
+                    outcome: "complete",
+                    requested_at: result.receipt.requestedAt,
+                  },
+                  whatsapp_connection_id: result.receipt.publicId,
+                },
+                200,
+                browserOrigin,
+              );
+            }
             if (result.kind === "lifecycle") {
               const observation = result.observation;
               if (observation.outcome === "qr_available") {
