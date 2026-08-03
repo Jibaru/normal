@@ -26,12 +26,6 @@ run "development_topology" {
     decrypted_media_bytes_per_day      = 268435456
     sends_per_minute                   = 10
     sends_per_day                      = 200
-    oauth_clients = [{
-      client_class  = "approved"
-      client_id     = "approved-client"
-      client_name   = "Approved MCP Client"
-      redirect_uris = ["https://client.example.test/callback"]
-    }]
   }
 
   assert {
@@ -118,7 +112,6 @@ run "development_topology" {
       "plain_text:CLERK_ISSUER",
       "plain_text:DEPLOYMENT_ENVIRONMENT",
       "plain_text:EXTERNAL_ONBOARDING_GATE",
-      "plain_text:OAUTH_CLIENT_REGISTRY",
       "plain_text:OAUTH_ISSUER",
       "plain_text:OAUTH_RESOURCE",
       "plain_text:MCP_REQUESTS_PER_HOUR",
@@ -172,30 +165,20 @@ run "development_topology" {
         for binding in cloudflare_worker_version.api.bindings :
         binding.text if binding.name == "OAUTH_RESOURCE"
       ]) == "https://api.dev.example.com/mcp" &&
-      jsondecode(one([
-        for binding in cloudflare_worker_version.api.bindings :
-        binding.text if binding.name == "OAUTH_CLIENT_REGISTRY"
-      ]))[0].redirectUris == ["https://client.example.test/callback"] &&
       toset(cloudflare_worker_version.api.compatibility_flags) == toset([
         "global_fetch_strictly_public",
         "nodejs_compat",
       ])
     )
-    error_message = "OAuth must bind the exact API issuer/resource, reviewed redirects, and strict fetch compatibility."
+    error_message = "OAuth must bind the exact API issuer/resource and strict fetch compatibility."
   }
 
   assert {
-    condition = (
-      one([
-        for item in vercel_project.web.environment :
-        item.value if item.key == "NEXT_PUBLIC_CLERK_JWT_TEMPLATE"
-      ]) == "whatsapp-api" &&
-      one([
-        for item in vercel_project.web.environment :
-        item.value if item.key == "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"
-      ]) == "pk_test_Y2xlcmsuZGV2LmV4YW1wbGUuY29tJA"
-    )
-    error_message = "The browser must receive the environment's public Clerk key and exact custom JWT template."
+    condition = one([
+      for item in vercel_project.web.environment :
+      item.value if item.key == "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"
+    ]) == "pk_test_Y2xlcmsuZGV2LmV4YW1wbGUuY29tJA"
+    error_message = "The browser must receive the environment's public Clerk key."
   }
 
   assert {
@@ -256,12 +239,6 @@ run "preview_topology" {
     decrypted_media_bytes_per_day      = 268435456
     sends_per_minute                   = 10
     sends_per_day                      = 200
-    oauth_clients = [{
-      client_class  = "approved"
-      client_id     = "approved-client"
-      client_name   = "Approved MCP Client"
-      redirect_uris = ["https://client.example.test/callback"]
-    }]
   }
 
   assert {
@@ -305,12 +282,6 @@ run "production_topology" {
     decrypted_media_bytes_per_day      = 268435456
     sends_per_minute                   = 10
     sends_per_day                      = 200
-    oauth_clients = [{
-      client_class  = "approved"
-      client_id     = "approved-client"
-      client_name   = "Approved MCP Client"
-      redirect_uris = ["https://client.example.test/callback"]
-    }]
   }
 
   assert {
@@ -419,12 +390,6 @@ run "reject_same_web_and_api_origin" {
     decrypted_media_bytes_per_day      = 268435456
     sends_per_minute                   = 10
     sends_per_day                      = 200
-    oauth_clients = [{
-      client_class  = "approved"
-      client_id     = "approved-client"
-      client_name   = "Approved MCP Client"
-      redirect_uris = ["https://client.example.test/callback"]
-    }]
   }
 
   expect_failures = [vercel_project.web]

@@ -1,23 +1,15 @@
 locals {
-  environment_suffix               = var.deployment_environment == "production" ? "" : "-${var.deployment_environment}"
-  api_worker_name                  = "whatsapp-mcp-api${local.environment_suffix}"
-  provider_control_worker_name     = "whatsapp-mcp-provider-control${local.environment_suffix}"
-  deletion_coordinator_worker_name = "whatsapp-mcp-deletion-coordinator${local.environment_suffix}"
-  restore_coordinator_worker_name  = "whatsapp-mcp-restore-coordinator${local.environment_suffix}"
-  web_project_name                 = "whatsapp-mcp-web${local.environment_suffix}"
-  webhook_ingress_bucket_name      = "whatsapp-mcp-webhook-ingress${local.environment_suffix}"
-  stored_media_bucket_name         = "whatsapp-mcp-stored-media${local.environment_suffix}"
-  deletion_capsules_bucket_name    = "whatsapp-mcp-deletion-capsules${local.environment_suffix}"
-  deletion_markers_bucket_name     = "whatsapp-mcp-deletion-markers${local.environment_suffix}"
-  oauth_kv_namespace_name          = "whatsapp-mcp-oauth${local.environment_suffix}"
-  oauth_client_registry = jsonencode([
-    for client in var.oauth_clients : {
-      clientClass  = client.client_class
-      clientId     = client.client_id
-      clientName   = client.client_name
-      redirectUris = client.redirect_uris
-    }
-  ])
+  environment_suffix                       = var.deployment_environment == "production" ? "" : "-${var.deployment_environment}"
+  api_worker_name                          = "whatsapp-mcp-api${local.environment_suffix}"
+  provider_control_worker_name             = "whatsapp-mcp-provider-control${local.environment_suffix}"
+  deletion_coordinator_worker_name         = "whatsapp-mcp-deletion-coordinator${local.environment_suffix}"
+  restore_coordinator_worker_name          = "whatsapp-mcp-restore-coordinator${local.environment_suffix}"
+  web_project_name                         = "whatsapp-mcp-web${local.environment_suffix}"
+  webhook_ingress_bucket_name              = "whatsapp-mcp-webhook-ingress${local.environment_suffix}"
+  stored_media_bucket_name                 = "whatsapp-mcp-stored-media${local.environment_suffix}"
+  deletion_capsules_bucket_name            = "whatsapp-mcp-deletion-capsules${local.environment_suffix}"
+  deletion_markers_bucket_name             = "whatsapp-mcp-deletion-markers${local.environment_suffix}"
+  oauth_kv_namespace_name                  = "whatsapp-mcp-oauth${local.environment_suffix}"
   ingestion_queue_name                     = "whatsapp-mcp-ingestion${local.environment_suffix}"
   dead_letter_queue_name                   = "whatsapp-mcp-ingestion-dlq${local.environment_suffix}"
   replay_queue_name                        = "whatsapp-mcp-ingestion-replay${local.environment_suffix}"
@@ -505,11 +497,6 @@ resource "cloudflare_worker_version" "api" {
       type = "inherit"
     },
     {
-      name = "OAUTH_CLIENT_REGISTRY"
-      text = local.oauth_client_registry
-      type = "plain_text"
-    },
-    {
       name = "OAUTH_ISSUER"
       text = "https://${var.api_hostname}"
       type = "plain_text"
@@ -757,12 +744,6 @@ resource "vercel_project" "web" {
     {
       key       = "NEXT_PUBLIC_API_ORIGIN"
       value     = "https://${var.api_hostname}"
-      target    = ["production"]
-      sensitive = false
-    },
-    {
-      key       = "NEXT_PUBLIC_CLERK_JWT_TEMPLATE"
-      value     = var.clerk_jwt_template
       target    = ["production"]
       sensitive = false
     },

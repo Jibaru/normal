@@ -208,9 +208,8 @@ In the same environment's Clerk dashboard, create the `whatsapp-api` custom JWT
 template with a 60-second lifetime and only an `aud` claim whose value is the
 exact `https://<api_hostname>` origin. Record the exact issuer and publishable
 key in the protected `.tfvars` file as `clerk_issuer` and
-`clerk_publishable_key`; retain the default `clerk_jwt_template` unless the
-reviewed browser configuration uses another safe name. Copy the template's PEM
-reviewed browser configuration uses another safe name. Record the written
+`clerk_publishable_key`. The browser configuration fixes the template name as
+`whatsapp-api`. Record the written
 vendor-approved session ceiling as the required
 `provider_approved_session_capacity` integer; there is no default, and one
 admitted Personal Account reserves three sessions. Record the approved
@@ -495,9 +494,6 @@ export CLOUDFLARE_OAUTH_KV_ID="$(
 export CLERK_API_AUDIENCE="$(tofu -chdir=infra/compute output -raw api_origin)"
 export CLERK_AUTHORIZED_PARTY="$(tofu -chdir=infra/compute output -raw web_origin)"
 export CLERK_ISSUER="$(sed -n 's/^[[:space:]]*clerk_issuer[[:space:]]*=[[:space:]]*\"\\([^\"]*\\)\"[[:space:]]*$/\\1/p' "$TFVARS_PATH")"
-export OAUTH_CLIENT_REGISTRY="$(
-  tofu -chdir=infra/compute output -raw oauth_client_registry
-)"
 export OAUTH_ISSUER="$CLERK_API_AUDIENCE"
 export OAUTH_RESOURCE="$OAUTH_ISSUER/mcp"
 export MCP_REQUESTS_PER_MINUTE="$(sed -n 's/^[[:space:]]*mcp_requests_per_minute[[:space:]]*=[[:space:]]*\\([0-9][0-9]*\\)[[:space:]]*$/\\1/p' "$TFVARS_PATH")"
@@ -513,7 +509,7 @@ CI=true bun run --cwd apps/api wrangler deploy \
   --env "$DEPLOYMENT_ENVIRONMENT"
 unset CLOUDFLARE_HYPERDRIVE_ID CLOUDFLARE_OAUTH_KV_ID NEON_BRANCH_ID \
   CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID CLERK_API_AUDIENCE \
-  CLERK_AUTHORIZED_PARTY CLERK_ISSUER OAUTH_CLIENT_REGISTRY \
+  CLERK_AUTHORIZED_PARTY CLERK_ISSUER \
   MCP_REQUESTS_PER_HOUR MCP_REQUESTS_PER_MINUTE OAUTH_ISSUER OAUTH_RESOURCE \
   PROVIDER_APPROVED_SESSION_CAPACITY SENDS_PER_DAY SENDS_PER_MINUTE
 export VERCEL_ORG_ID="$(tofu -chdir=infra/compute output -raw vercel_team_id)"

@@ -54,37 +54,6 @@ const requireHttpsOrigin = (name: string): string => {
   throw new Error(`${name} must be an exact HTTPS origin`);
 };
 
-const requireOAuthClientRegistry = (): string => {
-  const serialized = process.env.OAUTH_CLIENT_REGISTRY;
-  try {
-    const clients = JSON.parse(serialized ?? "") as unknown;
-    if (
-      serialized &&
-      serialized.length <= 32_768 &&
-      Array.isArray(clients) &&
-      clients.length >= 1 &&
-      clients.length <= 32 &&
-      clients.every(
-        (client) =>
-          typeof client === "object" &&
-          client !== null &&
-          !Array.isArray(client) &&
-          typeof (client as Record<string, unknown>).clientClass === "string" &&
-          typeof (client as Record<string, unknown>).clientId === "string" &&
-          typeof (client as Record<string, unknown>).clientName === "string" &&
-          Array.isArray((client as Record<string, unknown>).redirectUris),
-      )
-    ) {
-      return serialized;
-    }
-  } catch {
-    // The single safe error below intentionally does not echo configuration.
-  }
-  throw new Error(
-    "OAUTH_CLIENT_REGISTRY must contain at least one allowlisted MCP Client",
-  );
-};
-
 const requireMcpResource = (issuer: string): string => {
   const resource = process.env.OAUTH_RESOURCE;
   if (resource === `${issuer}/mcp`) {
@@ -157,7 +126,6 @@ const apiVariables = {
   READ_MESSAGE_RECORDS_PER_DAY: String(readMessageRecordsPerDay),
   SENDS_PER_DAY: String(sendsPerDay),
   SENDS_PER_MINUTE: String(sendsPerMinute),
-  OAUTH_CLIENT_REGISTRY: requireOAuthClientRegistry(),
   OAUTH_ISSUER: oauthIssuer,
   OAUTH_RESOURCE: requireMcpResource(oauthIssuer),
   PROVIDER_APPROVED_SESSION_CAPACITY: requireProviderApprovedSessionCapacity(),

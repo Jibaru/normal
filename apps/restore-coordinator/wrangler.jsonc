@@ -28,6 +28,58 @@
   ],
   "observability": { "enabled": true },
   "env": {
+    "development": {
+      "name": "whatsapp-mcp-restore-coordinator-development",
+      "vars": { "DEPLOYMENT_ENVIRONMENT": "development" },
+      "secrets": {
+        "required": [
+          "RESTORE_DATABASE_URL",
+          "NEON_BRANCH_ID",
+          "DELETION_MARKER_HMAC_SECRET"
+        ]
+      },
+      "r2_buckets": [
+        {
+          "binding": "DELETION_MARKERS",
+          "bucket_name": "whatsapp-mcp-deletion-markers-development"
+        },
+        {
+          "binding": "STORED_MEDIA",
+          "bucket_name": "whatsapp-mcp-stored-media-development"
+        },
+        {
+          "binding": "WEBHOOK_INGRESS",
+          "bucket_name": "whatsapp-mcp-webhook-ingress-development"
+        }
+      ],
+      "triggers": { "crons": ["*/5 * * * *"] }
+    },
+    "preview": {
+      "name": "whatsapp-mcp-restore-coordinator-preview",
+      "vars": { "DEPLOYMENT_ENVIRONMENT": "preview" },
+      "secrets": {
+        "required": [
+          "RESTORE_DATABASE_URL",
+          "NEON_BRANCH_ID",
+          "DELETION_MARKER_HMAC_SECRET"
+        ]
+      },
+      "r2_buckets": [
+        {
+          "binding": "DELETION_MARKERS",
+          "bucket_name": "whatsapp-mcp-deletion-markers-preview"
+        },
+        {
+          "binding": "STORED_MEDIA",
+          "bucket_name": "whatsapp-mcp-stored-media-preview"
+        },
+        {
+          "binding": "WEBHOOK_INGRESS",
+          "bucket_name": "whatsapp-mcp-webhook-ingress-preview"
+        }
+      ],
+      "triggers": { "crons": ["*/5 * * * *"] }
+    },
     "production": {
       "name": "whatsapp-mcp-restore-coordinator",
       "vars": { "DEPLOYMENT_ENVIRONMENT": "production" },

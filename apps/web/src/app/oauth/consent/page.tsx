@@ -1,6 +1,6 @@
 import { parseApiOrigin } from "../../../effect/api-origin";
 import {
-  isClerkJwtTemplate,
+  CLERK_JWT_TEMPLATE,
   isClerkPublishableKey,
 } from "../../../effect/clerk-config";
 import { ConsentExperience } from "./consent-experience";
@@ -14,17 +14,15 @@ export default async function OAuthConsentPage({
 }) {
   const request = (await searchParams).request;
   const apiOrigin = parseApiOrigin(process.env.NEXT_PUBLIC_API_ORIGIN);
-  const clerkJwtTemplate = process.env.NEXT_PUBLIC_CLERK_JWT_TEMPLATE;
   const clerkPublishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
   if (
     typeof request !== "string" ||
     !/^[A-Za-z0-9_-]{43}$/.test(request) ||
     apiOrigin === null ||
-    !isClerkJwtTemplate(clerkJwtTemplate) ||
     !isClerkPublishableKey(clerkPublishableKey)
   ) {
     return (
-      <main className="min-h-screen bg-zinc-950 px-6 py-12 text-zinc-100">
+      <main className="min-h-screen bg-background px-6 py-12 text-foreground">
         <p>Authorization request unavailable.</p>
       </main>
     );
@@ -32,7 +30,7 @@ export default async function OAuthConsentPage({
 
   return (
     <ConsentExperience
-      clerkJwtTemplate={clerkJwtTemplate}
+      clerkJwtTemplate={CLERK_JWT_TEMPLATE}
       clerkPublishableKey={clerkPublishableKey}
       decisionEndpoint={new URL(
         "/v1/oauth/consent/decision",

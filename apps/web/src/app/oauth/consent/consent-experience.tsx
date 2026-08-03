@@ -1,6 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Field,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from "@/components/ui/field";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 import { loadBrowserClerk } from "../../../clerk/browser";
 
 interface ConsentExperienceProps {
@@ -182,115 +194,130 @@ export function ConsentExperience({
     (!hasSend || sendConfirmed);
 
   return (
-    <main className="min-h-screen bg-zinc-950 px-6 py-12 text-zinc-100">
-      <section className="mx-auto max-w-2xl space-y-8">
-        <p className="font-mono text-sm uppercase tracking-[0.2em] text-emerald-400">
+    <main className="min-h-screen bg-background px-6 py-12 text-foreground">
+      <section className="mx-auto flex max-w-2xl flex-col gap-8">
+        <p className="font-mono text-sm uppercase tracking-[0.2em] text-primary">
           MCP Authorization
         </p>
         {inspection === null ? (
-          <p aria-live="polite">
-            {state === "loading" ? "Loading authorization…" : "unavailable"}
-          </p>
+          state === "loading" ? (
+            <div aria-live="polite" className="flex flex-col gap-3">
+              <span className="sr-only">Loading authorization</span>
+              <Skeleton className="h-5 w-40" />
+              <Skeleton className="h-10 w-72" />
+              <Skeleton className="h-24 w-full" />
+            </div>
+          ) : (
+            <Alert variant="destructive">
+              <AlertDescription>
+                Authorization is temporarily unavailable.
+              </AlertDescription>
+            </Alert>
+          )
         ) : (
           <>
-            <div className="space-y-2">
-              <p className="text-zinc-400">Allow this MCP Client?</p>
+            <div className="flex flex-col gap-2">
+              <p className="text-muted-foreground">Allow this MCP Client?</p>
               <h1 className="text-3xl font-semibold">
                 {inspection.client.name}
               </h1>
             </div>
 
-            <fieldset className="space-y-3">
-              <legend className="text-lg font-medium">
-                WhatsApp Connections
-              </legend>
-              {inspection.connections.map((connection) => (
-                <label
-                  className="flex gap-3 rounded border border-zinc-800 p-4"
-                  key={connection.connection_id}
-                >
-                  <input
-                    checked={connections.includes(connection.connection_id)}
-                    onChange={(event) =>
-                      setConnections(
-                        toggle(
-                          connections,
-                          connection.connection_id,
-                          event.currentTarget.checked,
-                        ),
-                      )
-                    }
-                    type="checkbox"
-                  />
-                  {connection.label}
-                </label>
-              ))}
-            </fieldset>
+            <FieldSet>
+              <FieldLegend>WhatsApp Connections</FieldLegend>
+              <FieldGroup>
+                {inspection.connections.map((connection) => (
+                  <FieldLabel key={connection.connection_id}>
+                    <Field orientation="horizontal">
+                      <Checkbox
+                        checked={connections.includes(connection.connection_id)}
+                        onCheckedChange={(checked) =>
+                          setConnections(
+                            toggle(
+                              connections,
+                              connection.connection_id,
+                              checked,
+                            ),
+                          )
+                        }
+                      />
+                      {connection.label}
+                    </Field>
+                  </FieldLabel>
+                ))}
+              </FieldGroup>
+            </FieldSet>
 
-            <fieldset className="space-y-3">
-              <legend className="text-lg font-medium">Permissions</legend>
-              {inspection.requested_scopes.map((scope) => (
-                <label
-                  className="flex gap-3 rounded border border-zinc-800 p-4"
-                  key={scope}
-                >
-                  <input
-                    checked={scopes.includes(scope)}
-                    onChange={(event) =>
-                      setScopes(
-                        toggle(scopes, scope, event.currentTarget.checked),
-                      )
-                    }
-                    type="checkbox"
-                  />
-                  {scopeLabels[scope] ?? scope}
-                </label>
-              ))}
-            </fieldset>
+            <FieldSet>
+              <FieldLegend>Permissions</FieldLegend>
+              <FieldGroup>
+                {inspection.requested_scopes.map((scope) => (
+                  <FieldLabel key={scope}>
+                    <Field orientation="horizontal">
+                      <Checkbox
+                        checked={scopes.includes(scope)}
+                        onCheckedChange={(checked) =>
+                          setScopes(toggle(scopes, scope, checked))
+                        }
+                      />
+                      {scopeLabels[scope] ?? scope}
+                    </Field>
+                  </FieldLabel>
+                ))}
+              </FieldGroup>
+            </FieldSet>
 
-            <fieldset className="space-y-3">
-              <legend className="text-lg font-medium">Confirm authority</legend>
-              <label className="flex gap-3 rounded border border-zinc-800 p-4">
-                <input
-                  checked={readConfirmed}
-                  onChange={(event) =>
-                    setReadConfirmed(event.currentTarget.checked)
-                  }
-                  type="checkbox"
-                />
-                Share selected read data
-              </label>
-              <label className="flex gap-3 rounded border border-zinc-800 p-4">
-                <input
-                  checked={sendConfirmed}
-                  onChange={(event) =>
-                    setSendConfirmed(event.currentTarget.checked)
-                  }
-                  type="checkbox"
-                />
-                Allow outbound sends
-              </label>
-            </fieldset>
+            <FieldSet>
+              <FieldLegend>Confirm authority</FieldLegend>
+              <FieldGroup>
+                <FieldLabel>
+                  <Field orientation="horizontal">
+                    <Checkbox
+                      checked={readConfirmed}
+                      onCheckedChange={setReadConfirmed}
+                    />
+                    Share selected read data
+                  </Field>
+                </FieldLabel>
+                <FieldLabel>
+                  <Field orientation="horizontal">
+                    <Checkbox
+                      checked={sendConfirmed}
+                      onCheckedChange={setSendConfirmed}
+                    />
+                    Allow outbound sends
+                  </Field>
+                </FieldLabel>
+              </FieldGroup>
+            </FieldSet>
 
             <div className="flex gap-3">
-              <button
-                className="rounded bg-emerald-400 px-5 py-2 font-medium text-zinc-950 disabled:opacity-50"
+              <Button
                 disabled={!canApprove}
                 onClick={() => void submit("approve")}
                 type="button"
               >
+                {state === "submitting" ? (
+                  <Spinner data-icon="inline-start" />
+                ) : null}
                 Approve
-              </button>
-              <button
-                className="rounded border border-zinc-700 px-5 py-2 disabled:opacity-50"
+              </Button>
+              <Button
                 disabled={state === "submitting"}
                 onClick={() => void submit("deny")}
                 type="button"
+                variant="outline"
               >
                 Deny
-              </button>
+              </Button>
             </div>
-            <p aria-live="polite">{state === "unavailable" ? state : ""}</p>
+            {state === "unavailable" ? (
+              <Alert variant="destructive">
+                <AlertDescription>
+                  Authorization is temporarily unavailable.
+                </AlertDescription>
+              </Alert>
+            ) : null}
           </>
         )}
       </section>

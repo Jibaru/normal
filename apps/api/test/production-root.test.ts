@@ -198,7 +198,6 @@ describe("API production root", () => {
     "CLERK_JWT_KEY",
     "CLERK_SECRET_KEY",
     "CLERK_WEBHOOK_SIGNING_SECRET",
-    "OAUTH_CLIENT_REGISTRY",
     "OAUTH_ISSUER",
     "OAUTH_PROTOCOL_ENCRYPTION_KEY",
     "OAUTH_RESOURCE",
@@ -286,19 +285,6 @@ describe("API production root", () => {
     ["OAUTH_RESOURCE", "https://api.example.test/other"],
     ["OAUTH_PROTOCOL_ENCRYPTION_KEY", "not-a-32-byte-key"],
     ["SMOKE_CHECK_SECRET", "not-a-32-byte-key"],
-    ["OAUTH_CLIENT_REGISTRY", "not-json"],
-    ["OAUTH_CLIENT_REGISTRY", "[]"],
-    [
-      "OAUTH_CLIENT_REGISTRY",
-      JSON.stringify([
-        {
-          clientClass: "approved",
-          clientId: "approved-client",
-          clientName: "Approved MCP Client",
-          redirectUris: ["https://client.example.test/callback#fragment"],
-        },
-      ]),
-    ],
   ] as const)(
     "fails closed when %s is invalid",
     async (configuration, value) => {

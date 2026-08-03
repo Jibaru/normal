@@ -9,7 +9,6 @@ describe("web production root", () => {
   const validEnvironment = {
     DEPLOYMENT_ENVIRONMENT: "production",
     NEXT_PUBLIC_API_ORIGIN: "https://api.example.com",
-    NEXT_PUBLIC_CLERK_JWT_TEMPLATE: "whatsapp-api",
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_Y2xlcmsuZXhhbXBsZS50ZXN0JA",
   } as const;
 
@@ -48,21 +47,10 @@ describe("web production root", () => {
     expect(response.status).toBe(200);
   });
 
-  test.each([
-    "NEXT_PUBLIC_CLERK_JWT_TEMPLATE",
-    "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
-  ] as const)("fails closed when %s is absent", async (name) => {
+  test("fails closed when the Clerk publishable key is absent", async () => {
+    const name = "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" as const;
     const { [name]: _missing, ...environment } = validEnvironment;
     const response = await createProductionHealthRoute(environment)();
-
-    expect(response.status).toBe(503);
-  });
-
-  test("rejects an unsafe Clerk JWT template name", async () => {
-    const response = await createProductionHealthRoute({
-      ...validEnvironment,
-      NEXT_PUBLIC_CLERK_JWT_TEMPLATE: "template with spaces",
-    })();
 
     expect(response.status).toBe(503);
   });

@@ -7,10 +7,10 @@ const authorizationUrl = (
 ): string => {
   const url = new URL("https://api.example.test/oauth/authorize");
   const parameters = {
-    client_id: "approved-client",
+    client_id: "claude",
     code_challenge: "A".repeat(43),
     code_challenge_method: "S256",
-    redirect_uri: "https://client.example.test/callback",
+    redirect_uri: "https://claude.ai/api/mcp/auth_callback",
     resource: "https://api.example.test/mcp",
     response_type: "code",
     scope: "connections:read messages:send",
@@ -120,8 +120,24 @@ describe("production OAuth boundary", () => {
     );
     expect(handoff).toBeDefined();
     expect(handoff?.[0]).not.toContain(location.searchParams.get("request"));
-    expect(handoff?.[1]).not.toContain("approved-client");
-    expect(handoff?.[1]).not.toContain("https://client.example.test/callback");
+    expect(handoff?.[1]).not.toContain("claude");
+    expect(handoff?.[1]).not.toContain(
+      "https://claude.ai/api/mcp/auth_callback",
+    );
+  });
+
+  test("admits the source-defined ChatGPT public client", async () => {
+    const response = await createProductionHandler(validEnvironment())(
+      new Request(
+        authorizationUrl({
+          client_id: "chatgpt",
+          redirect_uri: "https://chatgpt.com/connector_platform_oauth_redirect",
+        }),
+        { redirect: "manual" },
+      ),
+    );
+
+    expect(response.status).toBe(302);
   });
 
   test.each([

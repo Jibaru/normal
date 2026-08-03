@@ -103,7 +103,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   ).toBeVisible();
 
   await page
-    .getByRole("button", { name: "Bootstrap Personal Account" })
+    .getByRole("button", { name: "Continue to Personal Account" })
     .click();
 
   await expect(page.getByTestId("api-boundary-status")).toHaveText(
@@ -230,7 +230,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   ).toBeVisible();
   await page.reload();
   await page
-    .getByRole("button", { name: "Bootstrap Personal Account" })
+    .getByRole("button", { name: "Continue to Personal Account" })
     .click();
   const resumedConnection = page.getByTestId("whatsapp-connection");
   await expect(resumedConnection).toContainText("connecting");
@@ -305,7 +305,7 @@ test("waitlists a signed-in User when private-beta capacity is exhausted", async
   await page.goto("/");
 
   await page
-    .getByRole("button", { name: "Bootstrap Personal Account" })
+    .getByRole("button", { name: "Continue to Personal Account" })
     .click();
 
   await expect(page.getByTestId("api-boundary-status")).toHaveText(
@@ -360,7 +360,7 @@ test("keeps the Personal Account usable when MCP Authorization listing is unavai
   await page.goto("/");
 
   await page
-    .getByRole("button", { name: "Bootstrap Personal Account" })
+    .getByRole("button", { name: "Continue to Personal Account" })
     .click();
 
   await expect(page.getByTestId("api-boundary-status")).toHaveText(
@@ -392,12 +392,12 @@ test("recovers when the external identity token lookup fails", async ({
   await page.goto("/");
 
   const button = page.getByRole("button", {
-    name: "Bootstrap Personal Account",
+    name: "Continue to Personal Account",
   });
   await button.click();
 
   await expect(page.getByTestId("api-boundary-status")).toHaveText(
-    "unavailable",
+    "Your Personal Account is temporarily unavailable. Please try again.",
   );
   await expect(button).toBeEnabled();
 });
@@ -423,12 +423,14 @@ test("opens the real Clerk sign-in flow when no browser session exists", async (
   });
   await page.goto("/");
 
-  await page
-    .getByRole("button", { name: "Bootstrap Personal Account" })
-    .click();
+  await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Continue to Personal Account" }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Sign in" }).click();
 
   await expect(page.getByTestId("api-boundary-status")).toHaveText(
-    "signed_out",
+    "Sign in to continue.",
   );
   expect(
     await page.evaluate(
@@ -440,4 +442,46 @@ test("opens the real Clerk sign-in flow when no browser session exists", async (
         ).__openedClerkSignIn,
     ),
   ).toBe(true);
+});
+
+test("reveals the Personal Account action after Clerk signs in", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    let listener: (() => void) | undefined;
+    const clerk: {
+      addListener: (next: () => void) => () => void;
+      loaded: boolean;
+      openSignIn: () => void;
+      session: { getToken: () => Promise<string> } | null;
+    } = {
+      addListener: (next) => {
+        listener = next;
+        return () => {
+          listener = undefined;
+        };
+      },
+      loaded: true,
+      openSignIn: () => {
+        clerk.session = { getToken: async () => "signed-test-user" };
+        listener?.();
+      },
+      session: null,
+    };
+    Object.defineProperty(window, "Clerk", {
+      configurable: false,
+      value: clerk,
+      writable: false,
+    });
+  });
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Sign in" }).click();
+
+  await expect(
+    page.getByRole("button", { name: "Continue to Personal Account" }),
+  ).toBeVisible();
+  await expect(page.getByTestId("api-boundary-status")).toHaveText(
+    "Signed in. Continue to create or open your Personal Account.",
+  );
 });

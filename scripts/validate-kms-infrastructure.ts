@@ -19,6 +19,11 @@ type Resource = {
   readonly Type: string;
 };
 
+type RuleCondition = {
+  readonly "Fn::Equals"?: ReadonlyArray<unknown>;
+  readonly "Fn::Or"?: ReadonlyArray<RuleCondition>;
+};
+
 const template = (await Bun.file("infra/aws/kms.template.json").json()) as {
   readonly Resources?: Readonly<Record<string, Resource>>;
   readonly Rules?: Readonly<
@@ -27,9 +32,7 @@ const template = (await Bun.file("infra/aws/kms.template.json").json()) as {
       {
         readonly Assertions?: ReadonlyArray<{
           readonly Assert?: {
-            readonly "Fn::Not"?: ReadonlyArray<{
-              readonly "Fn::Or"?: ReadonlyArray<unknown>;
-            }>;
+            readonly "Fn::Not"?: ReadonlyArray<RuleCondition>;
           };
         }>;
       }
@@ -38,6 +41,12 @@ const template = (await Bun.file("infra/aws/kms.template.json").json()) as {
 };
 
 const resources = template.Resources;
+const countEqualityComparisons = (condition: RuleCondition): number =>
+  (condition["Fn::Equals"] === undefined ? 0 : 1) +
+  (condition["Fn::Or"] ?? []).reduce(
+    (count, child) => count + countEqualityComparisons(child),
+    0,
+  );
 assert(resources, "CloudFormation template must declare resources");
 assert(
   template.Rules?.DeployOnlyInUsEast1,
@@ -48,8 +57,10 @@ assert(
   "CloudFormation template must reject shared authority bootstrap principals",
 );
 assert.equal(
-  template.Rules.AuthoritiesUseDistinctBootstrapPrincipals.Assertions?.[0]
-    ?.Assert?.["Fn::Not"]?.[0]?.["Fn::Or"]?.length,
+  countEqualityComparisons(
+    template.Rules.AuthoritiesUseDistinctBootstrapPrincipals.Assertions?.[0]
+      ?.Assert?.["Fn::Not"]?.[0] ?? {},
+  ),
   15,
   "CloudFormation template must compare every pair of authority principals",
 );

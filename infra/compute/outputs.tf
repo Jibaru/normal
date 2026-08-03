@@ -34,11 +34,6 @@ output "oauth_kv_namespace_id" {
   sensitive   = true
 }
 
-output "oauth_client_registry" {
-  description = "Reviewed MCP Client allowlist rendered for the API Worker."
-  value       = local.oauth_client_registry
-}
-
 output "r2_bucket_names" {
   description = "Private R2 buckets bound only to the API Worker."
   value = {

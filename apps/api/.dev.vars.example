@@ -1,15 +1,8 @@
-# Non-secret local values
-DEPLOYMENT_ENVIRONMENT=development
-NEON_BRANCH_ID=br_replace_with_neon_branch_id
-AWS_KMS_REGION=us-east-1
-PROVIDER_APPROVED_SESSION_CAPACITY=replace-with-vendor-approved-session-capacity
-MCP_REQUESTS_PER_MINUTE=replace-with-approved-minute-request-limit
-MESSAGE_RETENTION_DAY_OPTIONS=7,30,90
-SENDS_PER_MINUTE=replace-with-approved-send-minute-limit
-SENDS_PER_DAY=replace-with-approved-daily-send-limit
-MCP_REQUESTS_PER_HOUR=replace-with-approved-hour-request-limit
-READ_MESSAGE_RECORDS_PER_DAY=replace-with-approved-daily-returned-record-limit
-DECRYPTED_MEDIA_BYTES_PER_DAY=replace-with-approved-daily-decrypted-media-byte-limit
+# `.dev.vars` is only for values that must not be committed. Non-secret local
+# configuration belongs in `wrangler.jsonc` under `vars`.
+
+# These identifiers are not credentials, but deployment provisions them through
+# the secret-binding pipeline so they remain environment-specific.
 KMS_CONTENT_ROOT_KEY_ARN=arn:aws:kms:us-east-1:111122223333:key/replace-with-content-root-key-id
 KMS_DELETION_COORDINATOR_KEY_ARN=arn:aws:kms:us-east-1:111122223333:key/replace-with-deletion-coordinator-key-id
 
@@ -21,8 +14,7 @@ AWS_SESSION_TOKEN=replace-with-temporary-session-token
 # Dedicated marker-key HMAC secret; generate independently with openssl rand -hex 32.
 DELETION_MARKER_HMAC_SECRET=replace-with-dedicated-32-byte-hex-secret
 
-# Dedicated authorization-bound pagination cursor HMAC key.
-MCP_CURSOR_HMAC_SECRET=replace-with-dedicated-32-byte-hex-secret
+# Dedicated authorization-bound send fingerprint HMAC key.
 SEND_FINGERPRINT_HMAC_SECRET=replace-with-dedicated-32-byte-hex-secret
 
 # Authenticates the non-interactive deployed smoke command only.
@@ -36,26 +28,13 @@ WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET=replace-with-dedicated-32-byte-hex-secre
 # Generate independently with openssl rand -hex 32.
 MCP_CURSOR_HMAC_SECRET=replace-with-dedicated-32-byte-hex-secret
 
-# Clerk custom JWT verification. The template aud must equal the API origin,
-# azp plus the browser Origin must equal the web origin, and Clerk's standard
-# fva claim must remain present so OAuth consent can enforce reverification.
-CLERK_API_AUDIENCE=https://api.example.test
-CLERK_AUTHORIZED_PARTY=https://app.example.test
-CLERK_ISSUER=https://replace-with-clerk-frontend-api.clerk.accounts.dev
+# Clerk deployment material.
 CLERK_JWT_KEY="-----BEGIN PUBLIC KEY-----
 replace-with-clerk-jwt-public-key
 -----END PUBLIC KEY-----"
 CLERK_SECRET_KEY=sk_test_replace-with-clerk-backend-secret
 CLERK_WEBHOOK_SIGNING_SECRET=whsec_replace-with-clerk-webhook-signing-secret
 
-# OAuth issuer and resource must use the API custom origin. The registry is the
-# reviewed MCP Client allowlist; every redirect is matched exactly.
-OAUTH_ISSUER=https://api.example.test
-OAUTH_RESOURCE=https://api.example.test/mcp
-OAUTH_CLIENT_REGISTRY='[{"clientClass":"approved","clientId":"replace-with-reviewed-client-id","clientName":"Replace with reviewed MCP Client","redirectUris":["https://client.example.test/oauth/callback"]}]'
-
 # Encrypts short-lived authorization requests handed to the web consent UI.
 # Generate independently with openssl rand -hex 32.
 OAUTH_PROTOCOL_ENCRYPTION_KEY=replace-with-dedicated-32-byte-hex-secret
-# External onboarding is fail-closed until the production launch-gate workflow passes.
-EXTERNAL_ONBOARDING_GATE=closed

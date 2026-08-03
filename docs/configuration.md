@@ -19,7 +19,6 @@ Secret examples never contain usable key material.
 | `DEPLOYMENT_ENVIRONMENT` | Non-secret | Web, API, provider-control | Set to the deployed environment. Change only as part of a deployment. |
 | `NEXT_PUBLIC_API_ORIGIN` | Non-secret | Web browser bundle and web startup validation | OpenTofu sets the same-environment API Worker's bare HTTPS origin. It is frozen into the browser bundle at build time. |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Public identifier | Web browser bundle and web startup validation | Copy the publishable key from the same-environment Clerk instance. OpenTofu freezes it into that environment's browser bundle. |
-| `NEXT_PUBLIC_CLERK_JWT_TEMPLATE` | Non-secret | Web browser bundle and web startup validation | Name of the same-environment Clerk custom JWT template. The default and recommended value is `whatsapp-api`. |
 | `CLERK_API_AUDIENCE` | Non-secret | API | Exact bare HTTPS API origin. OpenTofu derives it from `api_hostname`; the custom JWT template's `aud` claim must match it exactly. |
 | `CLERK_AUTHORIZED_PARTY` | Non-secret | API | Exact bare HTTPS web origin allowed by both the token `azp` claim and request `Origin`. OpenTofu derives it from `web_hostname`. |
 | `CLERK_ISSUER` | Non-secret | API | Exact HTTPS issuer for the same-environment Clerk instance. |
@@ -28,7 +27,6 @@ Secret examples never contain usable key material.
 | `CLERK_WEBHOOK_SIGNING_SECRET` | Secret deployment material | API | Signing secret for Clerk deliveries. Configure `user.deleted` delivery to `/v1/webhooks/clerk`; invalid deliveries fail closed before identity lookup. |
 | `OAUTH_ISSUER` | Non-secret | API OAuth provider | Exact API HTTPS origin and RFC 8414 issuer. It must equal `CLERK_API_AUDIENCE`; OpenTofu derives both from `api_hostname`. |
 | `OAUTH_RESOURCE` | Non-secret | API OAuth provider | Exact protected MCP resource, formed as `OAUTH_ISSUER` plus `/mcp`. |
-| `OAUTH_CLIENT_REGISTRY` | Non-secret reviewed policy | API OAuth provider | JSON allowlist rendered from `oauth_clients`, containing each stable MCP Client ID, class, display name, and exact permitted redirects. |
 | `OAUTH_PROTOCOL_ENCRYPTION_KEY` | Secret | API OAuth provider | Dedicated 32-byte hex AES key for short-lived consent handoff records. Generate with `openssl rand -hex 32`; never reuse another platform key. |
 | `SMOKE_CHECK_SECRET` | Secret | API deployed-smoke boundary and deployment runner | Dedicated 32-byte hex bearer secret. Generate independently with `openssl rand -hex 32`, store it in the Worker and deployment secret stores, and rotate both together. It authorizes only disposable smoke canaries and must never be reused as an OAuth, encryption, or HMAC key. |
 | `MCP_REQUESTS_PER_MINUTE` | Non-secret approved quota | API MCP resource server | Authoritative per-Personal-Account request reservations allowed in an exact rolling minute. Set the reviewed positive integer through `mcp_requests_per_minute`; there is no production default. |
@@ -134,7 +132,7 @@ resource, S256-only PKCE, and the four MCP scopes. Implicit flow, dynamic
 client registration, and Client ID Metadata Documents are disabled.
 
 Before consent, the API exactly matches `client_id`, `redirect_uri`,
-`resource`, response type, and PKCE against `OAUTH_CLIENT_REGISTRY`; failures
+`resource`, response type, and PKCE against the source-defined client allowlist; failures
 return locally and never redirect. A valid request is parsed by Cloudflare's
 OAuth provider, AES-256-GCM encrypted, stored in OAuth KV for at most ten
 minutes under a SHA-256 lookup key, and handed to the web consent origin using
@@ -269,23 +267,17 @@ Review telemetry contains only `tool_call_log.review.completed`, a bounded log
 count, and the API service name; do not add tenant, Client, authorization,
 Connection, send, network, or capability identifiers.
 
-Declare the reviewed per-environment allowlist through `oauth_clients`:
+The public OAuth clients are defined in `apps/api/src/oauth.ts`:
 
-```hcl
-oauth_clients = [{
-  client_class  = "approved"
-  client_id     = "reviewed-client-id"
-  client_name   = "Reviewed MCP Client"
-  redirect_uris = ["https://client.example.com/oauth/callback"]
-}]
+```text
+Claude: client_id=claude, redirect_uri=https://claude.ai/api/mcp/auth_callback
+ChatGPT: client_id=chatgpt, redirect_uri=https://chatgpt.com/connector_platform_oauth_redirect
 ```
 
-HTTPS redirects and explicitly configured HTTP loopback redirects are accepted
-at configuration time; authorization still requires exact string equality.
-Treat every client, redirect, or client-class change as an authorization-policy
-change and review the environment-isolated plan. KV never acts as the client
-registry: removing an entry from the deployed configuration makes that client
-unavailable to new authorization and token requests immediately.
+Client IDs identify public PKCE clients and are not credentials. Treat every
+client, redirect, or client-class source change as an authorization-policy
+change. Authorization requires exact string equality, and KV never acts as the
+client registry.
 
 Provider-control startup also validates both Wasender secrets before serving
 even its private health route or an RPC method. The Wrangler manifest declares
@@ -623,9 +615,7 @@ repository:
 | `api_hostname` | Public custom hostname routed to the API Worker. |
 | `web_hostname` | Distinct public hostname assigned to the Vercel web project. |
 | `clerk_issuer` | Exact HTTPS issuer for the same-environment Clerk instance. |
-| `clerk_jwt_template` | Safe custom JWT template name; defaults to `whatsapp-api`. |
 | `clerk_publishable_key` | Public browser key for the same-environment Clerk instance. |
-| `oauth_clients` | Reviewed environment-specific MCP Client classes, IDs, names, and exact redirects. |
 | `provider_approved_session_capacity` | Required reviewed integer ceiling; each admitted Personal Account reserves three sessions. |
 | `mcp_requests_per_minute` | Required approved positive integer for authoritative per-Personal-Account requests in an exact rolling minute. |
 | `mcp_requests_per_hour` | Required approved integer for authoritative per-Personal-Account requests in an exact rolling hour; at least the minute value. |

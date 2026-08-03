@@ -94,6 +94,10 @@ const hooks = {
 // specific binaries and any packages added since the last copy.
 const copyToWorktree = ["node_modules"];
 
+// Parallel copies of Bun's large node_modules tree can exceed Sandcastle's
+// 60-second default even though an individual APFS clone is fast.
+const timeouts = { copyToWorktreeMs: 5 * 60_000 };
+
 // ---------------------------------------------------------------------------
 // Main loop
 // ---------------------------------------------------------------------------
@@ -158,6 +162,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
         sandbox: codexSandbox(),
         hooks,
         copyToWorktree,
+        timeouts,
       });
 
       try {

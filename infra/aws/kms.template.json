@@ -47,93 +47,101 @@
               {
                 "Fn::Or": [
                   {
-                    "Fn::Equals": [
-                      { "Ref": "KmsAdministratorAssumerArn" },
-                      { "Ref": "ContentRuntimeAssumerArn" }
+                    "Fn::Or": [
+                      {
+                        "Fn::Equals": [
+                          { "Ref": "KmsAdministratorAssumerArn" },
+                          { "Ref": "ContentRuntimeAssumerArn" }
+                        ]
+                      },
+                      {
+                        "Fn::Equals": [
+                          { "Ref": "KmsAdministratorAssumerArn" },
+                          { "Ref": "DeletionCoordinatorAssumerArn" }
+                        ]
+                      },
+                      {
+                        "Fn::Equals": [
+                          { "Ref": "KmsAdministratorAssumerArn" },
+                          { "Ref": "ProviderControlAssumerArn" }
+                        ]
+                      },
+                      {
+                        "Fn::Equals": [
+                          { "Ref": "KmsAdministratorAssumerArn" },
+                          { "Ref": "OrdinaryOperatorAssumerArn" }
+                        ]
+                      },
+                      {
+                        "Fn::Equals": [
+                          { "Ref": "ContentRuntimeAssumerArn" },
+                          { "Ref": "DeletionCoordinatorAssumerArn" }
+                        ]
+                      },
+                      {
+                        "Fn::Equals": [
+                          { "Ref": "ContentRuntimeAssumerArn" },
+                          { "Ref": "ProviderControlAssumerArn" }
+                        ]
+                      },
+                      {
+                        "Fn::Equals": [
+                          { "Ref": "ContentRuntimeAssumerArn" },
+                          { "Ref": "OrdinaryOperatorAssumerArn" }
+                        ]
+                      },
+                      {
+                        "Fn::Equals": [
+                          { "Ref": "DeletionCoordinatorAssumerArn" },
+                          { "Ref": "ProviderControlAssumerArn" }
+                        ]
+                      },
+                      {
+                        "Fn::Equals": [
+                          { "Ref": "DeletionCoordinatorAssumerArn" },
+                          { "Ref": "OrdinaryOperatorAssumerArn" }
+                        ]
+                      },
+                      {
+                        "Fn::Equals": [
+                          { "Ref": "ProviderControlAssumerArn" },
+                          { "Ref": "OrdinaryOperatorAssumerArn" }
+                        ]
+                      }
                     ]
                   },
                   {
-                    "Fn::Equals": [
-                      { "Ref": "KmsAdministratorAssumerArn" },
-                      { "Ref": "DeletionCoordinatorAssumerArn" }
-                    ]
-                  },
-                  {
-                    "Fn::Equals": [
-                      { "Ref": "KmsAdministratorAssumerArn" },
-                      { "Ref": "ProviderControlAssumerArn" }
-                    ]
-                  },
-                  {
-                    "Fn::Equals": [
-                      { "Ref": "KmsAdministratorAssumerArn" },
-                      { "Ref": "OrdinaryOperatorAssumerArn" }
-                    ]
-                  },
-                  {
-                    "Fn::Equals": [
-                      { "Ref": "ContentRuntimeAssumerArn" },
-                      { "Ref": "DeletionCoordinatorAssumerArn" }
-                    ]
-                  },
-                  {
-                    "Fn::Equals": [
-                      { "Ref": "ContentRuntimeAssumerArn" },
-                      { "Ref": "ProviderControlAssumerArn" }
-                    ]
-                  },
-                  {
-                    "Fn::Equals": [
-                      { "Ref": "ContentRuntimeAssumerArn" },
-                      { "Ref": "OrdinaryOperatorAssumerArn" }
-                    ]
-                  },
-                  {
-                    "Fn::Equals": [
-                      { "Ref": "DeletionCoordinatorAssumerArn" },
-                      { "Ref": "ProviderControlAssumerArn" }
-                    ]
-                  },
-                  {
-                    "Fn::Equals": [
-                      { "Ref": "DeletionCoordinatorAssumerArn" },
-                      { "Ref": "OrdinaryOperatorAssumerArn" }
-                    ]
-                  },
-                  {
-                    "Fn::Equals": [
-                      { "Ref": "ProviderControlAssumerArn" },
-                      { "Ref": "OrdinaryOperatorAssumerArn" }
-                    ]
-                  },
-                  {
-                    "Fn::Equals": [
-                      { "Ref": "BreakGlassAssumerArn" },
-                      { "Ref": "KmsAdministratorAssumerArn" }
-                    ]
-                  },
-                  {
-                    "Fn::Equals": [
-                      { "Ref": "BreakGlassAssumerArn" },
-                      { "Ref": "ContentRuntimeAssumerArn" }
-                    ]
-                  },
-                  {
-                    "Fn::Equals": [
-                      { "Ref": "BreakGlassAssumerArn" },
-                      { "Ref": "DeletionCoordinatorAssumerArn" }
-                    ]
-                  },
-                  {
-                    "Fn::Equals": [
-                      { "Ref": "BreakGlassAssumerArn" },
-                      { "Ref": "ProviderControlAssumerArn" }
-                    ]
-                  },
-                  {
-                    "Fn::Equals": [
-                      { "Ref": "BreakGlassAssumerArn" },
-                      { "Ref": "OrdinaryOperatorAssumerArn" }
+                    "Fn::Or": [
+                      {
+                        "Fn::Equals": [
+                          { "Ref": "BreakGlassAssumerArn" },
+                          { "Ref": "KmsAdministratorAssumerArn" }
+                        ]
+                      },
+                      {
+                        "Fn::Equals": [
+                          { "Ref": "BreakGlassAssumerArn" },
+                          { "Ref": "ContentRuntimeAssumerArn" }
+                        ]
+                      },
+                      {
+                        "Fn::Equals": [
+                          { "Ref": "BreakGlassAssumerArn" },
+                          { "Ref": "DeletionCoordinatorAssumerArn" }
+                        ]
+                      },
+                      {
+                        "Fn::Equals": [
+                          { "Ref": "BreakGlassAssumerArn" },
+                          { "Ref": "ProviderControlAssumerArn" }
+                        ]
+                      },
+                      {
+                        "Fn::Equals": [
+                          { "Ref": "BreakGlassAssumerArn" },
+                          { "Ref": "OrdinaryOperatorAssumerArn" }
+                        ]
+                      }
                     ]
                   }
                 ]

@@ -38,7 +38,6 @@ export interface Env {
   readonly SENDS_PER_DAY: string;
   readonly SENDS_PER_MINUTE: string;
   readonly SMOKE_CHECK_SECRET: string;
-  readonly OAUTH_CLIENT_REGISTRY: string;
   readonly OAUTH_ISSUER: string;
   readonly OAUTH_KV: KVNamespace;
   readonly OAUTH_PROTOCOL_ENCRYPTION_KEY: string;

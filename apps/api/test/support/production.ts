@@ -38,14 +38,6 @@ export const validEnvironment = () => ({
     "arn:aws:kms:us-east-1:111122223333:key/00000000-0000-0000-0000-000000000001",
   KMS_DELETION_COORDINATOR_KEY_ARN:
     "arn:aws:kms:us-east-1:111122223333:key/00000000-0000-0000-0000-000000000002",
-  OAUTH_CLIENT_REGISTRY: JSON.stringify([
-    {
-      clientClass: "approved",
-      clientId: "approved-client",
-      clientName: "Approved MCP Client",
-      redirectUris: ["https://client.example.test/callback"],
-    },
-  ]),
   OAUTH_ISSUER: "https://api.example.test",
   OAUTH_KV: {
     delete: async () => undefined,

@@ -2,6 +2,25 @@
 
 import { makeIdempotencyKey } from "@whatsapp-mcp/contracts/handles";
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Spinner } from "@/components/ui/spinner";
 import { loadBrowserClerk } from "../clerk/browser";
 
 interface PublicBoundaryJourneyProps {
@@ -22,6 +41,8 @@ type JourneyState =
   | "unavailable"
   | "waitlisted"
   | "ok";
+
+type IdentityState = "loading" | "signed_out" | "signed_in" | "unavailable";
 
 type SetupState =
   | "cancelled"
@@ -316,6 +337,7 @@ export function PublicBoundaryJourney({
   personalAccountDeletionEndpoint,
   toolCallLogsEndpoint,
 }: PublicBoundaryJourneyProps) {
+  const [identityState, setIdentityState] = useState<IdentityState>("loading");
   const [state, setState] = useState<JourneyState>("idle");
   const [setupState, setSetupState] = useState<SetupState>("idle");
   const [authorizationState, setAuthorizationState] =
@@ -378,6 +400,31 @@ export function PublicBoundaryJourney({
   const observationGeneration = useRef(0);
   const observationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  useEffect(() => {
+    let active = true;
+    let unsubscribe: (() => void) | undefined;
+
+    void loadBrowserClerk(clerkPublishableKey)
+      .then((clerk) => {
+        if (!active) return;
+        const updateIdentity = () => {
+          if (active) {
+            setIdentityState(clerk.session ? "signed_in" : "signed_out");
+          }
+        };
+        updateIdentity();
+        unsubscribe = clerk.addListener?.(updateIdentity);
+      })
+      .catch(() => {
+        if (active) setIdentityState("unavailable");
+      });
+
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, [clerkPublishableKey]);
+
   useEffect(
     () => () => {
       observationGeneration.current += 1;
@@ -403,11 +450,19 @@ export function PublicBoundaryJourney({
     const token = await clerk.session?.getToken({
       template: clerkJwtTemplate,
     });
-    if (token === undefined || token === null) {
-      clerk.openSignIn?.();
-      return null;
-    }
+    if (token === undefined || token === null) return null;
     return token;
+  };
+
+  const openSignIn = async () => {
+    try {
+      const clerk = await loadBrowserClerk(clerkPublishableKey);
+      if (clerk.openSignIn === undefined)
+        throw new Error("sign-in unavailable");
+      clerk.openSignIn();
+    } catch {
+      setIdentityState("unavailable");
+    }
   };
 
   const loadMoreToolCallLogs = async () => {
@@ -827,6 +882,7 @@ export function PublicBoundaryJourney({
     try {
       const token = await getToken();
       if (token === null) {
+        setIdentityState("signed_out");
         setState("signed_out");
         return;
       }
@@ -1113,31 +1169,50 @@ export function PublicBoundaryJourney({
   };
 
   return (
-    <section aria-label="Signed-in API boundary" className="space-y-3">
-      <button
-        className="rounded bg-emerald-400 px-4 py-2 font-medium text-zinc-950 disabled:opacity-60"
-        disabled={state === "loading"}
-        onClick={checkBoundary}
-        type="button"
-      >
-        Bootstrap Personal Account
-      </button>
+    <section
+      aria-label="Signed-in API boundary"
+      className="flex flex-col gap-3"
+    >
+      {identityState === "signed_in" ? (
+        <Button
+          disabled={state === "loading"}
+          onClick={checkBoundary}
+          type="button"
+        >
+          {state === "loading" ? <Spinner data-icon="inline-start" /> : null}
+          Continue to Personal Account
+        </Button>
+      ) : identityState === "signed_out" ? (
+        <Button onClick={openSignIn} type="button">
+          Sign in
+        </Button>
+      ) : null}
       <p aria-live="polite" data-testid="api-boundary-status">
-        {state === "ok"
-          ? "Personal Account ready"
-          : state === "waitlisted"
-            ? "You’re on the private-beta waitlist"
-            : state}
+        {identityState === "loading"
+          ? "Checking sign-in status…"
+          : identityState === "unavailable"
+            ? "Sign-in is temporarily unavailable. Please refresh and try again."
+            : identityState === "signed_out"
+              ? "Sign in to continue."
+              : state === "ok"
+                ? "Personal Account ready"
+                : state === "waitlisted"
+                  ? "You’re on the private-beta waitlist"
+                  : state === "loading"
+                    ? "Preparing your Personal Account…"
+                    : state === "unavailable"
+                      ? "Your Personal Account is temporarily unavailable. Please try again."
+                      : "Signed in. Continue to create or open your Personal Account."}
       </p>
       {state === "ok" ? (
         <>
           <section
             aria-label="MCP Authorizations"
-            className="space-y-3 rounded-lg border border-zinc-800 bg-zinc-900 p-4"
+            className="flex flex-col gap-3 rounded-lg border bg-card p-4 text-card-foreground"
           >
             <div>
               <h2 className="text-lg font-medium">MCP Authorizations</h2>
-              <p className="text-sm text-zinc-400">
+              <p className="text-sm text-muted-foreground">
                 Review and revoke access held by approved MCP Clients.
               </p>
             </div>
@@ -1150,7 +1225,7 @@ export function PublicBoundaryJourney({
             ) : authorizations.length === 0 ? (
               <p>No MCP Clients currently have access.</p>
             ) : (
-              <ul className="space-y-3">
+              <ul className="flex flex-col gap-3">
                 {authorizations.map((authorization) => {
                   const stateLabel =
                     authorization.revocationState === "revoked"
@@ -1160,7 +1235,7 @@ export function PublicBoundaryJourney({
                         : "Active";
                   return (
                     <li
-                      className="space-y-3 rounded border border-zinc-700 bg-zinc-950 p-4"
+                      className="flex flex-col gap-3 rounded-lg border bg-background p-4"
                       key={authorization.id}
                     >
                       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1168,20 +1243,20 @@ export function PublicBoundaryJourney({
                           <h3 className="font-medium">
                             {authorization.client.name}
                           </h3>
-                          <p className="font-mono text-xs text-zinc-500">
+                          <p className="font-mono text-xs text-muted-foreground">
                             {authorization.client.id}
                           </p>
                         </div>
-                        <span
-                          className="rounded-full border border-zinc-700 px-2 py-1 text-xs"
+                        <Badge
                           data-testid="mcp-authorization-state"
+                          variant="outline"
                         >
                           {stateLabel}
-                        </span>
+                        </Badge>
                       </div>
                       <dl className="grid gap-2 text-sm sm:grid-cols-2">
                         <div>
-                          <dt className="text-zinc-500">Created</dt>
+                          <dt className="text-muted-foreground">Created</dt>
                           <dd>
                             <time dateTime={authorization.createdAt}>
                               {displayTime(authorization.createdAt)} UTC
@@ -1189,7 +1264,7 @@ export function PublicBoundaryJourney({
                           </dd>
                         </div>
                         <div>
-                          <dt className="text-zinc-500">Expires</dt>
+                          <dt className="text-muted-foreground">Expires</dt>
                           <dd>
                             <time dateTime={authorization.expiresAt}>
                               {displayTime(authorization.expiresAt)} UTC
@@ -1197,43 +1272,47 @@ export function PublicBoundaryJourney({
                           </dd>
                         </div>
                       </dl>
-                      <div className="space-y-1">
-                        <p className="text-sm text-zinc-500">
+                      <div className="flex flex-col gap-1">
+                        <p className="text-sm text-muted-foreground">
                           WhatsApp Connections
                         </p>
-                        <ul className="space-y-1 font-mono text-xs">
+                        <ul className="flex flex-col gap-1 font-mono text-xs">
                           {authorization.connectionIds.map((connectionId) => (
                             <li key={connectionId}>{connectionId}</li>
                           ))}
                         </ul>
                       </div>
-                      <div className="space-y-1">
-                        <p className="text-sm text-zinc-500">Permissions</p>
+                      <div className="flex flex-col gap-1">
+                        <p className="text-sm text-muted-foreground">
+                          Permissions
+                        </p>
                         <ul className="flex flex-wrap gap-2 text-xs">
                           {authorization.scopes.map((scope) => (
-                            <li
-                              className="rounded bg-zinc-800 px-2 py-1"
-                              key={scope}
-                            >
-                              {scopeLabels[scope]}
+                            <li key={scope}>
+                              <Badge variant="secondary">
+                                {scopeLabels[scope]}
+                              </Badge>
                             </li>
                           ))}
                         </ul>
                       </div>
-                      <button
+                      <Button
                         aria-label={`Revoke ${authorization.client.name}`}
-                        className="rounded border border-red-500 px-3 py-2 text-sm text-red-300 disabled:cursor-not-allowed disabled:opacity-50"
                         disabled={
                           authorization.revocationState === "revoked" ||
                           revokingAuthorization === authorization.id
                         }
                         onClick={() => revokeAuthorization(authorization)}
                         type="button"
+                        variant="destructive"
                       >
+                        {revokingAuthorization === authorization.id ? (
+                          <Spinner data-icon="inline-start" />
+                        ) : null}
                         {revokingAuthorization === authorization.id
                           ? "Revoking…"
                           : "Revoke access"}
-                      </button>
+                      </Button>
                     </li>
                   );
                 })}
@@ -1242,11 +1321,11 @@ export function PublicBoundaryJourney({
           </section>
           <section
             aria-label="Tool Call Logs"
-            className="space-y-3 rounded-lg border border-zinc-800 bg-zinc-900 p-4"
+            className="flex flex-col gap-3 rounded-lg border bg-card p-4 text-card-foreground"
           >
             <div>
               <h2 className="text-lg font-medium">Tool Call Logs</h2>
-              <p className="text-sm text-zinc-400">
+              <p className="text-sm text-muted-foreground">
                 Metadata-only activity from the last 90 days. Message content,
                 full numbers, credentials, and provider data are never shown.
               </p>
@@ -1260,10 +1339,10 @@ export function PublicBoundaryJourney({
             ) : toolCallLogs.length === 0 ? (
               <p>No tool activity in the last 90 days.</p>
             ) : (
-              <ul className="space-y-3">
+              <ul className="flex flex-col gap-3">
                 {toolCallLogs.map((log, index) => (
                   <li
-                    className="space-y-3 rounded border border-zinc-700 bg-zinc-950 p-4"
+                    className="flex flex-col gap-3 rounded-lg border bg-background p-4"
                     data-testid="tool-call-log"
                     key={`${log.startedAt}:${log.references[0]}:${index}`}
                   >
@@ -1272,17 +1351,17 @@ export function PublicBoundaryJourney({
                         <h3 className="font-medium">
                           {log.capability.replaceAll("_", " ")}
                         </h3>
-                        <p className="text-sm text-zinc-400">
+                        <p className="text-sm text-muted-foreground">
                           {log.client.name}
                         </p>
                       </div>
-                      <span className="rounded-full border border-zinc-700 px-2 py-1 text-xs capitalize">
+                      <Badge className="capitalize" variant="outline">
                         {log.outcome.replaceAll("_", " ")}
-                      </span>
+                      </Badge>
                     </div>
                     <dl className="grid gap-2 text-sm sm:grid-cols-3">
                       <div>
-                        <dt className="text-zinc-500">Started</dt>
+                        <dt className="text-muted-foreground">Started</dt>
                         <dd>
                           <time dateTime={log.startedAt}>
                             {displayTime(log.startedAt)} UTC
@@ -1290,11 +1369,11 @@ export function PublicBoundaryJourney({
                         </dd>
                       </div>
                       <div>
-                        <dt className="text-zinc-500">Results</dt>
+                        <dt className="text-muted-foreground">Results</dt>
                         <dd>{log.counts.results ?? "Pending"}</dd>
                       </div>
                       <div>
-                        <dt className="text-zinc-500">Latency</dt>
+                        <dt className="text-muted-foreground">Latency</dt>
                         <dd>
                           {log.latencyMs === null
                             ? "Pending"
@@ -1302,7 +1381,7 @@ export function PublicBoundaryJourney({
                         </dd>
                       </div>
                     </dl>
-                    <ul className="space-y-1 font-mono text-xs text-zinc-500">
+                    <ul className="flex flex-col gap-1 font-mono text-xs text-muted-foreground">
                       {log.references.map((reference) => (
                         <li key={reference}>{reference}</li>
                       ))}
@@ -1312,77 +1391,75 @@ export function PublicBoundaryJourney({
               </ul>
             )}
             {toolCallLogState === "ok" && toolCallLogCursor !== null ? (
-              <button
-                className="rounded border border-zinc-700 px-3 py-2 text-sm disabled:opacity-50"
+              <Button
                 disabled={toolCallLogPageState === "loading"}
                 onClick={loadMoreToolCallLogs}
                 type="button"
+                variant="outline"
               >
+                {toolCallLogPageState === "loading" ? (
+                  <Spinner data-icon="inline-start" />
+                ) : null}
                 {toolCallLogPageState === "loading"
                   ? "Loading more…"
                   : "Load more"}
-              </button>
+              </Button>
             ) : null}
             {toolCallLogPageState === "unavailable" ? (
               <p aria-live="polite">More Tool Call Logs are unavailable.</p>
             ) : null}
           </section>
           <form
-            className="space-y-3 rounded-lg border border-zinc-800 bg-zinc-900 p-4"
+            className="flex flex-col gap-3 rounded-lg border bg-card p-4 text-card-foreground"
             onSubmit={startSetup}
           >
-            <div className="space-y-1">
-              <label
-                className="block text-sm font-medium"
-                htmlFor="whatsapp-number"
-              >
-                WhatsApp Number
-              </label>
-              <input
-                autoComplete="tel"
-                className="w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2"
-                disabled={setupState === "loading"}
-                id="whatsapp-number"
-                inputMode="tel"
-                onChange={(event) => {
-                  stopObserving();
-                  setWhatsappNumber(event.target.value);
-                  setSetupCleanupState(null);
-                  setSetupId(null);
-                  setSetupState("idle");
-                }}
-                placeholder="+1 555 012 3456"
-                required
-                type="tel"
-                value={whatsappNumber}
-              />
-              <p className="text-sm text-zinc-400">
-                Include the country code. Your setup expires after 15 minutes.
-              </p>
+            <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor="whatsapp-number">
+                  WhatsApp Number
+                </FieldLabel>
+                <Input
+                  autoComplete="tel"
+                  disabled={setupState === "loading"}
+                  id="whatsapp-number"
+                  inputMode="tel"
+                  onChange={(event) => {
+                    stopObserving();
+                    setWhatsappNumber(event.target.value);
+                    setSetupCleanupState(null);
+                    setSetupId(null);
+                    setSetupState("idle");
+                  }}
+                  placeholder="+1 555 012 3456"
+                  required
+                  type="tel"
+                  value={whatsappNumber}
+                />
+                <FieldDescription>
+                  Include the country code. Your setup expires after 15 minutes.
+                </FieldDescription>
+              </Field>
+            </FieldGroup>
+            <div className="flex flex-wrap gap-2">
+              <Button disabled={setupState === "loading"} type="submit">
+                {setupState === "loading" ? (
+                  <Spinner data-icon="inline-start" />
+                ) : null}
+                Start Connection Setup
+              </Button>
+              {setupId !== null &&
+              (setupState === "pending" ||
+                setupState === "replayed" ||
+                setupState === "qr_available" ||
+                setupState === "connecting" ||
+                setupState === "provisioned" ||
+                setupState === "provisioning_failed" ||
+                setupState === "provisioning_quarantined") ? (
+                <Button onClick={cancelSetup} type="button" variant="outline">
+                  Cancel Connection Setup
+                </Button>
+              ) : null}
             </div>
-            <button
-              className="rounded bg-emerald-400 px-4 py-2 font-medium text-zinc-950 disabled:opacity-60"
-              disabled={setupState === "loading"}
-              type="submit"
-            >
-              Start Connection Setup
-            </button>
-            {setupId !== null &&
-            (setupState === "pending" ||
-              setupState === "replayed" ||
-              setupState === "qr_available" ||
-              setupState === "connecting" ||
-              setupState === "provisioned" ||
-              setupState === "provisioning_failed" ||
-              setupState === "provisioning_quarantined") ? (
-              <button
-                className="ml-2 rounded border border-zinc-600 px-4 py-2 font-medium disabled:opacity-60"
-                onClick={cancelSetup}
-                type="button"
-              >
-                Cancel Connection Setup
-              </button>
-            ) : null}
             <p aria-live="polite" data-testid="connection-setup-status">
               {setupState === "pending"
                 ? "Connection Setup started. Preparing your QR code."
@@ -1437,71 +1514,89 @@ export function PublicBoundaryJourney({
         </>
       ) : null}
       {state === "ok" ? (
-        <section aria-label="WhatsApp Connections" className="space-y-3">
+        <section
+          aria-label="WhatsApp Connections"
+          className="flex flex-col gap-3"
+        >
           <h2 className="text-xl font-semibold">WhatsApp Connections</h2>
           {connections.length === 0 ? (
-            <p className="text-sm text-zinc-400">
+            <p className="text-sm text-muted-foreground">
               No WhatsApp Connections yet.
             </p>
           ) : (
-            <ul className="space-y-2">
+            <ul className="flex flex-col gap-2">
               {connections.map((connection) => (
                 <li
-                  className="rounded-lg border border-zinc-800 bg-zinc-900 p-4"
+                  className="rounded-lg border bg-card p-4 text-card-foreground"
                   data-testid="whatsapp-connection"
                   key={connection.id}
                 >
                   <p className="font-medium">
                     {connection.displayName ?? "WhatsApp Connection"}
                   </p>
-                  <p className="text-sm text-zinc-300">
+                  <p className="text-sm text-muted-foreground">
                     Number ending {connection.numberSuffix}
                   </p>
                   <p className="text-sm capitalize text-emerald-400">
                     {connection.state.replace("_", " ")}
                   </p>
                   <time
-                    className="text-xs text-zinc-500"
+                    className="text-xs text-muted-foreground"
                     dateTime={connection.stateChangedAt}
                   >
                     State changed {connection.stateChangedAt}
                   </time>
-                  <div className="mt-3 space-y-2 rounded border border-zinc-700 p-3">
-                    <label
-                      className="block text-sm font-medium"
-                      htmlFor={`retention-${connection.id}`}
-                    >
-                      Message Retention Policy
-                    </label>
-                    <select
-                      className="rounded border border-zinc-700 bg-zinc-950 px-3 py-2"
-                      id={`retention-${connection.id}`}
-                      onChange={(event) => {
-                        setRetentionDrafts((current) => ({
-                          ...current,
-                          [connection.id]: event.target.value,
-                        }));
-                        setRetentionAcknowledgements((current) => ({
-                          ...current,
-                          [connection.id]: false,
-                        }));
-                      }}
-                      value={
-                        retentionDrafts[connection.id] ??
-                        (connection.retentionDays === null
-                          ? "until-deletion"
-                          : String(connection.retentionDays))
-                      }
-                    >
-                      {connection.retentionOptions.map((days) => (
-                        <option key={days} value={days}>
-                          {days} days
-                        </option>
-                      ))}
-                      <option value="until-deletion">
-                        Retain until Connection Deletion
-                      </option>
-                    </select>
+                  <div className="mt-3 flex flex-col gap-2 rounded border p-3">
+                    <Field>
+                      <FieldLabel htmlFor={`retention-${connection.id}`}>
+                        Message Retention Policy
+                      </FieldLabel>
+                      <Select
+                        items={[
+                          ...connection.retentionOptions.map((days) => ({
+                            label: `${days} days`,
+                            value: String(days),
+                          })),
+                          {
+                            label: "Retain until Connection Deletion",
+                            value: "until-deletion",
+                          },
+                        ]}
+                        onValueChange={(value) => {
+                          if (value === null) return;
+                          setRetentionDrafts((current) => ({
+                            ...current,
+                            [connection.id]: value,
+                          }));
+                          setRetentionAcknowledgements((current) => ({
+                            ...current,
+                            [connection.id]: false,
+                          }));
+                        }}
+                        value={
+                          retentionDrafts[connection.id] ??
+                          (connection.retentionDays === null
+                            ? "until-deletion"
+                            : String(connection.retentionDays))
+                        }
+                      >
+                        <SelectTrigger id={`retention-${connection.id}`}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            {connection.retentionOptions.map((days) => (
+                              <SelectItem key={days} value={String(days)}>
+                                {days} days
+                              </SelectItem>
+                            ))}
+                            <SelectItem value="until-deletion">
+                              Retain until Connection Deletion
+                            </SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </Field>
                     {(() => {
                       const draft = retentionDrafts[connection.id];
                       const next =
@@ -1513,27 +1608,29 @@ export function PublicBoundaryJourney({
                         (connection.retentionDays !== null &&
                           next > connection.retentionDays);
                       return broadens ? (
-                        <label className="block text-sm text-amber-200">
-                          <input
+                        <Field orientation="horizontal">
+                          <Checkbox
                             checked={
                               retentionAcknowledgements[connection.id] === true
                             }
-                            className="mr-2"
-                            onChange={(event) =>
+                            id={`retention-acknowledgement-${connection.id}`}
+                            onCheckedChange={(checked) =>
                               setRetentionAcknowledgements((current) => ({
                                 ...current,
-                                [connection.id]: event.target.checked,
+                                [connection.id]: checked,
                               }))
                             }
-                            type="checkbox"
                           />
-                          I explicitly choose to retain message content for
-                          longer.
-                        </label>
+                          <FieldLabel
+                            htmlFor={`retention-acknowledgement-${connection.id}`}
+                          >
+                            I explicitly choose to retain message content for
+                            longer.
+                          </FieldLabel>
+                        </Field>
                       ) : null;
                     })()}
-                    <button
-                      className="block rounded border border-emerald-500 px-3 py-2 text-sm text-emerald-300 disabled:opacity-50"
+                    <Button
                       disabled={(() => {
                         const draft = retentionDrafts[connection.id];
                         const next =
@@ -1549,16 +1646,20 @@ export function PublicBoundaryJourney({
                       })()}
                       onClick={() => void updateRetention(connection)}
                       type="button"
+                      variant="outline"
                     >
                       Save retention policy
-                    </button>
-                    <p aria-live="polite" className="text-sm text-zinc-400">
+                    </Button>
+                    <p
+                      aria-live="polite"
+                      className="text-sm text-muted-foreground"
+                    >
                       {retentionStatus[connection.id] ??
                         `Current policy: ${connection.retentionDays === null ? "retain until Connection Deletion" : `${connection.retentionDays} days`}.`}
                     </p>
                   </div>
                   {connection.state === "disconnected" ? (
-                    <p className="mt-2 text-sm text-zinc-400">
+                    <p className="mt-2 text-sm text-muted-foreground">
                       Retained history remains available under your Message
                       Retention Policy.
                     </p>
@@ -1571,37 +1672,37 @@ export function PublicBoundaryJourney({
                   ) : null}
                   <div className="mt-3 flex flex-wrap gap-2">
                     {connection.state === "connected" ? (
-                      <button
+                      <Button
                         aria-label={`Disconnect WhatsApp Connection ending ${connection.numberSuffix}`}
-                        className="rounded border border-red-500 px-3 py-2 text-sm text-red-300 disabled:opacity-50"
                         disabled={connectionLifecycleAction !== null}
                         onClick={() =>
                           startConnectionLifecycle(connection, "disconnect")
                         }
                         type="button"
+                        variant="destructive"
                       >
                         Disconnect
-                      </button>
+                      </Button>
                     ) : connection.state === "connecting" ||
                       connection.state === "disconnected" ||
                       connection.state === "degraded" ||
                       connection.state === "reconnect_required" ? (
-                      <button
+                      <Button
                         aria-label={`Reconnect WhatsApp Connection ending ${connection.numberSuffix}`}
-                        className="rounded border border-emerald-500 px-3 py-2 text-sm text-emerald-300 disabled:opacity-50"
                         disabled={connectionLifecycleAction !== null}
                         onClick={() =>
                           startConnectionLifecycle(connection, "reconnect")
                         }
                         type="button"
+                        variant="outline"
                       >
                         Reconnect
-                      </button>
+                      </Button>
                     ) : null}
                   </div>
                   <p
                     aria-live="polite"
-                    className="mt-2 text-sm text-zinc-400"
+                    className="mt-2 text-sm text-muted-foreground"
                     data-testid="connection-lifecycle-status"
                   >
                     {connectionLifecycleStatus[connection.id] ?? ""}
@@ -1625,21 +1726,24 @@ export function PublicBoundaryJourney({
       {state === "ok" ? (
         <section
           aria-label="Personal Account Deletion"
-          className="space-y-3 rounded-lg border border-red-900 p-4"
+          className="flex flex-col gap-3 rounded-lg border border-destructive/40 p-4"
         >
           <h2 className="text-xl font-semibold">Delete Personal Account</h2>
-          <p className="text-sm text-zinc-400">
+          <p className="text-sm text-muted-foreground">
             Permanently revoke access, cancel incomplete Connection Setups, and
             delete every WhatsApp Connection.
           </p>
-          <button
-            className="rounded border border-red-500 px-3 py-2 text-sm text-red-300 disabled:opacity-50"
+          <Button
             disabled={deletionState === "deleting"}
             onClick={() => void deletePersonalAccount()}
             type="button"
+            variant="destructive"
           >
+            {deletionState === "deleting" ? (
+              <Spinner data-icon="inline-start" />
+            ) : null}
             Delete Personal Account
-          </button>
+          </Button>
           <p aria-live="polite">
             {deletionState === "deleting"
               ? "Personal Account Deletion is starting."

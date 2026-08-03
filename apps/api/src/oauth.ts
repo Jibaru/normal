@@ -28,6 +28,21 @@ export interface AllowlistedOAuthClient {
   readonly redirectUris: ReadonlyArray<string>;
 }
 
+const OAUTH_CLIENTS: ReadonlyArray<AllowlistedOAuthClient> = [
+  {
+    clientClass: "claude",
+    clientId: "claude",
+    clientName: "Claude",
+    redirectUris: ["https://claude.ai/api/mcp/auth_callback"],
+  },
+  {
+    clientClass: "chatgpt",
+    clientId: "chatgpt",
+    clientName: "ChatGPT",
+    redirectUris: ["https://chatgpt.com/connector_platform_oauth_redirect"],
+  },
+];
+
 export interface OAuthConfiguration {
   readonly clients: ReadonlyArray<AllowlistedOAuthClient>;
   readonly consentOrigin: string;
@@ -129,88 +144,6 @@ const isExactHttpsOrigin = (value: string): boolean => {
   }
 };
 
-const isPermittedRedirectUri = (value: string): boolean => {
-  try {
-    const url = new URL(value);
-    const loopback =
-      url.protocol === "http:" &&
-      ["127.0.0.1", "[::1]", "localhost"].includes(url.hostname);
-    return (
-      url.username === "" &&
-      url.password === "" &&
-      url.hash === "" &&
-      (url.protocol === "https:" || loopback) &&
-      url.toString() === value
-    );
-  } catch {
-    return false;
-  }
-};
-
-const parseClientRegistry = (
-  serialized: string,
-): ReadonlyArray<AllowlistedOAuthClient> => {
-  if (serialized.length > 32_768) {
-    throw new InvalidOAuthConfiguration();
-  }
-
-  let value: unknown;
-  try {
-    value = JSON.parse(serialized);
-  } catch {
-    throw new InvalidOAuthConfiguration();
-  }
-
-  if (!Array.isArray(value) || value.length === 0 || value.length > 32) {
-    throw new InvalidOAuthConfiguration();
-  }
-
-  const clients: Array<AllowlistedOAuthClient> = [];
-  const clientIds = new Set<string>();
-  for (const candidate of value) {
-    if (
-      typeof candidate !== "object" ||
-      candidate === null ||
-      Array.isArray(candidate)
-    ) {
-      throw new InvalidOAuthConfiguration();
-    }
-    const record = candidate as Record<string, unknown>;
-    if (
-      Object.keys(record).sort().join(",") !==
-        "clientClass,clientId,clientName,redirectUris" ||
-      typeof record.clientClass !== "string" ||
-      !/^[a-z][a-z0-9_-]{0,63}$/.test(record.clientClass) ||
-      typeof record.clientId !== "string" ||
-      !/^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/.test(record.clientId) ||
-      clientIds.has(record.clientId) ||
-      typeof record.clientName !== "string" ||
-      record.clientName.length < 1 ||
-      record.clientName.length > 128 ||
-      record.clientName.trim() !== record.clientName ||
-      !Array.isArray(record.redirectUris) ||
-      record.redirectUris.length < 1 ||
-      record.redirectUris.length > 8 ||
-      record.redirectUris.some(
-        (redirect) =>
-          typeof redirect !== "string" || !isPermittedRedirectUri(redirect),
-      ) ||
-      new Set(record.redirectUris).size !== record.redirectUris.length
-    ) {
-      throw new InvalidOAuthConfiguration();
-    }
-    clientIds.add(record.clientId);
-    clients.push({
-      clientClass: record.clientClass,
-      clientId: record.clientId,
-      clientName: record.clientName,
-      redirectUris: record.redirectUris as ReadonlyArray<string>,
-    });
-  }
-
-  return clients;
-};
-
 export const loadOAuthConfiguration = (
   environment: Record<string, unknown>,
 ): Effect.Effect<OAuthConfiguration, unknown> =>
@@ -221,7 +154,6 @@ export const loadOAuthConfiguration = (
         validation: isExactHttpsOrigin,
       }),
     ),
-    clientRegistry: Config.string("OAUTH_CLIENT_REGISTRY"),
     consentOrigin: Config.string("CLERK_AUTHORIZED_PARTY").pipe(
       Config.validate({
         message: "CLERK_AUTHORIZED_PARTY must be an exact HTTPS origin",
@@ -263,7 +195,7 @@ export const loadOAuthConfiguration = (
             throw new InvalidOAuthConfiguration();
           }
           return {
-            clients: parseClientRegistry(configuration.clientRegistry),
+            clients: OAUTH_CLIENTS,
             consentOrigin: configuration.consentOrigin,
             issuer: configuration.issuer,
             protocolEncryptionKey: configuration.protocolEncryptionKey,

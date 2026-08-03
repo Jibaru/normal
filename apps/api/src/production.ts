@@ -307,7 +307,6 @@ export interface ApiEnvironment {
   readonly SENDS_PER_MINUTE?: string | undefined;
   readonly SMOKE_CHECK_SECRET?: string | undefined;
   readonly INGESTION_QUEUE?: unknown;
-  readonly OAUTH_CLIENT_REGISTRY?: string | undefined;
   readonly OAUTH_ISSUER?: string | undefined;
   readonly OAUTH_KV?: unknown;
   readonly OAUTH_PROTOCOL_ENCRYPTION_KEY?: string | undefined;

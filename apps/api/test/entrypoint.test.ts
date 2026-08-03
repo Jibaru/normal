@@ -55,10 +55,10 @@ describe("API Worker entrypoint", () => {
   test("admits only an exact allowlisted OAuth request through real Worker KV", async () => {
     const url = new URL("https://api.example.test/oauth/authorize");
     url.search = new URLSearchParams({
-      client_id: "approved-client",
+      client_id: "claude",
       code_challenge: "A".repeat(43),
       code_challenge_method: "S256",
-      redirect_uri: "https://client.example.test/callback",
+      redirect_uri: "https://claude.ai/api/mcp/auth_callback",
       resource: "https://api.example.test/mcp",
       response_type: "code",
       scope: "connections:read",
@@ -85,7 +85,7 @@ describe("API Worker entrypoint", () => {
       `oauth:authorization-request:${encodedHash}`,
     );
     expect(sealed).not.toBeNull();
-    expect(sealed).not.toContain("approved-client");
+    expect(sealed).not.toContain("claude");
     expect(sealed).not.toContain("client.example.test");
 
     url.searchParams.set(
