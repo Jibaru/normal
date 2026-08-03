@@ -316,6 +316,10 @@ resource "cloudflare_worker_version" "api" {
       type = "inherit"
     },
     {
+      name = "SEND_FINGERPRINT_HMAC_SECRET"
+      type = "inherit"
+    },
+    {
       name = "OAUTH_CLIENT_REGISTRY"
       text = local.oauth_client_registry
       type = "plain_text"
@@ -347,6 +351,16 @@ resource "cloudflare_worker_version" "api" {
     {
       name = "MCP_REQUESTS_PER_HOUR"
       text = tostring(var.mcp_requests_per_hour)
+      type = "plain_text"
+    },
+    {
+      name = "SENDS_PER_MINUTE"
+      text = tostring(var.sends_per_minute)
+      type = "plain_text"
+    },
+    {
+      name = "SENDS_PER_DAY"
+      text = tostring(var.sends_per_day)
       type = "plain_text"
     },
     {

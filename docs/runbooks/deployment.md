@@ -176,7 +176,8 @@ vendor-approved session ceiling as the required
 admitted Personal Account reserves three sessions. Record the approved
 authoritative MCP request limits as the required positive integers
 `mcp_requests_per_minute` and `mcp_requests_per_hour`; there are no defaults,
-and the hour value must be at least the minute value. Copy the template's PEM
+and the hour value must be at least the minute value. Record reviewed positive
+`sends_per_minute` and `sends_per_day` limits as well. Copy the template's PEM
 public key without changing its line breaks. Load it and a separately generated
 32-byte OAuth protocol-encryption key into the API Worker shell:
 
@@ -190,13 +191,17 @@ openssl rand -hex 32 | wrangler secret put OAUTH_PROTOCOL_ENCRYPTION_KEY \
 openssl rand -hex 32 | wrangler secret put MCP_CURSOR_HMAC_SECRET \
   --cwd apps/api \
   --env "$DEPLOYMENT_ENVIRONMENT"
+openssl rand -hex 32 | wrangler secret put SEND_FINGERPRINT_HMAC_SECRET \
+  --cwd apps/api \
+  --env "$DEPLOYMENT_ENVIRONMENT"
 wrangler secret list \
   --cwd apps/api \
   --env "$DEPLOYMENT_ENVIRONMENT"
 ```
 
-The API list must include `CLERK_JWT_KEY`, `OAUTH_PROTOCOL_ENCRYPTION_KEY`, and
-`MCP_CURSOR_HMAC_SECRET`; values are never printed. Keeping
+The API list must include `CLERK_JWT_KEY`, `OAUTH_PROTOCOL_ENCRYPTION_KEY`,
+`MCP_CURSOR_HMAC_SECRET`, and `SEND_FINGERPRINT_HMAC_SECRET`; values are never
+printed. Keeping
 the public verification key in the secret store prevents unreviewed copying
 into source, browser bundles, plans, or state. Apply this external Clerk
 dashboard gate independently in development, preview, and production. The
@@ -453,6 +458,8 @@ export OAUTH_ISSUER="$CLERK_API_AUDIENCE"
 export OAUTH_RESOURCE="$OAUTH_ISSUER/mcp"
 export MCP_REQUESTS_PER_MINUTE="$(sed -n 's/^[[:space:]]*mcp_requests_per_minute[[:space:]]*=[[:space:]]*\\([0-9][0-9]*\\)[[:space:]]*$/\\1/p' "$TFVARS_PATH")"
 export MCP_REQUESTS_PER_HOUR="$(sed -n 's/^[[:space:]]*mcp_requests_per_hour[[:space:]]*=[[:space:]]*\\([0-9][0-9]*\\)[[:space:]]*$/\\1/p' "$TFVARS_PATH")"
+export SENDS_PER_MINUTE="$(sed -n 's/^[[:space:]]*sends_per_minute[[:space:]]*=[[:space:]]*\\([0-9][0-9]*\\)[[:space:]]*$/\\1/p' "$TFVARS_PATH")"
+export SENDS_PER_DAY="$(sed -n 's/^[[:space:]]*sends_per_day[[:space:]]*=[[:space:]]*\\([0-9][0-9]*\\)[[:space:]]*$/\\1/p' "$TFVARS_PATH")"
 export PROVIDER_APPROVED_SESSION_CAPACITY="$(sed -n 's/^[[:space:]]*provider_approved_session_capacity[[:space:]]*=[[:space:]]*\\([0-9][0-9]*\\)[[:space:]]*$/\\1/p' "$TFVARS_PATH")"
 bun scripts/render-api-wrangler.ts \
   apps/api/.wrangler/production.jsonc \
@@ -464,7 +471,7 @@ unset CLOUDFLARE_HYPERDRIVE_ID CLOUDFLARE_OAUTH_KV_ID \
   CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID CLERK_API_AUDIENCE \
   CLERK_AUTHORIZED_PARTY CLERK_ISSUER OAUTH_CLIENT_REGISTRY \
   MCP_REQUESTS_PER_HOUR MCP_REQUESTS_PER_MINUTE OAUTH_ISSUER OAUTH_RESOURCE \
-  PROVIDER_APPROVED_SESSION_CAPACITY
+  PROVIDER_APPROVED_SESSION_CAPACITY SENDS_PER_DAY SENDS_PER_MINUTE
 export VERCEL_ORG_ID="$(tofu -chdir=infra/compute output -raw vercel_team_id)"
 export VERCEL_PROJECT_ID="$(tofu -chdir=infra/compute output -raw vercel_project_id)"
 vercel deploy --prod --yes --cwd apps/web
@@ -483,7 +490,8 @@ Worker manifests set `AWS_KMS_REGION` explicitly. Set
 `KMS_CONTENT_ROOT_KEY_ARN` and `KMS_DELETION_COORDINATOR_KEY_ARN` in the API
 deployment configuration and populate the marker HMAC plus three AWS credential
 secrets before deployment. `CLERK_JWT_KEY` and
-`OAUTH_PROTOCOL_ENCRYPTION_KEY` and `MCP_CURSOR_HMAC_SECRET` must already exist
+`OAUTH_PROTOCOL_ENCRYPTION_KEY`, `MCP_CURSOR_HMAC_SECRET`, and
+`SEND_FINGERPRINT_HMAC_SECRET` must already exist
 on the selected API Worker and are preserved as inherited secret bindings.
 Rotating the cursor secret invalidates all outstanding pagination cursors but
 does not require a data migration. Rendering fails unless the
@@ -886,6 +894,12 @@ message identity, or media bytes in logs is an incident.
 
 ### Wasender text sending
 
+Before enabling sends, set reviewed positive `SENDS_PER_MINUTE` and
+`SENDS_PER_DAY` values and install an independently generated
+`SEND_FINGERPRINT_HMAC_SECRET` with `openssl rand -hex 32`. Keep that key in
+the recovery inventory; do not rotate it by replacement while bindings created
+with the current key remain live.
+
 When the outbound-send public boundary is deployed, run its smoke check only
 with a dedicated operator-owned WhatsApp Connection and designated recipient.
 Confirm one provider attempt and a normalized operation receipt. The currently
@@ -902,6 +916,13 @@ Alert on elevated ambiguous outcomes, timeouts, server errors, and malformed or
 oversized responses. Never replay an ambiguous Send Operation during an
 incident. Reconcile it only from authenticated webhook evidence carrying the
 same connection and HMAC-protected stable message identity.
+
+If a Worker terminates after the durable transaction but before a complete
+provider response is recorded, allow the 30-second dispatch lease to expire.
+The next exact replay observes `unknown` and must not dispatch. Do not delete a
+Send Operation, idempotency binding, fingerprint, lease, or quota reservation
+to force a retry. A post-attempt Tool Call Log update failure is investigated
+as audit degradation; the Send Operation remains authoritative.
 
 ### Wasender Directory
 

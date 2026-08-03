@@ -27,6 +27,9 @@ export interface Env {
   readonly MCP_REQUESTS_PER_HOUR: string;
   readonly MCP_REQUESTS_PER_MINUTE: string;
   readonly MCP_CURSOR_HMAC_SECRET: string;
+  readonly SEND_FINGERPRINT_HMAC_SECRET: string;
+  readonly SENDS_PER_DAY: string;
+  readonly SENDS_PER_MINUTE: string;
   readonly OAUTH_CLIENT_REGISTRY: string;
   readonly OAUTH_ISSUER: string;
   readonly OAUTH_KV: KVNamespace;

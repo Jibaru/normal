@@ -15,6 +15,8 @@ import {
   ListContactsOutputContract,
   type ListGroupsOutput,
   ListGroupsOutputContract,
+  type SendTextMessageOutput,
+  SendTextMessageOutputContract,
 } from "@whatsapp-mcp/contracts/mcp-schema";
 import type {
   BeginToolCallResult,
@@ -143,6 +145,38 @@ export const McpToolPersistence = Context.GenericTag<McpToolPersistenceService>(
   "@whatsapp-mcp/api/McpToolPersistence",
 );
 
+export type SendTextMessageResult =
+  | { readonly outcome: "receipt"; readonly receipt: SendTextMessageOutput }
+  | {
+      readonly outcome:
+        | "authorization_denied"
+        | "audit_unavailable"
+        | "connection_unavailable"
+        | "idempotency_conflict"
+        | "recipient_not_found"
+        | "service_unavailable";
+    }
+  | {
+      readonly outcome: "rate_limited";
+      readonly resetsAt: Date;
+      readonly retryAfterSeconds: number;
+    };
+
+export interface SendTextMessageService {
+  readonly send: (
+    input: McpAccessAuthorization & {
+      readonly connectionId: string;
+      readonly idempotencyKey: string;
+      readonly recipientId: string;
+      readonly text: string;
+    },
+  ) => Effect.Effect<SendTextMessageResult, never>;
+}
+
+export const SendTextMessage = Context.GenericTag<SendTextMessageService>(
+  "@whatsapp-mcp/api/SendTextMessage",
+);
+
 export interface McpToolClockService {
   readonly now: Effect.Effect<Date>;
 }
@@ -199,6 +233,7 @@ export type McpToolRequirements =
   | McpToolClockService
   | McpToolIdentifiersService
   | McpToolPersistenceService
+  | SendTextMessageService
   | SafeTelemetryService
   | EnvelopeEncryption
   | McpCursorSigningService;
@@ -306,6 +341,64 @@ const ListContactsOutputSchema = z
   })
   .strict();
 
+const unicodeWhiteSpace = new Set([
+  0x0009, 0x000a, 0x000b, 0x000c, 0x000d, 0x0020, 0x0085, 0x00a0, 0x1680,
+  0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008,
+  0x2009, 0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000,
+]);
+const isOnlyUnicodeWhiteSpace = (value: string): boolean =>
+  Array.from(value).every((character) =>
+    unicodeWhiteSpace.has(character.codePointAt(0) ?? -1),
+  );
+const hasUnpairedSurrogate = (value: string): boolean => {
+  for (let index = 0; index < value.length; index += 1) {
+    const unit = value.charCodeAt(index);
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (next < 0xdc00 || next > 0xdfff) return true;
+      index += 1;
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) return true;
+  }
+  return false;
+};
+const SendTextMessageInput = z
+  .object({
+    connection_id: z.string().regex(/^con_[A-Za-z0-9_-]{21}$/u),
+    recipient_id: z.string().regex(/^(?:ctc|grp)_[A-Za-z0-9_-]{21}$/u),
+    text: z
+      .string()
+      .min(1)
+      .max(4_096)
+      .refine((value) => {
+        const length = Array.from(value).length;
+        return (
+          length >= 1 &&
+          length <= 4_096 &&
+          !hasUnpairedSurrogate(value) &&
+          !isOnlyUnicodeWhiteSpace(value)
+        );
+      }, "text must contain 1 to 4096 Unicode scalar values and non-whitespace"),
+    idempotency_key: z.string().regex(/^[A-Za-z0-9_-]{21}$/u),
+  })
+  .strict();
+const SendTextMessageOutputSchema = z
+  .object({
+    send_id: z.string().regex(/^snd_[A-Za-z0-9_-]{21}$/u),
+    status: z.enum([
+      "processing",
+      "accepted",
+      "sent",
+      "delivered",
+      "read",
+      "failed",
+      "unknown",
+    ]),
+    created_at: z.iso.datetime(),
+    status_changed_at: z.iso.datetime(),
+    idempotent_replay: z.boolean(),
+  })
+  .strict();
+
 const buildListConnectionsResult = makeSuccessResultBuilder(
   ListConnectionsOutputContract,
 );
@@ -315,6 +408,9 @@ const buildListGroupsResult = makeSuccessResultBuilder(
 
 const buildListContactsResult = makeSuccessResultBuilder(
   ListContactsOutputContract,
+);
+const buildSendTextMessageResult = makeSuccessResultBuilder(
+  SendTextMessageOutputContract,
 );
 
 const auditUnavailable = () =>
@@ -345,6 +441,23 @@ const invalidCursor = () =>
     retryable: false,
   });
 
+const sendError = (
+  error_code:
+    | "connection_unavailable"
+    | "idempotency_conflict"
+    | "recipient_not_found",
+) =>
+  makeExecutionErrorResult({
+    error_code,
+    message:
+      error_code === "connection_unavailable"
+        ? "The WhatsApp Connection is unavailable for new sends."
+        : error_code === "idempotency_conflict"
+          ? "The idempotency key is already bound to different exact inputs."
+          : "The WhatsApp Recipient was not found.",
+    retryable: error_code === "connection_unavailable",
+  });
+
 const rateLimited = (retryAfterSeconds: number, resetsAt: Date) =>
   makeExecutionErrorResult({
     error_code: "rate_limited",
@@ -357,6 +470,7 @@ const rateLimited = (retryAfterSeconds: number, resetsAt: Date) =>
 type McpToolOutcome =
   | "audit_unavailable"
   | "authorization_denied"
+  | "execution_error"
   | "invalid_cursor"
   | "rate_limited"
   | "service_unavailable"
@@ -493,6 +607,43 @@ const listConnections = (
       completed._tag === "Left" ? undefined : output.connections.length,
     );
     return completed._tag === "Left" ? auditUnavailable() : result;
+  }).pipe(Effect.catchAll(() => Effect.succeed(auditUnavailable())));
+
+const sendTextMessage = (
+  authorization: McpAccessAuthorization,
+  input: z.infer<typeof SendTextMessageInput>,
+) =>
+  Effect.gen(function* () {
+    const service = yield* SendTextMessage;
+    const result = yield* service.send({
+      ...authorization,
+      connectionId: input.connection_id,
+      idempotencyKey: input.idempotency_key,
+      recipientId: input.recipient_id,
+      text: input.text,
+    });
+    if (result.outcome === "receipt") {
+      yield* emitToolCompletion("send_text_message", "success", 1);
+      return buildSendTextMessageResult(result.receipt);
+    }
+    if (result.outcome === "rate_limited") {
+      yield* emitToolCompletion("send_text_message", "rate_limited");
+      return rateLimited(result.retryAfterSeconds, result.resetsAt);
+    }
+    if (result.outcome === "authorization_denied") {
+      yield* emitToolCompletion("send_text_message", "authorization_denied");
+      return authorizationDenied();
+    }
+    if (result.outcome === "audit_unavailable") {
+      yield* emitToolCompletion("send_text_message", "audit_unavailable");
+      return auditUnavailable();
+    }
+    if (result.outcome === "service_unavailable") {
+      yield* emitToolCompletion("send_text_message", "service_unavailable");
+      return serviceUnavailable();
+    }
+    yield* emitToolCompletion("send_text_message", "execution_error");
+    return sendError(result.outcome);
   }).pipe(Effect.catchAll(() => Effect.succeed(auditUnavailable())));
 
 const compareText = (left: string, right: string): number =>
@@ -1178,6 +1329,7 @@ export const createMcpRequestHandler =
       .catch(() => false);
     let hasConnectionsRead = true;
     let hasDirectoryRead = true;
+    let hasMessagesSend = true;
     if (isToolsListRequest) {
       try {
         const inspected = await Effect.runPromise(
@@ -1194,6 +1346,7 @@ export const createMcpRequestHandler =
           inspected?.scopes.includes("connections:read") === true;
         hasDirectoryRead =
           inspected?.scopes.includes("directory:read") === true;
+        hasMessagesSend = inspected?.scopes.includes("messages:send") === true;
       } catch {
         return unavailable();
       }
@@ -1204,6 +1357,34 @@ export const createMcpRequestHandler =
         name: "WhatsApp MCP",
         version: "0.1.0",
       });
+      server.registerTool(
+        "send_text_message",
+        {
+          annotations: {
+            readOnlyHint: false,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: true,
+          },
+          description:
+            "Send exact text once to a current WhatsApp Recipient after Client Confirmation.",
+          inputSchema: SendTextMessageInput,
+          outputSchema: SendTextMessageOutputSchema,
+          title: "Send WhatsApp Text Message",
+          _meta: { "anthropic/requiresUserInteraction": true },
+        },
+        async (input) => {
+          const result = await Effect.runPromise(
+            sendTextMessage(authorization, input).pipe(
+              Effect.provide(options.layer),
+            ),
+          );
+          return {
+            ...result,
+            content: result.content.map((block) => ({ ...block })),
+          } as CallToolResult;
+        },
+      );
       server.registerTool(
         "list_connections",
         {
@@ -1275,7 +1456,7 @@ export const createMcpRequestHandler =
           } as CallToolResult;
         },
       );
-      if (!hasConnectionsRead || !hasDirectoryRead) {
+      if (!hasConnectionsRead || !hasDirectoryRead || !hasMessagesSend) {
         const tools: Array<Record<string, unknown>> = [];
         if (hasConnectionsRead) {
           tools.push({
@@ -1315,6 +1496,27 @@ export const createMcpRequestHandler =
               target: "draft-2020-12",
             }),
             title: "List WhatsApp Contacts",
+          });
+        }
+        if (hasMessagesSend) {
+          tools.push({
+            annotations: {
+              readOnlyHint: false,
+              destructiveHint: false,
+              idempotentHint: true,
+              openWorldHint: true,
+            },
+            description:
+              "Send exact text once to a current WhatsApp Recipient after Client Confirmation.",
+            inputSchema: z.toJSONSchema(SendTextMessageInput, {
+              target: "draft-2020-12",
+            }),
+            name: "send_text_message",
+            outputSchema: z.toJSONSchema(SendTextMessageOutputSchema, {
+              target: "draft-2020-12",
+            }),
+            title: "Send WhatsApp Text Message",
+            _meta: { "anthropic/requiresUserInteraction": true },
           });
         }
         server.server.setRequestHandler("tools/list", () => ({

@@ -4,6 +4,7 @@ import {
   makeConnectionId,
   makeConnectionSetupId,
   makeContactId,
+  makeSendId,
 } from "@whatsapp-mcp/contracts/handles";
 import type {
   ProviderControlFailure,
@@ -23,6 +24,7 @@ import { makePgGroupRepository } from "@whatsapp-mcp/db/group";
 import { makePgMcpAuthorizationRepository } from "@whatsapp-mcp/db/mcp-authorization";
 import { makePgMcpToolRepository } from "@whatsapp-mcp/db/mcp-tool";
 import { makePgPersonalAccountRepository } from "@whatsapp-mcp/db/personal-account";
+import { makePgAtomicSendRepositoryFromConnectionString } from "@whatsapp-mcp/db/send";
 import { makePgWebhookEventRepository } from "@whatsapp-mcp/db/webhook-event";
 import { makePgWebhookIngressRepository } from "@whatsapp-mcp/db/webhook-ingress";
 import { makePgWhatsAppConnectionRepository } from "@whatsapp-mcp/db/whatsapp-connection";
@@ -119,6 +121,7 @@ import {
   McpToolPersistence,
   McpToolPersistenceError,
   makeMcpCursorCodec,
+  SendTextMessage,
 } from "./mcp";
 import {
   createMcpAuthorizationConsentHandler,
@@ -143,6 +146,10 @@ import {
   PersonalAccountPersistenceError,
   PrivateBetaConfig,
 } from "./personal-account";
+import {
+  importSendFingerprintKey,
+  makeAtomicSendTextMessageService,
+} from "./send-text-message";
 import {
   ApplicationConfig,
   DatabaseReadiness,
@@ -218,6 +225,9 @@ export interface ApiEnvironment {
   readonly MCP_REQUESTS_PER_HOUR?: string | undefined;
   readonly MCP_REQUESTS_PER_MINUTE?: string | undefined;
   readonly MCP_CURSOR_HMAC_SECRET?: string | undefined;
+  readonly SEND_FINGERPRINT_HMAC_SECRET?: string | undefined;
+  readonly SENDS_PER_DAY?: string | undefined;
+  readonly SENDS_PER_MINUTE?: string | undefined;
   readonly INGESTION_QUEUE?: unknown;
   readonly OAUTH_CLIENT_REGISTRY?: string | undefined;
   readonly OAUTH_ISSUER?: string | undefined;
@@ -263,6 +273,28 @@ const mcpCursorHmacSecret = Config.redacted("MCP_CURSOR_HMAC_SECRET").pipe(
   }),
 );
 
+const sendFingerprintHmacSecret = Config.redacted(
+  "SEND_FINGERPRINT_HMAC_SECRET",
+).pipe(
+  Config.validate({
+    message: "SEND_FINGERPRINT_HMAC_SECRET must be a 32-byte hex secret",
+    validation: (value) => /^[a-f0-9]{64}$/iu.test(Redacted.value(value)),
+  }),
+);
+const sendQuotaConfig = Config.all({
+  dailyLimit: Config.integer("SENDS_PER_DAY"),
+  minuteLimit: Config.integer("SENDS_PER_MINUTE"),
+}).pipe(
+  Config.validate({
+    message: "send quotas must be positive safe integers",
+    validation: ({ dailyLimit, minuteLimit }) =>
+      Number.isSafeInteger(dailyLimit) &&
+      dailyLimit > 0 &&
+      Number.isSafeInteger(minuteLimit) &&
+      minuteLimit > 0,
+  }),
+);
+
 const productionConfig = Config.all({
   environment: Config.literal(
     "development",
@@ -271,6 +303,8 @@ const productionConfig = Config.all({
   )("DEPLOYMENT_ENVIRONMENT"),
   mcpCursorHmacSecret,
   mcpRequestQuota: mcpRequestQuotaConfig,
+  sendFingerprintHmacSecret,
+  sendQuota: sendQuotaConfig,
 });
 
 const providerApprovedSessionCapacity = Config.integer(
@@ -1611,6 +1645,73 @@ const mcpToolRuntimeLayer = (environment: ApiEnvironment) =>
     ),
   );
 
+const atomicSendLayer = (environment: ApiEnvironment) =>
+  Layer.effect(
+    SendTextMessage,
+    Effect.gen(function* () {
+      const encryption = yield* EnvelopeEncryptionService;
+      const safeTelemetry = yield* SafeTelemetry;
+      const connectionString = environment.HYPERDRIVE?.connectionString;
+      const fingerprintSecret = environment.SEND_FINGERPRINT_HMAC_SECRET;
+      const sendDailyLimit = Number(environment.SENDS_PER_DAY);
+      const sendPerMinuteLimit = Number(environment.SENDS_PER_MINUTE);
+      const requestHourLimit = Number(environment.MCP_REQUESTS_PER_HOUR);
+      const requestMinuteLimit = Number(environment.MCP_REQUESTS_PER_MINUTE);
+      if (
+        typeof fingerprintSecret !== "string" ||
+        !Number.isSafeInteger(sendDailyLimit) ||
+        sendDailyLimit < 1 ||
+        !Number.isSafeInteger(sendPerMinuteLimit) ||
+        sendPerMinuteLimit < 1 ||
+        !Number.isSafeInteger(requestHourLimit) ||
+        requestHourLimit < 1 ||
+        !Number.isSafeInteger(requestMinuteLimit) ||
+        requestMinuteLimit < 1
+      ) {
+        return yield* Effect.fail(
+          new Error("atomic send configuration is invalid"),
+        );
+      }
+      const fingerprintKey = yield* Effect.promise(() =>
+        importSendFingerprintKey(fingerprintSecret),
+      );
+      return makeAtomicSendTextMessageService({
+        encryption,
+        fingerprintKey,
+        hourRequestLimit: requestHourLimit,
+        minuteRequestLimit: requestMinuteLimit,
+        nextAuditLogId: () => crypto.randomUUID(),
+        nextSend: () => ({ id: crypto.randomUUID(), publicId: makeSendId() }),
+        now: () => new Date(),
+        repository: makePgAtomicSendRepositoryFromConnectionString(
+          connectionString ?? "",
+        ),
+        sendDailyLimit,
+        sendPerMinuteLimit,
+        telemetry: (event) => {
+          const providerEvent = event as {
+            attemptCount: 0 | 1;
+            durationMs: number;
+            operationClass: "text-send";
+            outcome:
+              | "ambiguous"
+              | "definitive_failure"
+              | "identity_evidence"
+              | "provider_acknowledgement";
+            responseBytes: number | null;
+          };
+          Effect.runFork(
+            safeTelemetry.emit({
+              ...providerEvent,
+              event: "provider.text_send.completed",
+              service: "api",
+            }),
+          );
+        },
+      });
+    }),
+  );
+
 const mcpCursorSigningLayer = (environment: ApiEnvironment) =>
   Layer.effect(
     McpCursorSigning,
@@ -1808,6 +1909,9 @@ const unavailable = (): Response =>
   });
 
 export const createProductionHandler = (environment: ApiEnvironment) => {
+  const sendLayer = atomicSendLayer(environment).pipe(
+    Layer.provide(Layer.merge(encryptionLayer(environment), telemetryLayer)),
+  );
   const layer = Layer.mergeAll(
     configLayer(environment),
     databaseLayer(environment),
@@ -1836,6 +1940,7 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     webhookIngressCloudflareLayer(environment),
     mcpToolPersistenceLayer(environment),
     mcpToolRuntimeLayer(environment),
+    sendLayer,
     mcpCursorSigningLayer(environment),
   );
   const handler = createCanaryHandler(layer);

@@ -9,6 +9,10 @@ import {
 } from "../src/mcp-tool";
 import { runMigrations } from "../src/migrations";
 import type { PersonalAccountConnectionProvider } from "../src/personal-account";
+import {
+  type AtomicSendRepository,
+  makePgAtomicSendRepository,
+} from "../src/send";
 import { makeWebhookEventRepository } from "../src/webhook-event";
 
 const accountId = "10000000-0000-4000-8000-000000000030";
@@ -23,6 +27,7 @@ const observedAt = new Date("2026-07-31T12:00:00.000Z");
 describe("MCP tool repository", () => {
   let database: PGlite;
   let repository: McpToolRepository;
+  let sends: AtomicSendRepository;
 
   beforeEach(async () => {
     database = new PGlite();
@@ -131,9 +136,10 @@ describe("MCP tool repository", () => {
       expiresAt: new Date("2026-10-29T12:00:00.000Z"),
       oauthSubject,
       reverifiedAt: new Date("2026-07-31T11:59:00.000Z"),
-      scopes: ["connections:read", "directory:read"],
+      scopes: ["connections:read", "directory:read", "messages:send"],
     });
     repository = makeMcpToolRepository(provider);
+    sends = makePgAtomicSendRepository(provider);
   });
 
   afterEach(async () => {
@@ -152,7 +158,7 @@ describe("MCP tool repository", () => {
       observedAt,
     });
     expect(inspected).toEqual({
-      scopes: ["connections:read", "directory:read"],
+      scopes: ["connections:read", "directory:read", "messages:send"],
     });
 
     await expect(
@@ -217,6 +223,102 @@ describe("MCP tool repository", () => {
         tool_name: "list_connections",
       },
     ]);
+  });
+
+  test("atomically binds, leases, quotas, audits, and encrypts one send before replay", async () => {
+    await database.query(
+      `INSERT INTO app.directory_contact_projections (
+         personal_account_id, whatsapp_connection_id, as_of, stale, partial
+       ) VALUES ($1, '20000000-0000-4000-8000-000000000030', $2, false, false)`,
+      [accountId, observedAt],
+    );
+    await database.query(
+      `INSERT INTO app.directory_contacts (
+         personal_account_id, whatsapp_connection_id, public_id,
+         provider_identity_index, provider_identity_ciphertext_version,
+         provider_identity_key_version, provider_identity_nonce,
+         provider_identity_ciphertext, display_name_sort, active,
+         received_at
+       ) VALUES (
+         $1, '20000000-0000-4000-8000-000000000030',
+         'ctc_123456789012345678930', $2, 1, 1,
+         decode(repeat('11', 12), 'hex'), decode(repeat('12', 32), 'hex'),
+         '', true, $3
+       )`,
+      [accountId, `di1_${"A".repeat(43)}`, observedAt],
+    );
+    let encrypted = 0;
+    const input = {
+      ...authorization,
+      auditLogId: "50000000-0000-4000-8000-000000000099",
+      connectionPublicId: connectionA,
+      fingerprint: `sf1_${"B".repeat(43)}`,
+      hourRequestLimit: 100,
+      idempotencyKey: "123456789012345678930",
+      minuteRequestLimit: 100,
+      observedAt,
+      pendingExpiresAt: new Date("2026-08-07T12:00:00.000Z"),
+      recipientPublicId: "ctc_123456789012345678930",
+      sendDailyLimit: 100,
+      sendId: "60000000-0000-4000-8000-000000000099",
+      sendPerMinuteLimit: 100,
+      sendPublicId: "snd_123456789012345678930",
+    } as const;
+    const created = await sends.commit(input, async (material) => {
+      encrypted += 1;
+      expect(material.connectionKey.connectionId).toBe(
+        "20000000-0000-4000-8000-000000000030",
+      );
+      return {
+        ciphertext: new Uint8Array(32).fill(20),
+        keyVersion: 1,
+        nonce: new Uint8Array(12).fill(21),
+      };
+    });
+    expect(created).toMatchObject({
+      outcome: "created",
+      receipt: { status: "processing" },
+    });
+    expect(encrypted).toBe(1);
+
+    await database.query(
+      `UPDATE app.whatsapp_connections SET state='disconnected'
+       WHERE public_id=$1`,
+      [connectionA],
+    );
+    await database.query(
+      `UPDATE app.directory_contacts SET active=false
+       WHERE public_id='ctc_123456789012345678930'`,
+    );
+
+    const replay = await sends.commit(
+      { ...input, auditLogId: "50000000-0000-4000-8000-000000000098" },
+      async () => {
+        encrypted += 1;
+        throw new Error("replay must not encrypt");
+      },
+    );
+    expect(replay).toMatchObject({ outcome: "replay" });
+    expect(encrypted).toBe(1);
+
+    const rows = await database.query<{ count: number }>(
+      `SELECT count(*)::int AS count FROM app.send_operations
+       WHERE id='60000000-0000-4000-8000-000000000099'`,
+    );
+    expect(rows.rows[0]?.count).toBe(1);
+    const auditAndQuota = await database.query<{
+      audit_count: number;
+      quota_count: number;
+    }>(
+      `SELECT
+         (SELECT count(*)::int FROM app.tool_call_logs
+          WHERE tool_name='send_text_message') AS audit_count,
+         (SELECT count(*)::int FROM app.send_quota_reservations) AS quota_count`,
+    );
+    expect(auditAndQuota.rows[0]).toEqual({
+      audit_count: 2,
+      quota_count: 1,
+    });
   });
 
   test("atomically audits rate-limit rejection without another reservation", async () => {
@@ -890,7 +992,7 @@ describe("MCP tool repository", () => {
         observedAt,
       }),
     ).resolves.toEqual({
-      scopes: ["connections:read", "directory:read"],
+      scopes: ["connections:read", "directory:read", "messages:send"],
     });
     await expect(
       repository.beginToolCall({

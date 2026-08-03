@@ -35,7 +35,11 @@ export interface McpToolConnectionRecord {
   readonly stateChangedAt: string;
 }
 
-export type McpToolName = "list_connections" | "list_contacts" | "list_groups";
+export type McpToolName =
+  | "list_connections"
+  | "list_contacts"
+  | "list_groups"
+  | "send_text_message";
 
 export interface McpToolGroupRecord {
   readonly displayName: {
@@ -611,7 +615,11 @@ const insertToolCallLog = (
   );
 
 const requiredScope = (toolName: McpToolName): McpAuthorizationScope =>
-  toolName === "list_connections" ? "connections:read" : "directory:read";
+  toolName === "list_connections"
+    ? "connections:read"
+    : toolName === "send_text_message"
+      ? "messages:send"
+      : "directory:read";
 
 export const makeMcpToolRepository = (
   provider: McpToolConnectionProvider,

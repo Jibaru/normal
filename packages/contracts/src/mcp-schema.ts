@@ -1,5 +1,5 @@
 import { JSONSchema, Schema } from "effect";
-import { ConnectionId, ContactId, GroupId } from "./handles";
+import { ConnectionId, ContactId, GroupId, SendId } from "./handles";
 
 const utcTimestampPattern =
   /^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?Z(?![\s\S])/;
@@ -106,3 +106,24 @@ export const ListContactsOutputContract = makePublicObjectContract({
   partial: Schema.Boolean,
 });
 export type ListContactsOutput = typeof ListContactsOutputContract.schema.Type;
+
+export const SendStatus = Schema.Literal(
+  "processing",
+  "accepted",
+  "sent",
+  "delivered",
+  "read",
+  "failed",
+  "unknown",
+);
+export type SendStatus = typeof SendStatus.Type;
+
+export const SendTextMessageOutputContract = makePublicObjectContract({
+  send_id: SendId,
+  status: SendStatus,
+  created_at: UtcTimestamp,
+  status_changed_at: UtcTimestamp,
+  idempotent_replay: Schema.Boolean,
+});
+export type SendTextMessageOutput =
+  typeof SendTextMessageOutputContract.schema.Type;

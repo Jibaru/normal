@@ -124,6 +124,8 @@ const oauthKvPlaceholder = "replace-with-rendered-oauth-kv-id";
 const oauthIssuer = requireHttpsOrigin("OAUTH_ISSUER");
 const mcpRequestsPerMinute = requirePositiveInteger("MCP_REQUESTS_PER_MINUTE");
 const mcpRequestsPerHour = requirePositiveInteger("MCP_REQUESTS_PER_HOUR");
+const sendsPerDay = requirePositiveInteger("SENDS_PER_DAY");
+const sendsPerMinute = requirePositiveInteger("SENDS_PER_MINUTE");
 if (mcpRequestsPerHour < mcpRequestsPerMinute) {
   throw new Error(
     "MCP_REQUESTS_PER_HOUR must be at least MCP_REQUESTS_PER_MINUTE",
@@ -135,6 +137,8 @@ const apiVariables = {
   CLERK_ISSUER: requireHttpsOrigin("CLERK_ISSUER"),
   MCP_REQUESTS_PER_HOUR: String(mcpRequestsPerHour),
   MCP_REQUESTS_PER_MINUTE: String(mcpRequestsPerMinute),
+  SENDS_PER_DAY: String(sendsPerDay),
+  SENDS_PER_MINUTE: String(sendsPerMinute),
   OAUTH_CLIENT_REGISTRY: requireOAuthClientRegistry(),
   OAUTH_ISSUER: oauthIssuer,
   OAUTH_RESOURCE: requireMcpResource(oauthIssuer),

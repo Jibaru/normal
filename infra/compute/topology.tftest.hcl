@@ -20,6 +20,8 @@ run "development_topology" {
     provider_approved_session_capacity = 3
     mcp_requests_per_minute            = 60
     mcp_requests_per_hour              = 600
+    sends_per_minute                   = 10
+    sends_per_day                      = 200
     oauth_clients = [{
       client_class  = "approved"
       client_id     = "approved-client"
@@ -90,6 +92,7 @@ run "development_topology" {
       ]) == toset([
       "inherit:CLERK_JWT_KEY",
       "inherit:MCP_CURSOR_HMAC_SECRET",
+      "inherit:SEND_FINGERPRINT_HMAC_SECRET",
       "inherit:OAUTH_PROTOCOL_ENCRYPTION_KEY",
       "inherit:WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
       "kv_namespace:OAUTH_KV",
@@ -102,6 +105,8 @@ run "development_topology" {
       "plain_text:OAUTH_RESOURCE",
       "plain_text:MCP_REQUESTS_PER_HOUR",
       "plain_text:MCP_REQUESTS_PER_MINUTE",
+      "plain_text:SENDS_PER_DAY",
+      "plain_text:SENDS_PER_MINUTE",
       "plain_text:PROVIDER_APPROVED_SESSION_CAPACITY",
       "queue:CONNECTION_SETUP_PROVISIONING_QUEUE",
       "queue:INGESTION_QUEUE",
@@ -204,6 +209,8 @@ run "preview_topology" {
     provider_approved_session_capacity = 3
     mcp_requests_per_minute            = 60
     mcp_requests_per_hour              = 600
+    sends_per_minute                   = 10
+    sends_per_day                      = 200
     oauth_clients = [{
       client_class  = "approved"
       client_id     = "approved-client"
@@ -247,6 +254,8 @@ run "production_topology" {
     provider_approved_session_capacity = 3
     mcp_requests_per_minute            = 60
     mcp_requests_per_hour              = 600
+    sends_per_minute                   = 10
+    sends_per_day                      = 200
     oauth_clients = [{
       client_class  = "approved"
       client_id     = "approved-client"
@@ -351,6 +360,8 @@ run "reject_same_web_and_api_origin" {
     provider_approved_session_capacity = 3
     mcp_requests_per_minute            = 60
     mcp_requests_per_hour              = 600
+    sends_per_minute                   = 10
+    sends_per_day                      = 200
     oauth_clients = [{
       client_class  = "approved"
       client_id     = "approved-client"

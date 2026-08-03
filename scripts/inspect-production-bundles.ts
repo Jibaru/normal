@@ -66,10 +66,12 @@ await Promise.all([
   ]),
   inspectForForbiddenAuthority("apps/web/.next/server", [
     "MCP_CURSOR_HMAC_SECRET",
+    "SEND_FINGERPRINT_HMAC_SECRET",
     "WASENDER_API_CREDENTIAL",
     "WASENDER_REFERENCE_SECRET",
     "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
     "MCP_CURSOR_HMAC_SECRET",
+    "SEND_FINGERPRINT_HMAC_SECRET",
   ]),
   inspectForForbiddenAuthority("apps/provider-control/dist", [
     "AWS_ACCESS_KEY_ID",

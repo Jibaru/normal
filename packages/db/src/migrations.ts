@@ -231,6 +231,14 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 20,
   },
+  {
+    name: "atomic text sends",
+    sql: await readFile(
+      new NodeUrl("../migrations/0021_atomic_text_sends.sql", import.meta.url),
+      "utf8",
+    ),
+    version: 21,
+  },
 ];
 
 const checksum = (sql: string): string =>

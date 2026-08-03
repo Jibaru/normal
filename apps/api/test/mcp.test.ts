@@ -14,6 +14,7 @@ import {
   McpToolIdentifiers,
   McpToolPersistence,
   McpToolPersistenceError,
+  SendTextMessage,
 } from "../src/mcp";
 import type { SafeTelemetryEvent } from "../src/services";
 import { SafeTelemetry } from "../src/services";
@@ -149,6 +150,19 @@ const makeHarness = (
           ),
         ),
       encrypt: () => Effect.die("not used"),
+    }),
+    Layer.succeed(SendTextMessage, {
+      send: () =>
+        Effect.succeed({
+          outcome: "receipt" as const,
+          receipt: {
+            send_id: "snd_123456789012345678901" as never,
+            status: "accepted" as const,
+            created_at: "2026-08-03T12:00:00.000Z" as never,
+            status_changed_at: "2026-08-03T12:00:01.000Z" as never,
+            idempotent_replay: false,
+          },
+        }),
     }),
     Layer.succeed(McpToolPersistence, {
       beginToolCall: (input) => {
@@ -438,7 +452,7 @@ describe("stateless MCP list_connections boundary", () => {
       },
     });
 
-    const omitted = makeHarness({ scopes: ["messages:send"] });
+    const omitted = makeHarness({ scopes: ["messages:read"] });
     const omittedResponse = await omitted.handler(
       jsonRpcRequest("tools/list"),
       {},
@@ -451,7 +465,7 @@ describe("stateless MCP list_connections boundary", () => {
   });
 
   test("scope-filters discovery in a legacy-stateless JSON-RPC batch", async () => {
-    const harness = makeHarness({ scopes: ["messages:send"] });
+    const harness = makeHarness({ scopes: ["messages:read"] });
     const request = new Request("https://api.example.test/mcp", {
       body: JSON.stringify([
         {
@@ -483,7 +497,7 @@ describe("stateless MCP list_connections boundary", () => {
   });
 
   test("audits a direct call in a scope-filtered legacy batch", async () => {
-    const harness = makeHarness({ scopes: ["messages:send"] });
+    const harness = makeHarness({ scopes: ["messages:read"] });
     const request = new Request("https://api.example.test/mcp", {
       body: JSON.stringify([
         {
@@ -1075,4 +1089,94 @@ describe("stateless MCP list_groups boundary", () => {
       },
     });
   });
+});
+
+describe("atomic send_text_message MCP boundary", () => {
+  test("is discovered only with send scope and advertises exact confirmation metadata", async () => {
+    const harness = makeHarness({ scopes: ["messages:send"] });
+    const response = await harness.handler(
+      jsonRpcRequest("tools/list"),
+      {},
+      executionContext,
+      authorization,
+    );
+    const body = (await response.json()) as { result: { tools: unknown[] } };
+    expect(body.result.tools).toEqual([
+      expect.objectContaining({
+        name: "send_text_message",
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+        },
+        _meta: { "anthropic/requiresUserInteraction": true },
+      }),
+    ]);
+    expect(JSON.stringify(body)).not.toContain("confirmed");
+
+    const omitted = makeHarness({ scopes: ["connections:read"] });
+    const omittedBody = (await (
+      await omitted.handler(
+        jsonRpcRequest("tools/list"),
+        {},
+        executionContext,
+        authorization,
+      )
+    ).json()) as { result: { tools: Array<{ name: string }> } };
+    expect(omittedBody.result.tools.map((tool) => tool.name)).not.toContain(
+      "send_text_message",
+    );
+  });
+
+  test("preserves exact valid text and returns only a compact receipt", async () => {
+    const harness = makeHarness({ scopes: ["messages:send"] });
+    const response = await harness.handler(
+      jsonRpcRequest("tools/call", {
+        name: "send_text_message",
+        arguments: {
+          connection_id: "con_123456789012345678901",
+          recipient_id: "ctc_123456789012345678901",
+          text: "  e\u0301\n ",
+          idempotency_key: "123456789012345678901",
+        },
+      }),
+      {},
+      executionContext,
+      authorization,
+    );
+    expect(await response.json()).toMatchObject({
+      result: {
+        structuredContent: {
+          send_id: "snd_123456789012345678901",
+          status: "accepted",
+          idempotent_replay: false,
+        },
+      },
+    });
+  });
+
+  test.each(["", " \n\t", "x".repeat(4_097)])(
+    "rejects invalid exact text before the send service: %j",
+    async (text) => {
+      const harness = makeHarness({ scopes: ["messages:send"] });
+      const response = await harness.handler(
+        jsonRpcRequest("tools/call", {
+          name: "send_text_message",
+          arguments: {
+            connection_id: "con_123456789012345678901",
+            recipient_id: "ctc_123456789012345678901",
+            text,
+            idempotency_key: "123456789012345678901",
+          },
+        }),
+        {},
+        executionContext,
+        authorization,
+      );
+      expect(await response.json()).toMatchObject({
+        result: { isError: true },
+      });
+    },
+  );
 });

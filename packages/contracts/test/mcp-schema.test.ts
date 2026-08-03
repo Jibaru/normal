@@ -5,6 +5,7 @@ import {
   ListContactsOutputContract,
   ListGroupsOutputContract,
   makePublicObjectContract,
+  SendTextMessageOutputContract,
 } from "../src/mcp-schema";
 
 describe("makePublicObjectContract", () => {
@@ -154,6 +155,25 @@ describe("makePublicObjectContract", () => {
             phone_number: "+12025550199",
           },
         ],
+      }),
+    ).toThrow();
+  });
+
+  test("validates the compact send receipt without sensitive inputs", () => {
+    const output = {
+      send_id: "snd_123456789012345678901",
+      status: "accepted",
+      created_at: "2026-08-03T12:00:00.000Z",
+      status_changed_at: "2026-08-03T12:00:01.000Z",
+      idempotent_replay: false,
+    };
+    expect(
+      SendTextMessageOutputContract.decodeUnknown(output) as unknown,
+    ).toEqual(output);
+    expect(() =>
+      SendTextMessageOutputContract.decodeUnknown({
+        ...output,
+        text: "secret",
       }),
     ).toThrow();
   });

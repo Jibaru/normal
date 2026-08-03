@@ -158,3 +158,21 @@ variable "mcp_requests_per_hour" {
     error_message = "mcp_requests_per_hour must be an integer at least as large as mcp_requests_per_minute."
   }
 }
+
+variable "sends_per_minute" {
+  description = "Approved per-authorization exact rolling-minute outbound send reservations."
+  type        = number
+  validation {
+    condition     = var.sends_per_minute >= 1 && floor(var.sends_per_minute) == var.sends_per_minute
+    error_message = "sends_per_minute must be a positive integer."
+  }
+}
+
+variable "sends_per_day" {
+  description = "Approved per-Personal-Account UTC-day outbound send reservations."
+  type        = number
+  validation {
+    condition     = var.sends_per_day >= 1 && floor(var.sends_per_day) == var.sends_per_day
+    error_message = "sends_per_day must be a positive integer."
+  }
+}
