@@ -200,16 +200,19 @@ const makeHarness = (
     Layer.succeed(SendTextMessage, {
       send: () =>
         Effect.succeed(
-          overrides.sendResult ?? {
-            outcome: "receipt" as const,
-            receipt: {
-              send_id: "snd_123456789012345678901" as never,
-              status: "accepted" as const,
-              created_at: "2026-08-03T12:00:00.000Z" as never,
-              status_changed_at: "2026-08-03T12:00:01.000Z" as never,
-              idempotent_replay: false,
-            },
-          },
+          overrides.scopes !== undefined &&
+            !overrides.scopes.includes("messages:send")
+            ? ({ outcome: "authorization_denied" } as const)
+            : (overrides.sendResult ?? {
+                outcome: "receipt" as const,
+                receipt: {
+                  send_id: "snd_123456789012345678901" as never,
+                  status: "accepted" as const,
+                  created_at: "2026-08-03T12:00:00.000Z" as never,
+                  status_changed_at: "2026-08-03T12:00:01.000Z" as never,
+                  idempotent_replay: false,
+                },
+              }),
         ),
     }),
     Layer.succeed(McpToolPersistence, {
@@ -628,6 +631,113 @@ const makeHarness = (
 };
 
 describe("stateless MCP list_connections boundary", () => {
+  const scopeMatrix = Array.from({ length: 16 }, (_, mask) => {
+    const scopes = (
+      [
+        "connections:read",
+        "directory:read",
+        "messages:read",
+        "messages:send",
+      ] as const
+    ).filter((_, index) => (mask & (1 << index)) !== 0);
+    return [scopes.join("+") || "no scopes", scopes] as const;
+  });
+
+  test.each(scopeMatrix)(
+    "enforces discovery and direct handlers for %s",
+    async (_label, scopes) => {
+      const tools = [
+        {
+          arguments: {},
+          name: "list_connections",
+          scope: "connections:read",
+        },
+        {
+          arguments: { connection_id: "con_123456789012345678901" },
+          name: "list_groups",
+          scope: "directory:read",
+        },
+        {
+          arguments: { connection_id: "con_123456789012345678901" },
+          name: "list_contacts",
+          scope: "directory:read",
+        },
+        {
+          arguments: { connection_id: "con_123456789012345678901" },
+          name: "list_chats",
+          scope: "messages:read",
+        },
+        {
+          arguments: {
+            connection_id: "con_123456789012345678901",
+            conversation_id: "cvs_123456789012345678901",
+          },
+          name: "read_messages",
+          scope: "messages:read",
+        },
+        {
+          arguments: {
+            connection_id: "con_123456789012345678901",
+            idempotency_key: "123456789012345678901",
+            recipient_id: "ctc_123456789012345678901",
+            text: "known recipient",
+          },
+          name: "send_text_message",
+          scope: "messages:send",
+        },
+        {
+          arguments: {
+            connection_id: "con_123456789012345678901",
+            send_id: "snd_123456789012345678901",
+          },
+          name: "get_send_status",
+          scope: "messages:send",
+        },
+      ] as const;
+      const harness = makeHarness({ scopes });
+      const discovery = (await (
+        await harness.handler(
+          jsonRpcRequest("tools/list"),
+          {},
+          executionContext,
+          authorization,
+        )
+      ).json()) as { result: { tools: Array<{ name: string }> } };
+      expect(new Set(discovery.result.tools.map((tool) => tool.name))).toEqual(
+        new Set(
+          tools
+            .filter((tool) => scopes.includes(tool.scope))
+            .map((tool) => tool.name),
+        ),
+      );
+
+      for (const tool of tools) {
+        const result = (await (
+          await harness.handler(
+            jsonRpcRequest("tools/call", {
+              arguments: tool.arguments,
+              name: tool.name,
+            }),
+            {},
+            executionContext,
+            authorization,
+          )
+        ).json()) as {
+          result: { structuredContent?: { error_code?: string } };
+        };
+        if (scopes.includes(tool.scope)) {
+          expect(result.result.structuredContent?.error_code).not.toBe(
+            "authorization_denied",
+          );
+        } else {
+          expect(result.result.structuredContent?.error_code).toBe(
+            "authorization_denied",
+          );
+        }
+      }
+    },
+  );
+
   test("scope-filters discovery and publishes closed exact schemas", async () => {
     const permitted = makeHarness();
     const response = await permitted.handler(
