@@ -328,8 +328,10 @@ const fetchWithValidatedRedirects = async (options: {
       options.operation,
     );
     const response = await options.dependencies.fetch(url.href, {
-      body: options.requestBody,
-      headers: options.headers,
+      ...(options.requestBody === undefined
+        ? {}
+        : { body: options.requestBody }),
+      ...(options.headers === undefined ? {} : { headers: options.headers }),
       method: options.method,
       redirect: "manual",
       signal: options.controller.signal,
@@ -570,9 +572,7 @@ export const makeWasenderMediaRetrieval = ({
         timedOut = true;
         controller.abort();
       }, guardedMediaDownloadPolicy.attemptTimeoutMs);
-      let reader: ReturnType<
-        NonNullable<Response["body"]>["getReader"]
-      > | null = null;
+      let reader: { readonly releaseLock: () => void } | null = null;
       try {
         const response = await fetchWithValidatedRedirects({
           controller,

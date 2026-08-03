@@ -166,4 +166,43 @@ describe("Stored Media ingestion", () => {
     expect(outcome).toBe("quota_exceeded");
     expect(deleted).toEqual([input.objectKey]);
   });
+
+  test("removes a partially written object when the container write fails", async () => {
+    const deleted: string[] = [];
+    let failureCode = "";
+    const outcome = await processStoredMedia({
+      container: {
+        write: () => Effect.fail(new Error("partial write")),
+      } as never,
+      deleteObject: async (key) => {
+        deleted.push(key);
+      },
+      encryption: {} as never,
+      input,
+      persistence: {
+        fail: async ({ code }) => {
+          failureCode = code;
+          return true;
+        },
+        finalize: async () => "ready",
+      },
+      retrieval: {
+        getMetadata: () =>
+          Effect.succeed({
+            expectedSizeBytes: 1,
+            fileName: null,
+            mimeType: null,
+            source: Redacted.make("download") as never,
+          }),
+        download: ({ maxBytes }) =>
+          Effect.succeed({
+            maxBytes,
+            stream: Stream.succeed(new Uint8Array([1])),
+          }),
+      },
+    });
+    expect(outcome).toBe("failed");
+    expect(failureCode).toBe("processing_failed");
+    expect(deleted).toEqual([input.objectKey]);
+  });
 });

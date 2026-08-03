@@ -114,6 +114,7 @@ export const processStoredMedia = async (options: {
         controller.enqueue(chunk);
       },
     });
+    objectWritten = true;
     const result = await Effect.runPromise(
       options.container.write({
         accountKey: input.accountKey,
@@ -125,7 +126,6 @@ export const processStoredMedia = async (options: {
         ),
       }),
     );
-    objectWritten = true;
     if (
       metadata.expectedSizeBytes !== null &&
       metadata.expectedSizeBytes !== result.plaintextBytes
@@ -148,20 +148,21 @@ export const processStoredMedia = async (options: {
       }),
     );
     const protectedMetadata = await Effect.runPromise(
-      options.encryption.encrypt({
-        accountKey: input.accountKey,
-        connectionKey: input.connectionKey,
-        context: {
-          accountId: input.personalAccountId,
-          connectionId: input.whatsappConnectionId,
-          entity: "stored-media",
-          fieldOrObjectPurpose: "metadata",
-          recordId: input.id,
-        },
-        plaintext,
-      }),
+      options.encryption
+        .encrypt({
+          accountKey: input.accountKey,
+          connectionKey: input.connectionKey,
+          context: {
+            accountId: input.personalAccountId,
+            connectionId: input.whatsappConnectionId,
+            entity: "stored-media",
+            fieldOrObjectPurpose: "metadata",
+            recordId: input.id,
+          },
+          plaintext,
+        })
+        .pipe(Effect.ensuring(Effect.sync(() => plaintext.fill(0)))),
     );
-    plaintext.fill(0);
     const outcome = await options.persistence.finalize({
       id: input.id,
       metadata: protectedMetadata,
