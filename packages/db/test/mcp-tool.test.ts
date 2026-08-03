@@ -1096,6 +1096,10 @@ describe("MCP tool repository", () => {
     }
     const readAt = new Date("2026-08-01T12:00:00Z");
     const auditLogId = "50000000-0000-4000-8000-000000000042";
+    await database.query(
+      "UPDATE app.mcp_authorizations SET scopes=ARRAY['messages:read']::text[] WHERE id=$1",
+      [authorizationId],
+    );
     await expect(
       repository.beginToolCall({
         ...authorization,

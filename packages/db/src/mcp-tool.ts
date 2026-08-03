@@ -1107,31 +1107,62 @@ export const makeMcpToolRepository = (
           "SELECT id FROM app.personal_accounts WHERE id=$1 FOR UPDATE",
           [accountId],
         );
-        const groupMaterial = await loadGroupProjectionMaterial(
-          connection,
-          input,
-        );
-        const boundary = await connection.query<Record<string, unknown>>(
-          `SELECT connections.created_at AS connection_created_at, accounts.message_retention_days
-           FROM app.whatsapp_connections connections
-           JOIN app.personal_accounts accounts ON accounts.id=connections.personal_account_id
-           JOIN app.whatsapp_conversations conversations ON conversations.personal_account_id=connections.personal_account_id AND conversations.whatsapp_connection_id=connections.id
-           WHERE connections.personal_account_id=$1 AND connections.id=$2 AND connections.public_id=$3
-             AND conversations.public_id=$4 AND connections.state <> 'deleting'`,
+        const materialResult = await connection.query<Record<string, unknown>>(
+          `SELECT * FROM app_private.load_mcp_message_read_material($1, $2, $3, $4, $5, $6)`,
           [
-            accountId,
-            groupMaterial?.connectionKey.connectionId ?? null,
+            input.authorizationId,
+            input.oauthSubject,
+            input.clientId ?? null,
+            input.observedAt,
             input.connectionPublicId,
             input.conversationPublicId,
           ],
         );
-        const row = boundary.rows[0];
+        const row = materialResult.rows[0];
+        const connectionId =
+          typeof row?.connection_id === "string" ? row.connection_id : null;
+        const materialRow = row;
+        const accountCiphertext = bytes(materialRow?.account_key_ciphertext);
+        const accountKeyVersion = positiveInteger(
+          materialRow?.account_key_version,
+        );
+        const connectionAccountKeyVersion = positiveInteger(
+          materialRow?.connection_key_account_version,
+        );
+        const connectionCiphertext = bytes(
+          materialRow?.connection_key_ciphertext,
+        );
+        const connectionKeyVersion = positiveInteger(
+          materialRow?.connection_key_version,
+        );
+        const connectionNonce = bytes(materialRow?.connection_key_nonce);
         const material =
-          groupMaterial === null
+          connectionId === null ||
+          typeof materialRow?.account_kms_key_id !== "string" ||
+          accountCiphertext === null ||
+          accountKeyVersion === null ||
+          connectionAccountKeyVersion === null ||
+          connectionCiphertext === null ||
+          connectionKeyVersion === null ||
+          connectionNonce?.byteLength !== 12
             ? null
             : {
-                accountKey: groupMaterial.accountKey,
-                connectionKey: groupMaterial.connectionKey,
+                accountKey: {
+                  ciphertext: base64(accountCiphertext),
+                  keyVersion: accountKeyVersion,
+                  kmsKeyId: materialRow.account_kms_key_id,
+                  personalAccountId: accountId,
+                  version: 1 as const,
+                },
+                connectionKey: {
+                  accountKeyVersion: connectionAccountKeyVersion,
+                  ciphertext: base64(connectionCiphertext),
+                  connectionId,
+                  keyVersion: connectionKeyVersion,
+                  nonce: base64(connectionNonce),
+                  personalAccountId: accountId,
+                  version: 1 as const,
+                },
               };
         const connectionStarted = timestamp(row?.connection_created_at);
         const retentionDays = positiveInteger(row?.message_retention_days);

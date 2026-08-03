@@ -1727,6 +1727,7 @@ const readMessages = (
       return rateLimited(begun.right.retryAfterSeconds, begun.right.resetsAt);
     const fail = (
       code: "authorization_denied" | "rate_limited" | "service_unavailable",
+      quotaResetsAt?: Date,
     ) =>
       Effect.gen(function* () {
         const completed = yield* persistence
@@ -1749,24 +1750,28 @@ const readMessages = (
                 Math.max(
                   0,
                   Math.ceil(
-                    (new Date(
-                      Date.UTC(
-                        startedAt.getUTCFullYear(),
-                        startedAt.getUTCMonth(),
-                        startedAt.getUTCDate() + 1,
-                      ),
+                    ((
+                      quotaResetsAt ??
+                      new Date(
+                        Date.UTC(
+                          startedAt.getUTCFullYear(),
+                          startedAt.getUTCMonth(),
+                          startedAt.getUTCDate() + 1,
+                        ),
+                      )
                     ).valueOf() -
                       startedAt.valueOf()) /
                       1000,
                   ),
                 ),
-                new Date(
-                  Date.UTC(
-                    startedAt.getUTCFullYear(),
-                    startedAt.getUTCMonth(),
-                    startedAt.getUTCDate() + 1,
+                quotaResetsAt ??
+                  new Date(
+                    Date.UTC(
+                      startedAt.getUTCFullYear(),
+                      startedAt.getUTCMonth(),
+                      startedAt.getUTCDate() + 1,
+                    ),
                   ),
-                ),
               )
             : serviceUnavailable();
       });
@@ -1782,13 +1787,13 @@ const readMessages = (
         cursorPublicId: publicId,
         dailyRecordLimit,
         limit: input.limit,
-        observedAt: yield* clock.now,
+        observedAt: startedAt,
       })
       .pipe(Effect.either);
     if (loaded._tag === "Left") return yield* fail("service_unavailable");
     if (loaded.right === null) return yield* fail("authorization_denied");
     if (loaded.right.outcome === "record_quota_exhausted")
-      return yield* fail("rate_limited");
+      return yield* fail("rate_limited", loaded.right.resetsAt);
     const page = loaded.right.page;
     const decrypted = yield* Effect.forEach(
       page.messages,
@@ -1837,12 +1842,17 @@ const readMessages = (
     if (decrypted._tag === "Left") return yield* fail("service_unavailable");
     let olderCursor: string | null = null;
     const oldest = page.messages.at(-1);
-    if (page.hasOlder && oldest !== undefined)
-      olderCursor = yield* codec.encode({
-        boundary: [oldest.sentAt, oldest.publicId],
-        context,
-        expiresAtEpochSeconds: Math.floor(startedAt.valueOf() / 1000) + 900,
-      });
+    if (page.hasOlder && oldest !== undefined) {
+      const encoded = yield* codec
+        .encode({
+          boundary: [oldest.sentAt, oldest.publicId],
+          context,
+          expiresAtEpochSeconds: Math.floor(startedAt.valueOf() / 1000) + 900,
+        })
+        .pipe(Effect.either);
+      if (encoded._tag === "Left") return yield* fail("service_unavailable");
+      olderCursor = encoded.right;
+    }
     const encoder = new TextEncoder();
     const fitText = (text: string | null) => {
       if (text === null) return { text, truncated: false, totalBytes: null };
