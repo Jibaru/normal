@@ -321,6 +321,17 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 29,
   },
+  {
+    name: "protected Stored Media resources",
+    sql: await readFile(
+      new NodeUrl(
+        "../migrations/0030_protected_stored_media.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    version: 30,
+  },
 ];
 
 const checksum = (sql: string): string =>

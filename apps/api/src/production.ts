@@ -261,6 +261,7 @@ export interface ApiEnvironment {
   readonly OAUTH_KV?: unknown;
   readonly OAUTH_PROTOCOL_ENCRYPTION_KEY?: string | undefined;
   readonly OAUTH_RESOURCE?: string | undefined;
+  readonly DECRYPTED_MEDIA_BYTES_PER_DAY?: string | undefined;
   readonly PROVIDER_APPROVED_SESSION_CAPACITY?: string | undefined;
   readonly PROVIDER_CONTROL?: unknown;
   readonly STORED_MEDIA?: unknown;
@@ -274,6 +275,12 @@ export interface ApiEnvironment {
 }
 
 const mcpRequestQuotaConfig = Config.all({
+  dailyMediaByteLimit: Config.integer("DECRYPTED_MEDIA_BYTES_PER_DAY").pipe(
+    Config.validate({
+      message: "DECRYPTED_MEDIA_BYTES_PER_DAY must be a positive safe integer",
+      validation: (value) => Number.isSafeInteger(value) && value > 0,
+    }),
+  ),
   dailyRecordLimit: Config.integer("READ_MESSAGE_RECORDS_PER_DAY").pipe(
     Config.validate({
       message: "READ_MESSAGE_RECORDS_PER_DAY must be a positive safe integer",
@@ -1690,6 +1697,18 @@ const mcpAuthorizationPersistenceLayer = (environment: ApiEnvironment) =>
 
 const mcpToolPersistenceLayer = (environment: ApiEnvironment) =>
   Layer.succeed(McpToolPersistence, {
+    reserveStoredMediaRead: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string")
+            throw new Error("database unavailable");
+          return makePgMcpToolRepository(
+            connectionString,
+          ).reserveStoredMediaRead(input);
+        },
+        catch: () => new McpToolPersistenceError(),
+      }),
     beginToolCall: (input) =>
       Effect.tryPromise({
         try: () => {
@@ -2251,6 +2270,7 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
             layer,
             minuteLimit: requestQuota.minuteLimit,
             readMessageDailyRecordLimit: requestQuota.dailyRecordLimit,
+            storedMediaDailyByteLimit: requestQuota.dailyMediaByteLimit,
             resourceUrl: configuration.resource,
           })(nextRequest, nextEnvironment, nextContext, authorization);
         }

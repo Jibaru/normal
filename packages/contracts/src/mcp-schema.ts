@@ -199,19 +199,29 @@ export const ReadMessagesOutputContract = makePublicObjectContract({
       media: Schema.NullOr(
         Schema.Struct({
           media_id: MediaId,
+          type: Schema.Literal(
+            "image",
+            "audio",
+            "video",
+            "document",
+            "sticker",
+          ),
           state: Schema.Literal("pending", "ready", "rejected", "failed"),
           size_bytes: Schema.NullOr(
             Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
           ),
           mime_type: Schema.NullOr(Schema.String),
-          filename: Schema.NullOr(Schema.String),
-          availability: Schema.Literal(
-            "processing",
-            "readable",
-            "too_large_for_mcp",
-            "unavailable",
-          ),
+          file_name: Schema.NullOr(Schema.String),
           resource_uri: Schema.NullOr(Schema.String),
+          resource_unavailable_reason: Schema.NullOr(
+            Schema.Literal(
+              "media_pending",
+              "media_rejected",
+              "media_failed",
+              "too_large_for_mcp",
+            ),
+          ),
+          resource_size_limit_bytes: Schema.Literal(16_777_216),
         }),
       ),
     }),

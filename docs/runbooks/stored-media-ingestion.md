@@ -14,3 +14,9 @@ The API Worker's one-minute scheduled handler loads up to 10 pending rows with t
 - If a ready row's sole R2 object is missing, mark it `failed` with `object_missing`; do not claim recovery or retry the provider source, which was destroyed at finalization.
 
 Object deletion failures are safe to retry by opaque object key. Never log provider URLs, filenames, MIME metadata ciphertext, hashes tied to a User, or decrypted bytes. A retained-byte discrepancy is an incident: stop new finalizations for the affected Personal Account, compare ready-row byte totals to `stored_media_used_bytes`, and repair the ledger under audited operator procedure before resuming.
+
+## Protected MCP reads
+
+`resources/templates/list` advertises the non-listable `whatsapp-media://` template only for an active MCP Authorization with `messages:read`; `resources/list` remains empty. Each read rechecks the selected WhatsApp Connection and complete Stored Message–Stored Media ownership chain in Neon, atomically writes the Tool Call Log and reserves the verified full plaintext byte count, and only then decrypts metadata and the private R2 container. Responses are attachments with the verified MIME type, a sanitized filename when available, private zero-TTL cache metadata, and `Cache-Control: no-store`.
+
+Configure `DECRYPTED_MEDIA_BYTES_PER_DAY` to the approved positive per-Personal-Account UTC-day limit. Unknown, revoked, cross-linked, deleted, non-ready, oversized, malformed, missing, or authentication-failed reads deliberately share the resource-not-found boundary. Investigate using safe outcome counts and container failure classes only; never log the URI, filename, object key, plaintext, provider URL, or authorization token.
