@@ -87,8 +87,13 @@ create, adopt, connect, or reconciliation result may carry the narrower
 per-session authority to the API Worker, which must envelope-encrypt it before
 persistence.
 
-The API Worker is also the declared consumer for the ingestion Queue and its
-dead-letter Queue. It receives no DLQ producer binding. Provider-control has no
+The API Worker is also the declared consumer for the ingestion Queue, its
+dead-letter Queue, and the operator-only immutable replay Queue. It receives no
+DLQ or replay producer binding. The replay Queue accepts requests only through
+Cloudflare's authenticated API with a separate token restricted to Queues
+Write; the Worker resolves each opaque incident reference to canonical source
+metadata and publishes that metadata through its existing `INGESTION_QUEUE`
+binding. Provider-control has no
 KV, R2, Queue, Hyperdrive, database role, tenant-decryption service, route, or
 custom-domain authority and has both `workers_dev` and preview URLs disabled,
 so the service binding is its only declared ingress. Bundle inspection also
@@ -613,8 +618,9 @@ marker bucket is also protected from OpenTofu destroy. All four buckets
 explicitly disable the public `r2.dev` managed domain and declare no custom
 domain or CORS exposure.
 
-The provisioning and ingestion Queues retain unconsumed messages for seven
-days. Provisioning uses the bounded reconcile-first retry policy above.
+The provisioning, ingestion, and operator replay Queues retain unconsumed
+messages for seven days. Provisioning uses the bounded reconcile-first retry
+policy above.
 Ingestion allows exactly seven retries and uses a three-hour default delay,
 giving the roughly 21-hour bound required by ADR 0005; ingestion code may
 select a jittered per-message delay inside that cap. Exhausted ingestion items
@@ -807,8 +813,35 @@ after the transaction and the safe `webhook_event.dead_letter.completed`
 alert event succeed is the DLQ message acknowledged. The DLQ consumer uses
 Cloudflare's maximum 100 retries at five-minute intervals, keeping failed gap
 recording eligible beyond the four-hour recovery objective rather than reusing
-the ingestion consumer's seven-retry exhaustion policy. The source ciphertext
-remains in R2 for the existing seven-day diagnostic and immutable-replay window.
-Recovery telemetry contains only bounded counts and normalized outcomes; it
-never contains object, tenant, connection, provider, payload, ciphertext, or
-key identifiers.
+the ingestion consumer's seven-retry exhaustion policy. The transaction also
+creates a stable random incident reference. That single opaque reference is
+allowlisted in the alert so an operator can request replay without receiving an
+object key, tenant, connection, provider identifier, payload, ciphertext, or
+key value. The source ciphertext remains in R2 for the seven-day diagnostic and
+immutable-replay window.
+
+The dedicated replay consumer accepts a closed message containing only the
+incident reference, random request ID, 64-character opaque operator reference,
+allowlisted reason code, request time, and version. The restricted webhook
+database role creates the audit attempt before it resolves and publishes the
+original closed ingestion envelope. A repeated dispatched request is
+acknowledged without publication; a crash between Queue publication and audit
+completion can publish the same canonical envelope again, which safely
+converges through the ordinary parser, validator, normalizer, and Webhook Item
+deduplication transaction. No replay flag or payload field exists.
+
+The hourly retention handler explicitly removes each expired R2 object before
+deleting its `webhook_events` row and quarantine references. Dead-letter
+incident source links become null at that point, while `webhook_items` retain
+their non-reversible deduplication identities. The bucket lifecycle remains a
+defense-in-depth seven-day deletion rule.
+
+The operator command uses four validated process-only values that are never
+Worker bindings:
+
+| Variable | Sensitivity | Purpose |
+| --- | --- | --- |
+| `CLOUDFLARE_ACCOUNT_ID` | Internal | Exact Cloudflare account containing the replay Queue. |
+| `CLOUDFLARE_INGESTION_REPLAY_QUEUE_ID` | Internal | Sensitive OpenTofu output identifying only the environment's replay Queue. |
+| `CLOUDFLARE_REPLAY_API_TOKEN` | Secret | Short-lived token restricted to Queues Write for the target account. |
+| `WEBHOOK_REPLAY_OPERATOR_REFERENCE` | Internal | Random 64-character lowercase hexadecimal reference mapped to the authorized operator in the external access record. |

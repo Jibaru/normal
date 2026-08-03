@@ -113,16 +113,23 @@ for (const deployable of deployables) {
         (consumer) =>
           consumer.queue === `whatsapp-mcp-ingestion-dlq${environmentSuffix}`,
       );
+      const replay = consumers?.find(
+        (consumer) =>
+          consumer.queue ===
+          `whatsapp-mcp-ingestion-replay${environmentSuffix}`,
+      );
       if (
         ingestion?.dead_letter_queue !==
           `whatsapp-mcp-ingestion-dlq${environmentSuffix}` ||
         ingestion.max_retries !== 7 ||
         ingestion.retry_delay !== 10_800 ||
         deadLetter?.max_retries !== 100 ||
-        deadLetter?.retry_delay !== 300
+        deadLetter?.retry_delay !== 300 ||
+        replay?.max_retries !== 100 ||
+        replay?.retry_delay !== 300
       ) {
         throw new Error(
-          `API ${configurationName} configuration must bound ingestion at seven three-hour retries and give active DLQ handling the maximum retry budget.`,
+          `API ${configurationName} configuration must bound ingestion at seven three-hour retries and give active DLQ and immutable replay handling the maximum retry budget.`,
         );
       }
     }

@@ -80,7 +80,8 @@ run "development_topology" {
       cloudflare_workers_kv_namespace.oauth.title == "whatsapp-mcp-oauth-development" &&
       cloudflare_queue.connection_setup_provisioning.queue_name == "whatsapp-mcp-connection-setup-provisioning-development" &&
       cloudflare_queue.ingestion.queue_name == "whatsapp-mcp-ingestion-development" &&
-      cloudflare_queue.dead_letter.queue_name == "whatsapp-mcp-ingestion-dlq-development"
+      cloudflare_queue.dead_letter.queue_name == "whatsapp-mcp-ingestion-dlq-development" &&
+      cloudflare_queue.ingestion_replay.queue_name == "whatsapp-mcp-ingestion-replay-development"
     )
     error_message = "Development state resources must use isolated environment-specific names."
   }
@@ -320,17 +321,21 @@ run "production_topology" {
       cloudflare_queue_consumer.ingestion.settings.retry_delay == 10800 &&
       cloudflare_queue_consumer.dead_letter.settings.max_retries == 100 &&
       cloudflare_queue_consumer.dead_letter.settings.retry_delay == 300 &&
-      cloudflare_queue.dead_letter.settings.message_retention_period == 345600
+      cloudflare_queue.dead_letter.settings.message_retention_period == 345600 &&
+      cloudflare_queue.ingestion_replay.settings.message_retention_period == 604800 &&
+      cloudflare_queue_consumer.ingestion_replay.settings.max_retries == 100 &&
+      cloudflare_queue_consumer.ingestion_replay.settings.retry_delay == 300
     )
-    error_message = "Provisioning, ingestion, and dead-letter Queues must retain their bounded production delivery policies."
+    error_message = "Provisioning, ingestion, replay, and dead-letter Queues must retain their bounded production delivery policies."
   }
 
   assert {
     condition = (
       cloudflare_queue_consumer.ingestion.script_name == cloudflare_worker.api.name &&
-      cloudflare_queue_consumer.dead_letter.script_name == cloudflare_worker.api.name
+      cloudflare_queue_consumer.dead_letter.script_name == cloudflare_worker.api.name &&
+      cloudflare_queue_consumer.ingestion_replay.script_name == cloudflare_worker.api.name
     )
-    error_message = "The API Worker must actively consume both ingestion and dead-letter queues."
+    error_message = "The API Worker must actively consume ingestion, replay, and dead-letter queues."
   }
 
   assert {

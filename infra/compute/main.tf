@@ -18,6 +18,7 @@ locals {
   ])
   ingestion_queue_name                     = "whatsapp-mcp-ingestion${local.environment_suffix}"
   dead_letter_queue_name                   = "whatsapp-mcp-ingestion-dlq${local.environment_suffix}"
+  replay_queue_name                        = "whatsapp-mcp-ingestion-replay${local.environment_suffix}"
   connection_setup_provisioning_queue_name = "whatsapp-mcp-connection-setup-provisioning${local.environment_suffix}"
   api_bundle_path                          = abspath("${path.root}/../../apps/api/dist/index.js")
   provider_control_bundle_path             = abspath("${path.root}/../../apps/provider-control/dist/index.js")
@@ -161,6 +162,17 @@ resource "cloudflare_queue" "dead_letter" {
     delivery_delay           = 0
     delivery_paused          = false
     message_retention_period = 345600
+  }
+}
+
+resource "cloudflare_queue" "ingestion_replay" {
+  account_id = var.cloudflare_account_id
+  queue_name = local.replay_queue_name
+
+  settings = {
+    delivery_delay           = 0
+    delivery_paused          = false
+    message_retention_period = 604800
   }
 }
 
@@ -467,6 +479,23 @@ resource "cloudflare_queue_consumer" "connection_setup_provisioning" {
 resource "cloudflare_queue_consumer" "dead_letter" {
   account_id  = var.cloudflare_account_id
   queue_id    = cloudflare_queue.dead_letter.queue_id
+  script_name = cloudflare_worker.api.name
+  type        = "worker"
+
+  settings = {
+    batch_size            = 10
+    max_retries           = 100
+    max_wait_time_ms      = 5000
+    retry_delay           = 300
+    visibility_timeout_ms = 900000
+  }
+
+  depends_on = [cloudflare_workers_deployment.api]
+}
+
+resource "cloudflare_queue_consumer" "ingestion_replay" {
+  account_id  = var.cloudflare_account_id
+  queue_id    = cloudflare_queue.ingestion_replay.queue_id
   script_name = cloudflare_worker.api.name
   type        = "worker"
 

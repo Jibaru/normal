@@ -43,6 +43,7 @@ const storedCiphertext = encoder.encode(
   }),
 );
 const identityKey = new Uint8Array(32).fill(33);
+const incidentReference = "50000000-0000-4000-8000-000000000033";
 
 const material: WebhookEventProcessingMaterial = {
   accountKey: {
@@ -152,7 +153,10 @@ const makeHarness = (options: HarnessOptions = {}) => {
           ? Effect.fail(new WebhookEventPersistenceError())
           : Effect.sync(() => {
               calls.push("dead-letter");
-              return "gap_recorded" as const;
+              return {
+                incidentReference,
+                outcome: "gap_recorded" as const,
+              };
             }),
       prepare: () =>
         options.persistenceUnavailable
@@ -414,6 +418,7 @@ describe("Webhook Event processing", () => {
     expect(queued.retries).toEqual([]);
     expect(harness.telemetry).toContainEqual({
       event: "webhook_event.dead_letter.completed",
+      incidentReference,
       outcome: "gap_recorded",
       service: "api",
     });
@@ -436,6 +441,7 @@ describe("Webhook Event processing", () => {
     expect(queued.retries).toEqual([]);
     expect(harness.telemetry).toContainEqual({
       event: "webhook_event.dead_letter.completed",
+      incidentReference,
       outcome: "gap_recorded",
       service: "api",
     });

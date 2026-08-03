@@ -43,6 +43,12 @@ import {
   type WebhookRecoveryRequirements,
 } from "./webhook-recovery";
 import {
+  handleWebhookReplayBatch,
+  handleWebhookSourceRetention,
+  type WebhookReplayRequirements,
+  type WebhookSourceRetentionRequirements,
+} from "./webhook-replay";
+import {
   createWhatsAppConnectionHandler,
   isWhatsAppConnectionRequest,
   type WhatsAppConnectionRequirements,
@@ -88,6 +94,11 @@ export interface PublicBoundaryWorkerOptions {
   readonly webhookRecoveryLayer: (
     environment: PublicBoundaryEnvironment,
   ) => Layer.Layer<WebhookRecoveryRequirements>;
+  readonly webhookReplayLayer: (
+    environment: PublicBoundaryEnvironment,
+  ) => Layer.Layer<
+    WebhookReplayRequirements | WebhookSourceRetentionRequirements
+  >;
 }
 
 const jsonResponse = (body: unknown, status = 200): Response =>
@@ -197,6 +208,16 @@ export const createPublicBoundaryWorker = (
       _context: ExecutionContext,
     ): Promise<void> {
       if (
+        /^whatsapp-mcp-ingestion-replay(?:-(?:development|preview))?$/u.test(
+          batch.queue,
+        )
+      ) {
+        return handleWebhookReplayBatch(
+          batch,
+          options.webhookReplayLayer(environment),
+        );
+      }
+      if (
         /^whatsapp-mcp-ingestion-dlq(?:-(?:development|preview))?$/u.test(
           batch.queue,
         )
@@ -245,6 +266,12 @@ export const createPublicBoundaryWorker = (
         await handleWebhookIngressSweep(
           new Date(controller.scheduledTime).toISOString(),
           options.webhookRecoveryLayer(environment),
+        );
+      }
+      if (controller.cron === "0 * * * *") {
+        await handleWebhookSourceRetention(
+          new Date(controller.scheduledTime).toISOString(),
+          options.webhookReplayLayer(environment),
         );
       }
       await environment.OAUTH_KV.put(

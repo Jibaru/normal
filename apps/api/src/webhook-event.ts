@@ -5,7 +5,7 @@ import {
   makeMessageId,
 } from "@whatsapp-mcp/contracts/handles";
 import type {
-  DeadLetterWebhookEventOutcome,
+  DeadLetterWebhookEventResult,
   ProjectConnectionStateInput,
   ProjectDirectoryContactInput,
   ProjectGroupInput,
@@ -75,7 +75,7 @@ export interface WebhookEventPersistenceService {
     readonly receivedAt: string;
     readonly whatsappConnectionId: string;
   }) => Effect.Effect<
-    DeadLetterWebhookEventOutcome,
+    DeadLetterWebhookEventResult,
     WebhookEventPersistenceError
   >;
   readonly prepare: (input: {
@@ -811,17 +811,17 @@ export const handleWebhookEventBatch = (
   );
 
 const emitDeadLetter = (
-  outcome:
-    | "already_completed"
-    | "gap_recorded"
-    | "invalid_message"
-    | "source_unavailable",
+  result:
+    | DeadLetterWebhookEventResult
+    | { readonly outcome: "invalid_message" },
 ) =>
   Effect.gen(function* () {
     const telemetry = yield* SafeTelemetry;
     yield* telemetry.emit({
       event: "webhook_event.dead_letter.completed",
-      outcome,
+      incidentReference:
+        "incidentReference" in result ? result.incidentReference : null,
+      outcome: result.outcome,
       service: "api",
     });
   });
@@ -851,7 +851,7 @@ export const handleWebhookDeadLetterBatch = (
       (queued) => {
         const message = queued.body;
         const work = !isWebhookEventQueueMessage(message)
-          ? emitDeadLetter("invalid_message")
+          ? emitDeadLetter({ outcome: "invalid_message" })
           : Effect.gen(function* () {
               const outcome = yield* recordDeadLetter(message);
               yield* emitDeadLetter(outcome);

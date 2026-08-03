@@ -40,12 +40,19 @@ output "r2_bucket_names" {
 }
 
 output "queue_names" {
-  description = "Provisioning, ingestion, and actively consumed dead-letter Queues."
+  description = "Provisioning, ingestion, immutable replay, and actively consumed dead-letter Queues."
   value = {
     connection_setup_provisioning = cloudflare_queue.connection_setup_provisioning.queue_name
     dead_letter                   = cloudflare_queue.dead_letter.queue_name
     ingestion                     = cloudflare_queue.ingestion.queue_name
+    replay                        = cloudflare_queue.ingestion_replay.queue_name
   }
+}
+
+output "ingestion_replay_queue_id" {
+  description = "Queue identifier used only by the authenticated operator replay command."
+  value       = cloudflare_queue.ingestion_replay.queue_id
+  sensitive   = true
 }
 
 output "vercel_project_id" {
