@@ -51,6 +51,22 @@ export interface CreatedPersonalAccount {
 }
 
 export interface PersonalAccountRepository {
+  readonly listDeletionPurgeCandidates: (input: {
+    readonly limit: number;
+    readonly observedAt: string;
+  }) => Promise<
+    ReadonlyArray<{
+      readonly deadlineAt: string;
+      readonly deadlineRisk: boolean;
+      readonly deletionMarkerId: string;
+      readonly requestedAt: string;
+    }>
+  >;
+  readonly purgeDeletion: (input: {
+    readonly completedAt: string;
+    readonly deletionMarkerId: string;
+  }) => Promise<boolean>;
+  readonly purgeExpiredDeletionRecords: (limit: number) => Promise<number>;
   readonly create: (
     input: CreatePersonalAccountInput,
   ) => Promise<CreatedPersonalAccount | WaitlistedPersonalAccount | null>;
@@ -144,6 +160,52 @@ const admissionState = (
 export const makePersonalAccountRepository = (
   provider: PersonalAccountConnectionProvider,
 ): PersonalAccountRepository => ({
+  listDeletionPurgeCandidates: (input) =>
+    provider.withConnection(async (connection) => {
+      const result = await connection.query<{
+        deadline_at: unknown;
+        deadline_risk: unknown;
+        deletion_marker_id: unknown;
+        requested_at: unknown;
+      }>(
+        "SELECT * FROM app_private.list_personal_account_purge_candidates($1,$2)",
+        [input.observedAt, input.limit],
+      );
+      return result.rows.map((row) => {
+        if (
+          typeof row.deletion_marker_id !== "string" ||
+          !(row.requested_at instanceof Date) ||
+          !(row.deadline_at instanceof Date) ||
+          typeof row.deadline_risk !== "boolean"
+        )
+          throw new Error("invalid Personal Account purge candidate");
+        return {
+          deadlineAt: row.deadline_at.toISOString(),
+          deadlineRisk: row.deadline_risk,
+          deletionMarkerId: row.deletion_marker_id,
+          requestedAt: row.requested_at.toISOString(),
+        };
+      });
+    }),
+  purgeDeletion: (input) =>
+    provider.withConnection(async (connection) => {
+      const result = await connection.query<{ purged: unknown }>(
+        "SELECT app_private.purge_personal_account($1,$2) AS purged",
+        [input.deletionMarkerId, input.completedAt],
+      );
+      return result.rows[0]?.purged === true;
+    }),
+  purgeExpiredDeletionRecords: (limit) =>
+    provider.withConnection(async (connection) => {
+      const result = await connection.query<{ purged: unknown }>(
+        "SELECT app_private.purge_expired_deletion_records($1) AS purged",
+        [limit],
+      );
+      const purged = Number(result.rows[0]?.purged);
+      if (!Number.isSafeInteger(purged) || purged < 0)
+        throw new Error("invalid deletion record purge result");
+      return purged;
+    }),
   finishDeletion: (input) =>
     provider.withConnection(async (connection) => {
       const result = await connection.query<{ finished: unknown }>(

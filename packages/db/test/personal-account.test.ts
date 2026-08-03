@@ -209,6 +209,157 @@ describe("Personal Account repository", () => {
     ]);
   });
 
+  test("purges a deletion-complete account into unlinkable Security Records", async () => {
+    const repository = makePersonalAccountRepository(provider);
+    await repository.create({
+      clerkUserId: "user_purge123",
+      keyCiphertext: new Uint8Array([1, 2, 3]),
+      keyVersion: 1,
+      kmsKeyId: "arn:aws:kms:us-east-1:111122223333:key/content-root-key",
+      personalAccountId: accountId,
+      providerApprovedSessionCapacity: 3,
+    });
+    await repository.prepareDeletion({
+      clerkUserId: "user_purge123",
+      observedAt: "2026-08-03T01:00:00.000Z",
+    });
+    await repository.finishDeletion({
+      clerkUserId: "user_purge123",
+      deletionMarkerId: "c".repeat(64),
+      requestedAt: "2026-08-03T01:00:00.000Z",
+    });
+
+    await database.exec("RESET ROLE");
+    await database.query(
+      `INSERT INTO app.mcp_authorizations (
+         id, personal_account_id, oauth_subject, client_id, client_class,
+         scopes, state, reverified_at, authorized_at, absolute_expires_at,
+         revoked_at, refresh_family_state, refresh_family_revoked_at
+       ) VALUES (
+         '20000000-0000-4000-8000-000000000001', $1, $2, 'client-secret-ref',
+         'approved', ARRAY['connections:read'], 'revoked',
+         '2026-08-03T00:00:00Z', '2026-08-03T00:01:00Z',
+         '2026-10-31T00:01:00Z', '2026-08-03T01:00:00Z', 'revoked',
+         '2026-08-03T01:00:00Z'
+       )`,
+      [accountId, "s".repeat(43)],
+    );
+    await database.query(
+      `INSERT INTO app.tool_call_logs (
+         id, personal_account_id, mcp_authorization_id, tool_name, started_at,
+         completed_at, outcome, result_count, latency_ms, quota_reserved,
+         expires_at, public_id
+       ) VALUES (
+         '30000000-0000-4000-8000-000000000001', $1,
+         '20000000-0000-4000-8000-000000000001', 'list_connections',
+         '2026-08-03T00:10:00Z', '2026-08-03T00:10:00.025Z', 'success', 2, 25,
+         false, '2026-11-01T00:10:00Z', 'tcl_aaaaaaaaaaaaaaaaaaaaa'
+       )`,
+      [accountId],
+    );
+    await database.exec("SET ROLE whatsapp_api_runtime");
+
+    await expect(
+      repository.listDeletionPurgeCandidates({
+        limit: 100,
+        observedAt: "2026-08-03T02:00:00.000Z",
+      }),
+    ).resolves.toEqual([
+      {
+        deadlineAt: "2026-08-04T01:00:00.000Z",
+        deadlineRisk: false,
+        deletionMarkerId: "c".repeat(64),
+        requestedAt: "2026-08-03T01:00:00.000Z",
+      },
+    ]);
+    await expect(
+      repository.purgeDeletion({
+        completedAt: "2026-08-03T02:00:00.000Z",
+        deletionMarkerId: "c".repeat(64),
+      }),
+    ).resolves.toBe(true);
+
+    await database.exec("RESET ROLE");
+    expect(
+      (
+        await database.query(
+          "SELECT count(*)::integer AS count FROM app.personal_accounts",
+        )
+      ).rows,
+    ).toEqual([{ count: 0 }]);
+    expect(
+      (await database.query("SELECT * FROM app_private.security_records")).rows,
+    ).toEqual([
+      {
+        category: "tool_call",
+        client_class: "approved",
+        completed_at: new Date("2026-08-03T00:10:00.025Z"),
+        expires_at: new Date("2026-11-01T00:10:00.000Z"),
+        latency_ms: 25,
+        outcome: "success",
+        result_count: 2,
+        started_at: new Date("2026-08-03T00:10:00.000Z"),
+      },
+    ]);
+    expect(
+      (
+        await database.query(
+          "SELECT * FROM app_private.personal_account_cleanup_audit",
+        )
+      ).rows,
+    ).toEqual([
+      {
+        completed_at: new Date("2026-08-03T02:00:00.000Z"),
+        deletion_marker_id: "c".repeat(64),
+        expires_at: new Date("2026-11-01T02:00:00.000Z"),
+      },
+    ]);
+  });
+
+  test("bounds deletion-record expiry across both record types", async () => {
+    const repository = makePersonalAccountRepository(provider);
+    await database.exec("RESET ROLE");
+    await database.query(`
+      INSERT INTO app_private.security_records (
+        category, client_class, outcome, result_count, started_at,
+        completed_at, latency_ms, expires_at
+      )
+      SELECT
+        'tool_call', 'approved', 'success', 1,
+        '2025-01-01T00:00:00Z'::timestamptz + value * interval '1 second',
+        '2025-01-01T00:00:00.001Z'::timestamptz + value * interval '1 second',
+        1,
+        '2025-04-01T00:00:00Z'::timestamptz + value * interval '1 second'
+      FROM generate_series(0, 500) AS value
+    `);
+    await database.query(`
+      INSERT INTO app_private.personal_account_cleanup_audit (
+        deletion_marker_id, completed_at, expires_at
+      )
+      SELECT
+        encode(sha256(value::text::bytea), 'hex'),
+        '2025-01-01T00:00:00Z'::timestamptz + value * interval '1 second',
+        '2025-04-01T00:00:00Z'::timestamptz + value * interval '1 second'
+      FROM generate_series(0, 500) AS value
+    `);
+
+    await expect(repository.purgeExpiredDeletionRecords(500)).resolves.toBe(
+      500,
+    );
+
+    await database.exec("RESET ROLE");
+    expect(
+      (
+        await database.query(`
+          SELECT
+            (SELECT count(*)::integer FROM app_private.security_records) +
+            (SELECT count(*)::integer FROM app_private.personal_account_cleanup_audit)
+              AS count
+        `)
+      ).rows,
+    ).toEqual([{ count: 502 }]);
+  });
+
   test("creates and resolves one idempotent waitlist entry at capacity", async () => {
     const repository = makePersonalAccountRepository(provider);
     await repository.create({
