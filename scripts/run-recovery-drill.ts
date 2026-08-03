@@ -45,10 +45,13 @@ export const runRecoveryDrill = async (
   );
   if (!response.ok) throw new Error(`${drill} automation failed`);
   const evidence = await response.json();
-  const failures = validateDrillEvidence(
-    evidence as Parameters<typeof validateDrillEvidence>[0],
-    now,
-  );
+  const failures = validateDrillEvidence(evidence, now);
+  if (
+    typeof evidence !== "object" ||
+    evidence === null ||
+    Array.isArray(evidence)
+  )
+    throw new Error(`${drill} evidence rejected: ${failures.join("; ")}`);
   if ((evidence as { drill?: unknown }).drill !== drill)
     failures.push("automation returned evidence for a different drill");
   if (

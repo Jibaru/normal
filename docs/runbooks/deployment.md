@@ -1152,10 +1152,11 @@ Any missing artifact, secret, external approval, malformed report, failed
 check, missed four-hour RTO, missed five-minute Neon RPO, or nonzero deletion
 marker loss keeps onboarding closed.
 
-Evidence records the 99.5 percent first-party monthly SLO separately from
-Wasender and WhatsApp availability. Reports contain timings, aggregate counts,
-and normalized checks only; never include a User, Personal Account, WhatsApp
-Connection, provider identifier, key, token, message, or object key.
+Evidence records achieved first-party monthly availability against the 99.5
+percent SLO separately from achieved Wasender and WhatsApp availability.
+Reports contain timings, aggregate counts, and normalized checks only; never
+include a User, Personal Account, WhatsApp Connection, provider identifier,
+key, token, message, or object key.
 
 Applying real infrastructure remains gated on environment-specific Cloudflare
 accounts/zones, Vercel teams, state buckets/KMS keys, provider tokens, domain

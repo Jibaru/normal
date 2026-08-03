@@ -23,6 +23,7 @@ test("monthly automation requests a random prior-history point and non-serving b
     serving: false,
     achieved_rpo_seconds: 1,
     achieved_rto_seconds: 600,
+    achieved_first_party_availability_percent: 99.7,
     objectives: {
       recovery_time_seconds: 14_400,
       neon_recovery_point_seconds: 300,
@@ -80,6 +81,7 @@ test("random restore selection spans the full prior 30-day history", async () =>
         serving: false,
         achieved_rpo_seconds: 1,
         achieved_rto_seconds: 1,
+        achieved_first_party_availability_percent: 99.7,
         objectives: {
           recovery_time_seconds: 14_400,
           neon_recovery_point_seconds: 300,
@@ -126,6 +128,7 @@ test("rejects evidence for a different drill kind", async () => {
           serving: false,
           achieved_rpo_seconds: 1,
           achieved_rto_seconds: 1,
+          achieved_first_party_availability_percent: 99.7,
           objectives: {
             recovery_time_seconds: 14_400,
             neon_recovery_point_seconds: 300,

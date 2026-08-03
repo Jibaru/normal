@@ -15,6 +15,7 @@ const monthly: DrillEvidence = {
   serving: false,
   achieved_rpo_seconds: 120,
   achieved_rto_seconds: 720,
+  achieved_first_party_availability_percent: 99.7,
   objectives: {
     recovery_time_seconds: 14_400,
     neon_recovery_point_seconds: 300,
@@ -52,8 +53,39 @@ const quarterly: DrillEvidence = {
 };
 
 describe("recovery drill evidence", () => {
+  test("rejects malformed evidence without throwing", () => {
+    expect(validateDrillEvidence(null, new Date("2026-08-02"))).toEqual([
+      "evidence is not an object",
+    ]);
+    expect(
+      evaluateLaunchGate({
+        now: new Date("2026-08-02"),
+        monthly: null,
+        quarterly: null,
+        smokePassed: true,
+        numericQuotasApproved: true,
+        providerCapacityApproved: true,
+        wasenderTermsApproved: true,
+        productionBundleHasNoFake: true,
+      }).open,
+    ).toBe(false);
+  });
+
   test("accepts separate first-party objectives and dependency measurements", () => {
     expect(validateDrillEvidence(monthly, new Date("2026-08-02"))).toEqual([]);
+  });
+
+  test("rejects first-party availability below its SLO independently of dependencies", () => {
+    expect(
+      validateDrillEvidence(
+        {
+          ...monthly,
+          achieved_first_party_availability_percent: 99.4,
+          dependencies: { wasender_percent: 100, whatsapp_percent: 100 },
+        },
+        new Date("2026-08-02"),
+      ),
+    ).toContain("99.5 percent first-party availability objective was missed");
   });
 
   test("rejects serving restores and missing verification", () => {

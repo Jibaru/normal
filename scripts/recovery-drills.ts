@@ -10,6 +10,7 @@ export interface DrillEvidence {
   readonly serving: boolean;
   readonly achieved_rpo_seconds: number;
   readonly achieved_rto_seconds: number;
+  readonly achieved_first_party_availability_percent: number;
   readonly objectives: {
     readonly recovery_time_seconds: number;
     readonly neon_recovery_point_seconds: number;
@@ -50,18 +51,25 @@ const finiteNonnegative = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value) && value >= 0;
 
 export const validateDrillEvidence = (
-  evidence: DrillEvidence,
+  candidate: unknown,
   now: Date,
 ): string[] => {
+  if (
+    typeof candidate !== "object" ||
+    candidate === null ||
+    Array.isArray(candidate)
+  )
+    return ["evidence is not an object"];
+  const evidence = candidate as Partial<DrillEvidence>;
   const failures: string[] = [];
   if (evidence.version !== 1) failures.push("unsupported evidence version");
   if (evidence.environment !== "production")
     failures.push("evidence is not from production");
   if (evidence.serving) failures.push("restore branch must be non-serving");
 
-  const started = Date.parse(evidence.started_at);
-  const completed = Date.parse(evidence.completed_at);
-  const source = Date.parse(evidence.source_point_at);
+  const started = Date.parse(evidence.started_at ?? "");
+  const completed = Date.parse(evidence.completed_at ?? "");
+  const source = Date.parse(evidence.source_point_at ?? "");
   if (![started, completed, source].every(Number.isFinite))
     failures.push("evidence timestamps are invalid");
   else {
@@ -82,6 +90,12 @@ export const validateDrillEvidence = (
   )
     failures.push("four-hour recovery objective was missed");
   if (
+    !finiteNonnegative(evidence.achieved_first_party_availability_percent) ||
+    evidence.achieved_first_party_availability_percent < 99.5 ||
+    evidence.achieved_first_party_availability_percent > 100
+  )
+    failures.push("99.5 percent first-party availability objective was missed");
+  if (
     evidence.objectives?.recovery_time_seconds !== 14_400 ||
     evidence.objectives?.neon_recovery_point_seconds !== 300 ||
     evidence.objectives?.deletion_marker_loss !== 0 ||
@@ -92,9 +106,9 @@ export const validateDrillEvidence = (
     );
   if (
     !finiteNonnegative(evidence.dependencies?.wasender_percent) ||
-    evidence.dependencies.wasender_percent > 100 ||
+    (evidence.dependencies?.wasender_percent ?? Number.NaN) > 100 ||
     !finiteNonnegative(evidence.dependencies?.whatsapp_percent) ||
-    evidence.dependencies.whatsapp_percent > 100
+    (evidence.dependencies?.whatsapp_percent ?? Number.NaN) > 100
   )
     failures.push("dependency availability evidence is missing");
 
@@ -113,8 +127,8 @@ export const validateDrillEvidence = (
 
 export const evaluateLaunchGate = (input: {
   readonly now: Date;
-  readonly monthly: DrillEvidence;
-  readonly quarterly: DrillEvidence;
+  readonly monthly: unknown;
+  readonly quarterly: unknown;
   readonly smokePassed: boolean;
   readonly numericQuotasApproved: boolean;
   readonly providerCapacityApproved: boolean;
@@ -125,15 +139,23 @@ export const evaluateLaunchGate = (input: {
     ...validateDrillEvidence(input.monthly, input.now),
     ...validateDrillEvidence(input.quarterly, input.now),
   ];
-  const age = (evidence: DrillEvidence) =>
-    input.now.getTime() - Date.parse(evidence.completed_at);
-  if (input.monthly.drill !== "monthly_restore")
+  const evidenceRecord = (evidence: unknown): Partial<DrillEvidence> =>
+    typeof evidence === "object" &&
+    evidence !== null &&
+    !Array.isArray(evidence)
+      ? (evidence as Partial<DrillEvidence>)
+      : {};
+  const monthly = evidenceRecord(input.monthly);
+  const quarterly = evidenceRecord(input.quarterly);
+  const age = (evidence: Partial<DrillEvidence>) =>
+    input.now.getTime() - Date.parse(evidence.completed_at ?? "");
+  if (monthly.drill !== "monthly_restore")
     blockers.push("monthly evidence has the wrong drill kind");
-  if (age(input.monthly) > 35 * 86_400_000)
+  if (age(monthly) > 35 * 86_400_000)
     blockers.push("monthly recovery evidence is stale");
-  if (input.quarterly.drill !== "quarterly_game_day")
+  if (quarterly.drill !== "quarterly_game_day")
     blockers.push("quarterly evidence has the wrong drill kind");
-  if (age(input.quarterly) > 100 * 86_400_000)
+  if (age(quarterly) > 100 * 86_400_000)
     blockers.push("quarterly recovery evidence is stale");
   if (!input.smokePassed) blockers.push("real deployment smoke did not pass");
   if (!input.numericQuotasApproved)
