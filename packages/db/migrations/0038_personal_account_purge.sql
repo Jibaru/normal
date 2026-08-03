@@ -141,7 +141,9 @@ BEGIN
   ), expired_audit AS (
     SELECT audit.deletion_marker_id FROM app_private.personal_account_cleanup_audit audit
     WHERE audit.expires_at <= statement_timestamp()
-    ORDER BY audit.expires_at LIMIT requested_limit FOR UPDATE SKIP LOCKED
+    ORDER BY audit.expires_at
+    LIMIT GREATEST(requested_limit - (SELECT count(*) FROM deleted_security), 0)
+    FOR UPDATE SKIP LOCKED
   ), deleted_audit AS (
     DELETE FROM app_private.personal_account_cleanup_audit audit USING expired_audit
     WHERE audit.deletion_marker_id = expired_audit.deletion_marker_id RETURNING 1

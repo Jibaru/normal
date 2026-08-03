@@ -316,6 +316,50 @@ describe("Personal Account repository", () => {
     ]);
   });
 
+  test("bounds deletion-record expiry across both record types", async () => {
+    const repository = makePersonalAccountRepository(provider);
+    await database.exec("RESET ROLE");
+    await database.query(`
+      INSERT INTO app_private.security_records (
+        category, client_class, outcome, result_count, started_at,
+        completed_at, latency_ms, expires_at
+      )
+      SELECT
+        'tool_call', 'approved', 'success', 1,
+        '2025-01-01T00:00:00Z'::timestamptz + value * interval '1 second',
+        '2025-01-01T00:00:00.001Z'::timestamptz + value * interval '1 second',
+        1,
+        '2025-04-01T00:00:00Z'::timestamptz + value * interval '1 second'
+      FROM generate_series(0, 500) AS value
+    `);
+    await database.query(`
+      INSERT INTO app_private.personal_account_cleanup_audit (
+        deletion_marker_id, completed_at, expires_at
+      )
+      SELECT
+        encode(sha256(value::text::bytea), 'hex'),
+        '2025-01-01T00:00:00Z'::timestamptz + value * interval '1 second',
+        '2025-04-01T00:00:00Z'::timestamptz + value * interval '1 second'
+      FROM generate_series(0, 500) AS value
+    `);
+
+    await expect(repository.purgeExpiredDeletionRecords(500)).resolves.toBe(
+      500,
+    );
+
+    await database.exec("RESET ROLE");
+    expect(
+      (
+        await database.query(`
+          SELECT
+            (SELECT count(*)::integer FROM app_private.security_records) +
+            (SELECT count(*)::integer FROM app_private.personal_account_cleanup_audit)
+              AS count
+        `)
+      ).rows,
+    ).toEqual([{ count: 502 }]);
+  });
+
   test("creates and resolves one idempotent waitlist entry at capacity", async () => {
     const repository = makePersonalAccountRepository(provider);
     await repository.create({
