@@ -168,6 +168,15 @@ variable "read_message_records_per_day" {
   }
 }
 
+variable "decrypted_media_bytes_per_day" {
+  description = "Authoritative UTC-day decrypted Stored Media byte quota."
+  type        = number
+  validation {
+    condition     = var.decrypted_media_bytes_per_day > 0 && floor(var.decrypted_media_bytes_per_day) == var.decrypted_media_bytes_per_day
+    error_message = "decrypted_media_bytes_per_day must be a positive integer."
+  }
+}
+
 variable "sends_per_minute" {
   description = "Approved per-authorization exact rolling-minute outbound send reservations."
   type        = number

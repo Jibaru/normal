@@ -176,6 +176,7 @@ for (const deployable of deployables) {
             CLERK_API_AUDIENCE: "https://api.example.test",
             CLERK_AUTHORIZED_PARTY: "https://app.example.test",
             CLERK_ISSUER: "https://clerk.example.test",
+            DECRYPTED_MEDIA_BYTES_PER_DAY: "268435456",
             OAUTH_CLIENT_REGISTRY:
               '[{"clientClass":"approved","clientId":"approved-client","clientName":"Approved MCP Client","redirectUris":["https://client.example.test/callback"]}]',
             OAUTH_ISSUER: "https://api.example.test",
@@ -271,6 +272,7 @@ for (const deployable of deployables) {
         'env.MCP_REQUESTS_PER_HOUR ("600")',
         'env.MCP_REQUESTS_PER_MINUTE ("60")',
         'env.READ_MESSAGE_RECORDS_PER_DAY ("10000")',
+        'env.DECRYPTED_MEDIA_BYTES_PER_DAY ("268435456")',
         'env.PROVIDER_APPROVED_SESSION_CAPACITY ("3")',
       ]) {
         if (!output.includes(binding)) {

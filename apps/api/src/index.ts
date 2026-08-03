@@ -7,6 +7,7 @@ import {
 import { createWorker } from "./worker";
 
 export interface Env {
+  readonly DECRYPTED_MEDIA_BYTES_PER_DAY: string;
   readonly AWS_ACCESS_KEY_ID: string;
   readonly AWS_KMS_REGION: string;
   readonly AWS_SECRET_ACCESS_KEY: string;

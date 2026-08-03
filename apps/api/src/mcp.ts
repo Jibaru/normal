@@ -1,4 +1,9 @@
-import { type CallToolResult, McpServer } from "@modelcontextprotocol/server";
+import {
+  type CallToolResult,
+  McpServer,
+  ResourceNotFoundError,
+  ResourceTemplate,
+} from "@modelcontextprotocol/server";
 import {
   type CursorBoundary,
   type CursorContext,
@@ -24,7 +29,10 @@ import {
   type SendTextMessageOutput,
   SendTextMessageOutputContract,
 } from "@whatsapp-mcp/contracts/mcp-schema";
-import { makeStoredMediaUri } from "@whatsapp-mcp/contracts/stored-media-uri";
+import {
+  makeStoredMediaUri,
+  parseStoredMediaUri,
+} from "@whatsapp-mcp/contracts/stored-media-uri";
 import type {
   BeginToolCallResult,
   McpAccessAuthorization,
@@ -40,7 +48,7 @@ import type {
   RejectToolCallResult,
 } from "@whatsapp-mcp/db/mcp-tool";
 import { createMcpHandler } from "agents/mcp/server";
-import { Context, Data, Effect, type Layer } from "effect";
+import { Context, Data, Effect, type Layer, Option } from "effect";
 import { z } from "zod";
 import {
   contactSearchIndex,
@@ -52,6 +60,10 @@ import {
   type EnvelopeEncryption,
   EnvelopeEncryptionService,
 } from "./encryption/envelope";
+import {
+  type StoredMediaContainer,
+  StoredMediaContainerService,
+} from "./encryption/stored-media-container";
 import {
   groupSearchIndex,
   importGroupDirectoryIndexKey,
@@ -67,6 +79,24 @@ export class McpToolPersistenceError extends Data.TaggedError(
 ) {}
 
 export interface McpToolPersistenceService {
+  readonly failStoredMediaRead: (input: {
+    readonly auditLogId: string;
+    readonly completedAt: Date;
+    readonly errorCode: string;
+  }) => Effect.Effect<void, McpToolPersistenceError>;
+  readonly reserveStoredMediaRead: (
+    input: McpAccessAuthorization & {
+      readonly auditLogId: string;
+      readonly connectionPublicId: string;
+      readonly dailyByteLimit: number;
+      readonly mediaPublicId: string;
+      readonly messagePublicId: string;
+      readonly observedAt: Date;
+    },
+  ) => Effect.Effect<
+    McpStoredMediaReadMaterial | null,
+    McpToolPersistenceError
+  >;
   readonly beginToolCall: (
     input: McpAccessAuthorization & {
       readonly auditLogId: string;
@@ -197,6 +227,17 @@ export interface McpToolPersistenceService {
   ) => Effect.Effect<RejectToolCallResult, McpToolPersistenceError>;
 }
 
+export interface McpStoredMediaReadMaterial {
+  readonly accountKey: McpToolMessagePage["accountKey"];
+  readonly connectionKey: McpToolMessagePage["connectionKey"];
+  readonly mediaId: string;
+  readonly metadata: NonNullable<
+    NonNullable<McpToolMessagePage["messages"][number]["media"]>["metadata"]
+  >;
+  readonly objectKey: string;
+  readonly plaintextSizeBytes: number;
+}
+
 export const McpToolPersistence = Context.GenericTag<McpToolPersistenceService>(
   "@whatsapp-mcp/api/McpToolPersistence",
 );
@@ -291,6 +332,7 @@ export type McpToolRequirements =
   | McpToolPersistenceService
   | SendTextMessageService
   | SafeTelemetryService
+  | StoredMediaContainer
   | EnvelopeEncryption
   | McpCursorSigningService;
 
@@ -374,17 +416,27 @@ const ReadMessagesOutputSchema = z
             media: z
               .object({
                 media_id: z.string().regex(/^med_[A-Za-z0-9_-]{21}$/u),
+                type: z.enum([
+                  "image",
+                  "audio",
+                  "video",
+                  "document",
+                  "sticker",
+                ]),
                 state: z.enum(["pending", "ready", "rejected", "failed"]),
                 size_bytes: z.number().int().nonnegative().nullable(),
                 mime_type: z.string().nullable(),
-                filename: z.string().nullable(),
-                availability: z.enum([
-                  "processing",
-                  "readable",
-                  "too_large_for_mcp",
-                  "unavailable",
-                ]),
+                file_name: z.string().nullable(),
                 resource_uri: z.string().nullable(),
+                resource_unavailable_reason: z
+                  .enum([
+                    "media_pending",
+                    "media_rejected",
+                    "media_failed",
+                    "too_large_for_mcp",
+                  ])
+                  .nullable(),
+                resource_size_limit_bytes: z.literal(16_777_216),
               })
               .strict()
               .nullable(),
@@ -1578,6 +1630,7 @@ export interface McpRequestHandlerOptions {
   readonly layer: Layer.Layer<McpToolRequirements, unknown>;
   readonly minuteLimit: number;
   readonly readMessageDailyRecordLimit?: number;
+  readonly storedMediaDailyByteLimit?: number;
   readonly resourceUrl: string;
 }
 
@@ -1590,6 +1643,58 @@ const isToolsListPayload = (payload: unknown): boolean => {
       "method" in message &&
       message.method === "tools/list",
   );
+};
+
+const hasMethod = (payload: unknown, method: string): boolean => {
+  const messages = Array.isArray(payload) ? payload : [payload];
+  return messages.some(
+    (message) =>
+      typeof message === "object" &&
+      message !== null &&
+      "method" in message &&
+      message.method === method,
+  );
+};
+
+const sanitizeAttachmentFilename = (value: string): string | null => {
+  const leaf = value.split(/[\\/]/u).at(-1) ?? "";
+  const sanitized = Array.from(leaf)
+    .map((character) => {
+      const point = character.codePointAt(0) ?? 0;
+      return point <= 0x1f || point === 0x7f ? " " : character;
+    })
+    .join("")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 255);
+  return sanitized.length === 0 || sanitized === "." || sanitized === ".."
+    ? null
+    : sanitized;
+};
+
+const streamToBase64 = async (
+  stream: ReadableStream<Uint8Array>,
+  expectedBytes: number,
+): Promise<string> => {
+  const bytes = new Uint8Array(expectedBytes);
+  const reader = stream.getReader();
+  let offset = 0;
+  while (true) {
+    const next = await reader.read();
+    if (next.done) break;
+    if (offset + next.value.byteLength > expectedBytes)
+      throw new Error("Stored Media exceeded verified size");
+    bytes.set(next.value, offset);
+    offset += next.value.byteLength;
+  }
+  if (offset !== expectedBytes)
+    throw new Error("Stored Media did not match verified size");
+  let binary = "";
+  for (let index = 0; index < bytes.byteLength; index += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+  }
+  bytes.fill(0);
+  return btoa(binary);
 };
 
 const listChats = (
@@ -2057,19 +2162,28 @@ const readMessages = (
             ? null
             : {
                 media_id: message.media.publicId,
+                type: message.contentType as
+                  | "image"
+                  | "audio"
+                  | "video"
+                  | "document"
+                  | "sticker",
                 state: message.media.state,
                 size_bytes: message.media.plaintextSizeBytes,
                 mime_type: mediaMetadata?.mimeType ?? null,
-                filename: mediaMetadata?.fileName ?? null,
-                availability:
+                file_name: mediaMetadata?.fileName ?? null,
+                resource_unavailable_reason:
                   message.media.state === "pending"
-                    ? ("processing" as const)
-                    : message.media.state !== "ready"
-                      ? ("unavailable" as const)
-                      : (message.media.plaintextSizeBytes ??
-                            Number.POSITIVE_INFINITY) > 16_777_216
-                        ? ("too_large_for_mcp" as const)
-                        : ("readable" as const),
+                    ? ("media_pending" as const)
+                    : message.media.state === "rejected"
+                      ? ("media_rejected" as const)
+                      : message.media.state === "failed"
+                        ? ("media_failed" as const)
+                        : (message.media.plaintextSizeBytes ??
+                              Number.POSITIVE_INFINITY) > 16_777_216
+                          ? ("too_large_for_mcp" as const)
+                          : null,
+                resource_size_limit_bytes: 16_777_216 as const,
                 resource_uri:
                   message.media.state === "ready" &&
                   (message.media.plaintextSizeBytes ??
@@ -2182,7 +2296,20 @@ const readMessages = (
       "success",
       output.messages.length,
     );
-    return buildReadMessagesResult(output);
+    return buildReadMessagesResult(
+      output,
+      output.messages.flatMap((message) =>
+        message.media?.resource_uri == null
+          ? []
+          : [
+              {
+                type: "resource_link" as const,
+                name: message.media.file_name ?? "Stored Media attachment",
+                uri: message.media.resource_uri,
+              },
+            ],
+      ),
+    );
   }).pipe(Effect.catchAll(() => Effect.succeed(auditUnavailable())));
 
 export const createMcpRequestHandler =
@@ -2193,16 +2320,49 @@ export const createMcpRequestHandler =
     context: ExecutionContext,
     authorization: McpAccessAuthorization,
   ): Promise<Response> => {
-    const isToolsListRequest = await request
+    const payload = await request
       .clone()
       .json()
-      .then(isToolsListPayload)
-      .catch(() => false);
+      .catch(() => null);
+    const isToolsListRequest = isToolsListPayload(payload);
+    const isResourceDiscoveryRequest = hasMethod(
+      payload,
+      "resources/templates/list",
+    );
+    if (hasMethod(payload, "resources/read")) {
+      const message = Array.isArray(payload) ? payload[0] : payload;
+      const candidate =
+        typeof message === "object" &&
+        message !== null &&
+        "params" in message &&
+        typeof message.params === "object" &&
+        message.params !== null &&
+        "uri" in message.params &&
+        typeof message.params.uri === "string"
+          ? message.params.uri
+          : null;
+      if (candidate === null || Option.isNone(parseStoredMediaUri(candidate))) {
+        const id =
+          typeof message === "object" && message !== null && "id" in message
+            ? message.id
+            : null;
+        return noStore(
+          new Response(
+            JSON.stringify({
+              error: { code: -32602, message: "Resource not found" },
+              id,
+              jsonrpc: "2.0",
+            }),
+            { headers: { "content-type": "application/json" } },
+          ),
+        );
+      }
+    }
     let hasConnectionsRead = true;
     let hasDirectoryRead = true;
     let hasMessagesSend = true;
     let hasMessagesRead = true;
-    if (isToolsListRequest) {
+    if (isToolsListRequest || isResourceDiscoveryRequest) {
       try {
         const inspected = await Effect.runPromise(
           Effect.gen(function* () {
@@ -2230,6 +2390,148 @@ export const createMcpRequestHandler =
         name: "WhatsApp MCP",
         version: "0.1.0",
       });
+      if (hasMessagesRead) {
+        server.registerResource(
+          "stored-media",
+          new ResourceTemplate(
+            "whatsapp-media://connections/{connection_id}/messages/{message_id}/media/{media_id}",
+            { list: undefined },
+          ),
+          {
+            cacheHint: { cacheScope: "private", ttlMs: 0 },
+            description: "Authorization-checked Stored Media attachment.",
+            title: "WhatsApp Stored Media",
+          },
+          async (uri) => {
+            const notFound = (): never => {
+              throw new ResourceNotFoundError(uri.href, "Resource not found");
+            };
+            const parsed = Option.getOrUndefined(parseStoredMediaUri(uri.href));
+            if (parsed === undefined) return notFound();
+            let reservedAuditLogId: string | null = null;
+            try {
+              const result = await Effect.runPromise(
+                Effect.gen(function* () {
+                  const clock = yield* McpToolClock;
+                  const identifiers = yield* McpToolIdentifiers;
+                  const persistence = yield* McpToolPersistence;
+                  const encryption = yield* EnvelopeEncryptionService;
+                  const container = yield* StoredMediaContainerService;
+                  const auditLogId = yield* identifiers.nextAuditLogId;
+                  const material = yield* persistence.reserveStoredMediaRead({
+                    ...authorization,
+                    auditLogId,
+                    connectionPublicId: parsed.connectionId,
+                    dailyByteLimit:
+                      options.storedMediaDailyByteLimit ?? 268_435_456,
+                    mediaPublicId: parsed.mediaId,
+                    messagePublicId: parsed.messageId,
+                    observedAt: yield* clock.now,
+                  });
+                  if (material === null) return null;
+                  reservedAuditLogId = auditLogId;
+                  const metadataBytes = yield* encryption.decrypt({
+                    accountKey: material.accountKey,
+                    connectionKey: material.connectionKey,
+                    ciphertext: material.metadata,
+                    context: {
+                      accountId: material.accountKey.personalAccountId,
+                      connectionId: material.connectionKey.connectionId,
+                      entity: "stored-media",
+                      fieldOrObjectPurpose: "metadata",
+                      recordId: material.mediaId,
+                    },
+                  });
+                  let metadata: { fileName: string | null; mimeType: string };
+                  try {
+                    const decoded = JSON.parse(
+                      new TextDecoder("utf-8", {
+                        fatal: true,
+                        ignoreBOM: false,
+                      }).decode(metadataBytes),
+                    ) as unknown;
+                    if (
+                      typeof decoded !== "object" ||
+                      decoded === null ||
+                      !("mimeType" in decoded) ||
+                      typeof decoded.mimeType !== "string" ||
+                      !("fileName" in decoded) ||
+                      (decoded.fileName !== null &&
+                        typeof decoded.fileName !== "string")
+                    )
+                      throw new Error("Stored Media metadata was invalid");
+                    metadata = decoded as typeof metadata;
+                  } finally {
+                    metadataBytes.fill(0);
+                  }
+                  const stream = yield* container.read({
+                    accountKey: material.accountKey,
+                    connectionKey: material.connectionKey,
+                    context: {
+                      connectionId: material.connectionKey.connectionId,
+                      mediaObjectId: material.mediaId,
+                      personalAccountId: material.accountKey.personalAccountId,
+                    },
+                    objectKey: material.objectKey,
+                  });
+                  const blob = yield* Effect.tryPromise(() =>
+                    streamToBase64(stream, material.plaintextSizeBytes),
+                  );
+                  const filename =
+                    metadata.fileName === null
+                      ? null
+                      : sanitizeAttachmentFilename(metadata.fileName);
+                  yield* persistence.completeToolCall({
+                    auditLogId,
+                    completedAt: yield* clock.now,
+                    errorCode: null,
+                    outcome: "success",
+                    resultCount: 1,
+                  });
+                  return {
+                    blob,
+                    filename,
+                    mimeType: metadata.mimeType,
+                  };
+                }).pipe(Effect.provide(options.layer)),
+              );
+              if (result === null) return notFound();
+              return {
+                contents: [
+                  {
+                    _meta:
+                      result.filename === null
+                        ? undefined
+                        : { filename: result.filename },
+                    blob: result.blob,
+                    mimeType: result.mimeType,
+                    uri: uri.href,
+                  },
+                ],
+              };
+            } catch {
+              if (reservedAuditLogId !== null) {
+                const auditLogId = reservedAuditLogId;
+                await Effect.runPromise(
+                  Effect.gen(function* () {
+                    const clock = yield* McpToolClock;
+                    const persistence = yield* McpToolPersistence;
+                    yield* persistence.failStoredMediaRead({
+                      auditLogId,
+                      completedAt: yield* clock.now,
+                      errorCode: "resource_unavailable",
+                    });
+                  }).pipe(
+                    Effect.provide(options.layer),
+                    Effect.catchAll(() => Effect.void),
+                  ),
+                );
+              }
+              return notFound();
+            }
+          },
+        );
+      }
       server.registerTool(
         "send_text_message",
         {

@@ -1329,6 +1329,86 @@ describe("MCP tool repository", () => {
     expect(log.rows).toEqual([{ outcome: "success", result_count: 1 }]);
   });
 
+  test("atomically reauthorizes and reserves protected Stored Media bytes", async () => {
+    const conversationId = "70000000-0000-4000-8000-000000000046";
+    const messageId = "71000000-0000-4000-8000-000000000046";
+    await database.query(
+      `UPDATE app.mcp_authorizations SET scopes=ARRAY['messages:read']::text[] WHERE id=$1`,
+      [authorizationId],
+    );
+    await database.query(
+      `INSERT INTO app.whatsapp_conversations (id,personal_account_id,whatsapp_connection_id,public_id,kind,recipient_locator,recipient_public_id,last_activity_at,last_activity_direction)
+       VALUES ($1,$2,'20000000-0000-4000-8000-000000000030','cvs_123456789012345678946','direct',$3,'ctc_123456789012345678946',$4,'inbound')`,
+      [conversationId, accountId, `di1_${"D".repeat(43)}`, observedAt],
+    );
+    await database.query(
+      `INSERT INTO app.stored_messages (id,personal_account_id,whatsapp_connection_id,conversation_id,public_id,message_identity,direction,sent_at,content_type,content_ciphertext_version,content_key_version,content_nonce,content_ciphertext,received_at,webhook_item_identity)
+       VALUES ($1,$2,'20000000-0000-4000-8000-000000000030',$3,'msg_123456789012345678946',$4,'inbound',$5,'image',1,1,decode(repeat('11',12),'hex'),decode(repeat('12',32),'hex'),$5,$4)`,
+      [
+        messageId,
+        accountId,
+        conversationId,
+        `wi1_${"D".repeat(43)}`,
+        observedAt,
+      ],
+    );
+    await database.query(
+      `INSERT INTO app.stored_media (id,personal_account_id,whatsapp_connection_id,stored_message_id,public_id,state,media_type,object_key,plaintext_size_bytes,sha256,metadata_ciphertext_version,metadata_key_version,metadata_nonce,metadata_ciphertext)
+       VALUES ('72000000-0000-4000-8000-000000000046',$1,'20000000-0000-4000-8000-000000000030',$2,'med_123456789012345678946','ready','image','opaque-object',15,repeat('a',64),1,1,decode(repeat('13',12),'hex'),decode(repeat('14',32),'hex'))`,
+      [accountId, messageId],
+    );
+    const auditLogId = "50000000-0000-4000-8000-000000000046";
+    const material = await repository.reserveStoredMediaRead({
+      ...authorization,
+      auditLogId,
+      connectionPublicId: connectionA,
+      dailyByteLimit: 15,
+      mediaPublicId: "med_123456789012345678946",
+      messagePublicId: "msg_123456789012345678946",
+      observedAt,
+    });
+    expect(material).toMatchObject({
+      mediaId: "72000000-0000-4000-8000-000000000046",
+      objectKey: "opaque-object",
+      plaintextSizeBytes: 15,
+    });
+    const log = await database.query(
+      `SELECT outcome,media_bytes_reserved FROM app.tool_call_logs WHERE id=$1`,
+      [auditLogId],
+    );
+    expect(log.rows).toEqual([
+      { media_bytes_reserved: 15, outcome: "started" },
+    ]);
+    await repository.failStoredMediaRead({
+      auditLogId,
+      completedAt: new Date(observedAt.getTime() + 1_000),
+      errorCode: "resource_unavailable",
+    });
+    const failedLog = await database.query(
+      `SELECT outcome,error_code,result_count,media_bytes_reserved FROM app.tool_call_logs WHERE id=$1`,
+      [auditLogId],
+    );
+    expect(failedLog.rows).toEqual([
+      {
+        error_code: "resource_unavailable",
+        media_bytes_reserved: 0,
+        outcome: "execution_error",
+        result_count: 0,
+      },
+    ]);
+    await expect(
+      repository.reserveStoredMediaRead({
+        ...authorization,
+        auditLogId: "50000000-0000-4000-8000-000000000047",
+        connectionPublicId: connectionA,
+        dailyByteLimit: 100,
+        mediaPublicId: "med_123456789012345678946",
+        messagePublicId: "msg_000000000000000000000",
+        observedAt,
+      }),
+    ).resolves.toBeNull();
+  });
+
   test("rechecks directory scope, selected connection, and joined state for encrypted groups", async () => {
     await database.query(
       `UPDATE app.mcp_authorizations

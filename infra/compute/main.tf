@@ -371,6 +371,11 @@ resource "cloudflare_worker_version" "api" {
       type = "plain_text"
     },
     {
+      name = "DECRYPTED_MEDIA_BYTES_PER_DAY"
+      text = tostring(var.decrypted_media_bytes_per_day)
+      type = "plain_text"
+    },
+    {
       name = "SENDS_PER_MINUTE"
       text = tostring(var.sends_per_minute)
       type = "plain_text"

@@ -127,6 +127,9 @@ const mcpRequestsPerHour = requirePositiveInteger("MCP_REQUESTS_PER_HOUR");
 const readMessageRecordsPerDay = requirePositiveInteger(
   "READ_MESSAGE_RECORDS_PER_DAY",
 );
+const decryptedMediaBytesPerDay = requirePositiveInteger(
+  "DECRYPTED_MEDIA_BYTES_PER_DAY",
+);
 const sendsPerDay = requirePositiveInteger("SENDS_PER_DAY");
 const sendsPerMinute = requirePositiveInteger("SENDS_PER_MINUTE");
 if (mcpRequestsPerHour < mcpRequestsPerMinute) {
@@ -138,6 +141,7 @@ const apiVariables = {
   CLERK_API_AUDIENCE: requireHttpsOrigin("CLERK_API_AUDIENCE"),
   CLERK_AUTHORIZED_PARTY: requireHttpsOrigin("CLERK_AUTHORIZED_PARTY"),
   CLERK_ISSUER: requireHttpsOrigin("CLERK_ISSUER"),
+  DECRYPTED_MEDIA_BYTES_PER_DAY: String(decryptedMediaBytesPerDay),
   MCP_REQUESTS_PER_HOUR: String(mcpRequestsPerHour),
   MCP_REQUESTS_PER_MINUTE: String(mcpRequestsPerMinute),
   READ_MESSAGE_RECORDS_PER_DAY: String(readMessageRecordsPerDay),

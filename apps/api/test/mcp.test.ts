@@ -8,6 +8,7 @@ import type {
 import { Effect, Layer } from "effect";
 import { describe, expect, test } from "vitest";
 import { EnvelopeEncryptionService } from "../src/encryption/envelope";
+import { StoredMediaContainerService } from "../src/encryption/stored-media-container";
 import type { SendTextMessageResult } from "../src/mcp";
 import {
   createMcpRequestHandler,
@@ -39,6 +40,7 @@ const jsonRpcRequest = (
       ? (params as Record<string, unknown>)
       : {};
   const name = parameters.name;
+  const resourceName = parameters.uri;
   return new Request("https://api.example.test/mcp", {
     body: JSON.stringify({
       id: "request-1",
@@ -61,7 +63,11 @@ const jsonRpcRequest = (
       "content-type": "application/json",
       host: "api.example.test",
       "mcp-method": method,
-      ...(typeof name === "string" ? { "mcp-name": name } : {}),
+      ...(typeof name === "string"
+        ? { "mcp-name": name }
+        : typeof resourceName === "string"
+          ? { "mcp-name": resourceName }
+          : {}),
       "mcp-protocol-version": protocolVersion,
     },
     method: "POST",
@@ -127,6 +133,7 @@ const makeHarness = (
     readonly sendResult?: SendTextMessageResult;
     readonly sendStatusNotFound?: boolean;
     readonly tombstone?: boolean;
+    readonly mediaRead?: "not_found" | "ready";
   } = {},
 ) => {
   const observations: Array<string> = [];
@@ -171,6 +178,20 @@ const makeHarness = (
         ),
       encrypt: () => Effect.die("not used"),
     }),
+    Layer.succeed(StoredMediaContainerService, {
+      read: () => {
+        observations.push("decrypt-media-object");
+        return Effect.succeed(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("protected bytes"));
+              controller.close();
+            },
+          }),
+        );
+      },
+      write: () => Effect.die("not used"),
+    }),
     Layer.succeed(SendTextMessage, {
       send: () =>
         Effect.succeed(
@@ -187,6 +208,10 @@ const makeHarness = (
         ),
     }),
     Layer.succeed(McpToolPersistence, {
+      failStoredMediaRead: () => {
+        observations.push("fail-media-read");
+        return Effect.void;
+      },
       beginToolCall: (input) => {
         observations.push("begin");
         if (overrides.failBegin) {
@@ -245,6 +270,42 @@ const makeHarness = (
           : Effect.succeed({
               scopes: overrides.scopes ?? ["connections:read"],
             }),
+      reserveStoredMediaRead: () => {
+        observations.push("reserve-media-read");
+        if (overrides.mediaRead !== "ready") return Effect.succeed(null);
+        return Effect.succeed({
+          accountKey: {
+            ciphertext: "AQI=",
+            keyVersion: 1,
+            kmsKeyId: "kms-content-root",
+            personalAccountId: "10000000-0000-4000-8000-000000000030",
+            version: 1 as const,
+          },
+          connectionKey: {
+            accountKeyVersion: 1,
+            ciphertext: "AQI=",
+            connectionId: "20000000-0000-4000-8000-000000000030",
+            keyVersion: 1,
+            nonce: "AQIDBAUGBwgJCgsM",
+            personalAccountId: "10000000-0000-4000-8000-000000000030",
+            version: 1 as const,
+          },
+          mediaId: "30000000-0000-4000-8000-000000000030",
+          metadata: {
+            ciphertext: btoa(
+              JSON.stringify({
+                fileName: "../unsafe\r\nname.jpg",
+                mimeType: "image/jpeg",
+              }),
+            ),
+            keyVersion: 1,
+            nonce: "AQIDBAUGBwgJCgsM",
+            version: 1 as const,
+          },
+          objectKey: "stored-media/opaque-object",
+          plaintextSizeBytes: 15,
+        });
+      },
       loadGroupSearchMaterial: () => {
         observations.push("load-group-search-material");
         return Effect.succeed({
@@ -1493,11 +1554,13 @@ describe("read_messages MCP boundary", () => {
 
   test("Unicode-safely truncates one oversized record under 64 KiB with the full UTF-8 count", async () => {
     const text = `${"e\u0301😀".repeat(20_000)}tail`;
-    const encoded = btoa(
-      String.fromCharCode(
-        ...new TextEncoder().encode(JSON.stringify({ text })),
-      ),
-    );
+    const source = new TextEncoder().encode(JSON.stringify({ text }));
+    let binary = "";
+    for (let offset = 0; offset < source.byteLength; offset += 0x8000)
+      binary += String.fromCharCode(
+        ...source.subarray(offset, offset + 0x8000),
+      );
+    const encoded = btoa(binary);
     const oversized = makeHarness({
       scopes: ["messages:read"],
       messagePage: {
@@ -1583,6 +1646,131 @@ describe("read_messages MCP boundary", () => {
     ).not.toThrow();
     expect(text.startsWith(returned.text)).toBe(true);
   });
+});
+
+describe("Stored Media MCP resource boundary", () => {
+  const uri =
+    "whatsapp-media://connections/con_123456789012345678901/messages/msg_111111111111111111111/media/med_222222222222222222222";
+
+  test("discovers the non-listable template only with messages:read", async () => {
+    const allowed = makeHarness({ scopes: ["messages:read"] });
+    const templates = (await (
+      await allowed.handler(
+        jsonRpcRequest("resources/templates/list"),
+        {},
+        executionContext,
+        authorization,
+      )
+    ).json()) as { result: { resourceTemplates: unknown[] } };
+    expect(templates.result.resourceTemplates).toEqual([
+      expect.objectContaining({
+        uriTemplate:
+          "whatsapp-media://connections/{connection_id}/messages/{message_id}/media/{media_id}",
+      }),
+    ]);
+    const resources = (await (
+      await allowed.handler(
+        jsonRpcRequest("resources/list"),
+        {},
+        executionContext,
+        authorization,
+      )
+    ).json()) as { result: { resources: unknown[] } };
+    expect(resources.result.resources).toEqual([]);
+
+    const denied = makeHarness({ scopes: ["connections:read"] });
+    const hidden = (await (
+      await denied.handler(
+        jsonRpcRequest("resources/templates/list"),
+        {},
+        executionContext,
+        authorization,
+      )
+    ).json()) as { error: { code: number } };
+    expect(hidden.error.code).toBe(-32601);
+  });
+
+  test("reserves the full bytes before decrypting and returns a private attachment", async () => {
+    const harness = makeHarness({
+      mediaRead: "ready",
+      scopes: ["messages:read"],
+    });
+    const body = (await (
+      await harness.handler(
+        jsonRpcRequest("resources/read", { uri }),
+        {},
+        executionContext,
+        authorization,
+      )
+    ).json()) as {
+      result: {
+        cacheScope: string;
+        contents: Array<{
+          _meta: Record<string, unknown>;
+          blob: string;
+          mimeType: string;
+        }>;
+        ttlMs: number;
+      };
+    };
+    expect(body.result).toMatchObject({ cacheScope: "private", ttlMs: 0 });
+    expect(body.result.contents).toEqual([
+      expect.objectContaining({
+        blob: btoa("protected bytes"),
+        mimeType: "image/jpeg",
+        _meta: { filename: "unsafe name.jpg" },
+      }),
+    ]);
+    expect(harness.observations.indexOf("reserve-media-read")).toBeLessThan(
+      harness.observations.indexOf("decrypt-media-object"),
+    );
+  });
+
+  test("releases reserved bytes when the protected read fails before response", async () => {
+    const harness = makeHarness({
+      failComplete: true,
+      mediaRead: "ready",
+      scopes: ["messages:read"],
+    });
+    const body = (await (
+      await harness.handler(
+        jsonRpcRequest("resources/read", { uri }),
+        {},
+        executionContext,
+        authorization,
+      )
+    ).json()) as { error: { code: number; message: string } };
+    expect(body.error).toMatchObject({
+      code: -32602,
+      message: "Resource not found",
+    });
+    expect(harness.observations).toContain("fail-media-read");
+  });
+
+  test.each([
+    "whatsapp-media://connections/con_123456789012345678901/messages/msg_111111111111111111111/media/med_222222222222222222222/extra",
+    `${uri}?download=1`,
+    `${uri}#fragment`,
+    uri.replace("msg_111111111111111111111", "%2e%2e"),
+    uri,
+  ])(
+    "uses one not-found boundary for unavailable URI %s",
+    async (candidate) => {
+      const harness = makeHarness({ scopes: ["messages:read"] });
+      const body = (await (
+        await harness.handler(
+          jsonRpcRequest("resources/read", { uri: candidate }),
+          {},
+          executionContext,
+          authorization,
+        )
+      ).json()) as { error: { code: number; message: string } };
+      expect(body.error).toMatchObject({
+        code: -32602,
+        message: "Resource not found",
+      });
+    },
+  );
 });
 
 describe("atomic send_text_message MCP boundary", () => {

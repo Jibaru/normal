@@ -44,6 +44,15 @@ export type McpToolName =
   | "list_chats"
   | "read_messages";
 
+export interface McpStoredMediaReadMaterial {
+  readonly accountKey: McpToolMessagePage["accountKey"];
+  readonly connectionKey: McpToolMessagePage["connectionKey"];
+  readonly mediaId: string;
+  readonly metadata: McpToolDirectoryCiphertext;
+  readonly objectKey: string;
+  readonly plaintextSizeBytes: number;
+}
+
 export interface McpToolMessageRecord {
   readonly publicId: string;
   readonly messageIdentity: string;
@@ -234,6 +243,21 @@ export type BeginToolCallResult =
     };
 
 export interface McpToolRepository {
+  readonly failStoredMediaRead: (input: {
+    readonly auditLogId: string;
+    readonly completedAt: Date;
+    readonly errorCode: string;
+  }) => Promise<void>;
+  readonly reserveStoredMediaRead: (
+    input: McpAccessAuthorization & {
+      readonly auditLogId: string;
+      readonly connectionPublicId: string;
+      readonly dailyByteLimit: number;
+      readonly mediaPublicId: string;
+      readonly messagePublicId: string;
+      readonly observedAt: Date;
+    },
+  ) => Promise<McpStoredMediaReadMaterial | null>;
   readonly beginToolCall: (
     input: McpAccessAuthorization & {
       readonly auditLogId: string;
@@ -796,6 +820,137 @@ const requiredScope = (toolName: McpToolName): McpAuthorizationScope =>
 export const makeMcpToolRepository = (
   provider: McpToolConnectionProvider,
 ): McpToolRepository => ({
+  failStoredMediaRead: (input) =>
+    provider.withConnection((connection) =>
+      withTransaction(connection, async () => {
+        const loaded = await connection.query<{
+          personal_account_id: unknown;
+        }>(
+          `SELECT app_private.bootstrap_tool_call_log($1)
+             AS personal_account_id`,
+          [input.auditLogId],
+        );
+        const personalAccountId = loaded.rows[0]?.personal_account_id;
+        if (typeof personalAccountId !== "string")
+          throw new Error("Tool Call Log unavailable");
+        await connection.query(
+          "SELECT set_config('app.personal_account_id', $1, true)",
+          [personalAccountId],
+        );
+        const updated = await connection.query<{ id: unknown }>(
+          `UPDATE app.tool_call_logs
+           SET completed_at=$2, outcome='execution_error', error_code=$3,
+             result_count=0, media_bytes_reserved=0,
+             latency_ms=GREATEST(0,floor(extract(epoch FROM ($2::timestamptz-started_at))*1000)::integer)
+           WHERE id=$1 AND tool_name='read_stored_media' AND outcome='started'
+           RETURNING id`,
+          [input.auditLogId, input.completedAt, input.errorCode],
+        );
+        if (updated.rows.length !== 1)
+          throw new Error("Stored Media Tool Call Log unavailable");
+      }),
+    ),
+  reserveStoredMediaRead: (input) =>
+    provider.withConnection((connection) =>
+      withTransaction(connection, async () => {
+        if (
+          !Number.isSafeInteger(input.dailyByteLimit) ||
+          input.dailyByteLimit < 1
+        )
+          throw new Error("invalid Stored Media byte quota");
+        const accountId = await enterAuthorizationContext(connection, input);
+        if (accountId === null) return null;
+        const scopes = await loadAuthorizationScopes(connection, input);
+        if (scopes === null || !scopes.includes("messages:read")) return null;
+        await connection.query(
+          "SELECT id FROM app.personal_accounts WHERE id=$1 FOR UPDATE",
+          [accountId],
+        );
+        const loaded = await connection.query<Record<string, unknown>>(
+          `SELECT * FROM app_private.load_protected_stored_media($1,$2,$3,$4)`,
+          [
+            input.authorizationId,
+            input.connectionPublicId,
+            input.messagePublicId,
+            input.mediaPublicId,
+          ],
+        );
+        const row = loaded.rows[0];
+        const size = Number(row?.plaintext_size_bytes);
+        const used = await connection.query<{ used: unknown }>(
+          `SELECT COALESCE(sum(media_bytes_reserved),0) AS used FROM app.tool_call_logs
+           WHERE personal_account_id=$1 AND started_at >= date_trunc('day',$2::timestamptz)
+             AND started_at < date_trunc('day',$2::timestamptz)+interval '1 day'`,
+          [accountId, input.observedAt],
+        );
+        if (
+          row === undefined ||
+          !Number.isSafeInteger(size) ||
+          size < 0 ||
+          Number(used.rows[0]?.used ?? 0) + size > input.dailyByteLimit
+        )
+          return null;
+        await insertToolCallLog(connection, {
+          auditLogId: input.auditLogId,
+          authorizationId: input.authorizationId,
+          completed: false,
+          errorCode: null,
+          observedAt: input.observedAt,
+          outcome: "started",
+          personalAccountId: accountId,
+          quotaReserved: true,
+          toolName: "read_stored_media",
+        });
+        await connection.query(
+          "UPDATE app.tool_call_logs SET media_bytes_reserved=$2 WHERE id=$1",
+          [input.auditLogId, size],
+        );
+        const accountCiphertext = bytes(row.account_key_ciphertext);
+        const connectionCiphertext = bytes(row.connection_key_ciphertext);
+        const connectionNonce = bytes(row.connection_key_nonce);
+        const metadataCiphertext = bytes(row.metadata_ciphertext);
+        const metadataNonce = bytes(row.metadata_nonce);
+        if (
+          typeof row.media_id !== "string" ||
+          typeof row.object_key !== "string" ||
+          typeof row.connection_id !== "string" ||
+          typeof row.kms_key_id !== "string" ||
+          accountCiphertext === null ||
+          connectionCiphertext === null ||
+          connectionNonce === null ||
+          metadataCiphertext === null ||
+          metadataNonce === null
+        )
+          throw new Error("invalid Stored Media read material");
+        return {
+          accountKey: {
+            ciphertext: base64(accountCiphertext),
+            keyVersion: Number(row.account_key_version),
+            kmsKeyId: row.kms_key_id,
+            personalAccountId: accountId,
+            version: 1,
+          },
+          connectionKey: {
+            accountKeyVersion: Number(row.connection_account_key_version),
+            ciphertext: base64(connectionCiphertext),
+            connectionId: row.connection_id,
+            keyVersion: Number(row.connection_key_version),
+            nonce: base64(connectionNonce),
+            personalAccountId: accountId,
+            version: 1,
+          },
+          mediaId: row.media_id,
+          metadata: {
+            ciphertext: base64(metadataCiphertext),
+            keyVersion: Number(row.metadata_key_version),
+            nonce: base64(metadataNonce),
+            version: 1,
+          },
+          objectKey: row.object_key,
+          plaintextSizeBytes: size,
+        };
+      }),
+    ),
   inspectAuthorization: (input) =>
     provider.withConnection((connection) =>
       withTransaction(connection, async () => {
