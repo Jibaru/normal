@@ -288,6 +288,17 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 26,
   },
+  {
+    name: "message edit convergence and deletion tombstones",
+    sql: await readFile(
+      new NodeUrl(
+        "../migrations/0027_message_convergence.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    version: 27,
+  },
 ];
 
 const checksum = (sql: string): string =>

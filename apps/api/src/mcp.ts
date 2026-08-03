@@ -1798,45 +1798,47 @@ const readMessages = (
     const decrypted = yield* Effect.forEach(
       page.messages,
       (message) =>
-        encryption
-          .decrypt({
-            accountKey: page.accountKey,
-            connectionKey: page.connectionKey,
-            ciphertext: message.content,
-            context: {
-              accountId: page.accountKey.personalAccountId,
-              connectionId: page.connectionKey.connectionId,
-              entity: "stored-message",
-              fieldOrObjectPurpose: "content",
-              recordId: message.messageIdentity,
-            },
-          })
-          .pipe(
-            Effect.map((bytes) => {
-              try {
-                const value = JSON.parse(
-                  new TextDecoder("utf-8", {
-                    fatal: true,
-                    ignoreBOM: false,
-                  }).decode(bytes),
-                ) as unknown;
-                if (
-                  typeof value !== "object" ||
-                  value === null ||
-                  !("text" in value) ||
-                  ((value as { text: unknown }).text !== null &&
-                    typeof (value as { text: unknown }).text !== "string")
-                )
-                  throw new Error();
-                return {
-                  message,
-                  text: (value as { text: string | null }).text,
-                };
-              } finally {
-                bytes.fill(0);
-              }
-            }),
-          ),
+        message.content === null
+          ? Effect.succeed({ message, text: null })
+          : encryption
+              .decrypt({
+                accountKey: page.accountKey,
+                connectionKey: page.connectionKey,
+                ciphertext: message.content,
+                context: {
+                  accountId: page.accountKey.personalAccountId,
+                  connectionId: page.connectionKey.connectionId,
+                  entity: "stored-message",
+                  fieldOrObjectPurpose: "content",
+                  recordId: message.messageIdentity,
+                },
+              })
+              .pipe(
+                Effect.map((bytes) => {
+                  try {
+                    const value = JSON.parse(
+                      new TextDecoder("utf-8", {
+                        fatal: true,
+                        ignoreBOM: false,
+                      }).decode(bytes),
+                    ) as unknown;
+                    if (
+                      typeof value !== "object" ||
+                      value === null ||
+                      !("text" in value) ||
+                      ((value as { text: unknown }).text !== null &&
+                        typeof (value as { text: unknown }).text !== "string")
+                    )
+                      throw new Error();
+                    return {
+                      message,
+                      text: (value as { text: string | null }).text,
+                    };
+                  } finally {
+                    bytes.fill(0);
+                  }
+                }),
+              ),
       { concurrency: 4 },
     ).pipe(Effect.either);
     if (decrypted._tag === "Left") return yield* fail("service_unavailable");
@@ -1888,8 +1890,8 @@ const readMessages = (
           text: fitText(text).text,
           text_truncated: fitText(text).truncated,
           text_total_utf8_bytes: fitText(text).totalBytes,
-          edited_at: null,
-          deleted: false,
+          edited_at: message.editedAt ?? null,
+          deleted: message.deleted ?? false,
           media: null,
         })),
         size_limited:

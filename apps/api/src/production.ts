@@ -1193,6 +1193,32 @@ const webhookEventPersistenceLayer = (environment: ApiEnvironment) =>
         },
         catch: () => new WebhookEventPersistenceError(),
       }),
+    projectStoredMessageEdit: (input, compareVersions) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString =
+            environment.WEBHOOK_HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string")
+            throw new Error("Webhook Hyperdrive unavailable");
+          return makePgWebhookEventRepository(
+            connectionString,
+          ).projectStoredMessageEdit(input, compareVersions);
+        },
+        catch: () => new WebhookEventPersistenceError(),
+      }),
+    projectStoredMessageDeletion: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString =
+            environment.WEBHOOK_HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string")
+            throw new Error("Webhook Hyperdrive unavailable");
+          return makePgWebhookEventRepository(
+            connectionString,
+          ).projectStoredMessageDeletion(input);
+        },
+        catch: () => new WebhookEventPersistenceError(),
+      }),
     quarantine: (input) =>
       Effect.tryPromise({
         try: () => {

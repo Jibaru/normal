@@ -81,8 +81,12 @@ export interface NormalizedMessageEdit extends NormalizedItemBase {
 
 export interface NormalizedMessageDeletion extends NormalizedItemBase {
   readonly deletedAt: UtcTimestamp;
+  readonly direction?: "inbound" | "outbound";
   readonly kind: "message_delete";
   readonly messageIdentity: StableMessageIdentity;
+  readonly recipient?: RecipientLocator;
+  readonly recipientKind?: "direct" | "group";
+  readonly sentAt?: UtcTimestamp;
 }
 
 export interface NormalizedSendEvidence extends NormalizedItemBase {

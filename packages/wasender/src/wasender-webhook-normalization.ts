@@ -563,6 +563,13 @@ const normalizeDeletions = async (
       const deletedAt = occurrence?.timestamp ?? receivedAt;
       return {
         deletedAt,
+        ...(typeof record.fromMe === "boolean"
+          ? {
+              direction: record.fromMe
+                ? ("outbound" as const)
+                : ("inbound" as const),
+            }
+          : {}),
         evidence: await makeEvidence(key, occurrence),
         itemIdentity: (await makeIdentity(
           key,
@@ -572,6 +579,15 @@ const normalizeDeletions = async (
         itemIndex,
         kind: "message_delete" as const,
         messageIdentity: await makeMessageIdentity(key, rawId),
+        ...(remoteJid === null
+          ? {}
+          : {
+              recipient: await makeRecipient(key, remoteJid),
+              recipientKind: isGroup(remoteJid)
+                ? ("group" as const)
+                : ("direct" as const),
+              sentAt: deletedAt,
+            }),
       };
     }),
   );

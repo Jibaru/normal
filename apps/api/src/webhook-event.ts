@@ -9,6 +9,8 @@ import type {
   ProjectConnectionStateInput,
   ProjectDirectoryContactInput,
   ProjectGroupInput,
+  ProjectStoredMessageDeletionInput,
+  ProjectStoredMessageEditInput,
   ProjectStoredMessageInput,
   QuarantineWebhookItemInput,
   WebhookEventProcessingMaterial,
@@ -128,6 +130,22 @@ export interface WebhookEventPersistenceService {
       left: string,
       right: string,
     ) => Promise<WebhookVersionComparison>,
+  ) => Effect.Effect<
+    WebhookItemProjectionOutcome,
+    WebhookEventPersistenceError
+  >;
+  readonly projectStoredMessageEdit?: (
+    input: ProjectStoredMessageEditInput,
+    compareVersions: (
+      left: string,
+      right: string,
+    ) => Promise<WebhookVersionComparison>,
+  ) => Effect.Effect<
+    WebhookItemProjectionOutcome,
+    WebhookEventPersistenceError
+  >;
+  readonly projectStoredMessageDeletion?: (
+    input: ProjectStoredMessageDeletionInput,
   ) => Effect.Effect<
     WebhookItemProjectionOutcome,
     WebhookEventPersistenceError
@@ -540,6 +558,127 @@ const processItems = (
               }),
             ),
         );
+        counts = increment(
+          counts,
+          outcome === "applied"
+            ? "appliedCount"
+            : outcome === "duplicate"
+              ? "duplicateCount"
+              : "supersededCount",
+        );
+        continue;
+      }
+      if (item.kind === "message_edit") {
+        const plaintext = new TextEncoder().encode(
+          JSON.stringify({
+            text: item.content.text,
+            mediaSource:
+              item.content.mediaSource === null
+                ? null
+                : Redacted.value(item.content.mediaSource),
+          }),
+        );
+        const protectedContent = yield* Effect.acquireUseRelease(
+          Effect.succeed(plaintext),
+          (bytes) =>
+            encryption.encrypt({
+              accountKey: material.accountKey,
+              connectionKey: material.connectionKey,
+              context: {
+                accountId: message.personal_account_id,
+                connectionId: message.whatsapp_connection_id,
+                entity: "stored-message",
+                fieldOrObjectPurpose: "content",
+                recordId: item.messageIdentity,
+              },
+              plaintext: bytes,
+            }),
+          (bytes) => Effect.sync(() => bytes.fill(0)),
+        );
+        if (persistence.projectStoredMessageEdit === undefined)
+          return yield* Effect.fail(new WebhookEventPersistenceError());
+        const outcome = yield* persistence.projectStoredMessageEdit(
+          {
+            content: protectedContent,
+            contentType: item.content.type,
+            editedAt: item.editedAt,
+            eventId: message.object_id,
+            evidence: {
+              occurredAt: item.evidence.occurredAt,
+              version: item.evidence.version,
+            },
+            itemIdentity: item.itemIdentity,
+            itemIndex: item.itemIndex,
+            messageIdentity: item.messageIdentity,
+            personalAccountId: message.personal_account_id,
+            receivedAt: message.received_at,
+            whatsappConnectionId: message.whatsapp_connection_id,
+          },
+          (left, right) =>
+            Effect.runPromise(
+              normalizer.compareVersions({
+                left: left as ConvergenceVersion,
+                right: right as ConvergenceVersion,
+              }),
+            ),
+        );
+        counts = increment(
+          counts,
+          outcome === "applied"
+            ? "appliedCount"
+            : outcome === "duplicate"
+              ? "duplicateCount"
+              : "supersededCount",
+        );
+        continue;
+      }
+      if (item.kind === "message_delete") {
+        if (
+          item.recipient === undefined ||
+          item.direction === undefined ||
+          item.sentAt === undefined
+        ) {
+          yield* quarantine(message, item, "unsupported_projection");
+          counts = increment(counts, "quarantinedCount");
+          continue;
+        }
+        const recipientKind = item.recipientKind ?? "direct";
+        const recipientLocator =
+          recipientKind === "group"
+            ? item.recipient
+            : yield* contactProviderIdentityIndex(
+                indexKey,
+                message.whatsapp_connection_id,
+                item.recipient,
+              );
+        if (persistence.projectStoredMessageDeletion === undefined)
+          return yield* Effect.fail(new WebhookEventPersistenceError());
+        const outcome = yield* persistence.projectStoredMessageDeletion({
+          conversationId: crypto.randomUUID(),
+          conversationPublicId: yield* identifiers.nextConversationId ??
+            Effect.sync(() => makeConversationId()),
+          deletedAt: item.deletedAt,
+          direction: item.direction,
+          eventId: message.object_id,
+          evidence: {
+            occurredAt: item.evidence.occurredAt,
+            version: item.evidence.version,
+          },
+          itemIdentity: item.itemIdentity,
+          itemIndex: item.itemIndex,
+          messageId: crypto.randomUUID(),
+          messageIdentity: item.messageIdentity,
+          messagePublicId: yield* identifiers.nextMessageId ??
+            Effect.sync(() => makeMessageId()),
+          personalAccountId: message.personal_account_id,
+          receivedAt: message.received_at,
+          recipientKind,
+          recipientLocator,
+          recipientPublicId:
+            recipientKind === "group" ? makeGroupId() : makeContactId(),
+          sentAt: item.sentAt,
+          whatsappConnectionId: message.whatsapp_connection_id,
+        });
         counts = increment(
           counts,
           outcome === "applied"
