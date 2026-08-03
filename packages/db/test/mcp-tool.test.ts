@@ -346,6 +346,27 @@ describe("MCP tool repository", () => {
       ).resolves.toEqual({ outcome: "idempotency_conflict" });
     }
 
+    const [concurrentReplay, concurrentConflict] = await Promise.all([
+      sends.commit(
+        { ...input, auditLogId: "50000000-0000-4000-8000-000000000093" },
+        async () => {
+          throw new Error("concurrent replay must not encrypt");
+        },
+      ),
+      sends.commit(
+        {
+          ...input,
+          auditLogId: "50000000-0000-4000-8000-000000000092",
+          fingerprint: `sf1_${"F".repeat(43)}`,
+        },
+        async () => {
+          throw new Error("concurrent conflict must not encrypt");
+        },
+      ),
+    ]);
+    expect(concurrentReplay).toMatchObject({ outcome: "replay" });
+    expect(concurrentConflict).toEqual({ outcome: "idempotency_conflict" });
+
     const rows = await database.query<{ count: number }>(
       `SELECT count(*)::int AS count FROM app.send_operations
        WHERE id='60000000-0000-4000-8000-000000000099'`,
@@ -361,7 +382,7 @@ describe("MCP tool repository", () => {
          (SELECT count(*)::int FROM app.send_quota_reservations) AS quota_count`,
     );
     expect(auditAndQuota.rows[0]).toEqual({
-      audit_count: 6,
+      audit_count: 8,
       quota_count: 1,
     });
     const replayAudits = await database.query<{
@@ -376,6 +397,12 @@ describe("MCP tool repository", () => {
        ORDER BY id`,
     );
     expect(replayAudits.rows).toEqual([
+      {
+        error_code: "idempotency_conflict",
+        outcome: "execution_error",
+        quota_reserved: false,
+      },
+      { error_code: null, outcome: "success", quota_reserved: false },
       {
         error_code: "idempotency_conflict",
         outcome: "execution_error",
