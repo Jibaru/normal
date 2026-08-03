@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Schema } from "effect";
 import {
+  ListChatsOutputContract,
   ListConnectionsOutputContract,
   ListContactsOutputContract,
   ListGroupsOutputContract,
@@ -154,6 +155,36 @@ describe("makePublicObjectContract", () => {
             phone_number: "+12025550199",
           },
         ],
+      }),
+    ).toThrow();
+  });
+
+  test("validates metadata-only list_chats results", () => {
+    const output = {
+      chats: [
+        {
+          conversation_id: "cvs_123456789012345678901",
+          kind: "direct",
+          recipient_id: "ctc_123456789012345678901",
+          display_name: "Ada",
+          phone_last_four: "0199",
+          last_activity_at: "2026-07-30T11:59:00Z",
+          last_activity_direction: "inbound",
+        },
+      ],
+      has_more: false,
+      next_cursor: null,
+      as_of: "2026-07-30T12:00:00Z",
+      stale: false,
+      partial: false,
+    } as const;
+    expect(ListChatsOutputContract.decodeUnknown(output) as unknown).toEqual(
+      output,
+    );
+    expect(() =>
+      ListChatsOutputContract.decodeUnknown({
+        ...output,
+        chats: [{ ...output.chats[0], snippet: "secret" }],
       }),
     ).toThrow();
   });

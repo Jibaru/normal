@@ -515,6 +515,7 @@ const normalizeMessage = async (
     kind: "message_upsert",
     messageIdentity: await makeMessageIdentity(key, rawId),
     recipient: await makeRecipient(key, remoteJid),
+    recipientKind: isGroup(remoteJid) ? "group" : "direct",
     sender: senderRaw === null ? null : await makeContact(key, senderRaw),
     sentAt,
   };

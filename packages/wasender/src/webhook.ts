@@ -67,6 +67,7 @@ export interface NormalizedMessageUpsert extends NormalizedItemBase {
   readonly kind: "message_upsert";
   readonly messageIdentity: StableMessageIdentity;
   readonly recipient: RecipientLocator;
+  readonly recipientKind?: "direct" | "group";
   readonly sender: ContactLocator | null;
   readonly sentAt: UtcTimestamp;
 }

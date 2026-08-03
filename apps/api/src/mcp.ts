@@ -9,6 +9,8 @@ import {
 import { makeExecutionErrorResult } from "@whatsapp-mcp/contracts/mcp-error";
 import { makeSuccessResultBuilder } from "@whatsapp-mcp/contracts/mcp-result";
 import {
+  type ListChatsOutput,
+  ListChatsOutputContract,
   type ListConnectionsOutput,
   ListConnectionsOutputContract,
   type ListContactsOutput,
@@ -19,6 +21,7 @@ import {
 import type {
   BeginToolCallResult,
   McpAccessAuthorization,
+  McpToolChatPage,
   McpToolConnectionRecord,
   McpToolContactReadMaterial,
   McpToolEncryptedContactPage,
@@ -97,6 +100,16 @@ export interface McpToolPersistenceService {
       readonly searchIndex: string | null;
     },
   ) => Effect.Effect<McpToolGroupPage | null, McpToolPersistenceError>;
+  readonly listChats?: (
+    input: McpAccessAuthorization & {
+      readonly connectionPublicId: string;
+      readonly cursorActivityAt: string | null;
+      readonly cursorPublicId: string | null;
+      readonly kind: "all" | "direct" | "group";
+      readonly limit: number;
+      readonly observedAt: Date;
+    },
+  ) => Effect.Effect<McpToolChatPage | null, McpToolPersistenceError>;
   readonly loadGroupSearchMaterial: (
     input: McpAccessAuthorization & {
       readonly connectionPublicId: string;
@@ -204,6 +217,41 @@ export type McpToolRequirements =
   | McpCursorSigningService;
 
 const ListConnectionsInput = z.object({}).strict();
+const ListChatsInput = z
+  .object({
+    connection_id: z.string().regex(/^con_[A-Za-z0-9_-]{21}$/u),
+    kind: z.enum(["all", "direct", "group"]).default("all"),
+    limit: z.number().int().min(1).max(50).default(20),
+    cursor: z.string().min(1).max(4096).optional(),
+  })
+  .strict();
+const ListChatsOutputSchema = z
+  .object({
+    chats: z
+      .array(
+        z
+          .object({
+            conversation_id: z.string().regex(/^cvs_[A-Za-z0-9_-]{21}$/u),
+            kind: z.enum(["direct", "group"]),
+            recipient_id: z.string().regex(/^(ctc|grp)_[A-Za-z0-9_-]{21}$/u),
+            display_name: z.string().nullable(),
+            phone_last_four: z
+              .string()
+              .regex(/^\d{4}$/u)
+              .nullable(),
+            last_activity_at: z.iso.datetime(),
+            last_activity_direction: z.enum(["inbound", "outbound"]),
+          })
+          .strict(),
+      )
+      .max(50),
+    has_more: z.boolean(),
+    next_cursor: z.string().nullable(),
+    as_of: z.iso.datetime(),
+    stale: z.boolean(),
+    partial: z.boolean(),
+  })
+  .strict();
 const ListConnectionsOutputSchema = z
   .object({
     connections: z
@@ -316,6 +364,7 @@ const buildListGroupsResult = makeSuccessResultBuilder(
 const buildListContactsResult = makeSuccessResultBuilder(
   ListContactsOutputContract,
 );
+const buildListChatsResult = makeSuccessResultBuilder(ListChatsOutputContract);
 
 const auditUnavailable = () =>
   makeExecutionErrorResult({
@@ -1163,6 +1212,220 @@ const isToolsListPayload = (payload: unknown): boolean => {
   );
 };
 
+const listChats = (
+  authorization: McpAccessAuthorization,
+  input: z.infer<typeof ListChatsInput>,
+  hourLimit: number,
+  minuteLimit: number,
+) =>
+  Effect.gen(function* () {
+    const clock = yield* McpToolClock;
+    const identifiers = yield* McpToolIdentifiers;
+    const persistence = yield* McpToolPersistence;
+    const encryption = yield* EnvelopeEncryptionService;
+    const codec = yield* McpCursorCodec;
+    const startedAt = yield* clock.now;
+    const context: CursorContext = {
+      authorizationId: authorization.authorizationId,
+      connectionId: input.connection_id as CursorContext["connectionId"],
+      filters: { kind: input.kind },
+      pageSize: input.limit,
+      sortVersion: "chats-activity-v1",
+      tool: "list_chats",
+    };
+    let activity: string | null = null;
+    let publicId: string | null = null;
+    if (input.cursor !== undefined) {
+      const decoded = yield* codec
+        .decode({
+          context,
+          cursor: input.cursor,
+          nowEpochSeconds: Math.floor(startedAt.valueOf() / 1000),
+        })
+        .pipe(Effect.either);
+      if (
+        decoded._tag === "Left" ||
+        decoded.right.length !== 2 ||
+        typeof decoded.right[0] !== "string" ||
+        typeof decoded.right[1] !== "string"
+      )
+        return invalidCursor();
+      activity = decoded.right[0];
+      publicId = decoded.right[1];
+    }
+    const auditLogId = yield* identifiers.nextAuditLogId;
+    const begun = yield* persistence
+      .beginToolCall({
+        ...authorization,
+        auditLogId,
+        hourLimit,
+        minuteLimit,
+        observedAt: startedAt,
+        toolName: "list_chats",
+      })
+      .pipe(Effect.either);
+    if (begun._tag === "Left") return auditUnavailable();
+    if (begun.right.outcome === "authorization_denied")
+      return authorizationDenied();
+    if (begun.right.outcome === "rate_limited")
+      return rateLimited(begun.right.retryAfterSeconds, begun.right.resetsAt);
+    if (persistence.listChats === undefined) {
+      const completed = yield* persistence
+        .completeToolCall({
+          auditLogId,
+          completedAt: yield* clock.now,
+          errorCode: "service_unavailable",
+          outcome: "execution_error",
+          resultCount: null,
+        })
+        .pipe(Effect.either);
+      return completed._tag === "Left"
+        ? auditUnavailable()
+        : serviceUnavailable();
+    }
+    const loaded = yield* persistence
+      .listChats({
+        ...authorization,
+        connectionPublicId: input.connection_id,
+        cursorActivityAt: activity,
+        cursorPublicId: publicId,
+        kind: input.kind,
+        limit: input.limit + 1,
+        observedAt: yield* clock.now,
+      })
+      .pipe(Effect.either);
+    const fail = (code: "authorization_denied" | "service_unavailable") =>
+      Effect.gen(function* () {
+        const complete = yield* persistence
+          .completeToolCall({
+            auditLogId,
+            completedAt: yield* clock.now,
+            errorCode: code,
+            outcome:
+              code === "authorization_denied"
+                ? "authorization_denied"
+                : "execution_error",
+            resultCount: null,
+          })
+          .pipe(Effect.either);
+        return complete._tag === "Left"
+          ? auditUnavailable()
+          : code === "authorization_denied"
+            ? authorizationDenied()
+            : serviceUnavailable();
+      });
+    if (loaded._tag === "Left") return yield* fail("service_unavailable");
+    if (loaded.right === null) return yield* fail("authorization_denied");
+    const page = loaded.right;
+    const selected = page.chats.slice(0, input.limit);
+    const hasMore = page.chats.length > input.limit;
+    const decryptString = (
+      cipher: NonNullable<(typeof selected)[number]["displayName"]>,
+      entity: "directory-contact" | "whatsapp-group",
+      recordId: string,
+      purpose: string,
+    ) =>
+      encryption
+        .decrypt({
+          accountKey: page.accountKey,
+          connectionKey: page.connectionKey,
+          ciphertext: cipher,
+          context: {
+            accountId: page.accountKey.personalAccountId,
+            connectionId: page.connectionKey.connectionId,
+            entity,
+            fieldOrObjectPurpose: purpose,
+            recordId,
+          },
+        })
+        .pipe(
+          Effect.flatMap((bytes) =>
+            Effect.acquireUseRelease(
+              Effect.succeed(bytes),
+              (value) =>
+                Effect.try({
+                  try: () =>
+                    new TextDecoder("utf-8", {
+                      fatal: true,
+                      ignoreBOM: false,
+                    }).decode(value),
+                  catch: () => new McpToolPersistenceError(),
+                }),
+              (value) => Effect.sync(() => value.fill(0)),
+            ),
+          ),
+        );
+    const chats = yield* Effect.forEach(selected, (chat) =>
+      Effect.all({
+        displayName:
+          chat.displayName === null
+            ? Effect.succeed(null)
+            : decryptString(
+                chat.displayName,
+                chat.displayNameEntity,
+                chat.displayNameRecordId,
+                "display-name",
+              ),
+        phone:
+          chat.phone === null
+            ? Effect.succeed(null)
+            : decryptString(
+                chat.phone,
+                "directory-contact",
+                chat.displayNameRecordId,
+                "phone-number",
+              ),
+      }).pipe(Effect.map((meta) => ({ ...chat, ...meta }))),
+    ).pipe(Effect.either);
+    if (chats._tag === "Left") return yield* fail("service_unavailable");
+    let nextCursor: string | null = null;
+    if (hasMore) {
+      const last = selected.at(-1);
+      if (last === undefined) return yield* fail("service_unavailable");
+      nextCursor = yield* codec.encode({
+        boundary: [last.lastActivityAt, last.conversationId],
+        context,
+        expiresAtEpochSeconds: Math.floor(startedAt.valueOf() / 1000) + 900,
+      });
+    }
+    const output: ListChatsOutput = ListChatsOutputContract.decodeUnknown({
+      chats: chats.right.map((chat) => ({
+        conversation_id: chat.conversationId,
+        kind: chat.kind,
+        recipient_id: chat.recipientId,
+        display_name: chat.displayName,
+        phone_last_four:
+          chat.kind === "direct" && chat.phone !== null
+            ? chat.phone.replace(/\D/gu, "").slice(-4) || null
+            : null,
+        last_activity_at: chat.lastActivityAt,
+        last_activity_direction: chat.lastActivityDirection,
+      })),
+      has_more: hasMore,
+      next_cursor: nextCursor,
+      as_of: page.asOf,
+      stale: page.stale,
+      partial: page.partial,
+    });
+    const complete = yield* persistence
+      .completeToolCall({
+        auditLogId,
+        completedAt: yield* clock.now,
+        errorCode: null,
+        outcome: "success",
+        resultCount: output.chats.length,
+      })
+      .pipe(Effect.either);
+    yield* emitToolCompletion(
+      "list_chats",
+      complete._tag === "Left" ? "audit_unavailable" : "success",
+      complete._tag === "Left" ? undefined : output.chats.length,
+    );
+    return complete._tag === "Left"
+      ? auditUnavailable()
+      : buildListChatsResult(output);
+  }).pipe(Effect.catchAll(() => Effect.succeed(auditUnavailable())));
+
 export const createMcpRequestHandler =
   (options: McpRequestHandlerOptions) =>
   async (
@@ -1178,6 +1441,7 @@ export const createMcpRequestHandler =
       .catch(() => false);
     let hasConnectionsRead = true;
     let hasDirectoryRead = true;
+    let hasMessagesRead = true;
     if (isToolsListRequest) {
       try {
         const inspected = await Effect.runPromise(
@@ -1194,6 +1458,7 @@ export const createMcpRequestHandler =
           inspected?.scopes.includes("connections:read") === true;
         hasDirectoryRead =
           inspected?.scopes.includes("directory:read") === true;
+        hasMessagesRead = inspected?.scopes.includes("messages:read") === true;
       } catch {
         return unavailable();
       }
@@ -1217,6 +1482,30 @@ export const createMcpRequestHandler =
           const result = await Effect.runPromise(
             listConnections(
               authorization,
+              options.hourLimit,
+              options.minuteLimit,
+            ).pipe(Effect.provide(options.layer)),
+          );
+          return {
+            ...result,
+            content: result.content.map((block) => ({ ...block })),
+          } as CallToolResult;
+        },
+      );
+      server.registerTool(
+        "list_chats",
+        {
+          description:
+            "List only WhatsApp Conversations with observed Stored Message activity, without message snippets or unread state.",
+          inputSchema: ListChatsInput,
+          outputSchema: ListChatsOutputSchema,
+          title: "List WhatsApp Chats",
+        },
+        async (input) => {
+          const result = await Effect.runPromise(
+            listChats(
+              authorization,
+              input,
               options.hourLimit,
               options.minuteLimit,
             ).pipe(Effect.provide(options.layer)),
@@ -1275,7 +1564,7 @@ export const createMcpRequestHandler =
           } as CallToolResult;
         },
       );
-      if (!hasConnectionsRead || !hasDirectoryRead) {
+      if (!hasConnectionsRead || !hasDirectoryRead || !hasMessagesRead) {
         const tools: Array<Record<string, unknown>> = [];
         if (hasConnectionsRead) {
           tools.push({
@@ -1315,6 +1604,20 @@ export const createMcpRequestHandler =
               target: "draft-2020-12",
             }),
             title: "List WhatsApp Contacts",
+          });
+        }
+        if (hasMessagesRead) {
+          tools.push({
+            description:
+              "List only WhatsApp Conversations with observed Stored Message activity, without message snippets or unread state.",
+            inputSchema: z.toJSONSchema(ListChatsInput, {
+              target: "draft-2020-12",
+            }),
+            name: "list_chats",
+            outputSchema: z.toJSONSchema(ListChatsOutputSchema, {
+              target: "draft-2020-12",
+            }),
+            title: "List WhatsApp Chats",
           });
         }
         server.server.setRequestHandler("tools/list", () => ({

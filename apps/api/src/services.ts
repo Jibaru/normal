@@ -227,7 +227,11 @@ export interface McpToolCallCompletedEvent {
     | "success";
   readonly resultCount?: number | undefined;
   readonly service: "api";
-  readonly tool: "list_connections" | "list_contacts" | "list_groups";
+  readonly tool:
+    | "list_connections"
+    | "list_contacts"
+    | "list_groups"
+    | "list_chats";
 }
 
 export interface GroupDirectoryReconciliationCompletedEvent {
