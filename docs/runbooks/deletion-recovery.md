@@ -4,6 +4,19 @@ This runbook covers the restore-safe primitives. Connection Deletion, Personal
 Account Deletion, provider cleanup scheduling, and the traffic restore gate are
 separate workflows, but they must preserve this ordering and authority split.
 
+## Deleted Message Tombstones
+
+Message-deletion webhook items are terminal Message Store evidence. Operators
+must not repair a Deleted Message Tombstone by replaying an older message
+upsert, edit, or media job: replay must converge to the existing content-free
+row. A healthy tombstone retains ordering and its opaque message identity, has
+`deleted_at` set, and has every content ciphertext field null. `read_messages`
+still counts and returns that row with null text and media.
+
+If those invariants fail after a deployment or restore, stop webhook replay,
+retain only metadata-safe incident references, and use a forward migration or
+projector fix. Never copy ciphertext from a Webhook Event into a tombstone.
+
 ## Active deletion ordering
 
 1. Resolve the Personal Account and WhatsApp Connection only inside the

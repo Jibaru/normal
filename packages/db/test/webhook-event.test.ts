@@ -648,6 +648,113 @@ describe("Webhook Event repository", () => {
     ]);
   });
 
+  test("keeps deletion terminal and replaces prior ciphertext with the newest edit", async () => {
+    const repository = makeWebhookEventRepository(webhookProvider);
+    await repository.prepare(eventInput(firstEventId));
+    const messageIdentity = itemIdentity("message");
+    const base = {
+      eventId: firstEventId,
+      itemIndex: 0,
+      personalAccountId: accountId,
+      receivedAt,
+      whatsappConnectionId: connectionId,
+    };
+    const content = (value: number) => ({
+      ciphertext: Buffer.alloc(32, value).toString("base64"),
+      keyVersion: 1,
+      nonce: Buffer.alloc(12, value).toString("base64"),
+      version: 1 as const,
+    });
+    const upsert = {
+      ...base,
+      content: content(1),
+      contentType: "text" as const,
+      conversationId: "50000000-0000-4000-8000-000000000044",
+      conversationPublicId: "cvs_000000000000000000044",
+      direction: "inbound" as const,
+      evidence: {
+        occurredAt: "2026-07-31T12:00:00.000Z",
+        version: version("2026-07-31T12:00:00.000Z"),
+      },
+      itemIdentity: itemIdentity("upsert"),
+      messageId: "60000000-0000-4000-8000-000000000044",
+      messageIdentity,
+      messagePublicId: "msg_000000000000000000044",
+      recipientKind: "group" as const,
+      recipientLocator: itemIdentity("group"),
+      recipientPublicId: "grp_000000000000000000044",
+      sentAt: "2026-07-31T12:00:00.000Z",
+    };
+    expect(await repository.projectStoredMessage(upsert, compareVersions)).toBe(
+      "applied",
+    );
+    expect(
+      await repository.projectStoredMessageEdit(
+        {
+          ...base,
+          content: content(2),
+          contentType: "text",
+          editedAt: "2026-07-31T12:05:00.000Z",
+          evidence: {
+            occurredAt: "2026-07-31T12:05:00.000Z",
+            version: version("2026-07-31T12:05:00.000Z"),
+          },
+          itemIdentity: itemIdentity("edit"),
+          messageIdentity,
+        },
+        compareVersions,
+      ),
+    ).toBe("applied");
+    expect(
+      await repository.projectStoredMessage(
+        { ...upsert, itemIdentity: itemIdentity("late-upsert") },
+        compareVersions,
+      ),
+    ).toBe("superseded");
+    expect(
+      await repository.projectStoredMessageDeletion({
+        ...base,
+        conversationId: upsert.conversationId,
+        conversationPublicId: upsert.conversationPublicId,
+        deletedAt: "2026-07-31T12:10:00.000Z",
+        direction: "inbound",
+        evidence: {
+          occurredAt: "2026-07-31T12:10:00.000Z",
+          version: version("2026-07-31T12:10:00.000Z"),
+        },
+        itemIdentity: itemIdentity("delete"),
+        messageId: upsert.messageId,
+        messageIdentity,
+        messagePublicId: upsert.messagePublicId,
+        recipientKind: "group",
+        recipientLocator: upsert.recipientLocator,
+        recipientPublicId: upsert.recipientPublicId,
+        sentAt: upsert.sentAt,
+      }),
+    ).toBe("applied");
+    expect(
+      await repository.projectStoredMessage(
+        {
+          ...upsert,
+          itemIdentity: itemIdentity("resurrection"),
+          evidence: {
+            occurredAt: "2026-07-31T12:20:00.000Z",
+            version: version("2026-07-31T12:20:00.000Z"),
+          },
+        },
+        compareVersions,
+      ),
+    ).toBe("superseded");
+    const row = await database.query<Record<string, unknown>>(
+      `SELECT content_ciphertext, edited_at, deleted_at FROM app.stored_messages WHERE message_identity=$1`,
+      [messageIdentity],
+    );
+    expect(row.rows[0]).toMatchObject({
+      content_ciphertext: null,
+      deleted_at: new Date("2026-07-31T12:10:00.000Z"),
+    });
+  });
+
   test("atomically deduplicates encrypted group joins and applies a later unjoin", async () => {
     const repository = makeWebhookEventRepository(webhookProvider);
     await repository.prepare(eventInput(firstEventId));

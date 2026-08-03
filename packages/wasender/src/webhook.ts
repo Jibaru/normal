@@ -63,13 +63,13 @@ interface NormalizedItemBase {
 
 export interface NormalizedMessageUpsert extends NormalizedItemBase {
   readonly content: NormalizedMessageContent;
-  readonly direction: "inbound" | "outbound";
+  readonly direction?: "inbound" | "outbound";
   readonly kind: "message_upsert";
   readonly messageIdentity: StableMessageIdentity;
-  readonly recipient: RecipientLocator;
+  readonly recipient?: RecipientLocator;
   readonly recipientKind?: "direct" | "group";
   readonly sender: ContactLocator | null;
-  readonly sentAt: UtcTimestamp;
+  readonly sentAt?: UtcTimestamp;
 }
 
 export interface NormalizedMessageEdit extends NormalizedItemBase {
@@ -81,8 +81,12 @@ export interface NormalizedMessageEdit extends NormalizedItemBase {
 
 export interface NormalizedMessageDeletion extends NormalizedItemBase {
   readonly deletedAt: UtcTimestamp;
+  readonly direction: "inbound" | "outbound";
   readonly kind: "message_delete";
   readonly messageIdentity: StableMessageIdentity;
+  readonly recipient: RecipientLocator;
+  readonly recipientKind?: "direct" | "group";
+  readonly sentAt: UtcTimestamp;
 }
 
 export interface NormalizedSendEvidence extends NormalizedItemBase {

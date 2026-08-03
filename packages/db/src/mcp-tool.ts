@@ -57,7 +57,9 @@ export interface McpToolMessageRecord {
     | "text"
     | "unknown"
     | "video";
-  readonly content: McpToolDirectoryCiphertext;
+  readonly content: McpToolDirectoryCiphertext | null;
+  readonly editedAt?: string | null;
+  readonly deleted?: boolean;
 }
 export interface McpToolMessagePage {
   readonly accountKey: AccountKeyEnvelope;
@@ -1182,7 +1184,8 @@ export const makeMcpToolRepository = (
         const rows = await connection.query<Record<string, unknown>>(
           `SELECT messages.public_id, messages.message_identity, messages.sent_at, messages.direction,
              messages.content_type, messages.content_ciphertext_version, messages.content_key_version,
-             messages.content_nonce, messages.content_ciphertext, conversations.kind
+             messages.content_nonce, messages.content_ciphertext, messages.edited_at,
+             messages.deleted_at, conversations.kind
            FROM app.stored_messages messages
            JOIN app.whatsapp_conversations conversations ON conversations.personal_account_id=messages.personal_account_id AND conversations.whatsapp_connection_id=messages.whatsapp_connection_id AND conversations.id=messages.conversation_id
            WHERE messages.personal_account_id=$1 AND messages.whatsapp_connection_id=$2
@@ -1214,15 +1217,15 @@ export const makeMcpToolRepository = (
         let encryptedBytes = 0;
         for (const candidate of candidateRows) {
           const ciphertext = bytes(candidate.content_ciphertext);
-          if (ciphertext === null)
+          if (ciphertext === null && candidate.deleted_at === null)
             throw new Error("invalid Stored Message ciphertext");
           if (
             returnedRows.length > 0 &&
-            encryptedBytes + ciphertext.byteLength > 24_000
+            encryptedBytes + (ciphertext?.byteLength ?? 0) > 24_000
           )
             break;
           returnedRows.push(candidate);
-          encryptedBytes += ciphertext.byteLength;
+          encryptedBytes += ciphertext?.byteLength ?? 0;
         }
         if (usedCount + returnedRows.length > input.dailyRecordLimit) {
           return {
@@ -1241,6 +1244,11 @@ export const makeMcpToolRepository = (
           const ciphertext = bytes(message.content_ciphertext);
           const nonce = bytes(message.content_nonce);
           const keyVersion = positiveInteger(message.content_key_version);
+          const editedAt =
+            message.edited_at === null
+              ? null
+              : timestampString(message.edited_at);
+          const deleted = timestamp(message.deleted_at) !== null;
           if (
             typeof message.public_id !== "string" ||
             typeof message.message_identity !== "string" ||
@@ -1248,20 +1256,21 @@ export const makeMcpToolRepository = (
             (message.direction !== "inbound" &&
               message.direction !== "outbound") ||
             (message.kind !== "direct" && message.kind !== "group") ||
-            typeof message.content_type !== "string" ||
-            ![
-              "audio",
-              "document",
-              "image",
-              "sticker",
-              "text",
-              "unknown",
-              "video",
-            ].includes(message.content_type) ||
-            message.content_ciphertext_version !== 1 ||
-            ciphertext === null ||
-            nonce === null ||
-            keyVersion === null
+            (!deleted &&
+              (typeof message.content_type !== "string" ||
+                ![
+                  "audio",
+                  "document",
+                  "image",
+                  "sticker",
+                  "text",
+                  "unknown",
+                  "video",
+                ].includes(message.content_type))) ||
+            (!deleted && message.content_ciphertext_version !== 1) ||
+            (!deleted &&
+              (ciphertext === null || nonce === null || keyVersion === null)) ||
+            (message.edited_at !== null && editedAt === null)
           )
             throw new Error("invalid Stored Message");
           return {
@@ -1270,14 +1279,19 @@ export const makeMcpToolRepository = (
             sentAt,
             direction: message.direction,
             conversationKind: message.kind,
-            contentType:
-              message.content_type as McpToolMessageRecord["contentType"],
-            content: {
-              ciphertext: base64(ciphertext),
-              keyVersion,
-              nonce: base64(nonce),
-              version: 1,
-            },
+            contentType: deleted
+              ? "unknown"
+              : (message.content_type as McpToolMessageRecord["contentType"]),
+            content: deleted
+              ? null
+              : {
+                  ciphertext: base64(ciphertext),
+                  keyVersion: keyVersion as number,
+                  nonce: base64(nonce),
+                  version: 1,
+                },
+            editedAt,
+            deleted,
           };
         });
         const newest = messages[0]?.sentAt ?? input.observedAt.toISOString();

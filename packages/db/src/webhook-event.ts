@@ -163,6 +163,29 @@ export interface ProjectStoredMessageInput
   readonly sentAt: string;
 }
 
+export interface ProjectStoredMessageEditInput
+  extends EvidenceOrderedProjectionInput {
+  readonly content: PersistedDirectoryCiphertext;
+  readonly contentType: ProjectStoredMessageInput["contentType"];
+  readonly editedAt: string;
+  readonly messageIdentity: string;
+}
+
+export interface ProjectStoredMessageDeletionInput
+  extends EvidenceOrderedProjectionInput {
+  readonly conversationId: string;
+  readonly conversationPublicId: string;
+  readonly deletedAt: string;
+  readonly direction: "inbound" | "outbound";
+  readonly messageId: string;
+  readonly messageIdentity: string;
+  readonly messagePublicId: string;
+  readonly recipientKind: "direct" | "group";
+  readonly recipientLocator: string;
+  readonly recipientPublicId: string;
+  readonly sentAt: string;
+}
+
 export interface QuarantineWebhookItemInput extends WebhookItemBase {
   readonly classification: WebhookItemQuarantineClassification;
   readonly itemIdentity: string | null;
@@ -213,6 +236,16 @@ export interface WebhookEventRepository {
       left: string,
       right: string,
     ) => Promise<WebhookVersionComparison>,
+  ) => Promise<WebhookItemProjectionOutcome>;
+  readonly projectStoredMessageEdit: (
+    input: ProjectStoredMessageEditInput,
+    compareVersions: (
+      left: string,
+      right: string,
+    ) => Promise<WebhookVersionComparison>,
+  ) => Promise<WebhookItemProjectionOutcome>;
+  readonly projectStoredMessageDeletion: (
+    input: ProjectStoredMessageDeletionInput,
   ) => Promise<WebhookItemProjectionOutcome>;
   readonly quarantine: (input: QuarantineWebhookItemInput) => Promise<void>;
 }
@@ -1473,11 +1506,13 @@ export const makeWebhookEventRepository = (
         );
         if (claimed.rows.length === 0) return "duplicate" as const;
         const current = await connection.query<{
+          deleted_at: unknown;
+          edited_at: unknown;
           provider_occurred_at: unknown;
           provider_version: unknown;
           received_at: unknown;
         }>(
-          `SELECT provider_occurred_at, provider_version, received_at FROM app.stored_messages
+          `SELECT deleted_at, edited_at, provider_occurred_at, provider_version, received_at FROM app.stored_messages
            WHERE personal_account_id=$1 AND whatsapp_connection_id=$2 AND message_identity=$3 FOR UPDATE`,
           [
             input.personalAccountId,
@@ -1487,8 +1522,15 @@ export const makeWebhookEventRepository = (
         );
         const row = current.rows[0];
         if (row !== undefined) {
+          if (timestamp(row.deleted_at) !== null) return "superseded" as const;
           const oldOccurred = timestamp(row.provider_occurred_at);
           const newOccurred = timestamp(input.evidence.occurredAt);
+          const editedAt = timestamp(row.edited_at);
+          if (
+            editedAt !== null &&
+            (newOccurred === null || newOccurred <= editedAt)
+          )
+            return "superseded" as const;
           if (
             oldOccurred !== null &&
             newOccurred !== null &&
@@ -1575,6 +1617,184 @@ export const makeWebhookEventRepository = (
              AND whatsapp_connection_id=$2 AND conversation_id=$3 ORDER BY sent_at DESC, public_id DESC LIMIT 1) latest
            WHERE conversations.personal_account_id=$1 AND conversations.whatsapp_connection_id=$2 AND conversations.id=$3`,
           [input.personalAccountId, input.whatsappConnectionId, conversationId],
+        );
+        await connection.query(
+          `UPDATE app.webhook_items SET outcome='applied' WHERE personal_account_id=$1 AND whatsapp_connection_id=$2 AND deduplication_identity=$3`,
+          [
+            input.personalAccountId,
+            input.whatsappConnectionId,
+            input.itemIdentity,
+          ],
+        );
+        return "applied" as const;
+      }),
+    ),
+
+  projectStoredMessageEdit: (input, compareVersions) =>
+    provider.withConnection((connection) =>
+      withTransaction(connection, async () => {
+        const ciphertext = decodeCiphertext(input.content);
+        const nonce = decodeNonce(input.content);
+        await enterPersonalAccountContext(connection, input.personalAccountId);
+        const claimed = await connection.query(
+          `INSERT INTO app.webhook_items (personal_account_id, whatsapp_connection_id,
+             deduplication_identity, first_webhook_event_id, item_index, item_kind,
+             outcome, provider_occurred_at, provider_version, received_at)
+           VALUES ($1,$2,$3,$4,$5,'message_edit','superseded',$6,$7,$8)
+           ON CONFLICT (personal_account_id, whatsapp_connection_id, deduplication_identity)
+           DO NOTHING RETURNING deduplication_identity`,
+          [
+            input.personalAccountId,
+            input.whatsappConnectionId,
+            input.itemIdentity,
+            input.eventId,
+            input.itemIndex,
+            input.evidence.occurredAt,
+            input.evidence.version,
+            input.receivedAt,
+          ],
+        );
+        if (claimed.rows.length === 0) return "duplicate" as const;
+        const current = await connection.query<Record<string, unknown>>(
+          `SELECT deleted_at, edited_at, provider_version FROM app.stored_messages
+           WHERE personal_account_id=$1 AND whatsapp_connection_id=$2 AND message_identity=$3 FOR UPDATE`,
+          [
+            input.personalAccountId,
+            input.whatsappConnectionId,
+            input.messageIdentity,
+          ],
+        );
+        const row = current.rows[0];
+        if (row === undefined || timestamp(row.deleted_at) !== null)
+          return "superseded" as const;
+        const oldEditedAt = timestamp(row.edited_at);
+        const newEditedAt = timestamp(input.editedAt);
+        if (newEditedAt === null) throw new Error("invalid edit timestamp");
+        if (oldEditedAt !== null && newEditedAt < oldEditedAt)
+          return "superseded" as const;
+        if (
+          oldEditedAt?.valueOf() === newEditedAt.valueOf() &&
+          typeof row.provider_version === "string" &&
+          input.evidence.version !== null &&
+          (await compareVersions(
+            input.evidence.version,
+            row.provider_version,
+          )) === "before"
+        )
+          return "superseded" as const;
+        await connection.query(
+          `UPDATE app.stored_messages SET content_type=$4,content_ciphertext_version=$5,
+             content_key_version=$6,content_nonce=$7,content_ciphertext=$8,edited_at=$9,
+             provider_occurred_at=$10,provider_version=$11,received_at=$12,
+             webhook_event_id=$13,webhook_item_identity=$14,updated_at=transaction_timestamp()
+           WHERE personal_account_id=$1 AND whatsapp_connection_id=$2 AND message_identity=$3`,
+          [
+            input.personalAccountId,
+            input.whatsappConnectionId,
+            input.messageIdentity,
+            input.contentType,
+            input.content.version,
+            input.content.keyVersion,
+            nonce,
+            ciphertext,
+            input.editedAt,
+            input.evidence.occurredAt,
+            input.evidence.version,
+            input.receivedAt,
+            input.eventId,
+            input.itemIdentity,
+          ],
+        );
+        await connection.query(
+          `UPDATE app.webhook_items SET outcome='applied' WHERE personal_account_id=$1 AND whatsapp_connection_id=$2 AND deduplication_identity=$3`,
+          [
+            input.personalAccountId,
+            input.whatsappConnectionId,
+            input.itemIdentity,
+          ],
+        );
+        return "applied" as const;
+      }),
+    ),
+
+  projectStoredMessageDeletion: (input) =>
+    provider.withConnection((connection) =>
+      withTransaction(connection, async () => {
+        await enterPersonalAccountContext(connection, input.personalAccountId);
+        const claimed = await connection.query(
+          `INSERT INTO app.webhook_items (personal_account_id, whatsapp_connection_id,
+             deduplication_identity, first_webhook_event_id, item_index, item_kind,
+             outcome, provider_occurred_at, provider_version, received_at)
+           VALUES ($1,$2,$3,$4,$5,'message_delete','superseded',$6,$7,$8)
+           ON CONFLICT (personal_account_id, whatsapp_connection_id, deduplication_identity)
+           DO NOTHING RETURNING deduplication_identity`,
+          [
+            input.personalAccountId,
+            input.whatsappConnectionId,
+            input.itemIdentity,
+            input.eventId,
+            input.itemIndex,
+            input.evidence.occurredAt,
+            input.evidence.version,
+            input.receivedAt,
+          ],
+        );
+        if (claimed.rows.length === 0) return "duplicate" as const;
+        await connection.query(
+          `INSERT INTO app.whatsapp_conversations (id,personal_account_id,whatsapp_connection_id,
+             public_id,kind,recipient_locator,recipient_public_id,last_activity_at,last_activity_direction)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+           ON CONFLICT (personal_account_id,whatsapp_connection_id,recipient_locator) DO NOTHING`,
+          [
+            input.conversationId,
+            input.personalAccountId,
+            input.whatsappConnectionId,
+            input.conversationPublicId,
+            input.recipientKind,
+            input.recipientLocator,
+            input.recipientPublicId,
+            input.sentAt,
+            input.direction,
+          ],
+        );
+        const conversation = await connection.query<{ id: unknown }>(
+          `SELECT id FROM app.whatsapp_conversations WHERE personal_account_id=$1 AND whatsapp_connection_id=$2 AND recipient_locator=$3`,
+          [
+            input.personalAccountId,
+            input.whatsappConnectionId,
+            input.recipientLocator,
+          ],
+        );
+        const conversationId = conversation.rows[0]?.id;
+        if (typeof conversationId !== "string")
+          throw new Error("invalid WhatsApp Conversation");
+        await connection.query(
+          `INSERT INTO app.stored_messages (id,personal_account_id,whatsapp_connection_id,
+             conversation_id,public_id,message_identity,direction,sent_at,deleted_at,
+             provider_occurred_at,provider_version,received_at,webhook_event_id,webhook_item_identity)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+           ON CONFLICT (personal_account_id,whatsapp_connection_id,message_identity) DO UPDATE SET
+             content_type=NULL,content_ciphertext_version=NULL,content_key_version=NULL,
+             content_nonce=NULL,content_ciphertext=NULL,deleted_at=excluded.deleted_at,
+             provider_occurred_at=excluded.provider_occurred_at,provider_version=excluded.provider_version,
+             received_at=excluded.received_at,webhook_event_id=excluded.webhook_event_id,
+             webhook_item_identity=excluded.webhook_item_identity,updated_at=transaction_timestamp()`,
+          [
+            input.messageId,
+            input.personalAccountId,
+            input.whatsappConnectionId,
+            conversationId,
+            input.messagePublicId,
+            input.messageIdentity,
+            input.direction,
+            input.sentAt,
+            input.deletedAt,
+            input.evidence.occurredAt,
+            input.evidence.version,
+            input.receivedAt,
+            input.eventId,
+            input.itemIdentity,
+          ],
         );
         await connection.query(
           `UPDATE app.webhook_items SET outcome='applied' WHERE personal_account_id=$1 AND whatsapp_connection_id=$2 AND deduplication_identity=$3`,

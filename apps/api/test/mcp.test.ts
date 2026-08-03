@@ -123,6 +123,7 @@ const makeHarness = (
     readonly groupPage?: McpToolGroupPage | null;
     readonly cursorKey?: CryptoKey;
     readonly sendResult?: SendTextMessageResult;
+    readonly tombstone?: boolean;
   } = {},
 ) => {
   const observations: Array<string> = [];
@@ -287,40 +288,54 @@ const makeHarness = (
               personalAccountId: "10000000-0000-4000-8000-000000000030",
               version: 1 as const,
             },
-            messages: [
-              {
-                publicId: "msg_222222222222222222222",
-                messageIdentity: `wi1_${"B".repeat(43)}`,
-                sentAt: "2026-07-31T11:59:00.000Z",
-                direction: "inbound" as const,
-                conversationKind: "direct" as const,
-                contentType: "text" as const,
-                content: {
-                  ciphertext: btoa(
-                    JSON.stringify({ text: "newest", mediaSource: null }),
-                  ),
-                  keyVersion: 1,
-                  nonce: "AQIDBAUGBwgJCgsM",
-                  version: 1 as const,
-                },
-              },
-              {
-                publicId: "msg_111111111111111111111",
-                messageIdentity: `wi1_${"A".repeat(43)}`,
-                sentAt: "2026-07-31T11:58:00.000Z",
-                direction: "outbound" as const,
-                conversationKind: "direct" as const,
-                contentType: "text" as const,
-                content: {
-                  ciphertext: btoa(
-                    JSON.stringify({ text: "older", mediaSource: null }),
-                  ),
-                  keyVersion: 1,
-                  nonce: "AQIDBAUGBwgJCgsM",
-                  version: 1 as const,
-                },
-              },
-            ],
+            messages: overrides.tombstone
+              ? [
+                  {
+                    publicId: "msg_333333333333333333333",
+                    messageIdentity: `wi1_${"C".repeat(43)}`,
+                    sentAt: "2026-07-31T11:59:30.000Z",
+                    direction: "inbound" as const,
+                    conversationKind: "direct" as const,
+                    contentType: "unknown" as const,
+                    content: null,
+                    editedAt: null,
+                    deleted: true,
+                  },
+                ]
+              : [
+                  {
+                    publicId: "msg_222222222222222222222",
+                    messageIdentity: `wi1_${"B".repeat(43)}`,
+                    sentAt: "2026-07-31T11:59:00.000Z",
+                    direction: "inbound" as const,
+                    conversationKind: "direct" as const,
+                    contentType: "text" as const,
+                    content: {
+                      ciphertext: btoa(
+                        JSON.stringify({ text: "newest", mediaSource: null }),
+                      ),
+                      keyVersion: 1,
+                      nonce: "AQIDBAUGBwgJCgsM",
+                      version: 1 as const,
+                    },
+                  },
+                  {
+                    publicId: "msg_111111111111111111111",
+                    messageIdentity: `wi1_${"A".repeat(43)}`,
+                    sentAt: "2026-07-31T11:58:00.000Z",
+                    direction: "outbound" as const,
+                    conversationKind: "direct" as const,
+                    contentType: "text" as const,
+                    content: {
+                      ciphertext: btoa(
+                        JSON.stringify({ text: "older", mediaSource: null }),
+                      ),
+                      keyVersion: 1,
+                      nonce: "AQIDBAUGBwgJCgsM",
+                      version: 1 as const,
+                    },
+                  },
+                ],
             hasOlder: true,
             sizeLimited: false,
             historyStartsAt: "2026-07-01T00:00:00.000Z",
@@ -1282,6 +1297,38 @@ describe("stateless MCP list_groups boundary", () => {
 });
 
 describe("read_messages MCP boundary", () => {
+  test("returns Deleted Message Tombstones without content while retaining the record", async () => {
+    const harness = makeHarness({ scopes: ["messages:read"], tombstone: true });
+    const response = await harness.handler(
+      jsonRpcRequest("tools/call", {
+        name: "read_messages",
+        arguments: {
+          connection_id: "con_123456789012345678901",
+          conversation_id: "cvs_123456789012345678901",
+          limit: 20,
+        },
+      }),
+      {},
+      executionContext,
+      authorization,
+    );
+    const body = (await response.json()) as {
+      result: {
+        structuredContent: { messages: Array<Record<string, unknown>> };
+      };
+    };
+    expect(body.result.structuredContent.messages).toEqual([
+      expect.objectContaining({
+        message_id: "msg_333333333333333333333",
+        text: null,
+        text_total_utf8_bytes: null,
+        edited_at: null,
+        deleted: true,
+        media: null,
+      }),
+    ]);
+  });
+
   test("returns newest selection chronologically with bound older traversal metadata", async () => {
     const harness = makeHarness({ scopes: ["messages:read"] });
     const response = await harness.handler(
