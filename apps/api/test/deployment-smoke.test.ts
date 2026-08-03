@@ -53,4 +53,26 @@ describe("deployment smoke boundary", () => {
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ error: "not_found" });
   });
+
+  test("fails closed when the configured secret is absent", async () => {
+    let started = false;
+    const handler = createDeploymentSmokeHandler({
+      complete: async () => ({ status: "complete", subsystems: [] }),
+      secret: "",
+      start: async () => {
+        started = true;
+        return `smk_${"a".repeat(43)}`;
+      },
+    });
+
+    const response = await handler(
+      new Request("https://api.example.test/_internal/deployment-smoke", {
+        method: "POST",
+        headers: { authorization: "Bearer " },
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(started).toBe(false);
+  });
 });

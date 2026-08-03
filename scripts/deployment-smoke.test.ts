@@ -127,6 +127,27 @@ describe("deployed production smoke command", () => {
     ).rejects.toThrow("api failed; remediate with: bun run deploy:smoke");
   });
 
+  test("rejects a successful response whose health body is unavailable", async () => {
+    const fetch = async (input: string) => {
+      const url = new URL(input);
+      if (url.origin === "https://web.example.test")
+        return json({ service: "web", status: "ok" });
+      return json({ service: "api", status: "unavailable" });
+    };
+
+    await expect(
+      runDeploymentSmoke(
+        {
+          apiOrigin: "https://api.example.test",
+          mcpAccessToken: "must-not-leak",
+          smokeSecret: "must-not-leak-either",
+          webOrigin: "https://web.example.test",
+        },
+        { fetch, pollDelayMs: 0 },
+      ),
+    ).rejects.toThrow("api failed; remediate with: bun run deploy:smoke");
+  });
+
   test("reports an asynchronous R2/KMS failure without canary data", async () => {
     const fetch = async (input: string, init?: RequestInit) => {
       const request = new Request(input, init);

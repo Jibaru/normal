@@ -71,9 +71,13 @@ export const runDeploymentSmoke = async (
     ((input: string, init?: RequestInit) => globalThis.fetch(input, init));
   const api = new URL(config.apiOrigin).origin;
   const web = new URL(config.webOrigin).origin;
-  await requestJson(fetch, "web", `${web}/health`);
-  await requestJson(fetch, "api", `${api}/health`);
-  await requestJson(fetch, "api", `${api}/ready`);
+  const webHealth = await requestJson(fetch, "web", `${web}/health`);
+  if (webHealth.service !== "web" || webHealth.status !== "ok") fail("web");
+  const apiHealth = await requestJson(fetch, "api", `${api}/health`);
+  if (apiHealth.service !== "api" || apiHealth.status !== "ok") fail("api");
+  const apiReadiness = await requestJson(fetch, "api", `${api}/ready`);
+  if (apiReadiness.service !== "api" || apiReadiness.status !== "ready")
+    fail("api");
   const authorization = await requestJson(
     fetch,
     "oauth",

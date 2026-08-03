@@ -1,5 +1,6 @@
 const path = "/_internal/deployment-smoke";
 const canaryPattern = /^smk_[A-Za-z0-9_-]{43}$/u;
+const secretPattern = /^[a-f0-9]{64}$/iu;
 
 export interface DeploymentSmokeState {
   readonly status: "complete" | "failed" | "pending";
@@ -38,7 +39,10 @@ export const createDeploymentSmokeHandler =
   (options: DeploymentSmokeOptions) =>
   async (request: Request): Promise<Response> => {
     const authorization = request.headers.get("authorization") ?? "";
-    if (!constantTimeEqual(authorization, `Bearer ${options.secret}`))
+    if (
+      !secretPattern.test(options.secret) ||
+      !constantTimeEqual(authorization, `Bearer ${options.secret}`)
+    )
       return json({ error: "not_found" }, 404);
     const url = new URL(request.url);
     if (request.method === "POST" && url.search === "") {
