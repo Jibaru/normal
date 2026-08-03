@@ -299,6 +299,17 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 27,
   },
+  {
+    name: "Send Status convergence",
+    sql: await readFile(
+      new NodeUrl(
+        "../migrations/0028_send_status_convergence.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    version: 28,
+  },
 ];
 
 const checksum = (sql: string): string =>

@@ -1193,6 +1193,19 @@ const webhookEventPersistenceLayer = (environment: ApiEnvironment) =>
         },
         catch: () => new WebhookEventPersistenceError(),
       }),
+    projectSendEvidence: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString =
+            environment.WEBHOOK_HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string")
+            throw new Error("Webhook Hyperdrive unavailable");
+          return makePgWebhookEventRepository(
+            connectionString,
+          ).projectSendEvidence(input);
+        },
+        catch: () => new WebhookEventPersistenceError(),
+      }),
     projectStoredMessageEdit: (input, compareVersions) =>
       Effect.tryPromise({
         try: () => {
@@ -1715,6 +1728,16 @@ const mcpToolPersistenceLayer = (environment: ApiEnvironment) =>
           return makePgMcpToolRepository(connectionString).listConnections(
             input,
           );
+        },
+        catch: () => new McpToolPersistenceError(),
+      }),
+    getSendStatus: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string")
+            throw new Error("database unavailable");
+          return makePgMcpToolRepository(connectionString).getSendStatus(input);
         },
         catch: () => new McpToolPersistenceError(),
       }),

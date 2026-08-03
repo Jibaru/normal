@@ -9,6 +9,8 @@ import {
 import { makeExecutionErrorResult } from "@whatsapp-mcp/contracts/mcp-error";
 import { makeSuccessResultBuilder } from "@whatsapp-mcp/contracts/mcp-result";
 import {
+  type GetSendStatusOutput,
+  GetSendStatusOutputContract,
   type ListChatsOutput,
   ListChatsOutputContract,
   type ListConnectionsOutput,
@@ -33,6 +35,7 @@ import type {
   McpToolGroupSearchMaterial,
   McpToolMessagePage,
   McpToolName,
+  McpToolSendStatusRecord,
   RejectToolCallResult,
 } from "@whatsapp-mcp/db/mcp-tool";
 import { createMcpHandler } from "agents/mcp/server";
@@ -98,6 +101,13 @@ export interface McpToolPersistenceService {
     ReadonlyArray<McpToolConnectionRecord> | null,
     McpToolPersistenceError
   >;
+  readonly getSendStatus?: (
+    input: McpAccessAuthorization & {
+      readonly connectionPublicId: string;
+      readonly observedAt: Date;
+      readonly sendPublicId: string;
+    },
+  ) => Effect.Effect<McpToolSendStatusRecord | null, McpToolPersistenceError>;
   readonly listGroups: (
     input: McpAccessAuthorization & {
       readonly connectionPublicId: string;
@@ -545,6 +555,15 @@ const SendTextMessageOutputSchema = z
     idempotent_replay: z.boolean(),
   })
   .strict();
+const GetSendStatusInput = z
+  .object({
+    connection_id: z.string().regex(/^con_[A-Za-z0-9_-]{21}$/u),
+    send_id: z.string().regex(/^snd_[A-Za-z0-9_-]{21}$/u),
+  })
+  .strict();
+const GetSendStatusOutputSchema = SendTextMessageOutputSchema.omit({
+  idempotent_replay: true,
+});
 
 const buildListConnectionsResult = makeSuccessResultBuilder(
   ListConnectionsOutputContract,
@@ -558,6 +577,9 @@ const buildListContactsResult = makeSuccessResultBuilder(
 );
 const buildSendTextMessageResult = makeSuccessResultBuilder(
   SendTextMessageOutputContract,
+);
+const buildGetSendStatusResult = makeSuccessResultBuilder(
+  GetSendStatusOutputContract,
 );
 const buildListChatsResult = makeSuccessResultBuilder(ListChatsOutputContract);
 const buildReadMessagesResult = makeSuccessResultBuilder(
@@ -799,6 +821,94 @@ const sendTextMessage = (
 
 const compareText = (left: string, right: string): number =>
   left < right ? -1 : left > right ? 1 : 0;
+
+const getSendStatus = (
+  authorization: McpAccessAuthorization,
+  input: z.infer<typeof GetSendStatusInput>,
+  hourLimit: number,
+  minuteLimit: number,
+) =>
+  Effect.gen(function* () {
+    const clock = yield* McpToolClock;
+    const identifiers = yield* McpToolIdentifiers;
+    const persistence = yield* McpToolPersistence;
+    const auditLogId = yield* identifiers.nextAuditLogId;
+    const observedAt = yield* clock.now;
+    const started = yield* persistence
+      .beginToolCall({
+        ...authorization,
+        auditLogId,
+        hourLimit,
+        minuteLimit,
+        observedAt,
+        toolName: "get_send_status",
+      })
+      .pipe(Effect.either);
+    if (started._tag === "Left") return auditUnavailable();
+    if (started.right.outcome === "authorization_denied") {
+      yield* emitToolCompletion("get_send_status", "authorization_denied");
+      return authorizationDenied();
+    }
+    if (started.right.outcome === "rate_limited") {
+      yield* emitToolCompletion("get_send_status", "rate_limited");
+      return rateLimited(
+        started.right.retryAfterSeconds,
+        started.right.resetsAt,
+      );
+    }
+    if (persistence.getSendStatus === undefined) return serviceUnavailable();
+    const loaded = yield* persistence
+      .getSendStatus({
+        ...authorization,
+        connectionPublicId: input.connection_id,
+        observedAt,
+        sendPublicId: input.send_id,
+      })
+      .pipe(Effect.either);
+    const completedAt = yield* clock.now;
+    if (loaded._tag === "Left") {
+      yield* persistence.completeToolCall({
+        auditLogId,
+        completedAt,
+        errorCode: "service_unavailable",
+        outcome: "execution_error",
+        resultCount: null,
+      });
+      yield* emitToolCompletion("get_send_status", "service_unavailable");
+      return serviceUnavailable();
+    }
+    if (loaded.right === null) {
+      yield* persistence.completeToolCall({
+        auditLogId,
+        completedAt,
+        errorCode: "send_not_found",
+        outcome: "execution_error",
+        resultCount: null,
+      });
+      yield* emitToolCompletion("get_send_status", "execution_error");
+      return makeExecutionErrorResult({
+        error_code: "send_not_found",
+        message: "The Send Operation was not found.",
+        retryable: false,
+      });
+    }
+    const output: GetSendStatusOutput =
+      GetSendStatusOutputContract.decodeUnknown({
+        created_at: loaded.right.createdAt,
+        send_id: loaded.right.publicId,
+        status: loaded.right.status,
+        status_changed_at: loaded.right.statusChangedAt,
+      });
+    yield* persistence.completeToolCall({
+      auditLogId,
+      completedAt,
+      errorCode: null,
+      outcome: "success",
+      resultCount: 1,
+    });
+    yield* emitToolCompletion("get_send_status", "success", 1);
+    return buildGetSendStatusResult(output);
+  }).pipe(Effect.catchAll(() => Effect.succeed(auditUnavailable())));
 
 const listGroups = (
   authorization: McpAccessAuthorization,
@@ -2054,6 +2164,31 @@ export const createMcpRequestHandler =
         },
       );
       server.registerTool(
+        "get_send_status",
+        {
+          annotations: { readOnlyHint: true },
+          description:
+            "Read the latest locally converged Send Status without contacting the provider.",
+          inputSchema: GetSendStatusInput,
+          outputSchema: GetSendStatusOutputSchema,
+          title: "Get WhatsApp Send Status",
+        },
+        async (input) => {
+          const result = await Effect.runPromise(
+            getSendStatus(
+              authorization,
+              input,
+              options.hourLimit,
+              options.minuteLimit,
+            ).pipe(Effect.provide(options.layer)),
+          );
+          return {
+            ...result,
+            content: result.content.map((block) => ({ ...block })),
+          } as CallToolResult;
+        },
+      );
+      server.registerTool(
         "list_connections",
         {
           description:
@@ -2239,6 +2374,19 @@ export const createMcpRequestHandler =
             }),
             title: "Send WhatsApp Text Message",
             _meta: { "anthropic/requiresUserInteraction": true },
+          });
+          tools.push({
+            annotations: { readOnlyHint: true },
+            description:
+              "Read the latest locally converged Send Status without contacting the provider.",
+            inputSchema: z.toJSONSchema(GetSendStatusInput, {
+              target: "draft-2020-12",
+            }),
+            name: "get_send_status",
+            outputSchema: z.toJSONSchema(GetSendStatusOutputSchema, {
+              target: "draft-2020-12",
+            }),
+            title: "Get WhatsApp Send Status",
           });
         }
         if (hasMessagesRead) {

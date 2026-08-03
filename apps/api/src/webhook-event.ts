@@ -9,6 +9,7 @@ import type {
   ProjectConnectionStateInput,
   ProjectDirectoryContactInput,
   ProjectGroupInput,
+  ProjectSendEvidenceInput,
   ProjectStoredMessageDeletionInput,
   ProjectStoredMessageEditInput,
   ProjectStoredMessageInput,
@@ -130,6 +131,12 @@ export interface WebhookEventPersistenceService {
       left: string,
       right: string,
     ) => Promise<WebhookVersionComparison>,
+  ) => Effect.Effect<
+    WebhookItemProjectionOutcome,
+    WebhookEventPersistenceError
+  >;
+  readonly projectSendEvidence?: (
+    input: ProjectSendEvidenceInput,
   ) => Effect.Effect<
     WebhookItemProjectionOutcome,
     WebhookEventPersistenceError
@@ -766,6 +773,30 @@ const processItems = (
               }),
             ),
         );
+        counts = increment(
+          counts,
+          outcome === "applied"
+            ? "appliedCount"
+            : outcome === "duplicate"
+              ? "duplicateCount"
+              : "supersededCount",
+        );
+        continue;
+      }
+      if (item.kind === "send_evidence") {
+        if (persistence.projectSendEvidence === undefined)
+          return yield* Effect.fail(new WebhookEventPersistenceError());
+        const outcome = yield* persistence.projectSendEvidence({
+          eventId: message.object_id,
+          evidence: item.evidence,
+          itemIdentity: item.itemIdentity,
+          itemIndex: item.itemIndex,
+          messageIdentity: item.messageIdentity,
+          personalAccountId: message.personal_account_id,
+          receivedAt: message.received_at,
+          status: item.status,
+          whatsappConnectionId: message.whatsapp_connection_id,
+        });
         counts = increment(
           counts,
           outcome === "applied"

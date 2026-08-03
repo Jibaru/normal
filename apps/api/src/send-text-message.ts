@@ -208,6 +208,7 @@ export const makeAtomicSendTextMessageService = (
         | "read"
         | "failed"
         | "unknown";
+      let messageIdentity: string | undefined;
       try {
         const authority = await decryptString(envelope(provider.authority), {
           entity: "whatsapp-connection",
@@ -257,6 +258,9 @@ export const makeAtomicSendTextMessageService = (
               : result.outcome === "definitive_failure"
                 ? "failed"
                 : result.status;
+          if (result.outcome === "identity_evidence") {
+            messageIdentity = result.messageIdentity;
+          }
         } finally {
           identityBytes.fill(0);
         }
@@ -266,6 +270,7 @@ export const makeAtomicSendTextMessageService = (
       const updated = await options.repository
         .recordProviderOutcome({
           changedAt: options.now(),
+          ...(messageIdentity === undefined ? {} : { messageIdentity }),
           sendId: send.id,
           status,
         })

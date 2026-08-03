@@ -250,6 +250,7 @@ export interface McpToolCallCompletedEvent {
     | "list_connections"
     | "list_contacts"
     | "list_groups"
+    | "get_send_status"
     | "send_text_message"
     | "list_chats"
     | "read_messages";

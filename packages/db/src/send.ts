@@ -91,6 +91,7 @@ export interface AtomicSendRepository {
   readonly expireLeases: (observedAt: Date) => Promise<number>;
   readonly recordProviderOutcome: (input: {
     readonly changedAt: Date;
+    readonly messageIdentity?: string;
     readonly sendId: string;
     readonly status:
       | "accepted"
@@ -485,10 +486,15 @@ export const makePgAtomicSendRepository = (
         [accountId],
       );
       const result = await connection.query<Record<string, unknown>>(
-        `UPDATE app.send_operations SET status=$2,status_changed_at=$3
+        `UPDATE app.send_operations SET status=$2,status_changed_at=$3,message_identity=$4
          WHERE id=$1 AND status='processing' AND $3::timestamptz < lease_expires_at
          RETURNING *`,
-        [input.sendId, input.status, input.changedAt],
+        [
+          input.sendId,
+          input.status,
+          input.changedAt,
+          input.messageIdentity ?? null,
+        ],
       );
       const operation =
         result.rows[0] ??

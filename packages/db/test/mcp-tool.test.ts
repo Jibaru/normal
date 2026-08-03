@@ -439,6 +439,25 @@ describe("MCP tool repository", () => {
         status: "accepted",
       }),
     ).resolves.toMatchObject({ status: "accepted" });
+    await expect(
+      repository.getSendStatus({
+        ...authorization,
+        connectionPublicId: connectionA,
+        observedAt: new Date(observedAt.valueOf() + 16_000),
+        sendPublicId: input.sendPublicId,
+      }),
+    ).resolves.toMatchObject({
+      publicId: input.sendPublicId,
+      status: "accepted",
+    });
+    await expect(
+      repository.getSendStatus({
+        ...authorization,
+        connectionPublicId: connectionLater,
+        observedAt: new Date(observedAt.valueOf() + 16_000),
+        sendPublicId: input.sendPublicId,
+      }),
+    ).resolves.toBeNull();
   });
 
   test("atomically expires unresolved leases and rejects late direct responses", async () => {

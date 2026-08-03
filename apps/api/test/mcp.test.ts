@@ -125,6 +125,7 @@ const makeHarness = (
     readonly messagePage?: McpToolMessagePage;
     readonly cursorKey?: CryptoKey;
     readonly sendResult?: SendTextMessageResult;
+    readonly sendStatusNotFound?: boolean;
     readonly tombstone?: boolean;
   } = {},
 ) => {
@@ -197,10 +198,12 @@ const makeHarness = (
         const requiredScope =
           input.toolName === "list_connections"
             ? "connections:read"
-            : input.toolName === "list_chats" ||
-                input.toolName === "read_messages"
-              ? "messages:read"
-              : "directory:read";
+            : input.toolName === "get_send_status"
+              ? "messages:send"
+              : input.toolName === "list_chats" ||
+                  input.toolName === "read_messages"
+                ? "messages:read"
+                : "directory:read";
         if (
           overrides.scopes !== undefined &&
           !overrides.scopes.includes(requiredScope)
@@ -225,6 +228,17 @@ const makeHarness = (
         observations.push(`complete-message-read:${input.resultCount}`);
         return Effect.succeed({ outcome: "success" as const });
       },
+      getSendStatus: () =>
+        Effect.succeed(
+          overrides.sendStatusNotFound
+            ? null
+            : {
+                createdAt: "2026-08-03T12:00:00.000Z",
+                publicId: "snd_123456789012345678901",
+                status: "delivered" as const,
+                statusChangedAt: "2026-08-03T12:01:00.000Z",
+              },
+        ),
       inspectAuthorization: () =>
         overrides.failInspect
           ? Effect.fail(new McpToolPersistenceError())
@@ -1592,6 +1606,10 @@ describe("atomic send_text_message MCP boundary", () => {
         },
         _meta: { "anthropic/requiresUserInteraction": true },
       }),
+      expect.objectContaining({
+        name: "get_send_status",
+        annotations: { readOnlyHint: true },
+      }),
     ]);
     expect(JSON.stringify(body)).not.toContain("confirmed");
 
@@ -1632,6 +1650,35 @@ describe("atomic send_text_message MCP boundary", () => {
           status: "accepted",
           idempotent_replay: false,
         },
+      },
+    });
+  });
+
+  test("reads a locally converged status and shares one not-found boundary", async () => {
+    const harness = makeHarness({ scopes: ["messages:send"] });
+    const call = (sendStatusNotFound = false) =>
+      (sendStatusNotFound
+        ? makeHarness({ scopes: ["messages:send"], sendStatusNotFound })
+        : harness
+      ).handler(
+        jsonRpcRequest("tools/call", {
+          name: "get_send_status",
+          arguments: {
+            connection_id: "con_123456789012345678901",
+            send_id: "snd_123456789012345678901",
+          },
+        }),
+        {},
+        executionContext,
+        authorization,
+      );
+    expect(await (await call()).json()).toMatchObject({
+      result: { structuredContent: { status: "delivered" } },
+    });
+    expect(await (await call(true)).json()).toMatchObject({
+      result: {
+        isError: true,
+        structuredContent: { error_code: "send_not_found", retryable: false },
       },
     });
   });

@@ -221,6 +221,11 @@ const makeHarness = (options: HarnessOptions = {}) => {
           });
           return "applied" as const;
         }),
+      projectSendEvidence: (input) =>
+        Effect.sync(() => {
+          calls.push(`send-evidence:${input.status}:${input.messageIdentity}`);
+          return "applied" as const;
+        }),
       quarantine: (input) =>
         Effect.sync(() => {
           calls.push(`quarantine:${input.classification}`);
@@ -554,6 +559,35 @@ describe("Webhook Event processing", () => {
     expect(jitteredWebhookRetryDelaySeconds(0)).toBe(9_900);
     expect(jitteredWebhookRetryDelaySeconds(0.5)).toBe(10_800);
     expect(jitteredWebhookRetryDelaySeconds(1)).toBe(11_700);
+  });
+
+  test("projects normalized Send Status evidence instead of quarantining it", async () => {
+    const harness = makeHarness({
+      delivery: {
+        items: [
+          {
+            direction: "outbound",
+            evidence: { occurredAt: "2026-07-31T12:09:45.000Z", version: null },
+            itemIdentity: `wi1_${"send_evidence".padEnd(43, "0")}` as never,
+            itemIndex: 0,
+            kind: "send_evidence",
+            messageIdentity: `wi1_${"message".padEnd(43, "0")}` as never,
+            status: "delivered",
+          },
+        ],
+      },
+    });
+    const queued = queueMessage(message);
+    await handleWebhookEventBatch(
+      {
+        messages: [queued.message],
+        queue: "whatsapp-mcp-ingestion",
+      } as unknown as MessageBatch,
+      harness.layer,
+    );
+    expect(harness.calls).toContain(
+      `send-evidence:delivered:wi1_${"message".padEnd(43, "0")}`,
+    );
   });
 
   test("acknowledges a permanently invalid Queue envelope without touching data", async () => {

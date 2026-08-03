@@ -40,6 +40,7 @@ export type McpToolName =
   | "list_contacts"
   | "list_groups"
   | "send_text_message"
+  | "get_send_status"
   | "list_chats"
   | "read_messages";
 
@@ -60,6 +61,19 @@ export interface McpToolMessageRecord {
   readonly content: McpToolDirectoryCiphertext | null;
   readonly editedAt?: string | null;
   readonly deleted?: boolean;
+}
+export interface McpToolSendStatusRecord {
+  readonly createdAt: string;
+  readonly publicId: string;
+  readonly status:
+    | "processing"
+    | "accepted"
+    | "sent"
+    | "delivered"
+    | "read"
+    | "failed"
+    | "unknown";
+  readonly statusChangedAt: string;
 }
 export interface McpToolMessagePage {
   readonly accountKey: AccountKeyEnvelope;
@@ -237,6 +251,13 @@ export interface McpToolRepository {
   readonly listConnections: (
     input: McpAccessAuthorization & { readonly observedAt: Date },
   ) => Promise<ReadonlyArray<McpToolConnectionRecord> | null>;
+  readonly getSendStatus: (
+    input: McpAccessAuthorization & {
+      readonly connectionPublicId: string;
+      readonly observedAt: Date;
+      readonly sendPublicId: string;
+    },
+  ) => Promise<McpToolSendStatusRecord | null>;
   readonly listGroups: (
     input: McpAccessAuthorization & {
       readonly connectionPublicId: string;
@@ -341,6 +362,11 @@ const timestamp = (value: unknown): Date | null => {
 
 const timestampString = (value: unknown): string | null =>
   timestamp(value)?.toISOString() ?? null;
+
+const requiredString = (value: unknown): string => {
+  if (typeof value !== "string") throw new Error("invalid text value");
+  return value;
+};
 
 const bytes = (value: unknown): Uint8Array | null => {
   if (value instanceof Uint8Array) return value;
@@ -752,7 +778,7 @@ const insertToolCallLog = (
 const requiredScope = (toolName: McpToolName): McpAuthorizationScope =>
   toolName === "list_connections"
     ? "connections:read"
-    : toolName === "send_text_message"
+    : toolName === "send_text_message" || toolName === "get_send_status"
       ? "messages:send"
       : toolName === "list_chats"
         ? "messages:read"
@@ -965,6 +991,56 @@ export const makeMcpToolRepository = (
             stateChangedAt,
           };
         });
+      }),
+    ),
+  getSendStatus: (input) =>
+    provider.withConnection((connection) =>
+      withTransaction(connection, async () => {
+        if ((await enterAuthorizationContext(connection, input)) === null)
+          return null;
+        const result = await connection.query<Record<string, unknown>>(
+          `SELECT operations.public_id, operations.status,
+             operations.created_at, operations.status_changed_at
+           FROM app.send_operations AS operations
+           JOIN app.whatsapp_connections AS connections
+             ON connections.personal_account_id=operations.personal_account_id
+            AND connections.id=operations.whatsapp_connection_id
+           JOIN app.mcp_authorizations AS authorizations
+             ON authorizations.personal_account_id=operations.personal_account_id
+            AND authorizations.id=operations.mcp_authorization_id
+           JOIN app.mcp_authorization_connections AS grants
+             ON grants.personal_account_id=operations.personal_account_id
+            AND grants.mcp_authorization_id=authorizations.id
+            AND grants.whatsapp_connection_id=connections.id
+           WHERE operations.mcp_authorization_id=$1
+             AND operations.public_id=$2 AND connections.public_id=$3
+             AND operations.expires_at>$4 AND connections.state<>'deleting'
+             AND 'messages:send'=ANY(authorizations.scopes)`,
+          [
+            input.authorizationId,
+            input.sendPublicId,
+            input.connectionPublicId,
+            input.observedAt,
+          ],
+        );
+        const row = result.rows[0];
+        if (row === undefined) return null;
+        return {
+          createdAt:
+            timestampString(row.created_at) ??
+            (() => {
+              throw new Error("invalid send timestamp");
+            })(),
+          publicId: requiredString(row.public_id),
+          status: requiredString(
+            row.status,
+          ) as McpToolSendStatusRecord["status"],
+          statusChangedAt:
+            timestampString(row.status_changed_at) ??
+            (() => {
+              throw new Error("invalid send timestamp");
+            })(),
+        };
       }),
     ),
   listChats: (input) =>

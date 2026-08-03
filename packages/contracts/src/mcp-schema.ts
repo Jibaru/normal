@@ -135,6 +135,15 @@ export const SendTextMessageOutputContract = makePublicObjectContract({
 export type SendTextMessageOutput =
   typeof SendTextMessageOutputContract.schema.Type;
 
+export const GetSendStatusOutputContract = makePublicObjectContract({
+  send_id: SendId,
+  status: SendStatus,
+  created_at: UtcTimestamp,
+  status_changed_at: UtcTimestamp,
+});
+export type GetSendStatusOutput =
+  typeof GetSendStatusOutputContract.schema.Type;
+
 export const ListChatsOutputContract = makePublicObjectContract({
   chats: Schema.Array(
     Schema.Struct({
