@@ -157,6 +157,11 @@ export interface ProjectStoredMessageInput
   readonly messageIdentity: string;
   readonly messageId: string;
   readonly messagePublicId: string;
+  readonly media?: {
+    readonly id: string;
+    readonly publicId: string;
+    readonly source: PersistedDirectoryCiphertext;
+  } | null;
   readonly recipientLocator: string;
   readonly recipientKind: "direct" | "group";
   readonly recipientPublicId: string;
@@ -1649,6 +1654,26 @@ export const makeWebhookEventRepository = (
         if (typeof conversationId !== "string")
           throw new Error("invalid WhatsApp Conversation");
         await connection.query(
+          `WITH removed AS (
+             DELETE FROM app.stored_media media USING app.stored_messages messages
+             WHERE messages.personal_account_id=$1 AND messages.whatsapp_connection_id=$2
+               AND messages.message_identity=$3 AND media.personal_account_id=messages.personal_account_id
+               AND media.whatsapp_connection_id=messages.whatsapp_connection_id AND media.stored_message_id=messages.id
+             RETURNING media.object_key,media.plaintext_size_bytes,media.state
+           ), queued AS (
+             INSERT INTO app.stored_media_object_deletions(personal_account_id,object_key)
+             SELECT $1,object_key FROM removed WHERE object_key IS NOT NULL ON CONFLICT DO NOTHING
+           )
+           UPDATE app.personal_accounts SET stored_media_used_bytes=stored_media_used_bytes-
+             coalesce((SELECT sum(plaintext_size_bytes) FROM removed WHERE state='ready'),0)
+           WHERE id=$1`,
+          [
+            input.personalAccountId,
+            input.whatsappConnectionId,
+            input.messageIdentity,
+          ],
+        );
+        await connection.query(
           `INSERT INTO app.stored_messages (id,personal_account_id,whatsapp_connection_id,conversation_id,
              public_id,message_identity,direction,sent_at,content_type,content_ciphertext_version,
              content_key_version,content_nonce,content_ciphertext,provider_occurred_at,provider_version,
@@ -1682,6 +1707,39 @@ export const makeWebhookEventRepository = (
             input.itemIdentity,
           ],
         );
+        if (input.media != null) {
+          const storedMessage = await connection.query<{ id: unknown }>(
+            `SELECT id FROM app.stored_messages WHERE personal_account_id=$1
+               AND whatsapp_connection_id=$2 AND message_identity=$3`,
+            [
+              input.personalAccountId,
+              input.whatsappConnectionId,
+              input.messageIdentity,
+            ],
+          );
+          const storedMessageId = storedMessage.rows[0]?.id;
+          if (typeof storedMessageId !== "string")
+            throw new Error("invalid Stored Message for media");
+          await connection.query(
+            `INSERT INTO app.stored_media (id,personal_account_id,whatsapp_connection_id,
+               stored_message_id,public_id,state,media_type,source_ciphertext_version,
+               source_key_version,source_nonce,source_ciphertext)
+             VALUES ($1,$2,$3,$4,$5,'pending',$6,$7,$8,$9,$10)
+             ON CONFLICT (personal_account_id,whatsapp_connection_id,stored_message_id) DO NOTHING`,
+            [
+              input.media.id,
+              input.personalAccountId,
+              input.whatsappConnectionId,
+              storedMessageId,
+              input.media.publicId,
+              input.contentType,
+              input.media.source.version,
+              input.media.source.keyVersion,
+              decodeNonce(input.media.source),
+              decodeCiphertext(input.media.source),
+            ],
+          );
+        }
         await connection.query(
           `UPDATE app.whatsapp_conversations AS conversations SET
              last_activity_at=latest.sent_at,last_activity_direction=latest.direction,updated_at=transaction_timestamp()

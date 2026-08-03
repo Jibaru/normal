@@ -30,12 +30,20 @@ import {
   type AtomicSendRepository,
   makePgAtomicSendRepositoryFromConnectionString,
 } from "@whatsapp-mcp/db/send";
+import {
+  makePgStoredMediaRepository,
+  type PendingStoredMediaCandidate,
+} from "@whatsapp-mcp/db/stored-media";
 import { makePgWebhookEventRepository } from "@whatsapp-mcp/db/webhook-event";
 import { makePgWebhookIngressRepository } from "@whatsapp-mcp/db/webhook-ingress";
 import { makePgWebhookReplayRepository } from "@whatsapp-mcp/db/webhook-replay";
 import { makePgWhatsAppConnectionRepository } from "@whatsapp-mcp/db/whatsapp-connection";
+import type { SessionAuthority } from "@whatsapp-mcp/wasender/control";
+import { makeWasenderMediaRetrievalLayer } from "@whatsapp-mcp/wasender/media";
 import {
   type DirectorySessionAuthority,
+  MediaRetrieval,
+  type MediaSource,
   makeWasenderSessionDirectory,
   type ProviderNeutralFailure,
   type WasenderIdentityProtectionKey,
@@ -163,6 +171,7 @@ import {
   SafeTelemetry,
   type SafeTelemetryEvent,
 } from "./services";
+import { processStoredMedia } from "./stored-media-ingestion";
 import {
   handleWebhookDeadLetterBatch,
   handleWebhookEventBatch,
@@ -2464,6 +2473,118 @@ interface ConnectionSetupScheduledRepository {
 interface ConnectionHealthScheduledRepository
   extends Pick<ConnectionHealthRepository, "claim" | "finish"> {}
 
+const storedMediaSessionAuthority = (
+  plaintext: Uint8Array,
+): SessionAuthority => {
+  const parsed = JSON.parse(new TextDecoder().decode(plaintext)) as unknown;
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    !("sessionCredential" in parsed) ||
+    typeof parsed.sessionCredential !== "string" ||
+    !/^[\x21-\x7e]{1,4096}$/u.test(parsed.sessionCredential)
+  )
+    throw new Error("invalid Stored Media provider authority");
+  return Redacted.make(parsed.sessionCredential) as SessionAuthority;
+};
+
+const processProductionStoredMedia = async (
+  environment: ApiEnvironment,
+  candidate: PendingStoredMediaCandidate,
+): Promise<void> => {
+  if (
+    !hasMethods(environment.STORED_MEDIA, [
+      "createMultipartUpload",
+      "delete",
+      "get",
+    ])
+  )
+    throw new Error("Stored Media object storage unavailable");
+  const repository = makePgStoredMediaRepository(
+    environment.HYPERDRIVE?.connectionString ?? "",
+  );
+  const baseLayer = Layer.mergeAll(
+    encryptionLayer(environment),
+    storedMediaContainerLayer(environment),
+  );
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const encryption = yield* EnvelopeEncryptionService;
+      const container = yield* StoredMediaContainerService;
+      const authorityBytes = yield* encryption.decrypt({
+        accountKey: candidate.accountKey,
+        connectionKey: candidate.connectionKey,
+        ciphertext: candidate.authority,
+        context: {
+          accountId: candidate.personalAccountId,
+          connectionId: candidate.whatsappConnectionId,
+          entity: "whatsapp-connection",
+          fieldOrObjectPurpose: "provider-session-authority",
+          recordId: candidate.whatsappConnectionId,
+        },
+      });
+      const sourceBytes = yield* encryption.decrypt({
+        accountKey: candidate.accountKey,
+        connectionKey: candidate.connectionKey,
+        ciphertext: candidate.source,
+        context: {
+          accountId: candidate.personalAccountId,
+          connectionId: candidate.whatsappConnectionId,
+          entity: "stored-media",
+          fieldOrObjectPurpose: "provider-source",
+          recordId: candidate.id,
+        },
+      });
+      let authority: SessionAuthority;
+      try {
+        authority = storedMediaSessionAuthority(authorityBytes);
+      } finally {
+        authorityBytes.fill(0);
+      }
+      let source: MediaSource;
+      try {
+        source = Redacted.make(
+          new TextDecoder().decode(sourceBytes),
+        ) as MediaSource;
+      } finally {
+        sourceBytes.fill(0);
+      }
+      const retrieval = yield* MediaRetrieval.pipe(
+        Effect.provide(
+          makeWasenderMediaRetrievalLayer({ sessionAuthority: authority }),
+        ),
+      );
+      yield* Effect.promise(() =>
+        processStoredMedia({
+          container,
+          deleteObject: (objectKey) =>
+            (environment.STORED_MEDIA as Pick<R2Bucket, "delete">)
+              .delete(objectKey)
+              .catch(() =>
+                repository.enqueueObjectDeletion({
+                  objectKey,
+                  personalAccountId: candidate.personalAccountId,
+                }),
+              ),
+          encryption,
+          input: {
+            accountKey: candidate.accountKey,
+            connectionKey: candidate.connectionKey,
+            id: candidate.id,
+            mediaType: candidate.mediaType,
+            objectKey: `media/${crypto.randomUUID()}`,
+            personalAccountId: candidate.personalAccountId,
+            source,
+            whatsappConnectionId: candidate.whatsappConnectionId,
+          },
+          persistence: repository,
+          retrieval,
+        }),
+      );
+    }).pipe(Effect.provide(baseLayer)),
+  );
+};
+
 const unavailableDirectoryFailure = (): ProviderNeutralFailure => ({
   _tag: "ProviderNeutralFailure",
   code: "invalid_response",
@@ -2564,6 +2685,12 @@ export const createProductionScheduledHandler =
       readonly makeSendRepository?: (
         connectionString: string,
       ) => Pick<AtomicSendRepository, "expireLeases">;
+      readonly listPendingStoredMedia?: (
+        limit: number,
+      ) => Promise<ReadonlyArray<PendingStoredMediaCandidate>>;
+      readonly processPendingStoredMedia?: (
+        candidate: PendingStoredMediaCandidate,
+      ) => Promise<void>;
       readonly now?: () => string;
       readonly retainWebhookSources?: (observedAt: string) => Promise<void>;
       readonly sweepWebhookIngress?: (observedAt: string) => Promise<void>;
@@ -2745,6 +2872,37 @@ export const createProductionScheduledHandler =
       dependencies.makeSendRepository ??
       makePgAtomicSendRepositoryFromConnectionString
     )(connectionString).expireLeases(new Date(observedAt));
+    const pendingMedia = await (
+      dependencies.listPendingStoredMedia ??
+      (dependencies.makeRepository === undefined
+        ? (limit) =>
+            makePgStoredMediaRepository(connectionString).listPending(limit)
+        : async () => [])
+    )(10);
+    if (dependencies.makeRepository === undefined) {
+      const storedMediaRepository =
+        makePgStoredMediaRepository(connectionString);
+      const objectDeletions =
+        await storedMediaRepository.listObjectDeletions(100);
+      if (!hasMethods(environment.STORED_MEDIA, ["delete"]))
+        throw new Error("Stored Media deletion unavailable");
+      await Promise.all(
+        objectDeletions.map(async (deletion) => {
+          await (environment.STORED_MEDIA as Pick<R2Bucket, "delete">).delete(
+            deletion.objectKey,
+          );
+          await storedMediaRepository.finishObjectDeletion(deletion);
+        }),
+      );
+    }
+    await Promise.all(
+      pendingMedia.map((candidate) =>
+        (
+          dependencies.processPendingStoredMedia ??
+          ((value) => processProductionStoredMedia(environment, value))
+        )(candidate),
+      ),
+    );
     Effect.runSync(
       safeTelemetry.emit({
         event: "send.dispatch_lease.sweep_completed",

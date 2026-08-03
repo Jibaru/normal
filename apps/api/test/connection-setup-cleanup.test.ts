@@ -5,6 +5,7 @@ import type {
   SessionDeletionObservation,
   SessionReconciliation,
 } from "@whatsapp-mcp/contracts/provider-control";
+import type { PendingStoredMediaCandidate } from "@whatsapp-mcp/db/stored-media";
 import { Effect, Layer } from "effect";
 import { describe, expect, test } from "vitest";
 import {
@@ -255,6 +256,10 @@ describe("Connection Setup cleanup saga", () => {
     const observed: Array<string> = [];
     const sweepObserved: string[] = [];
     const sendLeaseSweeps: Date[] = [];
+    const processedMedia: PendingStoredMediaCandidate[] = [];
+    const pendingMedia = {
+      id: "30000000-0000-4000-8000-000000000045",
+    } as PendingStoredMediaCandidate;
     const handler = createProductionScheduledHandler(
       {
         CONNECTION_SETUP_PROVISIONING_QUEUE: {
@@ -282,6 +287,13 @@ describe("Connection Setup cleanup saga", () => {
             return 2;
           },
         }),
+        listPendingStoredMedia: async (limit) => {
+          expect(limit).toBe(10);
+          return [pendingMedia];
+        },
+        processPendingStoredMedia: async (candidate) => {
+          processedMedia.push(candidate);
+        },
         sweepWebhookIngress: async (value) => {
           sweepObserved.push(value);
         },
@@ -296,6 +308,7 @@ describe("Connection Setup cleanup saga", () => {
     expect(observed).toEqual(["2026-07-31T12:15:00.000Z"]);
     expect(sweepObserved).toEqual(["2026-07-31T12:15:00.000Z"]);
     expect(sendLeaseSweeps).toEqual([new Date("2026-07-31T12:15:00.000Z")]);
+    expect(processedMedia).toEqual([pendingMedia]);
     expect(batches).toEqual([
       [
         {

@@ -4,6 +4,7 @@ import {
   ContactId,
   ConversationId,
   GroupId,
+  MediaId,
   MessageId,
   SendId,
 } from "./handles";
@@ -195,7 +196,24 @@ export const ReadMessagesOutputContract = makePublicObjectContract({
       ),
       edited_at: Schema.NullOr(UtcTimestamp),
       deleted: Schema.Boolean,
-      media: Schema.Null,
+      media: Schema.NullOr(
+        Schema.Struct({
+          media_id: MediaId,
+          state: Schema.Literal("pending", "ready", "rejected", "failed"),
+          size_bytes: Schema.NullOr(
+            Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+          ),
+          mime_type: Schema.NullOr(Schema.String),
+          filename: Schema.NullOr(Schema.String),
+          availability: Schema.Literal(
+            "processing",
+            "readable",
+            "too_large_for_mcp",
+            "unavailable",
+          ),
+          resource_uri: Schema.NullOr(Schema.String),
+        }),
+      ),
     }),
   ).pipe(Schema.maxItems(50)),
   size_limited: Schema.Boolean,

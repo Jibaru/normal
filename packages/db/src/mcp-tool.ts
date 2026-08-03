@@ -61,6 +61,13 @@ export interface McpToolMessageRecord {
   readonly content: McpToolDirectoryCiphertext | null;
   readonly editedAt?: string | null;
   readonly deleted?: boolean;
+  readonly media?: {
+    readonly id: string;
+    readonly publicId: string;
+    readonly state: "failed" | "pending" | "ready" | "rejected";
+    readonly plaintextSizeBytes: number | null;
+    readonly metadata: McpToolDirectoryCiphertext | null;
+  } | null;
 }
 export interface McpToolSendStatusRecord {
   readonly createdAt: string;
@@ -1268,9 +1275,14 @@ export const makeMcpToolRepository = (
           `SELECT messages.public_id, messages.message_identity, messages.sent_at, messages.direction,
              messages.content_type, messages.content_ciphertext_version, messages.content_key_version,
              messages.content_nonce, messages.content_ciphertext, messages.edited_at,
-             messages.deleted_at, conversations.kind
+             messages.deleted_at, conversations.kind, media.id AS media_id, media.public_id AS media_public_id,
+             media.state AS media_state, media.plaintext_size_bytes,
+             media.metadata_ciphertext_version,media.metadata_key_version,
+             media.metadata_nonce,media.metadata_ciphertext
            FROM app.stored_messages messages
            JOIN app.whatsapp_conversations conversations ON conversations.personal_account_id=messages.personal_account_id AND conversations.whatsapp_connection_id=messages.whatsapp_connection_id AND conversations.id=messages.conversation_id
+           LEFT JOIN app.stored_media media ON media.personal_account_id=messages.personal_account_id
+             AND media.whatsapp_connection_id=messages.whatsapp_connection_id AND media.stored_message_id=messages.id
            WHERE messages.personal_account_id=$1 AND messages.whatsapp_connection_id=$2
              AND conversations.public_id=$3 AND messages.sent_at >= $4
              AND ($5::timestamptz IS NULL OR messages.sent_at < $5 OR (messages.sent_at=$5 AND messages.public_id < $6))
@@ -1310,6 +1322,48 @@ export const makeMcpToolRepository = (
               ? null
               : timestampString(message.edited_at);
           const deleted = timestamp(message.deleted_at) !== null;
+          const mediaState = message.media_state;
+          const mediaCiphertext = bytes(message.metadata_ciphertext);
+          const mediaNonce = bytes(message.metadata_nonce);
+          const mediaKeyVersion = positiveInteger(message.metadata_key_version);
+          const media =
+            mediaState === null || mediaState === undefined
+              ? null
+              : typeof message.media_id === "string" &&
+                  typeof message.media_public_id === "string" &&
+                  (mediaState === "pending" ||
+                    mediaState === "ready" ||
+                    mediaState === "rejected" ||
+                    mediaState === "failed")
+                ? {
+                    id: message.media_id,
+                    publicId: message.media_public_id,
+                    state: mediaState as
+                      | "failed"
+                      | "pending"
+                      | "ready"
+                      | "rejected",
+                    plaintextSizeBytes:
+                      message.plaintext_size_bytes === null
+                        ? null
+                        : Number(message.plaintext_size_bytes),
+                    metadata:
+                      mediaState === "ready" &&
+                      message.metadata_ciphertext_version === 1 &&
+                      mediaCiphertext !== null &&
+                      mediaNonce !== null &&
+                      mediaKeyVersion !== null
+                        ? {
+                            ciphertext: base64(mediaCiphertext),
+                            keyVersion: mediaKeyVersion,
+                            nonce: base64(mediaNonce),
+                            version: 1 as const,
+                          }
+                        : null,
+                  }
+                : (() => {
+                    throw new Error("invalid Stored Media");
+                  })();
           if (
             typeof message.public_id !== "string" ||
             typeof message.message_identity !== "string" ||
@@ -1353,6 +1407,7 @@ export const makeMcpToolRepository = (
                 },
             editedAt,
             deleted,
+            media,
           };
         });
         const newest = messages[0]?.sentAt ?? input.observedAt.toISOString();

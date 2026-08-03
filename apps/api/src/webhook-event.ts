@@ -2,6 +2,7 @@ import {
   makeContactId,
   makeConversationId,
   makeGroupId,
+  makeMediaId,
   makeMessageId,
 } from "@whatsapp-mcp/contracts/handles";
 import type {
@@ -198,6 +199,7 @@ export interface WebhookEventIdentifiersService {
   readonly nextContactId: Effect.Effect<string>;
   readonly nextConversationId?: Effect.Effect<string>;
   readonly nextMessageId?: Effect.Effect<string>;
+  readonly nextMediaId?: Effect.Effect<string>;
 }
 
 export const WebhookEventIdentifiers =
@@ -710,6 +712,30 @@ const processItems = (
           Effect.sync(() => makeConversationId());
         const messagePublicId = yield* identifiers.nextMessageId ??
           Effect.sync(() => makeMessageId());
+        const mediaId =
+          item.content.mediaSource === null ? null : crypto.randomUUID();
+        const mediaPublicId =
+          item.content.mediaSource === null
+            ? null
+            : yield* identifiers.nextMediaId ??
+                Effect.sync(() => makeMediaId());
+        const protectedMediaSource =
+          item.content.mediaSource === null || mediaId === null
+            ? null
+            : yield* encryption.encrypt({
+                accountKey: material.accountKey,
+                connectionKey: material.connectionKey,
+                context: {
+                  accountId: message.personal_account_id,
+                  connectionId: message.whatsapp_connection_id,
+                  entity: "stored-media",
+                  fieldOrObjectPurpose: "provider-source",
+                  recordId: mediaId,
+                },
+                plaintext: new TextEncoder().encode(
+                  Redacted.value(item.content.mediaSource),
+                ),
+              });
         const plaintext = new TextEncoder().encode(
           JSON.stringify({
             text: item.content.text,
@@ -756,6 +782,16 @@ const processItems = (
             messageId: crypto.randomUUID(),
             messageIdentity: item.messageIdentity,
             messagePublicId,
+            media:
+              mediaId === null ||
+              mediaPublicId === null ||
+              protectedMediaSource === null
+                ? null
+                : {
+                    id: mediaId,
+                    publicId: mediaPublicId,
+                    source: protectedMediaSource,
+                  },
             personalAccountId: message.personal_account_id,
             receivedAt: message.received_at,
             recipientKind,

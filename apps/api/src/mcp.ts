@@ -24,6 +24,7 @@ import {
   type SendTextMessageOutput,
   SendTextMessageOutputContract,
 } from "@whatsapp-mcp/contracts/mcp-schema";
+import { makeStoredMediaUri } from "@whatsapp-mcp/contracts/stored-media-uri";
 import type {
   BeginToolCallResult,
   McpAccessAuthorization,
@@ -370,7 +371,23 @@ const ReadMessagesOutputSchema = z
             text_total_utf8_bytes: z.number().int().nonnegative().nullable(),
             edited_at: z.iso.datetime().nullable(),
             deleted: z.boolean(),
-            media: z.null(),
+            media: z
+              .object({
+                media_id: z.string().regex(/^med_[A-Za-z0-9_-]{21}$/u),
+                state: z.enum(["pending", "ready", "rejected", "failed"]),
+                size_bytes: z.number().int().nonnegative().nullable(),
+                mime_type: z.string().nullable(),
+                filename: z.string().nullable(),
+                availability: z.enum([
+                  "processing",
+                  "readable",
+                  "too_large_for_mcp",
+                  "unavailable",
+                ]),
+                resource_uri: z.string().nullable(),
+              })
+              .strict()
+              .nullable(),
           })
           .strict(),
       )
@@ -1919,75 +1936,153 @@ const readMessages = (
     const page = loaded.right.page;
     const decrypted = yield* Effect.forEach(
       page.messages,
-      (message) =>
-        message.content === null
-          ? Effect.succeed({ message, text: null })
-          : encryption
-              .decrypt({
-                accountKey: page.accountKey,
-                connectionKey: page.connectionKey,
-                ciphertext: message.content,
-                context: {
-                  accountId: page.accountKey.personalAccountId,
-                  connectionId: page.connectionKey.connectionId,
-                  entity: "stored-message",
-                  fieldOrObjectPurpose: "content",
-                  recordId: message.messageIdentity,
-                },
-              })
-              .pipe(
-                Effect.map((bytes) => {
-                  try {
-                    const value = JSON.parse(
-                      new TextDecoder("utf-8", {
-                        fatal: true,
-                        ignoreBOM: false,
-                      }).decode(bytes),
-                    ) as unknown;
-                    if (
-                      typeof value !== "object" ||
-                      value === null ||
-                      !("text" in value) ||
-                      ((value as { text: unknown }).text !== null &&
-                        typeof (value as { text: unknown }).text !== "string")
-                    )
-                      throw new Error();
-                    return {
-                      message,
-                      text: (value as { text: string | null }).text,
-                    };
-                  } finally {
-                    bytes.fill(0);
-                  }
-                }),
-              ),
+      (message) => {
+        const content =
+          message.content === null
+            ? Effect.succeed({ message, text: null })
+            : encryption
+                .decrypt({
+                  accountKey: page.accountKey,
+                  connectionKey: page.connectionKey,
+                  ciphertext: message.content,
+                  context: {
+                    accountId: page.accountKey.personalAccountId,
+                    connectionId: page.connectionKey.connectionId,
+                    entity: "stored-message",
+                    fieldOrObjectPurpose: "content",
+                    recordId: message.messageIdentity,
+                  },
+                })
+                .pipe(
+                  Effect.map((bytes) => {
+                    try {
+                      const value = JSON.parse(
+                        new TextDecoder("utf-8", {
+                          fatal: true,
+                          ignoreBOM: false,
+                        }).decode(bytes),
+                      ) as unknown;
+                      if (
+                        typeof value !== "object" ||
+                        value === null ||
+                        !("text" in value) ||
+                        ((value as { text: unknown }).text !== null &&
+                          typeof (value as { text: unknown }).text !== "string")
+                      )
+                        throw new Error();
+                      return {
+                        message,
+                        text: (value as { text: string | null }).text,
+                      };
+                    } finally {
+                      bytes.fill(0);
+                    }
+                  }),
+                );
+        const mediaMetadata =
+          message.media?.metadata == null
+            ? Effect.succeed(null)
+            : encryption
+                .decrypt({
+                  accountKey: page.accountKey,
+                  connectionKey: page.connectionKey,
+                  ciphertext: message.media.metadata,
+                  context: {
+                    accountId: page.accountKey.personalAccountId,
+                    connectionId: page.connectionKey.connectionId,
+                    entity: "stored-media",
+                    fieldOrObjectPurpose: "metadata",
+                    recordId: message.media.id,
+                  },
+                })
+                .pipe(
+                  Effect.map((bytes) => {
+                    try {
+                      const value = JSON.parse(
+                        new TextDecoder("utf-8", {
+                          fatal: true,
+                          ignoreBOM: false,
+                        }).decode(bytes),
+                      ) as { fileName?: unknown; mimeType?: unknown };
+                      if (
+                        (value.fileName !== null &&
+                          typeof value.fileName !== "string") ||
+                        typeof value.mimeType !== "string"
+                      )
+                        throw new Error();
+                      return {
+                        fileName: value.fileName as string | null,
+                        mimeType: value.mimeType,
+                      };
+                    } finally {
+                      bytes.fill(0);
+                    }
+                  }),
+                );
+        return Effect.all({ content, mediaMetadata }).pipe(
+          Effect.map(({ content, mediaMetadata }) => ({
+            ...content,
+            mediaMetadata,
+          })),
+        );
+      },
       { concurrency: 4 },
     ).pipe(Effect.either);
     if (decrypted._tag === "Left") return yield* fail("service_unavailable");
     const encoder = new TextEncoder();
-    const normalized = decrypted.right.map(({ message, text }) => ({
-      message_id: message.publicId,
-      sent_at: message.sentAt,
-      direction: message.direction,
-      sender: {
-        kind:
-          message.direction === "outbound"
-            ? "self"
-            : message.conversationKind === "group"
-              ? "group_participant"
-              : "contact",
-        display_name: null,
-        phone_last_four: null,
-      },
-      content_type: message.contentType,
-      text,
-      text_truncated: false,
-      text_total_utf8_bytes:
-        text === null ? null : encoder.encode(text).byteLength,
-      edited_at: message.editedAt ?? null,
-      deleted: message.deleted ?? false,
-      media: null,
-    }));
+    const normalized = decrypted.right.map(
+      ({ message, text, mediaMetadata }) => ({
+        message_id: message.publicId,
+        sent_at: message.sentAt,
+        direction: message.direction,
+        sender: {
+          kind:
+            message.direction === "outbound"
+              ? "self"
+              : message.conversationKind === "group"
+                ? "group_participant"
+                : "contact",
+          display_name: null,
+          phone_last_four: null,
+        },
+        content_type: message.contentType,
+        text,
+        text_truncated: false,
+        text_total_utf8_bytes:
+          text === null ? null : encoder.encode(text).byteLength,
+        edited_at: message.editedAt ?? null,
+        deleted: message.deleted ?? false,
+        media:
+          message.media == null
+            ? null
+            : {
+                media_id: message.media.publicId,
+                state: message.media.state,
+                size_bytes: message.media.plaintextSizeBytes,
+                mime_type: mediaMetadata?.mimeType ?? null,
+                filename: mediaMetadata?.fileName ?? null,
+                availability:
+                  message.media.state === "pending"
+                    ? ("processing" as const)
+                    : message.media.state !== "ready"
+                      ? ("unavailable" as const)
+                      : (message.media.plaintextSizeBytes ??
+                            Number.POSITIVE_INFINITY) > 16_777_216
+                        ? ("too_large_for_mcp" as const)
+                        : ("readable" as const),
+                resource_uri:
+                  message.media.state === "ready" &&
+                  (message.media.plaintextSizeBytes ??
+                    Number.POSITIVE_INFINITY) <= 16_777_216
+                    ? makeStoredMediaUri({
+                        connectionId: input.connection_id as never,
+                        messageId: message.publicId as never,
+                        mediaId: message.media.publicId as never,
+                      })
+                    : null,
+              },
+      }),
+    );
     const makeOutput = (
       selectedNewestFirst: typeof normalized,
       olderCursor: string | null,
