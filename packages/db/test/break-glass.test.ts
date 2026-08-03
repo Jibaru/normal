@@ -27,51 +27,56 @@ describe("two-person break-glass authority", () => {
 
   afterEach(async () => database.close());
 
+  const asRole = async <T>(role: string, action: () => Promise<T>) => {
+    await database.exec(`SET ROLE ${role}`);
+    try {
+      return await action();
+    } finally {
+      await database.exec("RESET ROLE");
+    }
+  };
+
   const createRequest = () =>
-    database.query(
-      `SELECT app_private.create_break_glass_request($1, $2, $3, $4, $5, $6)`,
-      [
+    asRole("whatsapp_break_glass_requester", () =>
+      database.query(
+        `SELECT app_private.create_break_glass_request($1, $2, $3, $4, $5, $6)`,
+        [
+          requestId,
+          "incident-58",
+          "requester",
+          accountA,
+          "message_content",
+          new Date(Date.now() + 30 * 60_000),
+        ],
+      ),
+    );
+
+  const approveRequest = (approver: string) =>
+    asRole("whatsapp_break_glass_approver", () =>
+      database.query(`SELECT app_private.approve_break_glass_request($1, $2)`, [
         requestId,
-        "incident-58",
-        "requester",
-        accountA,
-        "message_content",
-        new Date(Date.now() + 30 * 60_000),
-      ],
+        approver,
+      ]),
+    );
+
+  const issueCredential = (digest: string) =>
+    asRole("whatsapp_break_glass_runtime", () =>
+      database.query(
+        `SELECT app_private.issue_break_glass_credential($1, $2, $3)`,
+        [requestId, "issuer", digest],
+      ),
     );
 
   test("requires two distinct approvals and rejects self-approval", async () => {
     await createRequest();
-    await expect(
-      database.query(`SELECT app_private.approve_break_glass_request($1, $2)`, [
-        requestId,
-        "requester",
-      ]),
-    ).rejects.toThrow();
-    await database.query(
-      `SELECT app_private.approve_break_glass_request($1, $2)`,
-      [requestId, "approver-a"],
-    );
-    await expect(
-      database.query(
-        `SELECT app_private.issue_break_glass_credential($1, $2, $3)`,
-        [requestId, "issuer", "a".repeat(64)],
-      ),
-    ).rejects.toThrow();
-    await expect(
-      database.query(`SELECT app_private.approve_break_glass_request($1, $2)`, [
-        requestId,
-        "approver-a",
-      ]),
-    ).rejects.toThrow();
-    await database.query(
-      `SELECT app_private.approve_break_glass_request($1, $2)`,
-      [requestId, "approver-b"],
-    );
-    const issued = await database.query<{ issue_break_glass_credential: Date }>(
-      `SELECT app_private.issue_break_glass_credential($1, $2, $3)`,
-      [requestId, "issuer", "a".repeat(64)],
-    );
+    await expect(approveRequest("requester")).rejects.toThrow();
+    await approveRequest("approver-a");
+    await expect(issueCredential("a".repeat(64))).rejects.toThrow();
+    await expect(approveRequest("approver-a")).rejects.toThrow();
+    await approveRequest("approver-b");
+    const issued = (await issueCredential("a".repeat(64))) as {
+      rows: Array<{ issue_break_glass_credential: Date }>;
+    };
     expect(issued.rows[0]?.issue_break_glass_credential).toBeInstanceOf(Date);
   });
 
@@ -91,6 +96,22 @@ describe("two-person break-glass authority", () => {
     );
 
     await database.exec("SET ROLE whatsapp_break_glass_runtime");
+    const missingCredential = await database.query<{
+      authorize_break_glass_attempt: boolean;
+    }>(`SELECT app_private.authorize_break_glass_attempt($1, NULL, $2, $3)`, [
+      requestId,
+      accountA,
+      "message_content",
+    ]);
+    expect(missingCredential.rows[0]?.authorize_break_glass_attempt).toBe(
+      false,
+    );
+    await expect(
+      database.query(
+        `SELECT app_private.record_break_glass_decryption_result($1, NULL, true)`,
+        [requestId],
+      ),
+    ).rejects.toThrow();
     const wrongAccount = await database.query<{
       authorize_break_glass_attempt: boolean;
     }>(`SELECT app_private.authorize_break_glass_attempt($1, $2, $3, $4)`, [

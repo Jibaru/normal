@@ -166,12 +166,12 @@ DECLARE request app_private.break_glass_requests;
 DECLARE allowed boolean;
 BEGIN
   SELECT * INTO request FROM app_private.break_glass_requests WHERE id = request_id FOR UPDATE;
-  allowed := request.id IS NOT NULL
+  allowed := COALESCE(request.id IS NOT NULL
     AND request.credential_sha256 = authorize_break_glass_attempt.credential_sha256
     AND request.personal_account_id = authorize_break_glass_attempt.personal_account_id
     AND request.capability = authorize_break_glass_attempt.capability
     AND request.credential_issued_at IS NOT NULL
-    AND request.expires_at > statement_timestamp();
+    AND request.expires_at > statement_timestamp(), false);
   IF request.id IS NOT NULL THEN
     INSERT INTO app_private.break_glass_audit_events
       (request_id, event_type, actor_reference, outcome)
@@ -196,7 +196,7 @@ SET search_path = pg_catalog, pg_temp AS $function$
 DECLARE request app_private.break_glass_requests;
 BEGIN
   SELECT * INTO STRICT request FROM app_private.break_glass_requests WHERE id = request_id FOR UPDATE;
-  IF request.credential_sha256 <> record_break_glass_decryption_result.credential_sha256
+  IF request.credential_sha256 IS DISTINCT FROM record_break_glass_decryption_result.credential_sha256
      OR request.credential_issued_at IS NULL OR request.expires_at <= statement_timestamp() THEN
     RAISE EXCEPTION 'break-glass result credential is invalid or expired';
   END IF;
