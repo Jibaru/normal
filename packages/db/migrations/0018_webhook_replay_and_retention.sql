@@ -59,7 +59,8 @@ CREATE TABLE app.webhook_replay_attempts (
       )
     ),
   requested_at timestamptz NOT NULL,
-  status text NOT NULL CHECK (status IN ('pending', 'dispatched')),
+  status text NOT NULL
+    CHECK (status IN ('pending', 'dispatched', 'source_unavailable')),
   dispatched_at timestamptz,
   expires_at timestamptz NOT NULL,
   created_at timestamptz NOT NULL DEFAULT transaction_timestamp(),
@@ -68,7 +69,7 @@ CREATE TABLE app.webhook_replay_attempts (
     ON DELETE CASCADE,
   CHECK (expires_at = requested_at + interval '90 days'),
   CHECK (
-    (status = 'pending' AND dispatched_at IS NULL)
+    (status IN ('pending', 'source_unavailable') AND dispatched_at IS NULL)
     OR
     (
       status = 'dispatched'
@@ -263,7 +264,42 @@ BEGIN
   WHERE incidents.id = requested_incident_id
   FOR UPDATE;
 
-  IF NOT FOUND OR incident.webhook_event_id IS NULL THEN
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT
+      'source_unavailable'::text,
+      NULL::uuid,
+      NULL::uuid,
+      NULL::uuid,
+      NULL::text,
+      NULL::integer,
+      NULL::timestamptz;
+    RETURN;
+  END IF;
+
+  IF incident.webhook_event_id IS NULL THEN
+    INSERT INTO app.webhook_replay_attempts (
+      id,
+      personal_account_id,
+      whatsapp_connection_id,
+      incident_id,
+      operator_reference,
+      reason_code,
+      requested_at,
+      status,
+      expires_at
+    )
+    VALUES (
+      requested_id,
+      incident.personal_account_id,
+      incident.whatsapp_connection_id,
+      incident.id,
+      requested_operator_reference,
+      requested_reason_code,
+      requested_at,
+      'source_unavailable',
+      requested_at + interval '90 days'
+    );
+
     RETURN QUERY SELECT
       'source_unavailable'::text,
       NULL::uuid,
@@ -287,6 +323,29 @@ BEGIN
   FOR UPDATE;
 
   IF NOT FOUND THEN
+    INSERT INTO app.webhook_replay_attempts (
+      id,
+      personal_account_id,
+      whatsapp_connection_id,
+      incident_id,
+      operator_reference,
+      reason_code,
+      requested_at,
+      status,
+      expires_at
+    )
+    VALUES (
+      requested_id,
+      incident.personal_account_id,
+      incident.whatsapp_connection_id,
+      incident.id,
+      requested_operator_reference,
+      requested_reason_code,
+      requested_at,
+      'source_unavailable',
+      requested_at + interval '90 days'
+    );
+
     RETURN QUERY SELECT
       'source_unavailable'::text,
       NULL::uuid,
@@ -348,6 +407,7 @@ BEGIN
     status = 'dispatched',
     dispatched_at = coalesce(attempts.dispatched_at, requested_dispatched_at)
   WHERE attempts.id = requested_id
+    AND attempts.status IN ('pending', 'dispatched')
     AND requested_dispatched_at >= attempts.requested_at;
   RETURN FOUND;
 END

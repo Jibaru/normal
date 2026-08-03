@@ -194,6 +194,21 @@ describe("Webhook Event replay and source retention repository", () => {
         requestId: "60000000-0000-4000-8000-000000000036",
       }),
     ).toEqual({ outcome: "source_unavailable" });
+    const unavailableAttempt = await database.query<{
+      incident_id: string;
+      status: string;
+    }>(
+      `SELECT incident_id, status
+       FROM app.webhook_replay_attempts
+       WHERE id = $1`,
+      ["60000000-0000-4000-8000-000000000036"],
+    );
+    expect(unavailableAttempt.rows).toEqual([
+      {
+        incident_id: base.incidentReference,
+        status: "source_unavailable",
+      },
+    ]);
   });
 
   test("closes the processing-failure gap only after normal replay processing completes", async () => {
@@ -325,6 +340,25 @@ describe("Webhook Event replay and source retention repository", () => {
         state_webhook_event_id: null,
       },
     ]);
+
+    const expiredReplayId = "60000000-0000-4000-8000-000000000037";
+    expect(
+      await replay.prepare({
+        incidentReference: deadLetter.incidentReference ?? "",
+        observedAt: "2026-08-07T12:10:01.000Z",
+        operatorReference: "b".repeat(64),
+        reasonCode: "dependency_recovered",
+        requestId: expiredReplayId,
+        requestedAt: "2026-08-07T12:10:01.000Z",
+      }),
+    ).toEqual({ outcome: "source_unavailable" });
+    const expiredReplay = await database.query<{ status: string }>(
+      `SELECT status
+       FROM app.webhook_replay_attempts
+       WHERE id = $1`,
+      [expiredReplayId],
+    );
+    expect(expiredReplay.rows).toEqual([{ status: "source_unavailable" }]);
   });
 
   test("keeps replay and retention authority unavailable to the API runtime role", async () => {
