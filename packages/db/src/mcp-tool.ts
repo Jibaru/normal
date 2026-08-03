@@ -39,7 +39,28 @@ export type McpToolName =
   | "list_connections"
   | "list_contacts"
   | "list_groups"
-  | "send_text_message";
+  | "send_text_message"
+  | "list_chats";
+
+export interface McpToolChatRecord {
+  readonly conversationId: string;
+  readonly kind: "direct" | "group";
+  readonly recipientId: string;
+  readonly displayName: McpToolDirectoryCiphertext | null;
+  readonly displayNameRecordId: string;
+  readonly displayNameEntity: "directory-contact" | "whatsapp-group";
+  readonly phone: McpToolDirectoryCiphertext | null;
+  readonly lastActivityAt: string;
+  readonly lastActivityDirection: "inbound" | "outbound";
+}
+export interface McpToolChatPage {
+  readonly accountKey: AccountKeyEnvelope;
+  readonly connectionKey: ConnectionKeyEnvelope;
+  readonly chats: ReadonlyArray<McpToolChatRecord>;
+  readonly asOf: string;
+  readonly stale: boolean;
+  readonly partial: boolean;
+}
 
 export interface McpToolGroupRecord {
   readonly displayName: {
@@ -184,6 +205,16 @@ export interface McpToolRepository {
       readonly searchIndex: string | null;
     },
   ) => Promise<McpToolGroupPage | null>;
+  readonly listChats: (
+    input: McpAccessAuthorization & {
+      readonly connectionPublicId: string;
+      readonly cursorActivityAt: string | null;
+      readonly cursorPublicId: string | null;
+      readonly kind: "all" | "direct" | "group";
+      readonly limit: number;
+      readonly observedAt: Date;
+    },
+  ) => Promise<McpToolChatPage | null>;
   readonly loadGroupSearchMaterial: (
     input: McpAccessAuthorization & {
       readonly connectionPublicId: string;
@@ -619,7 +650,9 @@ const requiredScope = (toolName: McpToolName): McpAuthorizationScope =>
     ? "connections:read"
     : toolName === "send_text_message"
       ? "messages:send"
-      : "directory:read";
+      : toolName === "list_chats"
+        ? "messages:read"
+        : "directory:read";
 
 export const makeMcpToolRepository = (
   provider: McpToolConnectionProvider,
@@ -826,6 +859,135 @@ export const makeMcpToolRepository = (
             stateChangedAt,
           };
         });
+      }),
+    ),
+  listChats: (input) =>
+    provider.withConnection((connection) =>
+      withTransaction(connection, async () => {
+        if (
+          !/^con_[A-Za-z0-9_-]{21}$/u.test(input.connectionPublicId) ||
+          !Number.isSafeInteger(input.limit) ||
+          input.limit < 1 ||
+          input.limit > 51 ||
+          (input.cursorActivityAt === null) !==
+            (input.cursorPublicId === null) ||
+          (input.cursorPublicId !== null &&
+            !/^cvs_[A-Za-z0-9_-]{21}$/u.test(input.cursorPublicId))
+        ) {
+          throw new Error("invalid MCP chat query");
+        }
+        if ((await enterAuthorizationContext(connection, input)) === null)
+          return null;
+        const scopes = await loadAuthorizationScopes(connection, input);
+        if (scopes === null || !scopes.includes("messages:read")) return null;
+        const materialResult = await connection.query<Record<string, unknown>>(
+          `SELECT connections.personal_account_id, connections.id AS connection_id,
+             account_keys.key_version AS account_key_version, account_keys.kms_key_id AS account_kms_key_id,
+             account_keys.ciphertext AS account_key_ciphertext,
+             connection_keys.account_key_version AS connection_key_account_version,
+             connection_keys.key_version AS connection_key_version, connection_keys.nonce AS connection_key_nonce,
+             connection_keys.ciphertext AS connection_key_ciphertext,
+             greatest(coalesce(contacts.as_of, connections.created_at), coalesce(groups.as_of, connections.created_at)) AS as_of,
+             (coalesce(contacts.stale,true) OR coalesce(groups.stale,true)) AS stale,
+             (coalesce(contacts.partial,true) OR coalesce(groups.partial,true)) AS partial
+           FROM app.mcp_authorization_connections selected
+           JOIN app.whatsapp_connections connections ON connections.personal_account_id=selected.personal_account_id AND connections.id=selected.whatsapp_connection_id
+           JOIN app.whatsapp_connection_key_envelopes connection_keys ON connection_keys.personal_account_id=connections.personal_account_id AND connection_keys.whatsapp_connection_id=connections.id
+           JOIN app.personal_account_key_envelopes account_keys ON account_keys.personal_account_id=connections.personal_account_id AND account_keys.key_version=connection_keys.account_key_version
+           LEFT JOIN app.directory_contact_projections contacts ON contacts.personal_account_id=connections.personal_account_id AND contacts.whatsapp_connection_id=connections.id
+           LEFT JOIN app.whatsapp_group_directory_states groups ON groups.personal_account_id=connections.personal_account_id AND groups.whatsapp_connection_id=connections.id
+           WHERE selected.mcp_authorization_id=$1 AND connections.public_id=$2 AND connections.state <> 'deleting'`,
+          [input.authorizationId, input.connectionPublicId],
+        );
+        const material = parseGroupMaterial(materialResult.rows[0]);
+        if (material === null) return null;
+        const rows = await connection.query<Record<string, unknown>>(
+          `SELECT conversations.public_id, conversations.kind, conversations.recipient_public_id,
+             conversations.last_activity_at, conversations.last_activity_direction,
+             coalesce(contacts.provider_identity_index, groups.id::text, conversations.recipient_public_id) AS recipient_record_id,
+             coalesce(contacts.display_name_ciphertext_version, groups.display_name_ciphertext_version) AS display_version,
+             coalesce(contacts.display_name_key_version, groups.display_name_key_version) AS display_key_version,
+             coalesce(contacts.display_name_nonce, groups.display_name_nonce) AS display_nonce,
+             coalesce(contacts.display_name_ciphertext, groups.display_name_ciphertext) AS display_ciphertext,
+             contacts.phone_ciphertext_version AS phone_version, contacts.phone_key_version,
+             contacts.phone_nonce, contacts.phone_ciphertext
+           FROM app.whatsapp_conversations conversations
+           LEFT JOIN app.directory_contacts contacts ON conversations.kind='direct' AND contacts.personal_account_id=conversations.personal_account_id AND contacts.whatsapp_connection_id=conversations.whatsapp_connection_id AND contacts.public_id=conversations.recipient_public_id
+           LEFT JOIN app.whatsapp_groups groups ON conversations.kind='group' AND groups.personal_account_id=conversations.personal_account_id AND groups.whatsapp_connection_id=conversations.whatsapp_connection_id AND groups.public_id=conversations.recipient_public_id
+           WHERE conversations.personal_account_id=$1 AND conversations.whatsapp_connection_id=$2
+             AND ($3='all' OR conversations.kind=$3)
+             AND ($4::timestamptz IS NULL OR conversations.last_activity_at < $4 OR (conversations.last_activity_at=$4 AND conversations.public_id > $5))
+           ORDER BY conversations.last_activity_at DESC, conversations.public_id LIMIT $6`,
+          [
+            material.accountKey.personalAccountId,
+            material.connectionKey.connectionId,
+            input.kind,
+            input.cursorActivityAt,
+            input.cursorPublicId,
+            input.limit,
+          ],
+        );
+        const encrypted = (
+          row: Record<string, unknown>,
+          prefix: "display" | "phone",
+        ): McpToolDirectoryCiphertext | null => {
+          const ciphertext = bytes(row[`${prefix}_ciphertext`]);
+          const nonce = bytes(row[`${prefix}_nonce`]);
+          const version = positiveInteger(row[`${prefix}_version`]);
+          const keyVersion = positiveInteger(
+            row[
+              prefix === "display" ? "display_key_version" : "phone_key_version"
+            ],
+          );
+          if (
+            ciphertext === null &&
+            nonce === null &&
+            version === null &&
+            keyVersion === null
+          )
+            return null;
+          if (
+            ciphertext === null ||
+            nonce === null ||
+            version !== 1 ||
+            keyVersion === null
+          )
+            throw new Error("invalid chat metadata ciphertext");
+          return {
+            ciphertext: base64(ciphertext),
+            nonce: base64(nonce),
+            keyVersion,
+            version: 1,
+          };
+        };
+        return {
+          ...material,
+          chats: rows.rows.map((row) => {
+            const activity = timestampString(row.last_activity_at);
+            if (
+              typeof row.public_id !== "string" ||
+              typeof row.recipient_public_id !== "string" ||
+              typeof row.recipient_record_id !== "string" ||
+              activity === null ||
+              (row.kind !== "direct" && row.kind !== "group") ||
+              (row.last_activity_direction !== "inbound" &&
+                row.last_activity_direction !== "outbound")
+            )
+              throw new Error("invalid WhatsApp Conversation");
+            return {
+              conversationId: row.public_id,
+              kind: row.kind,
+              recipientId: row.recipient_public_id,
+              displayName: encrypted(row, "display"),
+              displayNameRecordId: row.recipient_record_id,
+              displayNameEntity:
+                row.kind === "direct" ? "directory-contact" : "whatsapp-group",
+              phone: encrypted(row, "phone"),
+              lastActivityAt: activity,
+              lastActivityDirection: row.last_activity_direction,
+            };
+          }),
+        };
       }),
     ),
   listGroups: (input) =>

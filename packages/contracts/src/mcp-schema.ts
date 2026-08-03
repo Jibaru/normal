@@ -1,5 +1,11 @@
 import { JSONSchema, Schema } from "effect";
-import { ConnectionId, ContactId, GroupId, SendId } from "./handles";
+import {
+  ConnectionId,
+  ContactId,
+  ConversationId,
+  GroupId,
+  SendId,
+} from "./handles";
 
 const utcTimestampPattern =
   /^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?Z(?![\s\S])/;
@@ -127,3 +133,25 @@ export const SendTextMessageOutputContract = makePublicObjectContract({
 });
 export type SendTextMessageOutput =
   typeof SendTextMessageOutputContract.schema.Type;
+
+export const ListChatsOutputContract = makePublicObjectContract({
+  chats: Schema.Array(
+    Schema.Struct({
+      conversation_id: ConversationId,
+      kind: Schema.Literal("direct", "group"),
+      recipient_id: Schema.Union(ContactId, GroupId),
+      display_name: Schema.NullOr(Schema.String),
+      phone_last_four: Schema.NullOr(
+        Schema.String.pipe(Schema.pattern(/^[0-9]{4}$/)),
+      ),
+      last_activity_at: UtcTimestamp,
+      last_activity_direction: Schema.Literal("inbound", "outbound"),
+    }),
+  ).pipe(Schema.maxItems(50)),
+  has_more: Schema.Boolean,
+  next_cursor: Schema.NullOr(Schema.String.pipe(Schema.minLength(1))),
+  as_of: UtcTimestamp,
+  stale: Schema.Boolean,
+  partial: Schema.Boolean,
+});
+export type ListChatsOutput = typeof ListChatsOutputContract.schema.Type;

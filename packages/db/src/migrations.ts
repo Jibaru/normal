@@ -239,6 +239,14 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 21,
   },
+  {
+    name: "Stored Messages and WhatsApp Conversations",
+    sql: await readFile(
+      new NodeUrl("../migrations/0022_stored_messages.sql", import.meta.url),
+      "utf8",
+    ),
+    version: 22,
+  },
 ];
 
 const checksum = (sql: string): string =>

@@ -954,6 +954,18 @@ reports only outcome and bounded counts. Repeated failures intentionally make
 the connection-specific credential without logging group names, routing
 identities, roster data, or ciphertext.
 
+After Stored Message projection is deployed, deliver one authenticated inbound
+text upsert and one authenticated outbound text upsert to a disposable
+connection. Confirm each creates one encrypted Stored Message and that
+`list_chats` (under a `messages:read` authorization) returns only conversation
+handle, recipient handle and safe Directory metadata, activity time, direction,
+and freshness fields. Replay and reorder the deliveries and confirm the latest
+message time still determines activity. Receipt, reaction, status, newsletter,
+and call fixtures must not create a conversation. Worker telemetry and Tool Call
+Logs may contain only the tool name, outcome, counts, timing, and opaque handles;
+never print message text, provider identities, recipient locators, ciphertext,
+or cursor contents during this check.
+
 ## Rollback
 
 Vercel uses immutable deployment history. Worker rollback is a reviewed

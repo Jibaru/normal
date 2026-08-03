@@ -1,9 +1,15 @@
-import { makeGroupId } from "@whatsapp-mcp/contracts/handles";
+import {
+  makeContactId,
+  makeConversationId,
+  makeGroupId,
+  makeMessageId,
+} from "@whatsapp-mcp/contracts/handles";
 import type {
   DeadLetterWebhookEventOutcome,
   ProjectConnectionStateInput,
   ProjectDirectoryContactInput,
   ProjectGroupInput,
+  ProjectStoredMessageInput,
   QuarantineWebhookItemInput,
   WebhookEventProcessingMaterial,
   WebhookItemProjectionOutcome,
@@ -16,8 +22,11 @@ import {
   type NormalizedWebhookItem,
   type WebhookNormalization,
 } from "@whatsapp-mcp/wasender/webhook";
-import { Context, Data, Effect, Layer } from "effect";
-import { protectDirectoryContact } from "./directory-privacy";
+import { Context, Data, Effect, Layer, Redacted } from "effect";
+import {
+  contactProviderIdentityIndex,
+  protectDirectoryContact,
+} from "./directory-privacy";
 import {
   type EnvelopeEncryption,
   EnvelopeEncryptionService,
@@ -113,6 +122,16 @@ export interface WebhookEventPersistenceService {
     WebhookItemProjectionOutcome,
     WebhookEventPersistenceError
   >;
+  readonly projectStoredMessage?: (
+    input: ProjectStoredMessageInput,
+    compareVersions: (
+      left: string,
+      right: string,
+    ) => Promise<WebhookVersionComparison>,
+  ) => Effect.Effect<
+    WebhookItemProjectionOutcome,
+    WebhookEventPersistenceError
+  >;
   readonly quarantine: (
     input: QuarantineWebhookItemInput,
   ) => Effect.Effect<void, WebhookEventPersistenceError>;
@@ -152,6 +171,8 @@ export const WebhookEventClock = Context.GenericTag<WebhookEventClockService>(
 
 export interface WebhookEventIdentifiersService {
   readonly nextContactId: Effect.Effect<string>;
+  readonly nextConversationId?: Effect.Effect<string>;
+  readonly nextMessageId?: Effect.Effect<string>;
 }
 
 export const WebhookEventIdentifiers =
@@ -509,6 +530,93 @@ const processItems = (
             personalAccountId: message.personal_account_id,
             publicId: yield* identifiers.nextContactId,
             receivedAt: message.received_at,
+            whatsappConnectionId: message.whatsapp_connection_id,
+          },
+          (left, right) =>
+            Effect.runPromise(
+              normalizer.compareVersions({
+                left: left as ConvergenceVersion,
+                right: right as ConvergenceVersion,
+              }),
+            ),
+        );
+        counts = increment(
+          counts,
+          outcome === "applied"
+            ? "appliedCount"
+            : outcome === "duplicate"
+              ? "duplicateCount"
+              : "supersededCount",
+        );
+        continue;
+      }
+      if (item.kind === "message_upsert") {
+        const recipientKind = item.recipientKind ?? "direct";
+        const recipientLocator =
+          recipientKind === "group"
+            ? item.recipient
+            : yield* contactProviderIdentityIndex(
+                indexKey,
+                message.whatsapp_connection_id,
+                item.recipient,
+              );
+        const conversationPublicId = yield* identifiers.nextConversationId ??
+          Effect.sync(() => makeConversationId());
+        const messagePublicId = yield* identifiers.nextMessageId ??
+          Effect.sync(() => makeMessageId());
+        const plaintext = new TextEncoder().encode(
+          JSON.stringify({
+            text: item.content.text,
+            mediaSource:
+              item.content.mediaSource === null
+                ? null
+                : Redacted.value(item.content.mediaSource),
+          }),
+        );
+        const protectedContent = yield* Effect.acquireUseRelease(
+          Effect.succeed(plaintext),
+          (bytes) =>
+            encryption.encrypt({
+              accountKey: material.accountKey,
+              connectionKey: material.connectionKey,
+              context: {
+                accountId: message.personal_account_id,
+                connectionId: message.whatsapp_connection_id,
+                entity: "stored-message",
+                fieldOrObjectPurpose: "content",
+                recordId: item.messageIdentity,
+              },
+              plaintext: bytes,
+            }),
+          (bytes) => Effect.sync(() => bytes.fill(0)),
+        );
+        if (persistence.projectStoredMessage === undefined) {
+          return yield* Effect.fail(new WebhookEventPersistenceError());
+        }
+        const outcome = yield* persistence.projectStoredMessage(
+          {
+            content: protectedContent,
+            contentType: item.content.type,
+            conversationId: crypto.randomUUID(),
+            conversationPublicId,
+            direction: item.direction,
+            eventId: message.object_id,
+            evidence: {
+              occurredAt: item.evidence.occurredAt,
+              version: item.evidence.version,
+            },
+            itemIdentity: item.itemIdentity,
+            itemIndex: item.itemIndex,
+            messageId: crypto.randomUUID(),
+            messageIdentity: item.messageIdentity,
+            messagePublicId,
+            personalAccountId: message.personal_account_id,
+            receivedAt: message.received_at,
+            recipientKind,
+            recipientLocator,
+            recipientPublicId:
+              recipientKind === "group" ? makeGroupId() : makeContactId(),
+            sentAt: item.sentAt,
             whatsappConnectionId: message.whatsapp_connection_id,
           },
           (left, right) =>

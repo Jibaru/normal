@@ -41,6 +41,12 @@ const indexValue = (
     catch: () => new DirectoryPrivacyError(),
   });
 
+export const contactProviderIdentityIndex = (
+  key: CryptoKey,
+  connectionId: string,
+  identity: string,
+) => indexValue(key, connectionId, "provider-identity", identity);
+
 export const importDirectoryIndexKey = (
   secret: Uint8Array,
 ): Effect.Effect<CryptoKey, DirectoryPrivacyError> => {

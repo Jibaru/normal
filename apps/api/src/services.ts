@@ -232,7 +232,8 @@ export interface McpToolCallCompletedEvent {
     | "list_connections"
     | "list_contacts"
     | "list_groups"
-    | "send_text_message";
+    | "send_text_message"
+    | "list_chats";
 }
 
 export interface GroupDirectoryReconciliationCompletedEvent {

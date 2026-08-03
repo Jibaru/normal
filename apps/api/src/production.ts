@@ -4,6 +4,8 @@ import {
   makeConnectionId,
   makeConnectionSetupId,
   makeContactId,
+  makeConversationId,
+  makeMessageId,
   makeSendId,
 } from "@whatsapp-mcp/contracts/handles";
 import type {
@@ -1156,6 +1158,19 @@ const webhookEventPersistenceLayer = (environment: ApiEnvironment) =>
         },
         catch: () => new WebhookEventPersistenceError(),
       }),
+    projectStoredMessage: (input, compareVersions) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString =
+            environment.WEBHOOK_HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string")
+            throw new Error("Webhook Hyperdrive unavailable");
+          return makePgWebhookEventRepository(
+            connectionString,
+          ).projectStoredMessage(input, compareVersions);
+        },
+        catch: () => new WebhookEventPersistenceError(),
+      }),
     quarantine: (input) =>
       Effect.tryPromise({
         try: () => {
@@ -1181,6 +1196,8 @@ const webhookEventRuntimeLayer = (environment: ApiEnvironment) =>
     }),
     Layer.succeed(WebhookEventIdentifiers, {
       nextContactId: Effect.sync(() => makeContactId()),
+      nextConversationId: Effect.sync(() => makeConversationId()),
+      nextMessageId: Effect.sync(() => makeMessageId()),
     }),
     Layer.succeed(WebhookEventRetrySchedule, {
       delaySeconds: () =>
@@ -1550,6 +1567,16 @@ const mcpToolPersistenceLayer = (environment: ApiEnvironment) =>
           return makePgMcpToolRepository(connectionString).listConnections(
             input,
           );
+        },
+        catch: () => new McpToolPersistenceError(),
+      }),
+    listChats: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string")
+            throw new Error("database unavailable");
+          return makePgMcpToolRepository(connectionString).listChats(input);
         },
         catch: () => new McpToolPersistenceError(),
       }),
