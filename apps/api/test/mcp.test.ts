@@ -208,6 +208,10 @@ const makeHarness = (
         ),
     }),
     Layer.succeed(McpToolPersistence, {
+      failStoredMediaRead: () => {
+        observations.push("fail-media-read");
+        return Effect.void;
+      },
       beginToolCall: (input) => {
         observations.push("begin");
         if (overrides.failBegin) {
@@ -1720,6 +1724,27 @@ describe("Stored Media MCP resource boundary", () => {
     expect(harness.observations.indexOf("reserve-media-read")).toBeLessThan(
       harness.observations.indexOf("decrypt-media-object"),
     );
+  });
+
+  test("releases reserved bytes when the protected read fails before response", async () => {
+    const harness = makeHarness({
+      failComplete: true,
+      mediaRead: "ready",
+      scopes: ["messages:read"],
+    });
+    const body = (await (
+      await harness.handler(
+        jsonRpcRequest("resources/read", { uri }),
+        {},
+        executionContext,
+        authorization,
+      )
+    ).json()) as { error: { code: number; message: string } };
+    expect(body.error).toMatchObject({
+      code: -32602,
+      message: "Resource not found",
+    });
+    expect(harness.observations).toContain("fail-media-read");
   });
 
   test.each([

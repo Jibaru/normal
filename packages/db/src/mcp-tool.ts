@@ -243,6 +243,11 @@ export type BeginToolCallResult =
     };
 
 export interface McpToolRepository {
+  readonly failStoredMediaRead: (input: {
+    readonly auditLogId: string;
+    readonly completedAt: Date;
+    readonly errorCode: string;
+  }) => Promise<void>;
   readonly reserveStoredMediaRead: (
     input: McpAccessAuthorization & {
       readonly auditLogId: string;
@@ -815,6 +820,36 @@ const requiredScope = (toolName: McpToolName): McpAuthorizationScope =>
 export const makeMcpToolRepository = (
   provider: McpToolConnectionProvider,
 ): McpToolRepository => ({
+  failStoredMediaRead: (input) =>
+    provider.withConnection((connection) =>
+      withTransaction(connection, async () => {
+        const loaded = await connection.query<{
+          personal_account_id: unknown;
+        }>(
+          `SELECT app_private.bootstrap_tool_call_log($1)
+             AS personal_account_id`,
+          [input.auditLogId],
+        );
+        const personalAccountId = loaded.rows[0]?.personal_account_id;
+        if (typeof personalAccountId !== "string")
+          throw new Error("Tool Call Log unavailable");
+        await connection.query(
+          "SELECT set_config('app.personal_account_id', $1, true)",
+          [personalAccountId],
+        );
+        const updated = await connection.query<{ id: unknown }>(
+          `UPDATE app.tool_call_logs
+           SET completed_at=$2, outcome='execution_error', error_code=$3,
+             result_count=0, media_bytes_reserved=0,
+             latency_ms=GREATEST(0,floor(extract(epoch FROM ($2::timestamptz-started_at))*1000)::integer)
+           WHERE id=$1 AND tool_name='read_stored_media' AND outcome='started'
+           RETURNING id`,
+          [input.auditLogId, input.completedAt, input.errorCode],
+        );
+        if (updated.rows.length !== 1)
+          throw new Error("Stored Media Tool Call Log unavailable");
+      }),
+    ),
   reserveStoredMediaRead: (input) =>
     provider.withConnection((connection) =>
       withTransaction(connection, async () => {

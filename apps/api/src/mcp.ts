@@ -79,6 +79,11 @@ export class McpToolPersistenceError extends Data.TaggedError(
 ) {}
 
 export interface McpToolPersistenceService {
+  readonly failStoredMediaRead: (input: {
+    readonly auditLogId: string;
+    readonly completedAt: Date;
+    readonly errorCode: string;
+  }) => Effect.Effect<void, McpToolPersistenceError>;
   readonly reserveStoredMediaRead: (
     input: McpAccessAuthorization & {
       readonly auditLogId: string;
@@ -2403,6 +2408,7 @@ export const createMcpRequestHandler =
             };
             const parsed = Option.getOrUndefined(parseStoredMediaUri(uri.href));
             if (parsed === undefined) return notFound();
+            let reservedAuditLogId: string | null = null;
             try {
               const result = await Effect.runPromise(
                 Effect.gen(function* () {
@@ -2423,6 +2429,7 @@ export const createMcpRequestHandler =
                     observedAt: yield* clock.now,
                   });
                   if (material === null) return null;
+                  reservedAuditLogId = auditLogId;
                   const metadataBytes = yield* encryption.decrypt({
                     accountKey: material.accountKey,
                     connectionKey: material.connectionKey,
@@ -2452,7 +2459,7 @@ export const createMcpRequestHandler =
                       (decoded.fileName !== null &&
                         typeof decoded.fileName !== "string")
                     )
-                      return null;
+                      throw new Error("Stored Media metadata was invalid");
                     metadata = decoded as typeof metadata;
                   } finally {
                     metadataBytes.fill(0);
@@ -2470,6 +2477,10 @@ export const createMcpRequestHandler =
                   const blob = yield* Effect.tryPromise(() =>
                     streamToBase64(stream, material.plaintextSizeBytes),
                   );
+                  const filename =
+                    metadata.fileName === null
+                      ? null
+                      : sanitizeAttachmentFilename(metadata.fileName);
                   yield* persistence.completeToolCall({
                     auditLogId,
                     completedAt: yield* clock.now,
@@ -2479,10 +2490,7 @@ export const createMcpRequestHandler =
                   });
                   return {
                     blob,
-                    filename:
-                      metadata.fileName === null
-                        ? null
-                        : sanitizeAttachmentFilename(metadata.fileName),
+                    filename,
                     mimeType: metadata.mimeType,
                   };
                 }).pipe(Effect.provide(options.layer)),
@@ -2502,6 +2510,23 @@ export const createMcpRequestHandler =
                 ],
               };
             } catch {
+              if (reservedAuditLogId !== null) {
+                const auditLogId = reservedAuditLogId;
+                await Effect.runPromise(
+                  Effect.gen(function* () {
+                    const clock = yield* McpToolClock;
+                    const persistence = yield* McpToolPersistence;
+                    yield* persistence.failStoredMediaRead({
+                      auditLogId,
+                      completedAt: yield* clock.now,
+                      errorCode: "resource_unavailable",
+                    });
+                  }).pipe(
+                    Effect.provide(options.layer),
+                    Effect.catchAll(() => Effect.void),
+                  ),
+                );
+              }
               return notFound();
             }
           },

@@ -1356,6 +1356,23 @@ describe("MCP tool repository", () => {
     expect(log.rows).toEqual([
       { media_bytes_reserved: 15, outcome: "started" },
     ]);
+    await repository.failStoredMediaRead({
+      auditLogId,
+      completedAt: new Date(observedAt.getTime() + 1_000),
+      errorCode: "resource_unavailable",
+    });
+    const failedLog = await database.query(
+      `SELECT outcome,error_code,result_count,media_bytes_reserved FROM app.tool_call_logs WHERE id=$1`,
+      [auditLogId],
+    );
+    expect(failedLog.rows).toEqual([
+      {
+        error_code: "resource_unavailable",
+        media_bytes_reserved: 0,
+        outcome: "execution_error",
+        result_count: 0,
+      },
+    ]);
     await expect(
       repository.reserveStoredMediaRead({
         ...authorization,
