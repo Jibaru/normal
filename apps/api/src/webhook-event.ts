@@ -2,6 +2,7 @@ import { makeGroupId } from "@whatsapp-mcp/contracts/handles";
 import type {
   DeadLetterWebhookEventOutcome,
   ProjectConnectionStateInput,
+  ProjectDirectoryContactInput,
   ProjectGroupInput,
   QuarantineWebhookItemInput,
   WebhookEventProcessingMaterial,
@@ -16,6 +17,7 @@ import {
   type WebhookNormalization,
 } from "@whatsapp-mcp/wasender/webhook";
 import { Context, Data, Effect, Layer } from "effect";
+import { protectDirectoryContact } from "./directory-privacy";
 import {
   type EnvelopeEncryption,
   EnvelopeEncryptionService,
@@ -101,6 +103,16 @@ export interface WebhookEventPersistenceService {
     WebhookItemProjectionOutcome,
     WebhookEventPersistenceError
   >;
+  readonly projectDirectoryContact: (
+    input: ProjectDirectoryContactInput,
+    compareVersions: (
+      left: string,
+      right: string,
+    ) => Promise<WebhookVersionComparison>,
+  ) => Effect.Effect<
+    WebhookItemProjectionOutcome,
+    WebhookEventPersistenceError
+  >;
   readonly quarantine: (
     input: QuarantineWebhookItemInput,
   ) => Effect.Effect<void, WebhookEventPersistenceError>;
@@ -137,6 +149,15 @@ export interface WebhookEventClockService {
 export const WebhookEventClock = Context.GenericTag<WebhookEventClockService>(
   "@whatsapp-mcp/api/WebhookEventClock",
 );
+
+export interface WebhookEventIdentifiersService {
+  readonly nextContactId: Effect.Effect<string>;
+}
+
+export const WebhookEventIdentifiers =
+  Context.GenericTag<WebhookEventIdentifiersService>(
+    "@whatsapp-mcp/api/WebhookEventIdentifiers",
+  );
 
 export interface WebhookEventRetryScheduleService {
   readonly delaySeconds: (attempt: number) => Effect.Effect<number>;
@@ -176,6 +197,7 @@ export type WebhookEventRequirements =
   | EnvelopeEncryption
   | SafeTelemetryService
   | WebhookEventClockService
+  | WebhookEventIdentifiersService
   | WebhookEventNormalizationService
   | WebhookEventObjectStoreService
   | WebhookEventPersistenceService
@@ -364,6 +386,7 @@ const processItems = (
   Effect.gen(function* () {
     const persistence = yield* WebhookEventPersistence;
     const encryption = yield* EnvelopeEncryptionService;
+    const identifiers = yield* WebhookEventIdentifiers;
     let counts = emptyCounts();
     for (const item of items) {
       if (item.kind === "malformed" || item.kind === "unsupported") {
@@ -446,6 +469,48 @@ const processItems = (
                 };
               }),
             ),
+          (left, right) =>
+            Effect.runPromise(
+              normalizer.compareVersions({
+                left: left as ConvergenceVersion,
+                right: right as ConvergenceVersion,
+              }),
+            ),
+        );
+        counts = increment(
+          counts,
+          outcome === "applied"
+            ? "appliedCount"
+            : outcome === "duplicate"
+              ? "duplicateCount"
+              : "supersededCount",
+        );
+        continue;
+      }
+      if (item.kind === "directory_contact") {
+        const protectedContact = yield* protectDirectoryContact({
+          accountKey: material.accountKey,
+          connectionKey: material.connectionKey,
+          contact: item.contact,
+          encryption,
+          indexKey,
+        });
+        const outcome = yield* persistence.projectDirectoryContact(
+          {
+            ...protectedContact,
+            active: item.contact.active,
+            eventId: message.object_id,
+            evidence: {
+              occurredAt: item.evidence.occurredAt,
+              version: item.evidence.version,
+            },
+            itemIdentity: item.itemIdentity,
+            itemIndex: item.itemIndex,
+            personalAccountId: message.personal_account_id,
+            publicId: yield* identifiers.nextContactId,
+            receivedAt: message.received_at,
+            whatsappConnectionId: message.whatsapp_connection_id,
+          },
           (left, right) =>
             Effect.runPromise(
               normalizer.compareVersions({

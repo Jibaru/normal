@@ -221,12 +221,13 @@ export interface McpToolCallCompletedEvent {
   readonly outcome:
     | "audit_unavailable"
     | "authorization_denied"
+    | "invalid_cursor"
     | "rate_limited"
     | "service_unavailable"
     | "success";
   readonly resultCount?: number | undefined;
   readonly service: "api";
-  readonly tool: "list_connections" | "list_groups";
+  readonly tool: "list_connections" | "list_contacts" | "list_groups";
 }
 
 export interface GroupDirectoryReconciliationCompletedEvent {
@@ -247,11 +248,30 @@ export interface ProviderDirectoryCompletedEvent {
   readonly service: "api";
 }
 
+export interface ContactReconciliationCompletedEvent {
+  readonly contactCount: number;
+  readonly event: "directory.contacts.reconciliation.completed";
+  readonly outcome: "complete" | "failed" | "partial";
+  readonly service: "api";
+}
+
+export interface DirectoryProviderReadCompletedEvent {
+  readonly attempts: number;
+  readonly durationMs: number;
+  readonly event: "directory.provider_read.completed";
+  readonly operation: "safe-read";
+  readonly outcome: "complete" | "failed" | "partial";
+  readonly responseBytes: number;
+  readonly service: "api";
+}
+
 export interface SafeTelemetry {
   readonly emit: (event: SafeTelemetryEvent) => Effect.Effect<void>;
 }
 
 export type SafeTelemetryEvent =
+  | ContactReconciliationCompletedEvent
+  | DirectoryProviderReadCompletedEvent
   | ConnectionHealthReconciliationCompletedEvent
   | ConnectionSetupCancelCompletedEvent
   | ConnectionSetupCleanupCompletedEvent

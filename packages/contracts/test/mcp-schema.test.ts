@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Schema } from "effect";
 import {
   ListConnectionsOutputContract,
+  ListContactsOutputContract,
   ListGroupsOutputContract,
   makePublicObjectContract,
 } from "../src/mcp-schema";
@@ -109,6 +110,48 @@ describe("makePublicObjectContract", () => {
           {
             ...output.groups[0],
             roster: ["provider-participant"],
+          },
+        ],
+      }),
+    ).toThrow();
+  });
+
+  test("validates suffix-only paginated list_contacts results", () => {
+    const output = {
+      as_of: "2026-07-30T12:00:00.000Z",
+      contacts: [
+        {
+          contact_id: "ctc_123456789012345678901",
+          display_name: "Ada",
+          phone_last_four: "0199",
+        },
+      ],
+      has_more: true,
+      next_cursor: "opaque-cursor",
+      partial: false,
+      stale: false,
+    };
+
+    expect(ListContactsOutputContract.decodeUnknown(output) as unknown).toEqual(
+      output,
+    );
+    expect(ListContactsOutputContract.jsonSchema).toMatchObject({
+      additionalProperties: false,
+      properties: {
+        contacts: {
+          items: expect.objectContaining({ additionalProperties: false }),
+          maxItems: 50,
+          type: "array",
+        },
+      },
+    });
+    expect(() =>
+      ListContactsOutputContract.decodeUnknown({
+        ...output,
+        contacts: [
+          {
+            ...output.contacts[0],
+            phone_number: "+12025550199",
           },
         ],
       }),

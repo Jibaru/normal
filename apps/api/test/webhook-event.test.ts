@@ -12,6 +12,7 @@ import {
   handleWebhookEventBatch,
   jitteredWebhookRetryDelaySeconds,
   WebhookEventClock,
+  WebhookEventIdentifiers,
   WebhookEventNormalization,
   WebhookEventNormalizationError,
   WebhookEventObjectStore,
@@ -86,8 +87,24 @@ const delivery: NormalizedWebhookDelivery = {
       state: "connected",
     },
     {
-      classification: "unsupported_item_kind",
+      contact: {
+        active: true,
+        displayName: "Ada",
+        identity: `wi1_${"i".repeat(43)}` as never,
+        phoneNumber: "+15550199",
+        recipient: `wi1_${"r".repeat(43)}` as never,
+      },
+      evidence: {
+        occurredAt: "2026-07-31T12:09:30.000Z",
+        version: "wv1.test.signature" as never,
+      },
+      itemIdentity: `wi1_${"directory_contact".padEnd(43, "0")}` as never,
       itemIndex: 2,
+      kind: "directory_contact",
+    },
+    {
+      classification: "unsupported_item_kind",
+      itemIndex: 3,
       kind: "unsupported",
     },
   ],
@@ -165,6 +182,20 @@ const makeHarness = (options: HarnessOptions = {}) => {
           calls.push(`project-group:${input.displayName ?? "null"}`);
           return "applied" as const;
         }),
+      projectDirectoryContact: (input, compareVersions) =>
+        Effect.promise(async () => {
+          calls.push("project-contact");
+          expect(input.publicId).toBe("ctc_123456789012345678901");
+          expect(input.displayNameCiphertext).not.toBeNull();
+          expect(input.phoneCiphertext).not.toBeNull();
+          expect(input.providerIdentityCiphertext.ciphertext).not.toContain(
+            input.providerIdentityIndex,
+          );
+          expect(
+            await compareVersions("wv1.test.signature", "wv1.test.signature"),
+          ).toBe("equal");
+          return "applied" as const;
+        }),
       quarantine: (input) =>
         Effect.sync(() => {
           calls.push(`quarantine:${input.classification}`);
@@ -172,6 +203,9 @@ const makeHarness = (options: HarnessOptions = {}) => {
     }),
     Layer.succeed(WebhookEventClock, {
       now: Effect.succeed("2026-07-31T12:10:01.000Z"),
+    }),
+    Layer.succeed(WebhookEventIdentifiers, {
+      nextContactId: Effect.succeed("ctc_123456789012345678901"),
     }),
     Layer.succeed(WebhookEventRetrySchedule, {
       delaySeconds: (attempt) =>
@@ -204,10 +238,10 @@ const makeHarness = (options: HarnessOptions = {}) => {
       encrypt: ({ plaintext }) =>
         Effect.succeed({
           ciphertext: btoa(
-            String.fromCharCode(...plaintext, ...new Uint8Array(16)),
+            String.fromCharCode(...plaintext, ...new Uint8Array(17).fill(9)),
           ),
           keyVersion: 1,
-          nonce: "AQIDBAUGBwgJCgsM",
+          nonce: btoa(String.fromCharCode(...new Uint8Array(12).fill(8))),
           version: 1,
         }),
     }),
@@ -256,13 +290,14 @@ describe("Webhook Event processing", () => {
       "prepare",
       "quarantine:invalid_item_shape",
       "project",
+      "project-contact",
       "quarantine:unsupported_item_kind",
       "complete",
     ]);
     expect(queued.acknowledgements).toEqual(["ack"]);
     expect(queued.retries).toEqual([]);
     expect(harness.telemetry).toContainEqual({
-      appliedCount: 1,
+      appliedCount: 2,
       duplicateCount: 0,
       event: "webhook_event.processing.completed",
       outcome: "completed",

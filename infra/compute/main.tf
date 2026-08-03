@@ -350,6 +350,10 @@ resource "cloudflare_worker_version" "api" {
       type = "plain_text"
     },
     {
+      name = "MCP_CURSOR_HMAC_SECRET"
+      type = "inherit"
+    },
+    {
       name = "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET"
       type = "inherit"
     },

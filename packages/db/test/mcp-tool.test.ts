@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { PGlite } from "@electric-sql/pglite";
+import { makeDirectoryRepository } from "../src/directory";
 import { makeMcpAuthorizationRepository } from "../src/mcp-authorization";
 import {
   type McpToolConnectionProvider,
@@ -8,6 +9,7 @@ import {
 } from "../src/mcp-tool";
 import { runMigrations } from "../src/migrations";
 import type { PersonalAccountConnectionProvider } from "../src/personal-account";
+import { makeWebhookEventRepository } from "../src/webhook-event";
 
 const accountId = "10000000-0000-4000-8000-000000000030";
 const authorizationId = "40000000-0000-4000-8000-000000000030";
@@ -69,6 +71,42 @@ describe("MCP tool repository", () => {
         observedAt,
       ],
     );
+    await database.query(
+      `INSERT INTO app.whatsapp_connection_key_envelopes (
+         personal_account_id, whatsapp_connection_id, account_key_version,
+         key_version, nonce, ciphertext
+       ) VALUES (
+         $1, '20000000-0000-4000-8000-000000000030', 1, 1,
+         decode(repeat('03', 12), 'hex'), decode(repeat('04', 32), 'hex')
+       )`,
+      [accountId],
+    );
+    await database.query(
+      `INSERT INTO app.whatsapp_connection_secrets (
+         personal_account_id, whatsapp_connection_id, credential_ciphertext,
+         credential_ciphertext_version, credential_key_version, credential_nonce
+       ) VALUES (
+         $1, '20000000-0000-4000-8000-000000000030',
+         decode(repeat('05', 32), 'hex'), 1, 1,
+         decode(repeat('06', 12), 'hex')
+       )`,
+      [accountId],
+    );
+    await database.query(
+      `INSERT INTO app.whatsapp_connection_provider_sessions (
+         personal_account_id, whatsapp_connection_id,
+         locator_ciphertext_version, locator_key_version,
+         locator_nonce, locator_ciphertext,
+         authority_ciphertext_version, authority_key_version,
+         authority_nonce, authority_ciphertext, created_at, updated_at
+       ) VALUES (
+         $1, '20000000-0000-4000-8000-000000000030',
+         1, 1, decode(repeat('0d', 12), 'hex'), decode(repeat('0e', 32), 'hex'),
+         1, 1, decode(repeat('0f', 12), 'hex'), decode(repeat('10', 32), 'hex'),
+         $2, $2
+       )`,
+      [accountId, observedAt],
+    );
 
     const provider: McpToolConnectionProvider &
       PersonalAccountConnectionProvider = {
@@ -93,7 +131,7 @@ describe("MCP tool repository", () => {
       expiresAt: new Date("2026-10-29T12:00:00.000Z"),
       oauthSubject,
       reverifiedAt: new Date("2026-07-31T11:59:00.000Z"),
-      scopes: ["connections:read"],
+      scopes: ["connections:read", "directory:read"],
     });
     repository = makeMcpToolRepository(provider);
   });
@@ -113,7 +151,9 @@ describe("MCP tool repository", () => {
       ...authorization,
       observedAt,
     });
-    expect(inspected).toEqual({ scopes: ["connections:read"] });
+    expect(inspected).toEqual({
+      scopes: ["connections:read", "directory:read"],
+    });
 
     await expect(
       repository.beginToolCall({
@@ -225,6 +265,133 @@ describe("MCP tool repository", () => {
     ]);
   });
 
+  test("audits validation rejection without reserving request quota", async () => {
+    await expect(
+      repository.rejectToolCall({
+        ...authorization,
+        auditLogId: "50000000-0000-4000-8000-000000000033",
+        errorCode: "invalid_cursor",
+        observedAt,
+        toolName: "list_contacts",
+      }),
+    ).resolves.toBe("rejected");
+
+    const persisted = await database.query<{
+      error_code: string | null;
+      outcome: string;
+      quota_reserved: boolean;
+    }>(
+      `SELECT outcome, error_code, quota_reserved
+       FROM app.tool_call_logs
+       WHERE id = '50000000-0000-4000-8000-000000000033'`,
+    );
+    expect(persisted.rows).toEqual([
+      {
+        error_code: "invalid_cursor",
+        outcome: "execution_error",
+        quota_reserved: false,
+      },
+    ]);
+  });
+
+  test("loads encrypted contact material only for the selected authorized Connection", async () => {
+    await database.query(
+      `INSERT INTO app.directory_contact_projections (
+         personal_account_id, whatsapp_connection_id, as_of, stale, partial,
+         snapshot_observed_at
+       ) VALUES (
+         $1, '20000000-0000-4000-8000-000000000030', $2, false, false, $2
+       )`,
+      [accountId, observedAt],
+    );
+    await database.query(
+      `INSERT INTO app.directory_contacts (
+         personal_account_id, whatsapp_connection_id, public_id,
+         provider_identity_index, provider_identity_ciphertext_version,
+         provider_identity_key_version, provider_identity_nonce,
+         provider_identity_ciphertext, display_name_ciphertext_version,
+         display_name_key_version, display_name_nonce, display_name_ciphertext,
+         display_name_sort,
+         phone_ciphertext_version, phone_key_version, phone_nonce,
+         phone_ciphertext, name_prefix_indexes, phone_index, active, received_at
+       ) VALUES (
+         $1, '20000000-0000-4000-8000-000000000030',
+         'ctc_123456789012345678901', $2, 1, 1,
+         decode(repeat('07', 12), 'hex'), decode(repeat('08', 32), 'hex'),
+         1, 1, decode(repeat('09', 12), 'hex'), decode(repeat('0a', 32), 'hex'),
+         'ada',
+         1, 1, decode(repeat('0b', 12), 'hex'), decode(repeat('0c', 32), 'hex'),
+         ARRAY[$3::app.directory_blind_index], $4, true, $5
+       )`,
+      [
+        accountId,
+        `di1_${"i".repeat(43)}`,
+        `di1_${"n".repeat(43)}`,
+        `di1_${"p".repeat(43)}`,
+        observedAt,
+      ],
+    );
+
+    await expect(
+      repository.loadContactReadMaterial({
+        ...authorization,
+        connectionPublicId: connectionA,
+        observedAt,
+      }),
+    ).resolves.toMatchObject({
+      asOf: observedAt.toISOString(),
+      partial: false,
+      personalAccountId: accountId,
+      stale: false,
+      whatsappConnectionId: "20000000-0000-4000-8000-000000000030",
+    });
+    await expect(
+      repository.listEncryptedContacts({
+        ...authorization,
+        connectionPublicId: connectionA,
+        cursorDisplayNameSort: null,
+        cursorPublicId: null,
+        limit: 21,
+        observedAt,
+        searchIndex: `di1_${"n".repeat(43)}`,
+        searchKind: "name",
+      }),
+    ).resolves.toEqual({
+      asOf: observedAt.toISOString(),
+      contacts: [
+        expect.objectContaining({
+          displayNameCiphertext: expect.objectContaining({ keyVersion: 1 }),
+          displayNameSort: "ada",
+          phoneCiphertext: expect.objectContaining({ keyVersion: 1 }),
+          providerIdentityIndex: `di1_${"i".repeat(43)}`,
+          publicId: "ctc_123456789012345678901",
+        }),
+      ],
+      partial: false,
+      snapshotObservedAt: observedAt.toISOString(),
+      stale: false,
+    });
+    await expect(
+      repository.listEncryptedContacts({
+        ...authorization,
+        connectionPublicId: connectionA,
+        cursorDisplayNameSort: "ada",
+        cursorPublicId: "ctc_123456789012345678901",
+        limit: 1,
+        observedAt,
+        searchIndex: null,
+        searchKind: null,
+      }),
+    ).resolves.toMatchObject({ contacts: [] });
+    await expect(
+      repository.loadContactReadMaterial({
+        ...authorization,
+        connectionPublicId: connectionLater,
+        observedAt,
+      }),
+    ).resolves.toBeNull();
+  });
+
   test("reports the reset that restores capacity after a quota reduction", async () => {
     for (const [index, time] of [
       [40, "2026-07-31T11:59:10.000Z"],
@@ -258,6 +425,407 @@ describe("MCP tool repository", () => {
       resetsAt: new Date("2026-07-31T12:00:20.000Z"),
       retryAfterSeconds: 20,
     });
+  });
+
+  test("reconciles complete contact snapshots and removes missing contacts without retaining PII", async () => {
+    const directory = makeDirectoryRepository({
+      withConnection: async (use) => {
+        await database.exec("SET ROLE whatsapp_api_runtime");
+        try {
+          return await use(database);
+        } finally {
+          await database.exec("RESET ROLE");
+        }
+      },
+    });
+    const claimed = await directory.claimContactReconciliations({
+      claimedAt: observedAt.toISOString(),
+      limit: 100,
+    });
+    expect(claimed).toHaveLength(1);
+    const first = claimed[0];
+    if (first === undefined) throw new Error("missing reconciliation claim");
+    const encrypted = (byte: string) => ({
+      ciphertext: Buffer.from(byte.repeat(32), "hex").toString("base64"),
+      keyVersion: 1,
+      nonce: Buffer.from("11".repeat(12), "hex").toString("base64"),
+      version: 1 as const,
+    });
+    expect(
+      await directory.finishContactReconciliation({
+        claimId: first.claimId,
+        contacts: [
+          {
+            displayNameCiphertext: encrypted("12"),
+            displayNameSort: "ada",
+            namePrefixIndexes: [`di1_${"n".repeat(43)}`],
+            phoneCiphertext: encrypted("13"),
+            phoneIndex: `di1_${"p".repeat(43)}`,
+            providerIdentityCiphertext: encrypted("14"),
+            providerIdentityIndex: `di1_${"i".repeat(43)}`,
+            publicId: "ctc_123456789012345678901",
+          },
+        ],
+        observedAt: observedAt.toISOString(),
+        partial: false,
+        stale: false,
+        whatsappConnectionId: first.whatsappConnectionId,
+      }),
+    ).toBe(true);
+
+    const later = new Date(observedAt.valueOf() + 6 * 60_000);
+    const reclaimed = await directory.claimContactReconciliations({
+      claimedAt: later.toISOString(),
+      limit: 100,
+    });
+    expect(reclaimed).toHaveLength(1);
+    const second = reclaimed[0];
+    if (second === undefined) throw new Error("missing second claim");
+    expect(
+      await directory.finishContactReconciliation({
+        claimId: second.claimId,
+        contacts: [],
+        observedAt: later.toISOString(),
+        partial: false,
+        stale: false,
+        whatsappConnectionId: second.whatsappConnectionId,
+      }),
+    ).toBe(true);
+
+    const persisted = await database.query<{
+      active: boolean;
+      display_name_ciphertext: Uint8Array | null;
+      phone_ciphertext: Uint8Array | null;
+    }>(
+      "SELECT active, display_name_ciphertext, phone_ciphertext FROM app.directory_contacts",
+    );
+    expect(persisted.rows).toEqual([
+      {
+        active: false,
+        display_name_ciphertext: null,
+        phone_ciphertext: null,
+      },
+    ]);
+  });
+
+  test("does not let a partial snapshot supersede webhook evidence for an unobserved contact", async () => {
+    const connectionProvider = {
+      withConnection: async <Value>(
+        use: (connection: typeof database) => Promise<Value>,
+      ) => {
+        await database.exec("SET ROLE whatsapp_api_runtime");
+        try {
+          return await use(database);
+        } finally {
+          await database.exec("RESET ROLE");
+        }
+      },
+    };
+    const directory = makeDirectoryRepository(connectionProvider);
+    const encrypted = (byte: string) => ({
+      ciphertext: Buffer.from(byte.repeat(32), "hex").toString("base64"),
+      keyVersion: 1,
+      nonce: Buffer.from("11".repeat(12), "hex").toString("base64"),
+      version: 1 as const,
+    });
+    const firstContact = {
+      displayNameCiphertext: encrypted("12"),
+      displayNameSort: "ada",
+      namePrefixIndexes: [`di1_${"n".repeat(43)}`],
+      phoneCiphertext: encrypted("13"),
+      phoneIndex: `di1_${"p".repeat(43)}`,
+      providerIdentityCiphertext: encrypted("14"),
+      providerIdentityIndex: `di1_${"i".repeat(43)}`,
+      publicId: "ctc_123456789012345678901",
+    } as const;
+    const secondContact = {
+      displayNameCiphertext: encrypted("15"),
+      displayNameSort: "grace",
+      namePrefixIndexes: [`di1_${"o".repeat(43)}`],
+      phoneCiphertext: encrypted("16"),
+      phoneIndex: `di1_${"q".repeat(43)}`,
+      providerIdentityCiphertext: encrypted("17"),
+      providerIdentityIndex: `di1_${"j".repeat(43)}`,
+      publicId: "ctc_123456789012345678902",
+    } as const;
+    const initialClaim = (
+      await directory.claimContactReconciliations({
+        claimedAt: observedAt.toISOString(),
+        limit: 100,
+      })
+    )[0];
+    if (initialClaim === undefined) throw new Error("missing initial claim");
+    expect(
+      await directory.finishContactReconciliation({
+        claimId: initialClaim.claimId,
+        contacts: [firstContact, secondContact],
+        observedAt: observedAt.toISOString(),
+        partial: false,
+        stale: false,
+        whatsappConnectionId: initialClaim.whatsappConnectionId,
+      }),
+    ).toBe(true);
+
+    const partialAt = new Date(observedAt.valueOf() + 6 * 60_000);
+    const partialClaim = (
+      await directory.claimContactReconciliations({
+        claimedAt: partialAt.toISOString(),
+        limit: 100,
+      })
+    )[0];
+    if (partialClaim === undefined) throw new Error("missing partial claim");
+    expect(
+      await directory.finishContactReconciliation({
+        claimId: partialClaim.claimId,
+        contacts: [firstContact],
+        observedAt: partialAt.toISOString(),
+        partial: true,
+        stale: true,
+        whatsappConnectionId: partialClaim.whatsappConnectionId,
+      }),
+    ).toBe(true);
+
+    const webhookProvider = {
+      withConnection: async <Value>(
+        use: (connection: typeof database) => Promise<Value>,
+      ) => {
+        await database.exec("SET ROLE whatsapp_webhook_runtime");
+        try {
+          return await use(database);
+        } finally {
+          await database.exec("RESET ROLE");
+        }
+      },
+    };
+    const webhooks = makeWebhookEventRepository(webhookProvider);
+    const eventId = "50000000-0000-4000-8000-000000000039";
+    const webhookReceivedAt = new Date(
+      partialAt.valueOf() + 60_000,
+    ).toISOString();
+    await webhooks.prepare({
+      ciphertextSha256: "a".repeat(64),
+      eventId,
+      payloadBytes: 128,
+      personalAccountId: accountId,
+      receivedAt: webhookReceivedAt,
+      whatsappConnectionId: initialClaim.whatsappConnectionId,
+    });
+    const olderOccurrence = new Date(
+      observedAt.valueOf() + 60_000,
+    ).toISOString();
+    expect(
+      await webhooks.projectDirectoryContact(
+        {
+          ...firstContact,
+          displayNameCiphertext: encrypted("19"),
+          displayNameSort: "ada older",
+          eventId,
+          evidence: { occurredAt: olderOccurrence, version: null },
+          itemIdentity: `wi1_${"v".repeat(43)}`,
+          itemIndex: 0,
+          personalAccountId: accountId,
+          publicId: "ctc_123456789012345678904",
+          receivedAt: webhookReceivedAt,
+          whatsappConnectionId: initialClaim.whatsappConnectionId,
+          active: true,
+        },
+        async () => "incomparable",
+      ),
+    ).toBe("superseded");
+    expect(
+      await webhooks.projectDirectoryContact(
+        {
+          ...secondContact,
+          displayNameCiphertext: encrypted("18"),
+          displayNameSort: "grace updated",
+          eventId,
+          evidence: { occurredAt: olderOccurrence, version: null },
+          itemIdentity: `wi1_${"w".repeat(43)}`,
+          itemIndex: 1,
+          personalAccountId: accountId,
+          publicId: "ctc_123456789012345678903",
+          receivedAt: webhookReceivedAt,
+          whatsappConnectionId: initialClaim.whatsappConnectionId,
+          active: true,
+        },
+        async () => "incomparable",
+      ),
+    ).toBe("applied");
+
+    expect(
+      await webhooks.projectDirectoryContact(
+        {
+          ...firstContact,
+          displayNameCiphertext: encrypted("20"),
+          displayNameSort: "ada current",
+          eventId,
+          evidence: { occurredAt: null, version: null },
+          itemIdentity: `wi1_${"x".repeat(43)}`,
+          itemIndex: 2,
+          personalAccountId: accountId,
+          publicId: "ctc_123456789012345678905",
+          receivedAt: webhookReceivedAt,
+          whatsappConnectionId: initialClaim.whatsappConnectionId,
+          active: true,
+        },
+        async () => "incomparable",
+      ),
+    ).toBe("applied");
+
+    const laterEventId = "50000000-0000-4000-8000-000000000040";
+    const laterReceivedAt = new Date(
+      partialAt.valueOf() + 2 * 60_000,
+    ).toISOString();
+    await webhooks.prepare({
+      ciphertextSha256: "b".repeat(64),
+      eventId: laterEventId,
+      payloadBytes: 128,
+      personalAccountId: accountId,
+      receivedAt: laterReceivedAt,
+      whatsappConnectionId: initialClaim.whatsappConnectionId,
+    });
+    expect(
+      await webhooks.projectDirectoryContact(
+        {
+          ...firstContact,
+          displayNameCiphertext: encrypted("21"),
+          displayNameSort: "ada stale",
+          eventId: laterEventId,
+          evidence: {
+            occurredAt: new Date(partialAt.valueOf() - 60_000).toISOString(),
+            version: null,
+          },
+          itemIdentity: `wi1_${"y".repeat(43)}`,
+          itemIndex: 0,
+          personalAccountId: accountId,
+          publicId: "ctc_123456789012345678906",
+          receivedAt: laterReceivedAt,
+          whatsappConnectionId: initialClaim.whatsappConnectionId,
+          active: true,
+        },
+        async () => "incomparable",
+      ),
+    ).toBe("superseded");
+
+    const persisted = await database.query<{
+      display_name_sort: string;
+      provider_identity_index: string;
+    }>(
+      `SELECT provider_identity_index, display_name_sort
+       FROM app.directory_contacts
+       WHERE provider_identity_index IN (
+         $1::app.directory_blind_index,
+         $2::app.directory_blind_index
+       )
+       ORDER BY provider_identity_index`,
+      [firstContact.providerIdentityIndex, secondContact.providerIdentityIndex],
+    );
+    expect(persisted.rows).toEqual([
+      {
+        display_name_sort: "ada current",
+        provider_identity_index: firstContact.providerIdentityIndex,
+      },
+      {
+        display_name_sort: "grace updated",
+        provider_identity_index: secondContact.providerIdentityIndex,
+      },
+    ]);
+
+    const inFlightSnapshotAt = new Date(partialAt.valueOf() + 6 * 60_000);
+    const inFlightClaim = (
+      await directory.claimContactReconciliations({
+        claimedAt: inFlightSnapshotAt.toISOString(),
+        limit: 100,
+      })
+    )[0];
+    if (inFlightClaim === undefined) throw new Error("missing in-flight claim");
+
+    const newestEventId = "50000000-0000-4000-8000-000000000041";
+    const newestReceivedAt = new Date(
+      inFlightSnapshotAt.valueOf() + 60_000,
+    ).toISOString();
+    await webhooks.prepare({
+      ciphertextSha256: "c".repeat(64),
+      eventId: newestEventId,
+      payloadBytes: 128,
+      personalAccountId: accountId,
+      receivedAt: newestReceivedAt,
+      whatsappConnectionId: initialClaim.whatsappConnectionId,
+    });
+    expect(
+      await webhooks.projectDirectoryContact(
+        {
+          ...firstContact,
+          displayNameCiphertext: encrypted("22"),
+          displayNameSort: "ada newest",
+          eventId: newestEventId,
+          evidence: { occurredAt: null, version: null },
+          itemIdentity: `wi1_${"z".repeat(43)}`,
+          itemIndex: 0,
+          personalAccountId: accountId,
+          publicId: "ctc_123456789012345678907",
+          receivedAt: newestReceivedAt,
+          whatsappConnectionId: initialClaim.whatsappConnectionId,
+          active: true,
+        },
+        async () => "incomparable",
+      ),
+    ).toBe("applied");
+    expect(
+      await directory.finishContactReconciliation({
+        claimId: inFlightClaim.claimId,
+        contacts: [],
+        observedAt: inFlightSnapshotAt.toISOString(),
+        partial: false,
+        stale: false,
+        whatsappConnectionId: inFlightClaim.whatsappConnectionId,
+      }),
+    ).toBe(true);
+
+    const delayedEventId = "50000000-0000-4000-8000-000000000042";
+    const delayedReceivedAt = new Date(
+      inFlightSnapshotAt.valueOf() + 2 * 60_000,
+    ).toISOString();
+    await webhooks.prepare({
+      ciphertextSha256: "d".repeat(64),
+      eventId: delayedEventId,
+      payloadBytes: 128,
+      personalAccountId: accountId,
+      receivedAt: delayedReceivedAt,
+      whatsappConnectionId: initialClaim.whatsappConnectionId,
+    });
+    expect(
+      await webhooks.projectDirectoryContact(
+        {
+          ...firstContact,
+          displayNameCiphertext: encrypted("23"),
+          displayNameSort: "ada delayed",
+          eventId: delayedEventId,
+          evidence: {
+            occurredAt: new Date(
+              inFlightSnapshotAt.valueOf() - 60_000,
+            ).toISOString(),
+            version: null,
+          },
+          itemIdentity: `wi1_${"0".repeat(43)}`,
+          itemIndex: 0,
+          personalAccountId: accountId,
+          publicId: "ctc_123456789012345678908",
+          receivedAt: delayedReceivedAt,
+          whatsappConnectionId: initialClaim.whatsappConnectionId,
+          active: true,
+        },
+        async () => "incomparable",
+      ),
+    ).toBe("superseded");
+
+    const converged = await database.query<{ display_name_sort: string }>(
+      `SELECT display_name_sort
+       FROM app.directory_contacts
+       WHERE provider_identity_index = $1`,
+      [firstContact.providerIdentityIndex],
+    );
+    expect(converged.rows).toEqual([{ display_name_sort: "ada newest" }]);
   });
 
   test("rechecks scope and revocation at audit and protected-read boundaries", async () => {
@@ -321,7 +889,9 @@ describe("MCP tool repository", () => {
         ...authorization,
         observedAt,
       }),
-    ).resolves.toEqual({ scopes: ["connections:read"] });
+    ).resolves.toEqual({
+      scopes: ["connections:read", "directory:read"],
+    });
     await expect(
       repository.beginToolCall({
         ...authorization,
@@ -348,11 +918,9 @@ describe("MCP tool repository", () => {
       [authorizationId],
     );
     await database.query(
-      `INSERT INTO app.whatsapp_connection_key_envelopes (
-         personal_account_id, whatsapp_connection_id, account_key_version,
-         key_version, nonce, ciphertext
-       ) VALUES ($1, '20000000-0000-4000-8000-000000000030', 1, 1,
-         decode(repeat('01', 12), 'hex'), decode(repeat('02', 32), 'hex'))`,
+      `DELETE FROM app.whatsapp_connection_secrets
+       WHERE personal_account_id = $1
+         AND whatsapp_connection_id = '20000000-0000-4000-8000-000000000030'`,
       [accountId],
     );
     await database.query(

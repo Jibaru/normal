@@ -212,6 +212,25 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 18,
   },
+  {
+    name: "encrypted Directory contact projection",
+    sql: await readFile(
+      new NodeUrl("../migrations/0019_directory_contacts.sql", import.meta.url),
+      "utf8",
+    ),
+    version: 19,
+  },
+  {
+    name: "per-contact Directory snapshot evidence",
+    sql: await readFile(
+      new NodeUrl(
+        "../migrations/0020_contact_snapshot_evidence.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    version: 20,
+  },
 ];
 
 const checksum = (sql: string): string =>

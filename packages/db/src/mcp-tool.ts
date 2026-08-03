@@ -35,7 +35,7 @@ export interface McpToolConnectionRecord {
   readonly stateChangedAt: string;
 }
 
-export type McpToolName = "list_connections" | "list_groups";
+export type McpToolName = "list_connections" | "list_contacts" | "list_groups";
 
 export interface McpToolGroupRecord {
   readonly displayName: {
@@ -81,6 +81,60 @@ export interface McpToolGroupSearchMaterial {
     readonly version: 1;
   };
 }
+
+interface AccountKeyEnvelope {
+  readonly ciphertext: string;
+  readonly keyVersion: number;
+  readonly kmsKeyId: string;
+  readonly personalAccountId: string;
+  readonly version: 1;
+}
+
+interface ConnectionKeyEnvelope {
+  readonly accountKeyVersion: number;
+  readonly ciphertext: string;
+  readonly connectionId: string;
+  readonly keyVersion: number;
+  readonly nonce: string;
+  readonly personalAccountId: string;
+  readonly version: 1;
+}
+
+export interface McpToolDirectoryCiphertext {
+  readonly ciphertext: string;
+  readonly keyVersion: number;
+  readonly nonce: string;
+  readonly version: 1;
+}
+
+export interface McpToolContactReadMaterial {
+  readonly accountKey: AccountKeyEnvelope;
+  readonly asOf: string;
+  readonly connectionKey: ConnectionKeyEnvelope;
+  readonly identityKey: McpToolDirectoryCiphertext;
+  readonly partial: boolean;
+  readonly personalAccountId: string;
+  readonly stale: boolean;
+  readonly whatsappConnectionId: string;
+}
+
+export interface McpToolEncryptedContactRecord {
+  readonly displayNameCiphertext: McpToolDirectoryCiphertext | null;
+  readonly displayNameSort: string;
+  readonly phoneCiphertext: McpToolDirectoryCiphertext | null;
+  readonly providerIdentityIndex: string;
+  readonly publicId: string;
+}
+
+export interface McpToolEncryptedContactPage {
+  readonly asOf: string;
+  readonly contacts: ReadonlyArray<McpToolEncryptedContactRecord>;
+  readonly partial: boolean;
+  readonly snapshotObservedAt: string | null;
+  readonly stale: boolean;
+}
+
+export type RejectToolCallResult = "authorization_denied" | "rejected";
 
 export type BeginToolCallResult =
   | {
@@ -132,6 +186,31 @@ export interface McpToolRepository {
       readonly observedAt: Date;
     },
   ) => Promise<McpToolGroupSearchMaterial | null>;
+  readonly loadContactReadMaterial: (
+    input: McpAccessAuthorization & {
+      readonly connectionPublicId: string;
+      readonly observedAt: Date;
+    },
+  ) => Promise<McpToolContactReadMaterial | null>;
+  readonly listEncryptedContacts: (
+    input: McpAccessAuthorization & {
+      readonly connectionPublicId: string;
+      readonly cursorDisplayNameSort: string | null;
+      readonly cursorPublicId: string | null;
+      readonly limit: number;
+      readonly observedAt: Date;
+      readonly searchIndex: string | null;
+      readonly searchKind: "name" | "phone" | null;
+    },
+  ) => Promise<McpToolEncryptedContactPage | null>;
+  readonly rejectToolCall: (
+    input: McpAccessAuthorization & {
+      readonly auditLogId: string;
+      readonly errorCode: string;
+      readonly observedAt: Date;
+      readonly toolName: "list_connections" | "list_contacts";
+    },
+  ) => Promise<RejectToolCallResult>;
 }
 
 const withTransaction = async <Value>(
@@ -331,6 +410,96 @@ const loadGroupIndexMaterial = async (
   return parseGroupSearchMaterial(material.rows[0]);
 };
 
+const encodeBase64 = (value: Uint8Array): string =>
+  Buffer.from(value).toString("base64");
+
+interface ContactMaterialRow extends Record<string, unknown> {
+  readonly account_key_ciphertext: unknown;
+  readonly account_key_version: unknown;
+  readonly account_kms_key_id: unknown;
+  readonly connection_key_account_version: unknown;
+  readonly connection_key_ciphertext: unknown;
+  readonly connection_key_nonce: unknown;
+  readonly connection_key_version: unknown;
+  readonly identity_ciphertext: unknown;
+  readonly identity_ciphertext_version: unknown;
+  readonly identity_key_version: unknown;
+  readonly identity_nonce: unknown;
+  readonly personal_account_id: unknown;
+  readonly projection_as_of: unknown;
+  readonly projection_partial: unknown;
+  readonly projection_stale: unknown;
+  readonly whatsapp_connection_id: unknown;
+}
+
+const contactReadMaterial = (
+  row: ContactMaterialRow | undefined,
+): McpToolContactReadMaterial | null => {
+  if (row === undefined) return null;
+  const accountCiphertext = bytes(row.account_key_ciphertext);
+  const accountVersion = positiveInteger(row.account_key_version);
+  const connectionAccountVersion = positiveInteger(
+    row.connection_key_account_version,
+  );
+  const connectionCiphertext = bytes(row.connection_key_ciphertext);
+  const connectionNonce = bytes(row.connection_key_nonce);
+  const connectionVersion = positiveInteger(row.connection_key_version);
+  const identityCiphertext = bytes(row.identity_ciphertext);
+  const identityNonce = bytes(row.identity_nonce);
+  const identityVersion = positiveInteger(row.identity_key_version);
+  const asOf = timestampString(row.projection_as_of);
+  if (
+    typeof row.personal_account_id !== "string" ||
+    typeof row.whatsapp_connection_id !== "string" ||
+    typeof row.account_kms_key_id !== "string" ||
+    row.account_kms_key_id.length === 0 ||
+    accountCiphertext === null ||
+    accountVersion === null ||
+    connectionAccountVersion === null ||
+    connectionCiphertext === null ||
+    connectionNonce?.byteLength !== 12 ||
+    connectionVersion === null ||
+    row.identity_ciphertext_version !== 1 ||
+    identityCiphertext === null ||
+    identityNonce?.byteLength !== 12 ||
+    identityVersion === null ||
+    typeof row.projection_stale !== "boolean" ||
+    typeof row.projection_partial !== "boolean" ||
+    asOf === null
+  ) {
+    throw new Error("invalid MCP Directory read material");
+  }
+  return {
+    accountKey: {
+      ciphertext: encodeBase64(accountCiphertext),
+      keyVersion: accountVersion,
+      kmsKeyId: row.account_kms_key_id,
+      personalAccountId: row.personal_account_id,
+      version: 1,
+    },
+    asOf,
+    connectionKey: {
+      accountKeyVersion: connectionAccountVersion,
+      ciphertext: encodeBase64(connectionCiphertext),
+      connectionId: row.whatsapp_connection_id,
+      keyVersion: connectionVersion,
+      nonce: encodeBase64(connectionNonce),
+      personalAccountId: row.personal_account_id,
+      version: 1,
+    },
+    identityKey: {
+      ciphertext: encodeBase64(identityCiphertext),
+      keyVersion: identityVersion,
+      nonce: encodeBase64(identityNonce),
+      version: 1,
+    },
+    partial: row.projection_partial,
+    personalAccountId: row.personal_account_id,
+    stale: row.projection_stale,
+    whatsappConnectionId: row.whatsapp_connection_id,
+  };
+};
+
 const enterAuthorizationContext = async (
   connection: McpToolConnection,
   input: McpAccessAuthorization,
@@ -406,7 +575,11 @@ const insertToolCallLog = (
     readonly completed: boolean;
     readonly errorCode: string | null;
     readonly observedAt: Date;
-    readonly outcome: "started" | "rate_limited" | "authorization_denied";
+    readonly outcome:
+      | "started"
+      | "rate_limited"
+      | "authorization_denied"
+      | "execution_error";
     readonly personalAccountId: string;
     readonly quotaReserved: boolean;
     readonly toolName: string;
@@ -436,6 +609,9 @@ const insertToolCallLog = (
       input.quotaReserved,
     ],
   );
+
+const requiredScope = (toolName: McpToolName): McpAuthorizationScope =>
+  toolName === "list_connections" ? "connections:read" : "directory:read";
 
 export const makeMcpToolRepository = (
   provider: McpToolConnectionProvider,
@@ -480,11 +656,10 @@ export const makeMcpToolRepository = (
           [personalAccountId],
         );
         const scopes = await loadAuthorizationScopes(connection, input);
-        const requiredScope =
-          input.toolName === "list_groups"
-            ? "directory:read"
-            : "connections:read";
-        if (scopes === null || !scopes.includes(requiredScope)) {
+        if (
+          scopes === null ||
+          !scopes.includes(requiredScope(input.toolName))
+        ) {
           await insertToolCallLog(connection, {
             auditLogId: input.auditLogId,
             authorizationId: input.authorizationId,
@@ -755,6 +930,256 @@ export const makeMcpToolRepository = (
           return null;
         }
         return loadGroupIndexMaterial(connection, input);
+      }),
+    ),
+  loadContactReadMaterial: (input) =>
+    provider.withConnection((connection) =>
+      withTransaction(connection, async () => {
+        const result = await connection.query<ContactMaterialRow>(
+          `SELECT *
+           FROM app_private.load_mcp_contact_read_material($1, $2, $3, $4, $5)`,
+          [
+            input.authorizationId,
+            input.oauthSubject,
+            input.clientId ?? null,
+            input.connectionPublicId,
+            input.observedAt,
+          ],
+        );
+        const material = contactReadMaterial(result.rows[0]);
+        if (material === null) return null;
+        await connection.query(
+          "SELECT set_config('app.personal_account_id', $1, true)",
+          [material.personalAccountId],
+        );
+        return material;
+      }),
+    ),
+  listEncryptedContacts: (input) =>
+    provider.withConnection((connection) =>
+      withTransaction(connection, async () => {
+        if (
+          !/^con_[A-Za-z0-9_-]{21}$/u.test(input.connectionPublicId) ||
+          !Number.isSafeInteger(input.limit) ||
+          input.limit < 1 ||
+          input.limit > 51 ||
+          (input.cursorDisplayNameSort === null) !==
+            (input.cursorPublicId === null) ||
+          (input.cursorPublicId !== null &&
+            !/^ctc_[A-Za-z0-9_-]{21}$/u.test(input.cursorPublicId)) ||
+          (input.searchIndex === null) !== (input.searchKind === null) ||
+          (input.searchIndex !== null &&
+            !/^di1_[A-Za-z0-9_-]{43}$/u.test(input.searchIndex))
+        ) {
+          throw new Error("invalid MCP contact query");
+        }
+        await connection.query(
+          "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+        );
+        if ((await enterAuthorizationContext(connection, input)) === null) {
+          return null;
+        }
+        const scopes = await loadAuthorizationScopes(connection, input);
+        if (scopes === null || !scopes.includes("directory:read")) return null;
+        const projectionResult = await connection.query<{
+          projection_as_of: unknown;
+          projection_partial: unknown;
+          projection_snapshot_observed_at: unknown;
+          projection_stale: unknown;
+        }>(
+          `SELECT
+             coalesce(projections.as_of, connections.created_at)
+               AS projection_as_of,
+             coalesce(projections.stale, true) AS projection_stale,
+             coalesce(projections.partial, true) AS projection_partial,
+             projections.snapshot_observed_at
+               AS projection_snapshot_observed_at
+           FROM app.mcp_authorization_connections AS selected
+           JOIN app.whatsapp_connections AS connections
+             ON connections.personal_account_id = selected.personal_account_id
+            AND connections.id = selected.whatsapp_connection_id
+           LEFT JOIN app.directory_contact_projections AS projections
+             ON projections.personal_account_id = connections.personal_account_id
+            AND projections.whatsapp_connection_id = connections.id
+           WHERE selected.mcp_authorization_id = $1
+             AND connections.public_id = $2
+             AND connections.state <> 'deleting'`,
+          [input.authorizationId, input.connectionPublicId],
+        );
+        const projection = projectionResult.rows[0];
+        const asOf = timestampString(projection?.projection_as_of);
+        const snapshotObservedAt =
+          projection?.projection_snapshot_observed_at === null
+            ? null
+            : timestampString(projection?.projection_snapshot_observed_at);
+        if (
+          projection === undefined ||
+          asOf === null ||
+          typeof projection.projection_stale !== "boolean" ||
+          typeof projection.projection_partial !== "boolean" ||
+          (projection.projection_snapshot_observed_at !== null &&
+            snapshotObservedAt === null)
+        ) {
+          throw new Error("invalid MCP Directory projection metadata");
+        }
+        const result = await connection.query<{
+          display_name_ciphertext: unknown;
+          display_name_ciphertext_version: unknown;
+          display_name_key_version: unknown;
+          display_name_nonce: unknown;
+          display_name_sort: unknown;
+          phone_ciphertext: unknown;
+          phone_ciphertext_version: unknown;
+          phone_key_version: unknown;
+          phone_nonce: unknown;
+          provider_identity_index: unknown;
+          public_id: unknown;
+        }>(
+          `SELECT
+             contacts.public_id,
+             contacts.provider_identity_index,
+             contacts.display_name_ciphertext_version,
+             contacts.display_name_key_version,
+             contacts.display_name_nonce,
+             contacts.display_name_ciphertext,
+             contacts.display_name_sort,
+             contacts.phone_ciphertext_version,
+             contacts.phone_key_version,
+             contacts.phone_nonce,
+             contacts.phone_ciphertext
+           FROM app.mcp_authorization_connections AS selected
+           JOIN app.whatsapp_connections AS connections
+             ON connections.personal_account_id = selected.personal_account_id
+            AND connections.id = selected.whatsapp_connection_id
+           JOIN app.directory_contacts AS contacts
+             ON contacts.personal_account_id = connections.personal_account_id
+            AND contacts.whatsapp_connection_id = connections.id
+           WHERE selected.mcp_authorization_id = $1
+             AND connections.public_id = $2
+             AND connections.state <> 'deleting'
+             AND contacts.active
+             AND (
+               $5::text IS NULL
+               OR (contacts.display_name_sort, contacts.public_id)
+                 > ($5::text COLLATE "C", $6::text)
+             )
+             AND (
+               $3::text IS NULL
+               OR ($4 = 'phone' AND contacts.phone_index = $3)
+               OR (
+                 $4 = 'name'
+                 AND contacts.name_prefix_indexes
+                   @> ARRAY[$3::app.directory_blind_index]
+               )
+             )
+           ORDER BY contacts.display_name_sort, contacts.public_id
+           LIMIT $7`,
+          [
+            input.authorizationId,
+            input.connectionPublicId,
+            input.searchIndex,
+            input.searchKind,
+            input.cursorDisplayNameSort,
+            input.cursorPublicId,
+            input.limit,
+          ],
+        );
+        const parseField = (
+          row: (typeof result.rows)[number],
+          prefix: "display_name" | "phone",
+        ): McpToolDirectoryCiphertext | null => {
+          const ciphertext = bytes(row[`${prefix}_ciphertext`]);
+          const nonce = bytes(row[`${prefix}_nonce`]);
+          const version = positiveInteger(row[`${prefix}_key_version`]);
+          const formatVersion = row[`${prefix}_ciphertext_version`];
+          if (
+            ciphertext === null &&
+            nonce === null &&
+            version === null &&
+            formatVersion === null
+          ) {
+            return null;
+          }
+          if (
+            ciphertext === null ||
+            nonce?.byteLength !== 12 ||
+            version === null ||
+            formatVersion !== 1
+          ) {
+            throw new Error("invalid encrypted MCP Directory field");
+          }
+          return {
+            ciphertext: encodeBase64(ciphertext),
+            keyVersion: version,
+            nonce: encodeBase64(nonce),
+            version: 1,
+          };
+        };
+        const contacts = result.rows.map((row) => {
+          if (
+            typeof row.public_id !== "string" ||
+            !/^ctc_[A-Za-z0-9_-]{21}$/u.test(row.public_id) ||
+            typeof row.provider_identity_index !== "string" ||
+            !/^di1_[A-Za-z0-9_-]{43}$/u.test(row.provider_identity_index) ||
+            typeof row.display_name_sort !== "string"
+          ) {
+            throw new Error("invalid persisted MCP Directory contact");
+          }
+          return {
+            displayNameCiphertext: parseField(row, "display_name"),
+            displayNameSort: row.display_name_sort,
+            phoneCiphertext: parseField(row, "phone"),
+            providerIdentityIndex: row.provider_identity_index,
+            publicId: row.public_id,
+          };
+        });
+        return {
+          asOf,
+          contacts,
+          partial: projection.projection_partial,
+          snapshotObservedAt,
+          stale: projection.projection_stale,
+        };
+      }),
+    ),
+  rejectToolCall: (input) =>
+    provider.withConnection((connection) =>
+      withTransaction(connection, async () => {
+        const personalAccountId = await enterAuthorizationContext(
+          connection,
+          input,
+        );
+        if (personalAccountId === null) return "authorization_denied" as const;
+        const scopes = await loadAuthorizationScopes(connection, input);
+        if (
+          scopes === null ||
+          !scopes.includes(requiredScope(input.toolName))
+        ) {
+          await insertToolCallLog(connection, {
+            auditLogId: input.auditLogId,
+            authorizationId: input.authorizationId,
+            completed: true,
+            errorCode: "authorization_denied",
+            observedAt: input.observedAt,
+            outcome: "authorization_denied",
+            personalAccountId,
+            quotaReserved: false,
+            toolName: input.toolName,
+          });
+          return "authorization_denied" as const;
+        }
+        await insertToolCallLog(connection, {
+          auditLogId: input.auditLogId,
+          authorizationId: input.authorizationId,
+          completed: true,
+          errorCode: input.errorCode,
+          observedAt: input.observedAt,
+          outcome: "execution_error",
+          personalAccountId,
+          quotaReserved: false,
+          toolName: input.toolName,
+        });
+        return "rejected" as const;
       }),
     ),
   completeToolCall: (input) =>

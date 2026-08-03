@@ -63,7 +63,10 @@ The Worker runtime suite proves:
 - provider-control service-binding calls;
 - scheduled-handler effects through the supported runtime helpers;
 - an OAuth authorization redirect over signed-in HTTP;
-- MCP tool discovery over HTTP JSON-RPC; and
+- MCP tool discovery over HTTP JSON-RPC;
+- authorization-scoped `list_contacts` discovery, encrypted Directory
+  projection, deterministic cursor pagination, suffix-only output, and
+  audit-before-release behavior; and
 - an authenticated, non-cacheable protected-resource read.
 
 Controlled values, credentials, and failure selection are reachable only from

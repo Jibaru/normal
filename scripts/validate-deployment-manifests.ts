@@ -77,7 +77,7 @@ for (const deployable of deployables) {
         JSON.stringify(requiredSecretNames)
       ) {
         throw new Error(
-          `API ${configurationName} configuration must require identity, OAuth protocol, and WhatsApp Number reservation secrets.`,
+          `API ${configurationName} configuration must require identity, cursor, OAuth protocol, and WhatsApp Number reservation secrets.`,
         );
       }
       const environmentSuffix =

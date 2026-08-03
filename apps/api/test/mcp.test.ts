@@ -8,6 +8,7 @@ import { describe, expect, test } from "vitest";
 import { EnvelopeEncryptionService } from "../src/encryption/envelope";
 import {
   createMcpRequestHandler,
+  McpCursorCodec,
   McpCursorSigning,
   McpToolClock,
   McpToolIdentifiers,
@@ -102,9 +103,16 @@ const responseMessages = async (
 const makeHarness = (
   overrides: {
     readonly beginResult?: BeginToolCallResult;
+    readonly contactPage?: {
+      readonly asOf: string;
+      readonly partial: boolean;
+      readonly snapshotObservedAt: string | null;
+      readonly stale: boolean;
+    };
     readonly failBegin?: boolean;
     readonly failComplete?: boolean;
     readonly failInspect?: boolean;
+    readonly failReject?: boolean;
     readonly scopes?: ReadonlyArray<
       "connections:read" | "directory:read" | "messages:read" | "messages:send"
     >;
@@ -121,6 +129,27 @@ const makeHarness = (
     Layer.succeed(McpToolIdentifiers, {
       nextAuditLogId: Effect.succeed("50000000-0000-4000-8000-000000000030"),
     }),
+    Layer.succeed(McpCursorCodec, {
+      decode: ({ cursor }) => {
+        try {
+          return Effect.succeed(JSON.parse(atob(cursor)) as [string, string]);
+        } catch {
+          return Effect.fail({ _tag: "InvalidCursorError" } as never);
+        }
+      },
+      encode: ({ boundary }) => Effect.succeed(btoa(JSON.stringify(boundary))),
+    }),
+    Layer.succeed(EnvelopeEncryptionService, {
+      createConnectionKey: () => Effect.die("not used"),
+      createPersonalAccountKey: () => Effect.die("not used"),
+      decrypt: ({ ciphertext }) =>
+        Effect.succeed(
+          Uint8Array.from(atob(ciphertext.ciphertext), (value) =>
+            value.charCodeAt(0),
+          ),
+        ),
+      encrypt: () => Effect.die("not used"),
+    }),
     Layer.succeed(McpToolPersistence, {
       beginToolCall: (input) => {
         observations.push("begin");
@@ -130,13 +159,13 @@ const makeHarness = (
         if (overrides.beginResult !== undefined) {
           return Effect.succeed(overrides.beginResult);
         }
+        const requiredScope =
+          input.toolName === "list_connections"
+            ? "connections:read"
+            : "directory:read";
         if (
           overrides.scopes !== undefined &&
-          !overrides.scopes.includes(
-            input.toolName === "list_groups"
-              ? "directory:read"
-              : "connections:read",
-          )
+          !overrides.scopes.includes(requiredScope)
         ) {
           return Effect.succeed({
             auditLogId: "50000000-0000-4000-8000-000000000030",
@@ -256,20 +285,103 @@ const makeHarness = (
             : overrides.groupPage,
         );
       },
+      loadContactReadMaterial: () => {
+        observations.push("material");
+        return Effect.succeed({
+          accountKey: {
+            ciphertext: "AQI=",
+            keyVersion: 1,
+            kmsKeyId: "kms-content-root",
+            personalAccountId: "10000000-0000-4000-8000-000000000030",
+            version: 1 as const,
+          },
+          asOf: "2026-07-30T12:00:00.000Z",
+          connectionKey: {
+            accountKeyVersion: 1,
+            ciphertext: "AQI=",
+            connectionId: "20000000-0000-4000-8000-000000000030",
+            keyVersion: 1,
+            nonce: "AQIDBAUGBwgJCgsM",
+            personalAccountId: "10000000-0000-4000-8000-000000000030",
+            version: 1 as const,
+          },
+          identityKey: {
+            ciphertext: btoa(
+              String.fromCharCode(...new Uint8Array(32).fill(7)),
+            ),
+            keyVersion: 1,
+            nonce: "AQIDBAUGBwgJCgsM",
+            version: 1 as const,
+          },
+          partial: false,
+          personalAccountId: "10000000-0000-4000-8000-000000000030",
+          stale: false,
+          whatsappConnectionId: "20000000-0000-4000-8000-000000000030",
+        });
+      },
+      listEncryptedContacts: (input) => {
+        observations.push("contacts");
+        const encrypted = (value: string) => ({
+          ciphertext: btoa(value),
+          keyVersion: 1,
+          nonce: "AQIDBAUGBwgJCgsM",
+          version: 1 as const,
+        });
+        const contacts = [
+          {
+            displayNameCiphertext: encrypted("Grace"),
+            displayNameSort: "grace",
+            phoneCiphertext: null,
+            providerIdentityIndex: `di1_${"g".repeat(43)}`,
+            publicId: "ctc_123456789012345678902",
+          },
+          {
+            displayNameCiphertext: encrypted("Ada"),
+            displayNameSort: "ada",
+            phoneCiphertext: encrypted("+15550199"),
+            providerIdentityIndex: `di1_${"a".repeat(43)}`,
+            publicId: "ctc_123456789012345678901",
+          },
+        ].sort((left, right) =>
+          left.displayNameSort.localeCompare(right.displayNameSort),
+        );
+        return Effect.succeed({
+          ...(overrides.contactPage ?? {
+            asOf: "2026-07-30T12:00:00.000Z",
+            partial: false,
+            snapshotObservedAt: "2026-07-30T12:00:00.000Z",
+            stale: false,
+          }),
+          contacts: contacts
+            .filter(
+              (contact) =>
+                input.cursorDisplayNameSort === null ||
+                contact.displayNameSort > input.cursorDisplayNameSort ||
+                (contact.displayNameSort === input.cursorDisplayNameSort &&
+                  contact.publicId > (input.cursorPublicId ?? "")),
+            )
+            .slice(0, input.limit),
+        });
+      },
+      rejectToolCall: (input) => {
+        observations.push("reject");
+        if (overrides.failReject) {
+          return Effect.fail(new McpToolPersistenceError());
+        }
+        const requiredScope =
+          input.toolName === "list_connections"
+            ? "connections:read"
+            : "directory:read";
+        return Effect.succeed(
+          overrides.scopes !== undefined &&
+            !overrides.scopes.includes(requiredScope)
+            ? ("authorization_denied" as const)
+            : ("rejected" as const),
+        );
+      },
     }),
     Layer.succeed(McpCursorSigning, {
       key: overrides.cursorKey ?? ({} as CryptoKey),
-    }),
-    Layer.succeed(EnvelopeEncryptionService, {
-      createConnectionKey: () => Effect.die("not used"),
-      createPersonalAccountKey: () => Effect.die("not used"),
-      decrypt: ({ ciphertext }) =>
-        Effect.succeed(
-          Uint8Array.from(atob(ciphertext.ciphertext), (character) =>
-            character.charCodeAt(0),
-          ),
-        ),
-      encrypt: () => Effect.die("not used"),
     }),
     Layer.succeed(SafeTelemetry, {
       emit: (event) =>
@@ -611,6 +723,192 @@ describe("stateless MCP list_connections boundary", () => {
     expect(harness.observations).toEqual(["begin", "list", "complete"]);
   });
 
+  test("discovers both directory tools and returns deterministic suffix-only contact pages", async () => {
+    const harness = makeHarness({ scopes: ["directory:read"] });
+    const discovery = await harness.handler(
+      jsonRpcRequest("tools/list"),
+      {},
+      executionContext,
+      authorization,
+    );
+    const discoveryBody = (await discovery.json()) as {
+      result: {
+        tools: Array<{
+          inputSchema: Record<string, unknown>;
+          name: string;
+          outputSchema: Record<string, unknown>;
+        }>;
+      };
+    };
+    expect(discoveryBody.result.tools.map(({ name }) => name)).toEqual([
+      "list_groups",
+      "list_contacts",
+    ]);
+    expect(
+      discoveryBody.result.tools.find(({ name }) => name === "list_contacts"),
+    ).toMatchObject({
+      inputSchema: expect.objectContaining({ additionalProperties: false }),
+      outputSchema: expect.objectContaining({ additionalProperties: false }),
+    });
+
+    const first = await harness.handler(
+      jsonRpcRequest("tools/call", {
+        arguments: {
+          connection_id: "con_123456789012345678901",
+          limit: 1,
+        },
+        name: "list_contacts",
+      }),
+      {},
+      executionContext,
+      authorization,
+    );
+    const firstBody = (await first.json()) as {
+      result: { structuredContent: Record<string, unknown> };
+    };
+    expect(firstBody.result.structuredContent).toEqual({
+      as_of: "2026-07-30T12:00:00.000Z",
+      contacts: [
+        {
+          contact_id: "ctc_123456789012345678901",
+          display_name: "Ada",
+          phone_last_four: "0199",
+        },
+      ],
+      has_more: true,
+      next_cursor: expect.any(String),
+      partial: false,
+      stale: true,
+    });
+    expect(JSON.stringify(firstBody)).not.toContain("+15550199");
+    expect(harness.observations).toEqual([
+      "begin",
+      "material",
+      "contacts",
+      "complete",
+    ]);
+
+    const second = await harness.handler(
+      jsonRpcRequest("tools/call", {
+        arguments: {
+          connection_id: "con_123456789012345678901",
+          cursor: firstBody.result.structuredContent.next_cursor,
+          limit: 1,
+        },
+        name: "list_contacts",
+      }),
+      {},
+      executionContext,
+      authorization,
+    );
+    expect(await second.json()).toMatchObject({
+      result: {
+        structuredContent: {
+          contacts: [
+            {
+              contact_id: "ctc_123456789012345678902",
+              display_name: "Grace",
+              phone_last_four: null,
+            },
+          ],
+          has_more: false,
+          next_cursor: null,
+        },
+      },
+    });
+  });
+
+  test("keeps provider reconciliation staleness visible when webhooks advance as_of", async () => {
+    const harness = makeHarness({
+      contactPage: {
+        asOf: "2026-07-31T12:00:00.000Z",
+        partial: false,
+        snapshotObservedAt: "2026-07-31T11:40:00.000Z",
+        stale: false,
+      },
+      scopes: ["directory:read"],
+    });
+    const response = await harness.handler(
+      jsonRpcRequest("tools/call", {
+        arguments: { connection_id: "con_123456789012345678901" },
+        name: "list_contacts",
+      }),
+      {},
+      executionContext,
+      authorization,
+    );
+
+    expect(await response.json()).toMatchObject({
+      result: {
+        structuredContent: {
+          as_of: "2026-07-31T12:00:00.000Z",
+          stale: true,
+        },
+      },
+    });
+  });
+
+  test("audits invalid cursors without reserving request quota", async () => {
+    const harness = makeHarness({ scopes: ["directory:read"] });
+    const response = await harness.handler(
+      jsonRpcRequest("tools/call", {
+        arguments: {
+          connection_id: "con_123456789012345678901",
+          cursor: "not-a-cursor",
+        },
+        name: "list_contacts",
+      }),
+      {},
+      executionContext,
+      authorization,
+    );
+
+    expect(await response.json()).toMatchObject({
+      result: {
+        isError: true,
+        structuredContent: { error_code: "invalid_cursor" },
+      },
+    });
+    expect(harness.observations).toEqual(["reject"]);
+  });
+
+  test("audits direct list_contacts calls and withholds Directory data when completion fails", async () => {
+    const unauthorized = makeHarness({ scopes: ["connections:read"] });
+    const denied = await unauthorized.handler(
+      jsonRpcRequest("tools/call", {
+        arguments: { connection_id: "con_123456789012345678901" },
+        name: "list_contacts",
+      }),
+      {},
+      executionContext,
+      authorization,
+    );
+    expect(await denied.json()).toMatchObject({
+      result: {
+        isError: true,
+        structuredContent: { error_code: "authorization_denied" },
+      },
+    });
+    expect(unauthorized.observations).toEqual(["begin"]);
+
+    const unavailable = makeHarness({
+      failComplete: true,
+      scopes: ["directory:read"],
+    });
+    const response = await unavailable.handler(
+      jsonRpcRequest("tools/call", {
+        arguments: { connection_id: "con_123456789012345678901" },
+        name: "list_contacts",
+      }),
+      {},
+      executionContext,
+      authorization,
+    );
+    const serialized = JSON.stringify(await response.json());
+    expect(serialized).toContain("audit_unavailable");
+    expect(serialized).not.toContain("Ada");
+  });
+
   test("supports the legacy-stateless 2025 protocol lane", async () => {
     const harness = makeHarness();
     const request = jsonRpcRequest("tools/list", undefined, "2025-06-18");
@@ -643,7 +941,10 @@ describe("stateless MCP list_groups boundary", () => {
       result: { tools: Array<{ name: string }> };
     };
 
-    expect(body.result.tools.map(({ name }) => name)).toEqual(["list_groups"]);
+    expect(body.result.tools.map(({ name }) => name)).toEqual([
+      "list_groups",
+      "list_contacts",
+    ]);
   });
 
   test("audits before decrypting and returns normalized prefix results without provider data", async () => {

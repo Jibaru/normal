@@ -388,7 +388,7 @@ const contactPhoneNumber = (jid: string): string | null => {
     return null;
   }
   const phone = local.split(":", 1)[0];
-  return phone !== undefined && /^[1-9]\d{1,14}$/.test(phone)
+  return phone !== undefined && /^[1-9]\d{6,14}$/.test(phone)
     ? `+${phone}`
     : null;
 };

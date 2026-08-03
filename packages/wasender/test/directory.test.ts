@@ -99,7 +99,12 @@ describe("real Wasender Directory adapter", () => {
     );
     expect(JSON.stringify(observation)).not.toContain("98555123@lid");
     expect(JSON.stringify(observation)).not.toContain("provider.invalid");
-    expect(observation.entries[0]?.recipient).toMatch(/^loc_v1_c_/u);
+    expect(observation.entries[0]?.identity).toMatch(
+      /^wi1_[A-Za-z0-9_-]{43}$/u,
+    );
+    expect(observation.entries[0]?.recipient).toMatch(
+      /^loc_v1_c_[A-Za-z0-9_-]+$/u,
+    );
   });
 
   test("returns currently joined groups without provider identifiers or roster data", async () => {

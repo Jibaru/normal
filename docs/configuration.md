@@ -50,6 +50,18 @@ authority values before network access. Its provider origin is fixed in the
 production adapter, so configuration cannot redirect credentials to another
 host or select a fake implementation.
 
+Directory contact provider identities, display names, and phone numbers are
+stored only as connection-scoped envelope ciphertext. The approved derived
+normalized display-name sort value and HMAC blind indexes for provider
+identity, normalized name prefixes, and exact E.164 lookup are the only query
+material. Webhook projection is idempotent and evidence ordered;
+the five-minute provider snapshot is authoritative for removals only when it
+is complete. `list_contacts` rechecks the live authorization, selected
+connection, and contact state, decrypts only inside the API Worker, and returns
+at most a nullable display name plus the final four phone digits. A projection
+older than ten minutes is reported as stale even if the last provider read had
+succeeded.
+
 The API Worker receives `PROVIDER_CONTROL`, `HYPERDRIVE`,
 `WEBHOOK_HYPERDRIVE`, `OAUTH_KV`, `WEBHOOK_INGRESS`, `STORED_MEDIA`,
 `DELETION_CAPSULES`, `DELETION_MARKERS`, the `INGESTION_QUEUE` producer
