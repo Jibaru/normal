@@ -6,7 +6,7 @@ type TelemetryScalar = boolean | null | number | string;
 const common = ["event", "service"] as const;
 
 /** The complete runtime field allowlist for every production telemetry event. */
-const fieldsByEvent = {
+export const safeTelemetryFieldsByEvent = {
   "connection_health.reconciliation.completed": [
     ...common,
     "gapEvidence",
@@ -149,7 +149,10 @@ export const serializeSafeTelemetry = (value: unknown): string => {
   if (!isRecord(value) || typeof value.event !== "string") {
     throw new SafeTelemetryViolation("telemetry.event");
   }
-  const allowed = fieldsByEvent[value.event as keyof typeof fieldsByEvent];
+  const allowed =
+    safeTelemetryFieldsByEvent[
+      value.event as keyof typeof safeTelemetryFieldsByEvent
+    ];
   if (allowed === undefined) {
     throw new SafeTelemetryViolation("telemetry.event");
   }

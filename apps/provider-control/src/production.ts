@@ -94,7 +94,9 @@ const sessionLifecycleEffect = (environment: ProviderControlEnvironment) =>
 
 const telemetryLayer = Layer.succeed(SafeTelemetry, {
   emit: (event: HttpCompletedEvent) =>
-    Effect.sync(() => console.info(JSON.stringify(event))),
+    Effect.sync(() => console.info(JSON.stringify(event))).pipe(
+      Effect.withSpan("telemetry.emit"),
+    ),
 });
 
 const unavailable = (): Response =>

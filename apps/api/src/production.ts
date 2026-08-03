@@ -2315,7 +2315,9 @@ const deletionLayer = (environment: ApiEnvironment) =>
 
 const safeTelemetry = {
   emit: (event: SafeTelemetryEvent) =>
-    Effect.sync(() => console.info(serializeSafeTelemetry(event))),
+    Effect.sync(() => console.info(serializeSafeTelemetry(event))).pipe(
+      Effect.withSpan("telemetry.emit"),
+    ),
 } satisfies SafeTelemetry;
 
 const telemetryLayer = Layer.succeed(SafeTelemetry, safeTelemetry);

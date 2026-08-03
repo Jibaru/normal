@@ -29,4 +29,5 @@ jobs:
       - run: bun run test
       - run: bun run build
       - run: bun run manifests:validate
+      - run: bun run observability:validate
       - run: bun run infra:validate

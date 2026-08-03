@@ -1,0 +1,307 @@
+{
+  "version": 1,
+  "environment": "production",
+  "owner": {
+    "team": "platform-operations",
+    "runbook": "docs/runbooks/observability.md"
+  },
+  "delivery": {
+    "channel": "PAGER_WEBHOOK_URL",
+    "payloadFields": ["alert", "severity", "status", "observedAt"],
+    "canary": {
+      "enabled": true,
+      "schedule": "0 15 * * 1",
+      "alert": "alert-delivery-canary"
+    }
+  },
+  "sources": {
+    "workerTelemetry": {
+      "fields": [
+        "event",
+        "service",
+        "outcome",
+        "status",
+        "route",
+        "method",
+        "tool",
+        "durationMs",
+        "attemptCount",
+        "responseBytes",
+        "failureCode",
+        "state",
+        "gapEvidence",
+        "candidateCount",
+        "expiredCount",
+        "purgedCount",
+        "contactCount",
+        "appliedCount",
+        "duplicateCount",
+        "quarantinedCount",
+        "supersededCount",
+        "deletedCount",
+        "connectionCount",
+        "plaintextBytes",
+        "operation",
+        "operationClass",
+        "resultCount",
+        "clientClass",
+        "code",
+        "source",
+        "deadlineAt"
+      ]
+    },
+    "cloudflarePlatform": {
+      "fields": [
+        "service",
+        "status",
+        "latencyMs",
+        "queue",
+        "queueLagSeconds",
+        "queueDepth",
+        "deadLetters",
+        "dependency",
+        "availability",
+        "quotaUtilization",
+        "keyFailureCount",
+        "restoreGateFailures",
+        "mediaFailureCount",
+        "deletionDeadlineSeconds"
+      ]
+    }
+  },
+  "slos": [
+    {
+      "id": "first-party-availability",
+      "objective": 99.5,
+      "window": "30d",
+      "source": "cloudflarePlatform",
+      "indicator": "availability",
+      "filter": { "dependency": "first-party" }
+    },
+    {
+      "id": "wasender-availability",
+      "objective": null,
+      "window": "30d",
+      "source": "cloudflarePlatform",
+      "indicator": "availability",
+      "filter": { "dependency": "wasender" }
+    },
+    {
+      "id": "whatsapp-availability",
+      "objective": null,
+      "window": "30d",
+      "source": "cloudflarePlatform",
+      "indicator": "availability",
+      "filter": { "dependency": "whatsapp" }
+    }
+  ],
+  "dashboards": [
+    {
+      "id": "identity-and-mcp",
+      "panels": [
+        {
+          "title": "Authentication and OAuth outcomes",
+          "source": "workerTelemetry",
+          "metric": "count",
+          "filter": { "event": "oauth.authorization.request.completed" },
+          "groupBy": ["event", "outcome", "clientClass"]
+        },
+        {
+          "title": "MCP latency and errors",
+          "source": "cloudflarePlatform",
+          "metric": "latencyMs",
+          "filter": { "service": "api" },
+          "groupBy": ["service", "status"]
+        }
+      ]
+    },
+    {
+      "id": "ingestion-and-sends",
+      "panels": [
+        {
+          "title": "Send ambiguity",
+          "source": "workerTelemetry",
+          "metric": "count",
+          "filter": { "event": "provider.text_send.completed" },
+          "groupBy": ["outcome", "operationClass"]
+        },
+        {
+          "title": "Queue lag and depth",
+          "source": "cloudflarePlatform",
+          "metric": "queueLagSeconds",
+          "filter": {},
+          "groupBy": ["queue"]
+        },
+        {
+          "title": "Active dead letters",
+          "source": "cloudflarePlatform",
+          "metric": "deadLetters",
+          "filter": {},
+          "groupBy": ["queue"]
+        },
+        {
+          "title": "Webhook rejection",
+          "source": "workerTelemetry",
+          "metric": "count",
+          "filter": { "event": "webhook_ingress.completed" },
+          "groupBy": ["outcome"]
+        },
+        {
+          "title": "Ingestion reconciliation drift",
+          "source": "workerTelemetry",
+          "metric": "count",
+          "filter": { "event": "webhook_event.processing.completed" },
+          "groupBy": ["outcome"]
+        }
+      ]
+    },
+    {
+      "id": "capacity-security-and-lifecycle",
+      "panels": [
+        {
+          "title": "Quota pressure",
+          "source": "cloudflarePlatform",
+          "metric": "quotaUtilization",
+          "filter": {},
+          "groupBy": ["service"]
+        },
+        {
+          "title": "Stored Media failures",
+          "source": "cloudflarePlatform",
+          "metric": "mediaFailureCount",
+          "filter": {},
+          "groupBy": ["service"]
+        },
+        {
+          "title": "KMS key failures",
+          "source": "cloudflarePlatform",
+          "metric": "keyFailureCount",
+          "filter": {},
+          "groupBy": ["service"]
+        },
+        {
+          "title": "Deletion deadlines",
+          "source": "cloudflarePlatform",
+          "metric": "deletionDeadlineSeconds",
+          "filter": {},
+          "groupBy": ["service"]
+        },
+        {
+          "title": "Restore gate failures",
+          "source": "cloudflarePlatform",
+          "metric": "restoreGateFailures",
+          "filter": {},
+          "groupBy": ["service"]
+        }
+      ]
+    },
+    {
+      "id": "availability-slos",
+      "panels": [
+        {
+          "title": "First-party monthly availability",
+          "source": "cloudflarePlatform",
+          "metric": "availability",
+          "filter": { "dependency": "first-party" },
+          "groupBy": ["dependency"]
+        },
+        {
+          "title": "Wasender dependency availability",
+          "source": "cloudflarePlatform",
+          "metric": "availability",
+          "filter": { "dependency": "wasender" },
+          "groupBy": ["dependency"]
+        },
+        {
+          "title": "WhatsApp dependency availability",
+          "source": "cloudflarePlatform",
+          "metric": "availability",
+          "filter": { "dependency": "whatsapp" },
+          "groupBy": ["dependency"]
+        }
+      ]
+    }
+  ],
+  "alerts": [
+    {
+      "id": "active-dead-letters",
+      "severity": "page",
+      "source": "cloudflarePlatform",
+      "metric": "deadLetters",
+      "filter": {},
+      "condition": "gt",
+      "threshold": 0,
+      "for": "0m"
+    },
+    {
+      "id": "deletion-cleanup-risk",
+      "severity": "page",
+      "source": "cloudflarePlatform",
+      "metric": "deletionDeadlineSeconds",
+      "filter": {},
+      "condition": "lt",
+      "threshold": 21600,
+      "for": "0m"
+    },
+    {
+      "id": "restore-gate-failure",
+      "severity": "page",
+      "source": "cloudflarePlatform",
+      "metric": "restoreGateFailures",
+      "filter": {},
+      "condition": "gt",
+      "threshold": 0,
+      "for": "0m"
+    },
+    {
+      "id": "key-failures",
+      "severity": "page",
+      "source": "cloudflarePlatform",
+      "metric": "keyFailureCount",
+      "filter": {},
+      "condition": "gt",
+      "threshold": 0,
+      "for": "0m"
+    },
+    {
+      "id": "quota-pressure",
+      "severity": "ticket",
+      "source": "cloudflarePlatform",
+      "metric": "quotaUtilization",
+      "filter": {},
+      "condition": "gte",
+      "threshold": 0.8,
+      "for": "15m"
+    },
+    {
+      "id": "wasender-dependency-outage",
+      "severity": "page",
+      "source": "cloudflarePlatform",
+      "metric": "availability",
+      "filter": { "dependency": "wasender" },
+      "condition": "lt",
+      "threshold": 0.995,
+      "for": "5m"
+    },
+    {
+      "id": "whatsapp-dependency-outage",
+      "severity": "page",
+      "source": "cloudflarePlatform",
+      "metric": "availability",
+      "filter": { "dependency": "whatsapp" },
+      "condition": "lt",
+      "threshold": 0.995,
+      "for": "5m"
+    },
+    {
+      "id": "alert-delivery-canary",
+      "severity": "ticket",
+      "source": "cloudflarePlatform",
+      "metric": "availability",
+      "filter": {},
+      "condition": "canary",
+      "threshold": null,
+      "for": "0m"
+    }
+  ]
+}
