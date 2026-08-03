@@ -5,6 +5,41 @@ ALTER TABLE app.whatsapp_group_directory_states
   ADD COLUMN snapshot_observed_at timestamptz,
   ADD COLUMN retention_limited boolean NOT NULL DEFAULT false;
 
+CREATE FUNCTION app_private.clear_superseded_directory_retention_limitation()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $function$
+BEGIN
+  IF NEW.partial = false
+    AND (
+      TG_OP = 'INSERT'
+      OR OLD.partial
+      OR NEW.snapshot_observed_at IS DISTINCT FROM OLD.snapshot_observed_at
+    )
+  THEN
+    NEW.retention_limited := false;
+  END IF;
+  RETURN NEW;
+END
+$function$;
+
+CREATE TRIGGER directory_contact_projection_complete_snapshot
+BEFORE INSERT OR UPDATE
+ON app.directory_contact_projections
+FOR EACH ROW
+EXECUTE FUNCTION app_private.clear_superseded_directory_retention_limitation();
+
+CREATE TRIGGER whatsapp_group_directory_complete_snapshot
+BEFORE INSERT OR UPDATE
+ON app.whatsapp_group_directory_states
+FOR EACH ROW
+EXECUTE FUNCTION app_private.clear_superseded_directory_retention_limitation();
+
+REVOKE ALL
+ON FUNCTION app_private.clear_superseded_directory_retention_limitation()
+FROM PUBLIC;
+
 CREATE FUNCTION app_private.directory_projection_stale(
   requested_personal_account_id uuid,
   requested_whatsapp_connection_id uuid,
