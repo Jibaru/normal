@@ -1,4 +1,5 @@
-import { describe, expect, test } from "vitest";
+import { checkDatabaseReadiness } from "@whatsapp-mcp/db/connectivity";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
   createProductionHandler,
   createProductionQueueHandler,
@@ -6,12 +7,34 @@ import {
 import { validEnvironment } from "./support/production";
 
 describe("API production root", () => {
+  beforeEach(() => {
+    vi.mocked(checkDatabaseReadiness).mockResolvedValue(undefined);
+  });
+
   test("accepts valid production configuration", async () => {
     const response = await createProductionHandler(validEnvironment())(
       new Request("https://api.example.test/health"),
     );
 
     expect(response.status).toBe(200);
+  });
+
+  test("fails public traffic closed until replay approves the configured branch", async () => {
+    vi.mocked(checkDatabaseReadiness).mockRejectedValueOnce(
+      new Error("database restore replay is not complete"),
+    );
+    const environment = validEnvironment();
+    const response = await createProductionHandler(environment)(
+      new Request(
+        "https://api.example.test/.well-known/oauth-authorization-server",
+      ),
+    );
+
+    expect(response.status).toBe(503);
+    expect(checkDatabaseReadiness).toHaveBeenCalledWith(
+      environment.HYPERDRIVE.connectionString,
+      environment.NEON_BRANCH_ID,
+    );
   });
 
   test.each([

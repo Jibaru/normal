@@ -1260,6 +1260,12 @@ describe("production migrations", () => {
     await runMigrations(database);
     await seedTenants(database);
     await seedKeyEnvelopes(database);
+    await database.query(
+      `INSERT INTO app.stored_media_object_deletions
+        (personal_account_id, object_key, requested_at)
+       VALUES ($1, 'expired/media-object', '2026-08-03T11:00:00Z')`,
+      [accountA],
+    );
 
     await database.exec("SET ROLE whatsapp_api_runtime");
     try {
@@ -1296,6 +1302,25 @@ describe("production migrations", () => {
       );
       expect(replay.rows).toEqual([{ replayed: true }]);
       await database.query(
+        "SELECT app_private.purge_restore_expired('2026-08-03T12:00:00Z', 1000)",
+      );
+      const objectDeletions = await database.query<{
+        bucket: string;
+        object_key: string;
+      }>("SELECT * FROM app_private.list_restore_object_deletions(1000)");
+      expect(objectDeletions.rows).toContainEqual({
+        bucket: "stored_media",
+        object_key: "expired/media-object",
+      });
+      await expect(
+        database.query(
+          "SELECT app_private.complete_restore_replay('br-restored','2026-08-03T12:01:00Z',1,1,0)",
+        ),
+      ).rejects.toThrow("restore object deletions remain");
+      await database.query(
+        "SELECT app_private.finish_restore_object_deletion('stored_media','expired/media-object')",
+      );
+      await database.query(
         "SELECT app_private.complete_restore_replay('br-restored','2026-08-03T12:01:00Z',1,1,0)",
       );
     } finally {
@@ -1305,15 +1330,17 @@ describe("production migrations", () => {
     const protectedState = await database.query<{
       account_count: number;
       audit_columns: number;
+      object_deletion_count: number;
     }>(
       `SELECT
         (SELECT count(*)::integer FROM app.personal_accounts WHERE id = $1) AS account_count,
         (SELECT count(*)::integer FROM information_schema.columns
-          WHERE table_schema = 'app_private' AND table_name = 'restore_replay_audit') AS audit_columns`,
+          WHERE table_schema = 'app_private' AND table_name = 'restore_replay_audit') AS audit_columns,
+        (SELECT count(*)::integer FROM app.stored_media_object_deletions) AS object_deletion_count`,
       [accountA],
     );
     expect(protectedState.rows).toEqual([
-      { account_count: 0, audit_columns: 5 },
+      { account_count: 0, audit_columns: 5, object_deletion_count: 0 },
     ]);
   });
 });

@@ -29,6 +29,7 @@ CREATE TABLE app_private.restore_readiness (
 CREATE TABLE app_private.restore_object_deletions (
   bucket text NOT NULL CHECK (bucket IN ('stored_media', 'webhook_ingress')),
   object_key text NOT NULL CHECK (object_key <> ''),
+  personal_account_id uuid,
   PRIMARY KEY (bucket, object_key)
 );
 
@@ -153,6 +154,14 @@ BEGIN
   ) DELETE FROM app_private.security_records records USING candidates
     WHERE records.ctid = candidates.ctid;
   GET DIAGNOSTICS affected = ROW_COUNT; purged := purged + affected;
+  INSERT INTO app_private.restore_object_deletions(
+    bucket, object_key, personal_account_id
+  )
+  SELECT 'stored_media', deletions.object_key, deletions.personal_account_id
+  FROM app.stored_media_object_deletions deletions
+  ON CONFLICT (bucket, object_key) DO UPDATE SET personal_account_id =
+    COALESCE(restore_object_deletions.personal_account_id,
+      excluded.personal_account_id);
   RETURN purged;
 END
 $function$;
@@ -169,9 +178,21 @@ END
 $function$;
 
 CREATE FUNCTION app_private.finish_restore_object_deletion(requested_bucket text, requested_object_key text)
-RETURNS void LANGUAGE sql STRICT SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $function$
+RETURNS void LANGUAGE plpgsql STRICT SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $function$
+DECLARE selected_account_id uuid;
+BEGIN
+  SELECT personal_account_id INTO selected_account_id
+  FROM app_private.restore_object_deletions
+  WHERE bucket = requested_bucket AND object_key = requested_object_key;
+  IF requested_bucket = 'stored_media' AND selected_account_id IS NOT NULL THEN
+    PERFORM app_private.finish_stored_media_object_deletion(
+      selected_account_id, requested_object_key
+    );
+  END IF;
   DELETE FROM app_private.restore_object_deletions
   WHERE bucket = requested_bucket AND object_key = requested_object_key
+  ;
+END
 $function$;
 
 CREATE FUNCTION app_private.complete_restore_replay(
@@ -186,7 +207,8 @@ BEGIN
   ) THEN
     RETURN;
   END IF;
-  IF EXISTS (SELECT 1 FROM app_private.restore_object_deletions) THEN
+  IF EXISTS (SELECT 1 FROM app_private.restore_object_deletions)
+    OR EXISTS (SELECT 1 FROM app.stored_media_object_deletions) THEN
     RAISE EXCEPTION 'restore object deletions remain';
   END IF;
   UPDATE app_private.restore_readiness SET state = 'ready', completed_at = requested_at,

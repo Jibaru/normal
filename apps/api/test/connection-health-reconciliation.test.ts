@@ -312,6 +312,7 @@ describe("five-minute connection health reconciliation", () => {
       {
         DEPLOYMENT_ENVIRONMENT: "development",
         HYPERDRIVE: { connectionString: "test-connection-string" },
+        NEON_BRANCH_ID: "br-test",
         OAUTH_ISSUER: "https://api.example.test",
         PROVIDER_CONTROL: {
           reconcileSession: async (input: unknown) => {
