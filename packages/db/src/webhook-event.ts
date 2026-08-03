@@ -976,6 +976,7 @@ export const makeWebhookEventRepository = (
                WHERE messages.personal_account_id=$1
                  AND messages.whatsapp_connection_id=$2
                  AND conversations.recipient_locator=$3
+                 AND messages.content_expired_at IS NULL
                ORDER BY messages.sent_at DESC,messages.public_id DESC LIMIT 1
              )
              UPDATE app.whatsapp_conversations conversations SET
@@ -1874,7 +1875,8 @@ export const makeWebhookEventRepository = (
           `UPDATE app.whatsapp_conversations AS conversations SET
              last_activity_at=latest.sent_at,last_activity_direction=latest.direction,updated_at=transaction_timestamp()
            FROM (SELECT sent_at,direction FROM app.stored_messages WHERE personal_account_id=$1
-             AND whatsapp_connection_id=$2 AND conversation_id=$3 ORDER BY sent_at DESC, public_id DESC LIMIT 1) latest
+             AND whatsapp_connection_id=$2 AND conversation_id=$3 AND content_expired_at IS NULL
+             ORDER BY sent_at DESC, public_id DESC LIMIT 1) latest
            WHERE conversations.personal_account_id=$1 AND conversations.whatsapp_connection_id=$2 AND conversations.id=$3`,
           [input.personalAccountId, input.whatsappConnectionId, conversationId],
         );

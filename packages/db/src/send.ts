@@ -606,7 +606,8 @@ export const makePgAtomicSendRepository = (
              JOIN app.send_operations operations
                ON operations.personal_account_id=messages.personal_account_id
                AND operations.whatsapp_connection_id=messages.whatsapp_connection_id
-             WHERE operations.id=$1 AND messages.conversation_id=(
+             WHERE operations.id=$1 AND messages.content_expired_at IS NULL
+               AND messages.conversation_id=(
                SELECT id FROM app.whatsapp_conversations
                WHERE personal_account_id=operations.personal_account_id
                  AND whatsapp_connection_id=operations.whatsapp_connection_id

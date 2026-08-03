@@ -156,5 +156,26 @@ describe("Message Retention Policy persistence", () => {
     expect(released.rows).toEqual([
       { media_count: 0, stored_media_used_bytes: 0 },
     ]);
+
+    expect(
+      await media.createPending({
+        id: "70000000-0000-4000-8000-000000000052",
+        mediaType: "image",
+        personalAccountId: accountId,
+        publicId: "med_000000000000000000053",
+        source: {
+          ciphertext: Buffer.from("late source").toString("base64"),
+          keyVersion: 1,
+          nonce: Buffer.alloc(12, 7).toString("base64"),
+          version: 1,
+        },
+        storedMessageId: "50000000-0000-4000-8000-000000000052",
+        whatsappConnectionId: connectionId,
+      }),
+    ).toBe(false);
+    const lateMedia = await database.query<{ media_count: number }>(
+      "SELECT count(*)::int AS media_count FROM app.stored_media",
+    );
+    expect(lateMedia.rows).toEqual([{ media_count: 0 }]);
   });
 });

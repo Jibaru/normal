@@ -78,6 +78,24 @@ CREATE TRIGGER preserve_expired_message_content_state
 BEFORE UPDATE ON app.stored_messages FOR EACH ROW
 EXECUTE FUNCTION app_private.preserve_expired_message_content_state();
 
+CREATE FUNCTION app_private.prevent_media_for_unavailable_message()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, app, app_private AS $function$
+BEGIN
+  PERFORM 1 FROM app.stored_messages messages
+  WHERE messages.personal_account_id=NEW.personal_account_id
+    AND messages.whatsapp_connection_id=NEW.whatsapp_connection_id
+    AND messages.id=NEW.stored_message_id
+    AND messages.deleted_at IS NULL AND messages.content_expired_at IS NULL
+  FOR KEY SHARE;
+  IF NOT FOUND THEN RETURN NULL; END IF;
+  RETURN NEW;
+END
+$function$;
+CREATE TRIGGER prevent_media_for_unavailable_message
+BEFORE INSERT ON app.stored_media FOR EACH ROW
+EXECUTE FUNCTION app_private.prevent_media_for_unavailable_message();
+
 ALTER TABLE app.stored_media DROP CONSTRAINT stored_media_state_check;
 ALTER TABLE app.stored_media ADD CONSTRAINT stored_media_state_check
   CHECK (state IN ('pending','ready','purging','rejected','failed'));
