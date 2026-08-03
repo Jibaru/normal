@@ -8,6 +8,7 @@
     "./connection-setup": "./src/connection-setup.ts",
     "./config": "./src/config.ts",
     "./connectivity": "./src/connectivity.ts",
+    "./database": "./src/database.ts",
     "./group": "./src/group.ts",
     "./directory": "./src/directory.ts",
     "./migrations": "./src/migrations.ts",
@@ -16,6 +17,7 @@
     "./message-retention": "./src/message-retention.ts",
     "./personal-account": "./src/personal-account.ts",
     "./readiness": "./src/readiness.ts",
+    "./schema": "./src/schema.ts",
     "./restore": "./src/restore.ts",
     "./send": "./src/send.ts",
     "./stored-media": "./src/stored-media.ts",
@@ -26,9 +28,11 @@
     "./whatsapp-connection": "./src/whatsapp-connection.ts"
   },
   "scripts": {
-    "build": "bun build src/config.ts src/connection-health.ts src/connection-setup.ts src/connectivity.ts src/directory.ts src/group.ts src/mcp-authorization.ts src/mcp-tool.ts src/message-retention.ts src/migrations.ts src/personal-account.ts src/readiness.ts src/restore.ts src/send.ts src/stored-media.ts src/tool-call-log.ts src/record-ingestion-gap-cli.ts src/schema-version.ts src/webhook-event.ts src/webhook-ingress.ts src/webhook-replay.ts src/whatsapp-connection.ts --outdir dist --target bun",
+    "build": "bun build src/config.ts src/connection-health.ts src/connection-setup.ts src/connectivity.ts src/database.ts src/directory.ts src/group.ts src/mcp-authorization.ts src/mcp-tool.ts src/message-retention.ts src/migrations.ts src/personal-account.ts src/readiness.ts src/restore.ts src/schema.ts src/send.ts src/stored-media.ts src/tool-call-log.ts src/record-ingestion-gap-cli.ts src/schema-version.ts src/webhook-event.ts src/webhook-ingress.ts src/webhook-replay.ts src/whatsapp-connection.ts --outdir dist --target bun",
     "db:check": "bun src/check-cli.ts",
     "db:migrate": "bun src/migrate-cli.ts",
+    "db:generate": "drizzle-kit generate --config=drizzle.config.ts",
+    "db:studio": "drizzle-kit studio --config=drizzle.config.ts",
     "db:record-gap": "bun src/record-ingestion-gap-cli.ts",
     "lint": "biome check .",
     "test": "bun test",
@@ -36,6 +40,7 @@
   },
   "dependencies": {
     "@whatsapp-mcp/domain": "workspace:*",
+    "drizzle-orm": "^0.45.2",
     "effect": "3.22.1",
     "pg": "8.22.0"
   },
@@ -43,6 +48,7 @@
     "@electric-sql/pglite": "0.5.4",
     "@types/bun": "^1.3.14",
     "@types/pg": "8.20.0",
+    "drizzle-kit": "^0.31.10",
     "typescript": "^5"
   }
 }

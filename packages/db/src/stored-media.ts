@@ -1,3 +1,5 @@
+import { makeQueryConnection } from "./database";
+
 export interface StoredMediaConnection {
   readonly query: <
     Row extends Record<string, unknown> = Record<string, unknown>,
@@ -411,11 +413,7 @@ const makePgConnectionProvider = (
     });
     await client.connect();
     try {
-      return await use({
-        query: async (text, values) => ({
-          rows: (await client.query(text, values)).rows,
-        }),
-      });
+      return await use(makeQueryConnection(client));
     } finally {
       await client.end();
     }

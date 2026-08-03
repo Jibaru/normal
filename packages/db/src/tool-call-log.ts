@@ -1,4 +1,5 @@
 import type { Client as PgClient } from "pg";
+import { makeQueryConnection } from "./database";
 import type {
   PersonalAccountConnection,
   PersonalAccountConnectionProvider,
@@ -193,7 +194,7 @@ const makePgConnectionProvider = (
     });
     await client.connect();
     try {
-      return await use(client);
+      return await use(makeQueryConnection(client));
     } finally {
       await client.end();
     }

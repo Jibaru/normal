@@ -1,4 +1,4 @@
-import type { Client as PgClient } from "pg";
+import { makeQueryConnection } from "./database";
 import type {
   McpAccessAuthorization,
   McpToolConnectionProvider,
@@ -663,7 +663,7 @@ export const makePgAtomicSendRepositoryFromConnectionString = (
       const client = new Client({ connectionString });
       await client.connect();
       try {
-        return await use(client as PgClient);
+        return await use(makeQueryConnection(client));
       } finally {
         await client.end();
       }

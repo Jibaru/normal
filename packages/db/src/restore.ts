@@ -1,4 +1,4 @@
-import type { Client as PgClient } from "pg";
+import { makeQueryConnection, type QueryConnection } from "./database";
 
 export interface RestoreCandidate {
   readonly deletionKind: "personal_account" | "whatsapp_connection";
@@ -39,7 +39,7 @@ export interface RestoreRepository {
 
 const withClient = async <Value>(
   connectionString: string,
-  use: (client: PgClient) => Promise<Value>,
+  use: (client: QueryConnection) => Promise<Value>,
 ) => {
   const { Client } = await import("pg");
   const client = new Client({
@@ -49,7 +49,7 @@ const withClient = async <Value>(
   });
   await client.connect();
   try {
-    return await use(client);
+    return await use(makeQueryConnection(client));
   } finally {
     await client.end();
   }

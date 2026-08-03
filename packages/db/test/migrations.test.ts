@@ -1,12 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
-import { readdir, readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
-import {
-  EXPECTED_SCHEMA_VERSION,
-  MigrationDriftError,
-  runMigrations,
-} from "../src/migrations";
+import { EXPECTED_SCHEMA_VERSION, runMigrations } from "../src/migrations";
 import { assertExpectedSchemaVersion } from "../src/readiness";
 
 const accountA = "10000000-0000-4000-8000-000000000001";
@@ -40,17 +34,15 @@ describe("production migrations", () => {
     await runMigrations(database);
 
     const result = await database.query<{
-      checksum: string;
-      version: number;
+      created_at: string;
+      hash: string;
     }>(
-      "SELECT version, checksum FROM app_private.schema_migrations ORDER BY version",
+      "SELECT created_at, hash FROM app_private.schema_migrations ORDER BY id",
     );
 
-    expect(result.rows).toHaveLength(EXPECTED_SCHEMA_VERSION);
-    expect(result.rows.at(-1)?.version).toBe(EXPECTED_SCHEMA_VERSION);
-    expect(
-      result.rows.every(({ checksum }) => /^[a-f0-9]{64}$/.test(checksum)),
-    ).toBe(true);
+    expect(result.rows).toHaveLength(1);
+    expect(Number(result.rows[0]?.created_at)).toBe(EXPECTED_SCHEMA_VERSION);
+    expect(result.rows[0]?.hash).toMatch(/^[a-f0-9]{64}$/);
   });
 
   test("clears only retention limitations superseded by a complete Directory snapshot", async () => {
@@ -112,220 +104,6 @@ describe("production migrations", () => {
     }
   });
 
-  test("preserves an activated connection ingress identity when upgrading from version 11", async () => {
-    const migrationsDirectory = new URL("../migrations/", import.meta.url);
-    const migrationFiles = (await readdir(migrationsDirectory))
-      .filter((name) => /^\d{4}_.+\.sql$/u.test(name))
-      .sort();
-    await database.exec(`
-      CREATE SCHEMA app_private;
-      CREATE TABLE app_private.schema_migrations (
-        version integer PRIMARY KEY CHECK (version > 0),
-        name text NOT NULL,
-        checksum text NOT NULL CHECK (checksum ~ '^[a-f0-9]{64}$'),
-        applied_at timestamptz NOT NULL DEFAULT transaction_timestamp()
-      );
-    `);
-    for (const migrationFile of migrationFiles.slice(0, 11)) {
-      await database.exec(
-        await readFile(new URL(migrationFile, migrationsDirectory), "utf8"),
-      );
-    }
-
-    const setupId = "cst_000000000000000000001";
-    await database.query(
-      `INSERT INTO app.personal_accounts (id, state)
-       VALUES ($1, 'active')`,
-      [accountA],
-    );
-    await database.query(
-      `INSERT INTO app.connection_setups (
-        id,
-        personal_account_id,
-        idempotency_key,
-        state,
-        number_ciphertext_version,
-        number_key_version,
-        number_nonce,
-        number_ciphertext,
-        created_at,
-        expires_at,
-        updated_at
-      )
-      VALUES (
-        $1, $2, '000000000000000000001', 'activated', 1, 1,
-        decode(repeat('01', 12), 'hex'),
-        decode(repeat('02', 17), 'hex'),
-        '2026-07-31T12:00:00.000Z',
-        '2026-07-31T12:15:00.000Z',
-        '2026-07-31T12:01:00.000Z'
-      )`,
-      [setupId, accountA],
-    );
-    await database.query(
-      `INSERT INTO app.whatsapp_connections (
-        id,
-        personal_account_id,
-        webhook_ingress_id,
-        connection_setup_id
-      )
-      VALUES ($1, $2, $3, $4)`,
-      [connectionA, accountA, ingressA, setupId],
-    );
-
-    const migration12 = migrationFiles[11];
-    if (migration12 === undefined) throw new Error("migration 12 is missing");
-    await database.exec(
-      await readFile(new URL(migration12, migrationsDirectory), "utf8"),
-    );
-
-    const upgraded = await database.query<{
-      connection_ingress_id: string;
-      setup_ingress_id: string;
-    }>(
-      `SELECT
-         connections.webhook_ingress_id AS connection_ingress_id,
-         setups.webhook_ingress_id AS setup_ingress_id
-       FROM app.whatsapp_connections AS connections
-       JOIN app.connection_setups AS setups
-         ON setups.personal_account_id = connections.personal_account_id
-        AND setups.id = connections.connection_setup_id
-       WHERE connections.id = $1`,
-      [connectionA],
-    );
-    expect(upgraded.rows).toEqual([
-      {
-        connection_ingress_id: ingressA,
-        setup_ingress_id: ingressA,
-      },
-    ]);
-  });
-
-  test("upgrades an applied version 19 schema without migration drift", async () => {
-    const migrationsDirectory = new URL("../migrations/", import.meta.url);
-    const migrationFiles = (await readdir(migrationsDirectory))
-      .filter((name) => /^\d{4}_.+\.sql$/u.test(name))
-      .sort()
-      .slice(0, 19);
-    await database.exec(`
-      CREATE SCHEMA app_private;
-      CREATE TABLE app_private.schema_migrations (
-        version integer PRIMARY KEY CHECK (version > 0),
-        name text NOT NULL,
-        checksum text NOT NULL CHECK (checksum ~ '^[a-f0-9]{64}$'),
-        applied_at timestamptz NOT NULL DEFAULT transaction_timestamp()
-      );
-    `);
-    for (const [index, migrationFile] of migrationFiles.entries()) {
-      const sql = await readFile(
-        new URL(migrationFile, migrationsDirectory),
-        "utf8",
-      );
-      await database.exec(sql);
-      await database.query(
-        `INSERT INTO app_private.schema_migrations (version, name, checksum)
-         VALUES ($1, $2, $3)`,
-        [
-          index + 1,
-          migrationFile,
-          createHash("sha256").update(sql).digest("hex"),
-        ],
-      );
-    }
-
-    await seedTenants(database);
-    const snapshotAt = "2026-07-31T12:00:00.000Z";
-    const webhookReceivedAt = "2026-07-31T12:01:00.000Z";
-    const webhookEventId = "50000000-0000-4000-8000-000000000001";
-    const providerIdentityIndex = `di1_${"i".repeat(43)}`;
-    await database.query(
-      `INSERT INTO app.directory_contact_projections (
-         personal_account_id,
-         whatsapp_connection_id,
-         as_of,
-         stale,
-         partial,
-         snapshot_observed_at
-       ) VALUES ($1, $2, $3, false, false, $3)`,
-      [accountA, connectionA, snapshotAt],
-    );
-    await database.query(
-      `INSERT INTO app.webhook_events (
-         personal_account_id,
-         whatsapp_connection_id,
-         id,
-         ciphertext_sha256,
-         payload_bytes,
-         received_at,
-         source_expires_at
-       ) VALUES ($1, $2, $3, repeat('a', 64), 128, $4, $4::timestamptz + interval '7 days')`,
-      [accountA, connectionA, webhookEventId, webhookReceivedAt],
-    );
-    await database.query(
-      `INSERT INTO app.directory_contacts (
-         personal_account_id,
-         whatsapp_connection_id,
-         public_id,
-         provider_identity_index,
-         provider_identity_ciphertext_version,
-         provider_identity_key_version,
-         provider_identity_nonce,
-         provider_identity_ciphertext,
-         display_name_sort,
-         active,
-         received_at,
-         webhook_event_id,
-         webhook_item_identity
-       ) VALUES (
-         $1, $2, 'ctc_123456789012345678901', $3, 1, 1,
-         decode(repeat('01', 12), 'hex'),
-         decode(repeat('02', 17), 'hex'),
-         'webhook contact', true, $4, $5, $6
-       )`,
-      [
-        accountA,
-        connectionA,
-        providerIdentityIndex,
-        webhookReceivedAt,
-        webhookEventId,
-        `wi1_${"w".repeat(43)}`,
-      ],
-    );
-
-    await expect(runMigrations(database)).resolves.toBeUndefined();
-    const column = await database.query<{ column_name: string }>(
-      `SELECT column_name
-       FROM information_schema.columns
-       WHERE table_schema = 'app'
-         AND table_name = 'directory_contacts'
-         AND column_name = 'snapshot_observed_at'`,
-    );
-    expect(column.rows).toEqual([{ column_name: "snapshot_observed_at" }]);
-    const backfilled = await database.query<{ snapshot_observed_at: Date }>(
-      `SELECT snapshot_observed_at
-       FROM app.directory_contacts
-       WHERE provider_identity_index = $1`,
-      [providerIdentityIndex],
-    );
-    expect(backfilled.rows).toEqual([
-      { snapshot_observed_at: new Date(snapshotAt) },
-    ]);
-  });
-
-  test("refuses an applied migration whose checksum has changed", async () => {
-    await runMigrations(database);
-    await database.query(
-      `UPDATE app_private.schema_migrations
-       SET checksum = repeat('0', 64)
-       WHERE version = $1`,
-      [EXPECTED_SCHEMA_VERSION],
-    );
-
-    await expect(runMigrations(database)).rejects.toBeInstanceOf(
-      MigrationDriftError,
-    );
-  });
-
   test("exposes only the schema version needed by restricted readiness", async () => {
     await runMigrations(database);
 
@@ -336,7 +114,7 @@ describe("production migrations", () => {
       ).resolves.toBeUndefined();
       await expect(
         database.query(
-          "DELETE FROM app_private.schema_migrations WHERE version = 1",
+          "DELETE FROM app_private.schema_migrations WHERE id = 1",
         ),
       ).rejects.toThrow();
     } finally {

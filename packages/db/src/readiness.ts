@@ -1,5 +1,3 @@
-import type { QueryResult } from "./migrations";
-
 export { EXPECTED_SCHEMA_VERSION } from "./schema-version";
 
 import { EXPECTED_SCHEMA_VERSION } from "./schema-version";
@@ -8,7 +6,9 @@ export interface SchemaVersionConnection {
   readonly query: (
     text: string,
     values?: Array<unknown>,
-  ) => Promise<QueryResult<{ ready?: boolean; version?: number }>>;
+  ) => Promise<{
+    readonly rows: Array<{ ready?: boolean; version?: number | string }>;
+  }>;
 }
 
 export class SchemaVersionMismatch extends Error {
@@ -38,10 +38,10 @@ export const assertExpectedSchemaVersion = async (
 
   try {
     const result = await connection.query(
-      `SELECT COALESCE(max(version), 0)::integer AS version
+      `SELECT COALESCE(max(created_at), 0)::bigint AS version
        FROM app_private.schema_migrations`,
     );
-    actual = result.rows[0]?.version ?? 0;
+    actual = Number(result.rows[0]?.version ?? 0);
   } catch (error) {
     if (
       typeof error === "object" &&

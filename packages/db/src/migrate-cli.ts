@@ -1,7 +1,8 @@
+import { drizzle } from "drizzle-orm/node-postgres";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { ConfigProvider, Effect, Redacted } from "effect";
 import { Client } from "pg";
 import { migrationConfig } from "./config";
-import { runMigrations } from "./migrations";
 
 const program = migrationConfig.pipe(
   Effect.flatMap((config) =>
@@ -14,11 +15,10 @@ const program = migrationConfig.pipe(
         });
         await client.connect();
         try {
-          await runMigrations({
-            query: async (text, values) => {
-              const result = await client.query(text, values as Array<unknown>);
-              return { rows: result.rows };
-            },
+          await migrate(drizzle({ client }), {
+            migrationsFolder: new URL("../drizzle", import.meta.url).pathname,
+            migrationsSchema: "app_private",
+            migrationsTable: "schema_migrations",
           });
         } finally {
           await client.end();

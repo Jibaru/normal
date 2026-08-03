@@ -1,3 +1,5 @@
+import { makeQueryConnection } from "./database";
+
 export interface MessageRetentionPolicy {
   readonly days: number | null;
   readonly updatedAt: string;
@@ -97,11 +99,7 @@ const makePgProvider = (
     });
     await client.connect();
     try {
-      return await use({
-        query: async (text, values) => ({
-          rows: (await client.query(text, values)).rows,
-        }),
-      });
+      return await use(makeQueryConnection(client));
     } finally {
       await client.end();
     }
