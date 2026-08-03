@@ -13,6 +13,7 @@
     "db:migrate": "bun run --cwd packages/db db:migrate",
     "db:record-gap": "bun run --cwd packages/db db:record-gap",
     "dev": "turbo run dev --parallel --cache-dir=.turbo/cache",
+    "deploy:smoke": "bun scripts/deployment-smoke.ts",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "infra:validate": "bun scripts/validate-infrastructure.ts",

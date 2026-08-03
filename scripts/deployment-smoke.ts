@@ -1,0 +1,183 @@
+export interface DeploymentSmokeConfig {
+  readonly apiOrigin: string;
+  readonly mcpAccessToken: string;
+  readonly smokeSecret: string;
+  readonly webOrigin: string;
+}
+
+interface Dependencies {
+  readonly fetch?: (input: string, init?: RequestInit) => Promise<Response>;
+  readonly pollDelayMs?: number;
+}
+
+const remediation = "bun run deploy:smoke";
+
+const fail = (subsystem: string): never => {
+  throw new Error(`${subsystem} failed; remediate with: ${remediation}`);
+};
+
+const requestJson = async (
+  fetch: (input: string, init?: RequestInit) => Promise<Response>,
+  subsystem: string,
+  input: string,
+  init?: RequestInit,
+): Promise<Record<string, unknown>> => {
+  let response: Response;
+  try {
+    response = await fetch(input, init);
+  } catch {
+    return fail(subsystem);
+  }
+  if (!response.ok) return fail(subsystem);
+  const body = await response.json().catch(() => null);
+  if (typeof body !== "object" || body === null || Array.isArray(body))
+    return fail(subsystem);
+  return body as Record<string, unknown>;
+};
+
+const rpc = (method: string, id: string) => ({
+  id,
+  jsonrpc: "2.0",
+  method,
+  ...(method === "initialize"
+    ? {
+        params: {
+          capabilities: {},
+          clientInfo: { name: "deployment-smoke", version: "1" },
+          protocolVersion: "2025-06-18",
+        },
+      }
+    : {}),
+});
+
+export const runDeploymentSmoke = async (
+  config: DeploymentSmokeConfig,
+  dependencies: Dependencies = {},
+) => {
+  const fetch =
+    dependencies.fetch ??
+    ((input: string, init?: RequestInit) => globalThis.fetch(input, init));
+  const api = new URL(config.apiOrigin).origin;
+  const web = new URL(config.webOrigin).origin;
+  await requestJson(fetch, "web", `${web}/health`);
+  await requestJson(fetch, "api", `${api}/health`);
+  await requestJson(fetch, "api", `${api}/ready`);
+  const authorization = await requestJson(
+    fetch,
+    "oauth",
+    `${api}/.well-known/oauth-authorization-server`,
+  );
+  const resource = await requestJson(
+    fetch,
+    "oauth",
+    `${api}/.well-known/oauth-protected-resource/mcp`,
+  );
+  if (authorization.issuer !== api || resource.resource !== `${api}/mcp`)
+    fail("oauth");
+
+  const mcpHeaders = {
+    accept: "application/json, text/event-stream",
+    authorization: `Bearer ${config.mcpAccessToken}`,
+    "content-type": "application/json",
+  };
+  for (const [method, id] of [
+    ["initialize", "smoke-init"],
+    ["tools/list", "smoke-discovery"],
+  ] as const) {
+    const body = await requestJson(fetch, "mcp", `${api}/mcp`, {
+      body: JSON.stringify(rpc(method, id)),
+      headers: mcpHeaders,
+      method: "POST",
+    });
+    if (body.jsonrpc !== "2.0" || body.id !== id || !("result" in body))
+      fail("mcp");
+  }
+
+  const smokeHeaders = { authorization: `Bearer ${config.smokeSecret}` };
+  const started = await requestJson(
+    fetch,
+    "deployment-canary",
+    `${api}/_internal/deployment-smoke`,
+    {
+      headers: smokeHeaders,
+      method: "POST",
+    },
+  );
+  const canaryId =
+    typeof started.canary_id === "string"
+      ? started.canary_id
+      : fail("deployment-canary");
+
+  const deadline = Date.now() + 30_000;
+  while (Date.now() <= deadline) {
+    const state = await requestJson(
+      fetch,
+      "deployment-canary",
+      `${api}/_internal/deployment-smoke?id=${encodeURIComponent(canaryId)}`,
+      { headers: smokeHeaders },
+    );
+    if (state.status === "complete") {
+      const subsystems = Array.isArray(state.subsystems)
+        ? state.subsystems
+        : fail("deployment-canary");
+      for (const required of [
+        "database",
+        "provider-control",
+        "queue",
+        "r2-kms",
+      ])
+        if (!subsystems.includes(required)) fail(required);
+      return {
+        checks: [
+          "web",
+          "api",
+          "oauth",
+          "mcp",
+          "database",
+          "provider-control",
+          "queue",
+          "r2-kms",
+        ],
+        status: "ok" as const,
+      };
+    }
+    if (state.status === "failed") {
+      const [subsystem] = Array.isArray(state.subsystems)
+        ? state.subsystems
+        : [];
+      return fail(
+        typeof subsystem === "string" ? subsystem : "deployment-canary",
+      );
+    }
+    if (state.status !== "pending") fail("deployment-canary");
+    await new Promise((resolve) =>
+      setTimeout(resolve, dependencies.pollDelayMs ?? 500),
+    );
+  }
+  return fail("queue");
+};
+
+const required = (name: string): string => {
+  const value = process.env[name];
+  if (!value)
+    throw new Error(`${name} is required; remediate with: ${remediation}`);
+  return value;
+};
+
+if (import.meta.main) {
+  runDeploymentSmoke({
+    apiOrigin: required("SMOKE_API_ORIGIN"),
+    mcpAccessToken: required("SMOKE_MCP_ACCESS_TOKEN"),
+    smokeSecret: required("SMOKE_CHECK_SECRET"),
+    webOrigin: required("SMOKE_WEB_ORIGIN"),
+  })
+    .then((result) => console.info(JSON.stringify(result)))
+    .catch((error: unknown) => {
+      console.error(
+        error instanceof Error
+          ? error.message
+          : `smoke failed; remediate with: ${remediation}`,
+      );
+      process.exitCode = 1;
+    });
+}

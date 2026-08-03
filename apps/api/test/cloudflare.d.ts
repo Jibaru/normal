@@ -6,6 +6,7 @@ declare namespace Cloudflare {
     readonly MCP_REQUESTS_PER_MINUTE: string;
     readonly MCP_CURSOR_HMAC_SECRET: string;
     readonly SEND_FINGERPRINT_HMAC_SECRET: string;
+    readonly SMOKE_CHECK_SECRET: string;
     readonly SENDS_PER_DAY: string;
     readonly SENDS_PER_MINUTE: string;
     readonly WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET: string;

@@ -116,6 +116,30 @@ describe("AWS KMS infrastructure", () => {
     ]);
   });
 
+  test("grants the content runtime only a canary-bound deployment smoke context", () => {
+    const statement = statementsFor("ContentRootKey").find(
+      (candidate) => candidate.Sid === "AllowContentRuntimeDeploymentSmoke",
+    );
+    expect(statement && actions(statement)).toEqual([
+      "kms:GenerateDataKey",
+      "kms:Decrypt",
+    ]);
+    expect(statement?.Condition).toEqual({
+      "ForAllValues:StringEquals": {
+        "kms:EncryptionContextKeys": ["environment", "purpose", "canaryId"],
+      },
+      Null: {
+        "kms:EncryptionContext:canaryId": "false",
+        "kms:EncryptionContext:environment": "false",
+        "kms:EncryptionContext:purpose": "false",
+      },
+      StringEquals: {
+        "kms:EncryptionContext:environment": { Ref: "DeploymentEnvironment" },
+        "kms:EncryptionContext:purpose": "deployment-smoke",
+      },
+    });
+  });
+
   test("prevents provider-control, ordinary operators, and deletion coordination from decrypting tenant content", () => {
     const contentStatements = statementsFor("ContentRootKey");
     const denied = contentStatements.find(

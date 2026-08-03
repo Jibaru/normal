@@ -206,6 +206,7 @@ describe("API production root", () => {
     "MCP_REQUESTS_PER_MINUTE",
     "READ_MESSAGE_RECORDS_PER_DAY",
     "MCP_CURSOR_HMAC_SECRET",
+    "SMOKE_CHECK_SECRET",
     "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
   ] as const)("fails closed when %s is absent", async (configuration) => {
     const { [configuration]: _missing, ...environment } = validEnvironment();
@@ -284,6 +285,7 @@ describe("API production root", () => {
     ["OAUTH_ISSUER", "https://other-api.example.test"],
     ["OAUTH_RESOURCE", "https://api.example.test/other"],
     ["OAUTH_PROTOCOL_ENCRYPTION_KEY", "not-a-32-byte-key"],
+    ["SMOKE_CHECK_SECRET", "not-a-32-byte-key"],
     ["OAUTH_CLIENT_REGISTRY", "not-json"],
     ["OAUTH_CLIENT_REGISTRY", "[]"],
     [

@@ -401,6 +401,37 @@
               }
             },
             {
+              "Sid": "AllowContentRuntimeDeploymentSmoke",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Fn::GetAtt": ["ContentRuntimeRole", "Arn"]
+                }
+              },
+              "Action": ["kms:GenerateDataKey", "kms:Decrypt"],
+              "Resource": "*",
+              "Condition": {
+                "ForAllValues:StringEquals": {
+                  "kms:EncryptionContextKeys": [
+                    "environment",
+                    "purpose",
+                    "canaryId"
+                  ]
+                },
+                "Null": {
+                  "kms:EncryptionContext:canaryId": "false",
+                  "kms:EncryptionContext:environment": "false",
+                  "kms:EncryptionContext:purpose": "false"
+                },
+                "StringEquals": {
+                  "kms:EncryptionContext:environment": {
+                    "Ref": "DeploymentEnvironment"
+                  },
+                  "kms:EncryptionContext:purpose": "deployment-smoke"
+                }
+              }
+            },
+            {
               "Sid": "DenyNonContentAuthoritiesDecrypt",
               "Effect": "Deny",
               "Principal": {

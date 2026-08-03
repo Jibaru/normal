@@ -533,26 +533,28 @@ private service-binding health before deploying the API. Never rotate
 
 ## Smoke check
 
-The public checks contain no dependency details or credentials:
+Create a dedicated approved MCP Authorization for deployment automation with
+the minimum discovery scope needed by the release policy. Store its access
+token, the independently generated `SMOKE_CHECK_SECRET`, and the two origins in
+the deployment runner's secret store. Run the single non-interactive check
+after every deployment:
 
 ```sh
-API_ORIGIN="$(tofu -chdir=infra/compute output -raw api_origin)"
-WEB_ORIGIN="$(tofu -chdir=infra/compute output -raw web_origin)"
-curl --fail --silent "$API_ORIGIN/health"
-curl --fail --silent "$API_ORIGIN/ready"
-curl --fail --silent \
-  "$API_ORIGIN/.well-known/oauth-authorization-server"
-curl --fail --silent \
-  "$API_ORIGIN/.well-known/oauth-protected-resource/mcp"
-curl --fail --silent "$WEB_ORIGIN/health"
+SMOKE_API_ORIGIN="$(tofu -chdir=infra/compute output -raw api_origin)" \
+SMOKE_WEB_ORIGIN="$(tofu -chdir=infra/compute output -raw web_origin)" \
+SMOKE_MCP_ACCESS_TOKEN="$DEPLOYMENT_MCP_ACCESS_TOKEN" \
+SMOKE_CHECK_SECRET="$DEPLOYMENT_SMOKE_CHECK_SECRET" \
+bun run deploy:smoke
 ```
 
-Confirm the metadata advertises only `$API_ORIGIN` as issuer and authorization
-server, `$API_ORIGIN/mcp` as resource, S256 PKCE, the four documented scopes,
-and no registration endpoint. An authorization request from an unregistered
-client and one from a registered client with a one-character redirect change
-must both return `400` without a `Location` header. Do not complete real consent
-or a token exchange during this metadata smoke check.
+The command validates web and API health, branch-bound schema and restore
+readiness, OAuth metadata, authenticated MCP initialization and discovery, the
+restricted Hyperdrive role, private provider-control safe-read reachability,
+Queue publication and consumption, and an encrypted disposable R2/KMS round
+trip. The Queue consumer removes its object before reporting success; KV status
+expires automatically. Output contains only safe subsystem names. Re-run with
+`bun run deploy:smoke` after remediating the named subsystem; never print or
+pass the access token or smoke secret on a command line.
 
 Using the designated non-production approved MCP Client, complete consent for
 one smoke-test WhatsApp Connection and `connections:read`, then initialize a

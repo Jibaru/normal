@@ -144,6 +144,7 @@ for (const deployable of deployables) {
       "MCP_CURSOR_HMAC_SECRET",
       "OAUTH_PROTOCOL_ENCRYPTION_KEY",
       "SEND_FINGERPRINT_HMAC_SECRET",
+      "SMOKE_CHECK_SECRET",
       "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
     ];
     const configurations = [
@@ -164,7 +165,7 @@ for (const deployable of deployables) {
         JSON.stringify(requiredSecretNames)
       ) {
         throw new Error(
-          `API ${configurationName} configuration must require its exact identity, KMS, database, cursor, send fingerprint, OAuth protocol, and WhatsApp Number reservation secrets.`,
+          `API ${configurationName} configuration must require its exact identity, KMS, database, cursor, send fingerprint, deployed smoke, OAuth protocol, and WhatsApp Number reservation secrets.`,
         );
       }
       const environmentSuffix =

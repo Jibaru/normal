@@ -121,6 +121,14 @@ import {
   makeDeletionMarkerStore,
 } from "./deletion/marker";
 import {
+  createDeploymentSmokeHandler,
+  isDeploymentSmokeRequest,
+} from "./deployment-smoke";
+import {
+  handleDeploymentSmokeMessages,
+  makeProductionDeploymentSmoke,
+} from "./deployment-smoke-production";
+import {
   makeAwsDeletionCapsuleKmsWriter,
   makeAwsKmsKeyService,
 } from "./encryption/aws-kms";
@@ -297,6 +305,7 @@ export interface ApiEnvironment {
   readonly SEND_FINGERPRINT_HMAC_SECRET?: string | undefined;
   readonly SENDS_PER_DAY?: string | undefined;
   readonly SENDS_PER_MINUTE?: string | undefined;
+  readonly SMOKE_CHECK_SECRET?: string | undefined;
   readonly INGESTION_QUEUE?: unknown;
   readonly OAUTH_CLIENT_REGISTRY?: string | undefined;
   readonly OAUTH_ISSUER?: string | undefined;
@@ -363,6 +372,12 @@ const sendFingerprintHmacSecret = Config.redacted(
     validation: (value) => /^[a-f0-9]{64}$/iu.test(Redacted.value(value)),
   }),
 );
+const smokeCheckSecret = Config.redacted("SMOKE_CHECK_SECRET").pipe(
+  Config.validate({
+    message: "SMOKE_CHECK_SECRET must be a 32-byte hex secret",
+    validation: (value) => /^[a-f0-9]{64}$/iu.test(Redacted.value(value)),
+  }),
+);
 const sendQuotaConfig = Config.all({
   dailyLimit: Config.integer("SENDS_PER_DAY"),
   minuteLimit: Config.integer("SENDS_PER_MINUTE"),
@@ -387,6 +402,7 @@ const productionConfig = Config.all({
   mcpRequestQuota: mcpRequestQuotaConfig,
   sendFingerprintHmacSecret,
   sendQuota: sendQuotaConfig,
+  smokeCheckSecret,
 });
 
 const providerApprovedSessionCapacity = Config.integer(
@@ -2437,6 +2453,9 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     mcpCursorSigningLayer(environment),
   );
   const handler = createCanaryHandler(layer);
+  const deploymentSmokeHandler = createDeploymentSmokeHandler(
+    makeProductionDeploymentSmoke(environment),
+  );
   const personalAccountHandler = createPersonalAccountHandler(
     layer,
     environment.CLERK_AUTHORIZED_PARTY ?? "",
@@ -2498,6 +2517,9 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
       }
       if (isWebhookIngressRequest(request)) {
         return webhookIngressHandler(request);
+      }
+      if (isDeploymentSmokeRequest(request)) {
+        return deploymentSmokeHandler(request);
       }
       if (isPersonalAccountDeletionRequest(request)) {
         return personalAccountDeletionHandler(request);
@@ -2702,6 +2724,7 @@ export const createProductionQueueHandler =
       environment.HYPERDRIVE?.connectionString ?? "",
       environment.NEON_BRANCH_ID,
     );
+    if (await handleDeploymentSmokeMessages(batch, environment)) return;
     if (batch.queue === replayQueueName(environment)) {
       const layer = Layer.mergeAll(
         telemetryLayer,

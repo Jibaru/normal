@@ -36,6 +36,7 @@ export interface Env {
   readonly SEND_FINGERPRINT_HMAC_SECRET: string;
   readonly SENDS_PER_DAY: string;
   readonly SENDS_PER_MINUTE: string;
+  readonly SMOKE_CHECK_SECRET: string;
   readonly OAUTH_CLIENT_REGISTRY: string;
   readonly OAUTH_ISSUER: string;
   readonly OAUTH_KV: KVNamespace;
