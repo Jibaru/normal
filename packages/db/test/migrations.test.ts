@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import {
@@ -138,6 +139,117 @@ describe("production migrations", () => {
         connection_ingress_id: ingressA,
         setup_ingress_id: ingressA,
       },
+    ]);
+  });
+
+  test("upgrades an applied version 18 schema without migration drift", async () => {
+    const migrationsDirectory = new URL("../migrations/", import.meta.url);
+    const migrationFiles = (await readdir(migrationsDirectory))
+      .filter((name) => /^\d{4}_.+\.sql$/u.test(name))
+      .sort()
+      .slice(0, 18);
+    await database.exec(`
+      CREATE SCHEMA app_private;
+      CREATE TABLE app_private.schema_migrations (
+        version integer PRIMARY KEY CHECK (version > 0),
+        name text NOT NULL,
+        checksum text NOT NULL CHECK (checksum ~ '^[a-f0-9]{64}$'),
+        applied_at timestamptz NOT NULL DEFAULT transaction_timestamp()
+      );
+    `);
+    for (const [index, migrationFile] of migrationFiles.entries()) {
+      const sql = await readFile(
+        new URL(migrationFile, migrationsDirectory),
+        "utf8",
+      );
+      await database.exec(sql);
+      await database.query(
+        `INSERT INTO app_private.schema_migrations (version, name, checksum)
+         VALUES ($1, $2, $3)`,
+        [
+          index + 1,
+          migrationFile,
+          createHash("sha256").update(sql).digest("hex"),
+        ],
+      );
+    }
+
+    await seedTenants(database);
+    const snapshotAt = "2026-07-31T12:00:00.000Z";
+    const webhookReceivedAt = "2026-07-31T12:01:00.000Z";
+    const webhookEventId = "50000000-0000-4000-8000-000000000001";
+    const providerIdentityIndex = `di1_${"i".repeat(43)}`;
+    await database.query(
+      `INSERT INTO app.directory_contact_projections (
+         personal_account_id,
+         whatsapp_connection_id,
+         as_of,
+         stale,
+         partial,
+         snapshot_observed_at
+       ) VALUES ($1, $2, $3, false, false, $3)`,
+      [accountA, connectionA, snapshotAt],
+    );
+    await database.query(
+      `INSERT INTO app.webhook_events (
+         personal_account_id,
+         whatsapp_connection_id,
+         id,
+         ciphertext_sha256,
+         payload_bytes,
+         received_at,
+         source_expires_at
+       ) VALUES ($1, $2, $3, repeat('a', 64), 128, $4, $4::timestamptz + interval '7 days')`,
+      [accountA, connectionA, webhookEventId, webhookReceivedAt],
+    );
+    await database.query(
+      `INSERT INTO app.directory_contacts (
+         personal_account_id,
+         whatsapp_connection_id,
+         public_id,
+         provider_identity_index,
+         provider_identity_ciphertext_version,
+         provider_identity_key_version,
+         provider_identity_nonce,
+         provider_identity_ciphertext,
+         display_name_sort,
+         active,
+         received_at,
+         webhook_event_id,
+         webhook_item_identity
+       ) VALUES (
+         $1, $2, 'ctc_123456789012345678901', $3, 1, 1,
+         decode(repeat('01', 12), 'hex'),
+         decode(repeat('02', 17), 'hex'),
+         'webhook contact', true, $4, $5, $6
+       )`,
+      [
+        accountA,
+        connectionA,
+        providerIdentityIndex,
+        webhookReceivedAt,
+        webhookEventId,
+        `wi1_${"w".repeat(43)}`,
+      ],
+    );
+
+    await expect(runMigrations(database)).resolves.toBeUndefined();
+    const column = await database.query<{ column_name: string }>(
+      `SELECT column_name
+       FROM information_schema.columns
+       WHERE table_schema = 'app'
+         AND table_name = 'directory_contacts'
+         AND column_name = 'snapshot_observed_at'`,
+    );
+    expect(column.rows).toEqual([{ column_name: "snapshot_observed_at" }]);
+    const backfilled = await database.query<{ snapshot_observed_at: Date }>(
+      `SELECT snapshot_observed_at
+       FROM app.directory_contacts
+       WHERE provider_identity_index = $1`,
+      [providerIdentityIndex],
+    );
+    expect(backfilled.rows).toEqual([
+      { snapshot_observed_at: new Date(snapshotAt) },
     ]);
   });
 

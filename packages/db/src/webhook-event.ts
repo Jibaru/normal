@@ -830,14 +830,9 @@ export const makeWebhookEventRepository = (
           `SELECT
              contacts.provider_occurred_at,
              contacts.provider_version,
+             contacts.snapshot_observed_at,
              contacts.received_at,
-             contacts.webhook_event_id,
-             (
-               SELECT projections.snapshot_observed_at
-               FROM app.directory_contact_projections AS projections
-               WHERE projections.personal_account_id = $1
-                 AND projections.whatsapp_connection_id = $2
-             ) AS snapshot_observed_at
+             contacts.webhook_event_id
            FROM app.directory_contacts AS contacts
            WHERE contacts.personal_account_id = $1
              AND contacts.whatsapp_connection_id = $2

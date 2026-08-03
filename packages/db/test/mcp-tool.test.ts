@@ -9,6 +9,7 @@ import {
 } from "../src/mcp-tool";
 import { runMigrations } from "../src/migrations";
 import type { PersonalAccountConnectionProvider } from "../src/personal-account";
+import { makeWebhookEventRepository } from "../src/webhook-event";
 
 const accountId = "10000000-0000-4000-8000-000000000030";
 const authorizationId = "40000000-0000-4000-8000-000000000030";
@@ -469,6 +470,326 @@ describe("MCP tool repository", () => {
         phone_ciphertext: null,
       },
     ]);
+  });
+
+  test("does not let a partial snapshot supersede webhook evidence for an unobserved contact", async () => {
+    const connectionProvider = {
+      withConnection: async <Value>(
+        use: (connection: typeof database) => Promise<Value>,
+      ) => {
+        await database.exec("SET ROLE whatsapp_api_runtime");
+        try {
+          return await use(database);
+        } finally {
+          await database.exec("RESET ROLE");
+        }
+      },
+    };
+    const directory = makeDirectoryRepository(connectionProvider);
+    const encrypted = (byte: string) => ({
+      ciphertext: Buffer.from(byte.repeat(32), "hex").toString("base64"),
+      keyVersion: 1,
+      nonce: Buffer.from("11".repeat(12), "hex").toString("base64"),
+      version: 1 as const,
+    });
+    const firstContact = {
+      displayNameCiphertext: encrypted("12"),
+      displayNameSort: "ada",
+      namePrefixIndexes: [`di1_${"n".repeat(43)}`],
+      phoneCiphertext: encrypted("13"),
+      phoneIndex: `di1_${"p".repeat(43)}`,
+      providerIdentityCiphertext: encrypted("14"),
+      providerIdentityIndex: `di1_${"i".repeat(43)}`,
+      publicId: "ctc_123456789012345678901",
+    } as const;
+    const secondContact = {
+      displayNameCiphertext: encrypted("15"),
+      displayNameSort: "grace",
+      namePrefixIndexes: [`di1_${"o".repeat(43)}`],
+      phoneCiphertext: encrypted("16"),
+      phoneIndex: `di1_${"q".repeat(43)}`,
+      providerIdentityCiphertext: encrypted("17"),
+      providerIdentityIndex: `di1_${"j".repeat(43)}`,
+      publicId: "ctc_123456789012345678902",
+    } as const;
+    const initialClaim = (
+      await directory.claimContactReconciliations({
+        claimedAt: observedAt.toISOString(),
+        limit: 100,
+      })
+    )[0];
+    if (initialClaim === undefined) throw new Error("missing initial claim");
+    expect(
+      await directory.finishContactReconciliation({
+        claimId: initialClaim.claimId,
+        contacts: [firstContact, secondContact],
+        observedAt: observedAt.toISOString(),
+        partial: false,
+        stale: false,
+        whatsappConnectionId: initialClaim.whatsappConnectionId,
+      }),
+    ).toBe(true);
+
+    const partialAt = new Date(observedAt.valueOf() + 6 * 60_000);
+    const partialClaim = (
+      await directory.claimContactReconciliations({
+        claimedAt: partialAt.toISOString(),
+        limit: 100,
+      })
+    )[0];
+    if (partialClaim === undefined) throw new Error("missing partial claim");
+    expect(
+      await directory.finishContactReconciliation({
+        claimId: partialClaim.claimId,
+        contacts: [firstContact],
+        observedAt: partialAt.toISOString(),
+        partial: true,
+        stale: true,
+        whatsappConnectionId: partialClaim.whatsappConnectionId,
+      }),
+    ).toBe(true);
+
+    const webhookProvider = {
+      withConnection: async <Value>(
+        use: (connection: typeof database) => Promise<Value>,
+      ) => {
+        await database.exec("SET ROLE whatsapp_webhook_runtime");
+        try {
+          return await use(database);
+        } finally {
+          await database.exec("RESET ROLE");
+        }
+      },
+    };
+    const webhooks = makeWebhookEventRepository(webhookProvider);
+    const eventId = "50000000-0000-4000-8000-000000000039";
+    const webhookReceivedAt = new Date(
+      partialAt.valueOf() + 60_000,
+    ).toISOString();
+    await webhooks.prepare({
+      ciphertextSha256: "a".repeat(64),
+      eventId,
+      payloadBytes: 128,
+      personalAccountId: accountId,
+      receivedAt: webhookReceivedAt,
+      whatsappConnectionId: initialClaim.whatsappConnectionId,
+    });
+    const olderOccurrence = new Date(
+      observedAt.valueOf() + 60_000,
+    ).toISOString();
+    expect(
+      await webhooks.projectDirectoryContact(
+        {
+          ...firstContact,
+          displayNameCiphertext: encrypted("19"),
+          displayNameSort: "ada older",
+          eventId,
+          evidence: { occurredAt: olderOccurrence, version: null },
+          itemIdentity: `wi1_${"v".repeat(43)}`,
+          itemIndex: 0,
+          personalAccountId: accountId,
+          publicId: "ctc_123456789012345678904",
+          receivedAt: webhookReceivedAt,
+          whatsappConnectionId: initialClaim.whatsappConnectionId,
+          active: true,
+        },
+        async () => "incomparable",
+      ),
+    ).toBe("superseded");
+    expect(
+      await webhooks.projectDirectoryContact(
+        {
+          ...secondContact,
+          displayNameCiphertext: encrypted("18"),
+          displayNameSort: "grace updated",
+          eventId,
+          evidence: { occurredAt: olderOccurrence, version: null },
+          itemIdentity: `wi1_${"w".repeat(43)}`,
+          itemIndex: 1,
+          personalAccountId: accountId,
+          publicId: "ctc_123456789012345678903",
+          receivedAt: webhookReceivedAt,
+          whatsappConnectionId: initialClaim.whatsappConnectionId,
+          active: true,
+        },
+        async () => "incomparable",
+      ),
+    ).toBe("applied");
+
+    expect(
+      await webhooks.projectDirectoryContact(
+        {
+          ...firstContact,
+          displayNameCiphertext: encrypted("20"),
+          displayNameSort: "ada current",
+          eventId,
+          evidence: { occurredAt: null, version: null },
+          itemIdentity: `wi1_${"x".repeat(43)}`,
+          itemIndex: 2,
+          personalAccountId: accountId,
+          publicId: "ctc_123456789012345678905",
+          receivedAt: webhookReceivedAt,
+          whatsappConnectionId: initialClaim.whatsappConnectionId,
+          active: true,
+        },
+        async () => "incomparable",
+      ),
+    ).toBe("applied");
+
+    const laterEventId = "50000000-0000-4000-8000-000000000040";
+    const laterReceivedAt = new Date(
+      partialAt.valueOf() + 2 * 60_000,
+    ).toISOString();
+    await webhooks.prepare({
+      ciphertextSha256: "b".repeat(64),
+      eventId: laterEventId,
+      payloadBytes: 128,
+      personalAccountId: accountId,
+      receivedAt: laterReceivedAt,
+      whatsappConnectionId: initialClaim.whatsappConnectionId,
+    });
+    expect(
+      await webhooks.projectDirectoryContact(
+        {
+          ...firstContact,
+          displayNameCiphertext: encrypted("21"),
+          displayNameSort: "ada stale",
+          eventId: laterEventId,
+          evidence: {
+            occurredAt: new Date(partialAt.valueOf() - 60_000).toISOString(),
+            version: null,
+          },
+          itemIdentity: `wi1_${"y".repeat(43)}`,
+          itemIndex: 0,
+          personalAccountId: accountId,
+          publicId: "ctc_123456789012345678906",
+          receivedAt: laterReceivedAt,
+          whatsappConnectionId: initialClaim.whatsappConnectionId,
+          active: true,
+        },
+        async () => "incomparable",
+      ),
+    ).toBe("superseded");
+
+    const persisted = await database.query<{
+      display_name_sort: string;
+      provider_identity_index: string;
+    }>(
+      `SELECT provider_identity_index, display_name_sort
+       FROM app.directory_contacts
+       WHERE provider_identity_index IN (
+         $1::app.directory_blind_index,
+         $2::app.directory_blind_index
+       )
+       ORDER BY provider_identity_index`,
+      [firstContact.providerIdentityIndex, secondContact.providerIdentityIndex],
+    );
+    expect(persisted.rows).toEqual([
+      {
+        display_name_sort: "ada current",
+        provider_identity_index: firstContact.providerIdentityIndex,
+      },
+      {
+        display_name_sort: "grace updated",
+        provider_identity_index: secondContact.providerIdentityIndex,
+      },
+    ]);
+
+    const inFlightSnapshotAt = new Date(partialAt.valueOf() + 6 * 60_000);
+    const inFlightClaim = (
+      await directory.claimContactReconciliations({
+        claimedAt: inFlightSnapshotAt.toISOString(),
+        limit: 100,
+      })
+    )[0];
+    if (inFlightClaim === undefined) throw new Error("missing in-flight claim");
+
+    const newestEventId = "50000000-0000-4000-8000-000000000041";
+    const newestReceivedAt = new Date(
+      inFlightSnapshotAt.valueOf() + 60_000,
+    ).toISOString();
+    await webhooks.prepare({
+      ciphertextSha256: "c".repeat(64),
+      eventId: newestEventId,
+      payloadBytes: 128,
+      personalAccountId: accountId,
+      receivedAt: newestReceivedAt,
+      whatsappConnectionId: initialClaim.whatsappConnectionId,
+    });
+    expect(
+      await webhooks.projectDirectoryContact(
+        {
+          ...firstContact,
+          displayNameCiphertext: encrypted("22"),
+          displayNameSort: "ada newest",
+          eventId: newestEventId,
+          evidence: { occurredAt: null, version: null },
+          itemIdentity: `wi1_${"z".repeat(43)}`,
+          itemIndex: 0,
+          personalAccountId: accountId,
+          publicId: "ctc_123456789012345678907",
+          receivedAt: newestReceivedAt,
+          whatsappConnectionId: initialClaim.whatsappConnectionId,
+          active: true,
+        },
+        async () => "incomparable",
+      ),
+    ).toBe("applied");
+    expect(
+      await directory.finishContactReconciliation({
+        claimId: inFlightClaim.claimId,
+        contacts: [],
+        observedAt: inFlightSnapshotAt.toISOString(),
+        partial: false,
+        stale: false,
+        whatsappConnectionId: inFlightClaim.whatsappConnectionId,
+      }),
+    ).toBe(true);
+
+    const delayedEventId = "50000000-0000-4000-8000-000000000042";
+    const delayedReceivedAt = new Date(
+      inFlightSnapshotAt.valueOf() + 2 * 60_000,
+    ).toISOString();
+    await webhooks.prepare({
+      ciphertextSha256: "d".repeat(64),
+      eventId: delayedEventId,
+      payloadBytes: 128,
+      personalAccountId: accountId,
+      receivedAt: delayedReceivedAt,
+      whatsappConnectionId: initialClaim.whatsappConnectionId,
+    });
+    expect(
+      await webhooks.projectDirectoryContact(
+        {
+          ...firstContact,
+          displayNameCiphertext: encrypted("23"),
+          displayNameSort: "ada delayed",
+          eventId: delayedEventId,
+          evidence: {
+            occurredAt: new Date(
+              inFlightSnapshotAt.valueOf() - 60_000,
+            ).toISOString(),
+            version: null,
+          },
+          itemIdentity: `wi1_${"0".repeat(43)}`,
+          itemIndex: 0,
+          personalAccountId: accountId,
+          publicId: "ctc_123456789012345678908",
+          receivedAt: delayedReceivedAt,
+          whatsappConnectionId: initialClaim.whatsappConnectionId,
+          active: true,
+        },
+        async () => "incomparable",
+      ),
+    ).toBe("superseded");
+
+    const converged = await database.query<{ display_name_sort: string }>(
+      `SELECT display_name_sort
+       FROM app.directory_contacts
+       WHERE provider_identity_index = $1`,
+      [firstContact.providerIdentityIndex],
+    );
+    expect(converged.rows).toEqual([{ display_name_sort: "ada newest" }]);
   });
 
   test("rechecks scope and revocation at audit and protected-read boundaries", async () => {
