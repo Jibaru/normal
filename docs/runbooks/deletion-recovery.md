@@ -102,6 +102,38 @@ include the opaque entity identifier used to derive the marker, provider
 session locator, KMS plaintext/ciphertext, phone number, credential, or
 content.
 
+## Stalled provider cleanup and 24-hour escalation
+
+Page when provider absence remains unknown, a capsule reconciliation repeats a
+normalized failure, or six hours remain before the 24-hour active-purge
+deadline. Keep access revoked, keys unavailable, markers locked, capsules
+retained, and WhatsApp Numbers reserved. Inspect only marker identity, state,
+attempt count, lease age, deadline, and normalized failure through the deletion
+coordinator's restricted role.
+
+Restore KMS, provider-control, Queue, or Wasender access, then let the isolated
+coordinator reconcile before repeating deletion. Never call provider deletion
+blindly, release a reservation, alter the marker, age-delete a capsule, or give
+the coordinator content authority. At 24 hours, escalate to privacy and
+security on-call, record the missed active-purge objective honestly, preserve
+the same containment, and continue bounded reconciliation until provider
+absence and active purge are durable.
+
+## Marker validation and Deletion Capsule recovery
+
+Validate every marker's canonical `markers/v1/` key, exact version-1 fields,
+canonical timestamps, create-if-absent identity, and indefinite lock. A byte-
+different body at an existing key is an integrity incident. Validate a capsule
+only through its marker-bound encryption context and deletion-coordinator KMS
+role; it may contain only the provider locator required for cleanup.
+
+If the coordinator is unavailable, redeploy its last known-good artifact with
+fresh short-lived credentials for its existing narrow role. If KMS or the
+provider is unavailable, retain the capsule unchanged until recovery. A missing
+capsule before confirmed absence is not recoverable from tenant content or
+logs; keep deletion terminal, preserve the marker, escalate the stranded
+provider cleanup, and never recreate a guessed locator.
+
 ## Restore enumeration
 
 No restored Neon branch may receive verification or application traffic before
@@ -139,6 +171,17 @@ Do not sample marker replay, skip a malformed marker, substitute a database
 copy of marker state, or unlock/delete the marker bucket to recover from an
 error. Restore the marker/KMS authority or forward-fix the replay code while
 traffic remains closed.
+
+## Restore gate release criteria
+
+Release verification access only after all marker pages were enumerated, every
+restored opaque identifier was compared, marked keys are unavailable, marked
+rows and active objects were re-purged, wall-clock expiry batches and Stored
+Media deletion intents drained, and schema/RLS/quota/audit invariants pass.
+Release application and Queue traffic only after verification records aggregate
+marker count, zero failures, branch identity, achieved RPO, and elapsed RTO.
+Any malformed marker, authority failure, branch mismatch, or incomplete batch
+keeps the gate closed; there is no bypass or sampled success mode.
 
 ## Rollback and authority recovery
 

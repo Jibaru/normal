@@ -40,6 +40,38 @@ non-production accounts/teams or separate credentials within a non-production
 authority boundary, but their identities must be unable to assume the
 production roles or read production CI secrets.
 
+## Initial production deployment
+
+Use one change record and one reviewed commit for the entire release. The
+ordered path is **infrastructure → environment population → migration →
+provider-control → API → web → smoke check**. The deployer may stop between
+steps, but must not reorder them or serve traffic from a partially compatible
+set.
+
+1. Complete [Prerequisites](#prerequisites), including the written external
+   rollout gates. External account, billing, domain, DNS, and vendor approvals
+   are the only interactive gates; record their approval references without
+   credentials or tenant data.
+2. [Bootstrap remote state](#bootstrap-remote-state), run [Verify](#verify),
+   then create and inspect the saved infrastructure plans.
+3. Apply Neon, Hyperdrive, KMS, R2, Queue, KV, Worker-shell, route, and Vercel
+   declarations. Do not populate a secret into a plan or state file.
+4. Populate every value in [deployment configuration](../configuration.md)
+   through its named secret store and validate secret names, bindings, and
+   least-privilege roles. Production has no selectable test Layer or fake.
+5. Run `bun run db:migrate` followed by `bun run db:check` with the direct
+   migration-owner connection, then remove that connection from the shell.
+6. Deploy in dependency order: **provider-control → API → web**. Keep public
+   traffic closed if migration readiness or any private service binding fails.
+7. Run the non-interactive `bun run deploy:smoke` boundary and retain only its
+   normalized results, reviewed commit, deployment versions, plan digest, and
+   timestamps as release evidence.
+
+Promotion is complete only when readiness identifies the expected schema and
+Neon branch, the smoke check succeeds, Queue consumers and schedules are
+healthy, provider-control has no public route, and the observability canary is
+delivered. Otherwise follow [Partial deployment](incident-response.md#partial-deployment).
+
 ## Bootstrap remote state
 
 Remote state is an operator-owned prerequisite because a stack cannot safely
@@ -1052,6 +1084,22 @@ OpenTofu apply of the last known-good commit:
 3. Roll back provider-control only after confirming that its API callers remain
    compatible.
 4. Repeat the health checks.
+
+## Rollback decision matrix
+
+| Failed surface | Safe response | Must be preserved |
+| --- | --- | --- |
+| Web only | Redeploy the last known-good immutable Vercel deployment after confirming its API contract remains compatible. | API and Worker versions, current configuration, audit evidence. |
+| API Worker | Stop promotion, deploy a forward-compatible API or rebuild the last known-good compatible API and apply its reviewed Worker plan. | Send Operations, Queue messages, OAuth authority in Neon, R2 sources. |
+| Provider-control Worker | Roll back only when the current API remains RPC-compatible; otherwise forward-fix and keep lifecycle writes paused. | Provider references, reservations, cleanup intents, private-only routing. |
+| Configuration or secret binding | Restore the reviewed value or binding through its owning secret store and publish a new version. | Stable HMAC identities, KMS keys, token-family revocations, state history. |
+| Infrastructure | Create a plan from the last known-good declaration against the same remote state; inspect it before apply. | Locked markers, Deletion Capsules, KMS keys, Neon history, immutable audit. |
+| Database | Database migrations are forward-only. Deploy compatible code or a new forward-fix migration. | Migration ledger, RLS, restricted roles, tenant data. |
+
+Do not use destructive database reversal, edit the migration ledger, clear a
+Queue or lease, replace a stable HMAC key, or retry an ambiguous side effect to
+make rollback appear successful. After any rollback, rerun readiness,
+`bun run deploy:smoke`, Queue/schedule checks, and the alert-delivery canary.
 
 If rollback overlaps a text-send timeout or interrupted response, retain the
 Send Operation as `unknown` and do not issue a replacement provider call. A

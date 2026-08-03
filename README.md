@@ -41,7 +41,11 @@ cannot select a test Layer, and the production build inspection fails if a test
 Layer marker enters a deployable artifact.
 
 See [deployment configuration](docs/configuration.md) and the
-[deployment runbook](docs/runbooks/deployment.md).
+[deployment runbook](docs/runbooks/deployment.md). Operators should also use the
+[incident response](docs/runbooks/incident-response.md),
+[security operations](docs/runbooks/security-operations.md),
+[deletion recovery](docs/runbooks/deletion-recovery.md), and
+[environment teardown](docs/runbooks/environment-teardown.md) runbooks.
 
 The OpenTofu compute topology in `infra/compute` uses separate state and
 authority for development, preview, and production. It declares the Vercel web
