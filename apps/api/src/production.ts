@@ -238,6 +238,7 @@ export interface ApiEnvironment {
   readonly KMS_DELETION_COORDINATOR_KEY_ARN?: string | undefined;
   readonly MCP_REQUESTS_PER_HOUR?: string | undefined;
   readonly MCP_REQUESTS_PER_MINUTE?: string | undefined;
+  readonly READ_MESSAGE_RECORDS_PER_DAY?: string | undefined;
   readonly MCP_CURSOR_HMAC_SECRET?: string | undefined;
   readonly SEND_FINGERPRINT_HMAC_SECRET?: string | undefined;
   readonly SENDS_PER_DAY?: string | undefined;
@@ -261,6 +262,12 @@ export interface ApiEnvironment {
 }
 
 const mcpRequestQuotaConfig = Config.all({
+  dailyRecordLimit: Config.integer("READ_MESSAGE_RECORDS_PER_DAY").pipe(
+    Config.validate({
+      message: "READ_MESSAGE_RECORDS_PER_DAY must be a positive safe integer",
+      validation: (value) => Number.isSafeInteger(value) && value > 0,
+    }),
+  ),
   hourLimit: Config.integer("MCP_REQUESTS_PER_HOUR").pipe(
     Config.validate({
       message: "MCP_REQUESTS_PER_HOUR must be a positive safe integer",
@@ -1692,6 +1699,16 @@ const mcpToolPersistenceLayer = (environment: ApiEnvironment) =>
         },
         catch: () => new McpToolPersistenceError(),
       }),
+    readMessages: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string")
+            throw new Error("database unavailable");
+          return makePgMcpToolRepository(connectionString).readMessages(input);
+        },
+        catch: () => new McpToolPersistenceError(),
+      }),
     listGroups: (input) =>
       Effect.tryPromise({
         try: () => {
@@ -2160,6 +2177,7 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
             hourLimit: requestQuota.hourLimit,
             layer,
             minuteLimit: requestQuota.minuteLimit,
+            readMessageDailyRecordLimit: requestQuota.dailyRecordLimit,
             resourceUrl: configuration.resource,
           })(nextRequest, nextEnvironment, nextContext, authorization);
         }

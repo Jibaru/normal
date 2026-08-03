@@ -17,6 +17,8 @@ import {
   ListContactsOutputContract,
   type ListGroupsOutput,
   ListGroupsOutputContract,
+  type ReadMessagesOutput,
+  ReadMessagesOutputContract,
   type SendTextMessageOutput,
   SendTextMessageOutputContract,
 } from "@whatsapp-mcp/contracts/mcp-schema";
@@ -29,6 +31,7 @@ import type {
   McpToolEncryptedContactPage,
   McpToolGroupPage,
   McpToolGroupSearchMaterial,
+  McpToolMessagePage,
   McpToolName,
   RejectToolCallResult,
 } from "@whatsapp-mcp/db/mcp-tool";
@@ -112,6 +115,23 @@ export interface McpToolPersistenceService {
       readonly observedAt: Date;
     },
   ) => Effect.Effect<McpToolChatPage | null, McpToolPersistenceError>;
+  readonly readMessages?: (
+    input: McpAccessAuthorization & {
+      readonly auditLogId: string;
+      readonly connectionPublicId: string;
+      readonly conversationPublicId: string;
+      readonly cursorSentAt: string | null;
+      readonly cursorPublicId: string | null;
+      readonly dailyRecordLimit: number;
+      readonly limit: number;
+      readonly observedAt: Date;
+    },
+  ) => Effect.Effect<
+    | { readonly outcome: "success"; readonly page: McpToolMessagePage }
+    | { readonly outcome: "record_quota_exhausted"; readonly resetsAt: Date }
+    | null,
+    McpToolPersistenceError
+  >;
   readonly loadGroupSearchMaterial: (
     input: McpAccessAuthorization & {
       readonly connectionPublicId: string;
@@ -287,6 +307,74 @@ const ListChatsOutputSchema = z
     partial: z.boolean(),
   })
   .strict();
+const ReadMessagesInput = z
+  .object({
+    connection_id: z.string().regex(/^con_[A-Za-z0-9_-]{21}$/u),
+    conversation_id: z.string().regex(/^cvs_[A-Za-z0-9_-]{21}$/u),
+    limit: z.number().int().min(1).max(50).default(20),
+    older_cursor: z.string().min(1).max(4096).optional(),
+  })
+  .strict();
+const ReadMessagesOutputSchema = z
+  .object({
+    messages: z
+      .array(
+        z
+          .object({
+            message_id: z.string().regex(/^msg_[A-Za-z0-9_-]{21}$/u),
+            sent_at: z.iso.datetime(),
+            direction: z.enum(["inbound", "outbound"]),
+            sender: z
+              .object({
+                kind: z.enum(["self", "contact", "group_participant"]),
+                display_name: z.string().nullable(),
+                phone_last_four: z
+                  .string()
+                  .regex(/^\d{4}$/u)
+                  .nullable(),
+              })
+              .strict(),
+            content_type: z.enum([
+              "text",
+              "image",
+              "audio",
+              "video",
+              "document",
+              "sticker",
+              "unknown",
+            ]),
+            text: z.string().nullable(),
+            text_truncated: z.boolean(),
+            text_total_utf8_bytes: z.number().int().nonnegative().nullable(),
+            edited_at: z.iso.datetime().nullable(),
+            deleted: z.boolean(),
+            media: z.null(),
+          })
+          .strict(),
+      )
+      .max(50),
+    size_limited: z.boolean(),
+    has_older: z.boolean(),
+    older_cursor: z.string().nullable(),
+    history_starts_at: z.iso.datetime(),
+    history_start_reason: z.enum(["connection_started", "retention_policy"]),
+    gaps: z.array(
+      z
+        .object({
+          starts_at: z.iso.datetime(),
+          ends_at: z.iso.datetime().nullable(),
+          cause: z.enum([
+            "connection_unavailable",
+            "webhook_configuration",
+            "ingress_failure",
+            "processing_failure",
+            "restore_loss",
+          ]),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
 const ListConnectionsOutputSchema = z
   .object({
     connections: z
@@ -460,6 +548,9 @@ const buildSendTextMessageResult = makeSuccessResultBuilder(
   SendTextMessageOutputContract,
 );
 const buildListChatsResult = makeSuccessResultBuilder(ListChatsOutputContract);
+const buildReadMessagesResult = makeSuccessResultBuilder(
+  ReadMessagesOutputContract,
+);
 
 const auditUnavailable = () =>
   makeExecutionErrorResult({
@@ -1347,6 +1438,7 @@ export interface McpRequestHandlerOptions {
   readonly hourLimit: number;
   readonly layer: Layer.Layer<McpToolRequirements, unknown>;
   readonly minuteLimit: number;
+  readonly readMessageDailyRecordLimit?: number;
   readonly resourceUrl: string;
 }
 
@@ -1575,6 +1667,243 @@ const listChats = (
       : buildListChatsResult(output);
   }).pipe(Effect.catchAll(() => Effect.succeed(auditUnavailable())));
 
+const readMessages = (
+  authorization: McpAccessAuthorization,
+  input: z.infer<typeof ReadMessagesInput>,
+  hourLimit: number,
+  minuteLimit: number,
+  dailyRecordLimit: number,
+) =>
+  Effect.gen(function* () {
+    const clock = yield* McpToolClock;
+    const identifiers = yield* McpToolIdentifiers;
+    const persistence = yield* McpToolPersistence;
+    const encryption = yield* EnvelopeEncryptionService;
+    const codec = yield* McpCursorCodec;
+    const startedAt = yield* clock.now;
+    const context: CursorContext = {
+      authorizationId: authorization.authorizationId,
+      connectionId: input.connection_id as CursorContext["connectionId"],
+      filters: { conversation_id: input.conversation_id },
+      pageSize: input.limit,
+      sortVersion: "messages-sent-v1",
+      tool: "read_messages",
+    };
+    let sentAt: string | null = null;
+    let publicId: string | null = null;
+    if (input.older_cursor !== undefined) {
+      const decoded = yield* codec
+        .decode({
+          context,
+          cursor: input.older_cursor,
+          nowEpochSeconds: Math.floor(startedAt.valueOf() / 1000),
+        })
+        .pipe(Effect.either);
+      if (
+        decoded._tag === "Left" ||
+        decoded.right.length !== 2 ||
+        typeof decoded.right[0] !== "string" ||
+        typeof decoded.right[1] !== "string"
+      )
+        return invalidCursor();
+      sentAt = decoded.right[0];
+      publicId = decoded.right[1];
+    }
+    const auditLogId = yield* identifiers.nextAuditLogId;
+    const begun = yield* persistence
+      .beginToolCall({
+        ...authorization,
+        auditLogId,
+        hourLimit,
+        minuteLimit,
+        observedAt: startedAt,
+        toolName: "read_messages",
+      })
+      .pipe(Effect.either);
+    if (begun._tag === "Left") return auditUnavailable();
+    if (begun.right.outcome === "authorization_denied")
+      return authorizationDenied();
+    if (begun.right.outcome === "rate_limited")
+      return rateLimited(begun.right.retryAfterSeconds, begun.right.resetsAt);
+    const fail = (
+      code: "authorization_denied" | "rate_limited" | "service_unavailable",
+    ) =>
+      Effect.gen(function* () {
+        const completed = yield* persistence
+          .completeToolCall({
+            auditLogId,
+            completedAt: yield* clock.now,
+            errorCode: code,
+            outcome:
+              code === "authorization_denied"
+                ? "authorization_denied"
+                : "execution_error",
+            resultCount: null,
+          })
+          .pipe(Effect.either);
+        if (completed._tag === "Left") return auditUnavailable();
+        return code === "authorization_denied"
+          ? authorizationDenied()
+          : code === "rate_limited"
+            ? rateLimited(
+                Math.max(
+                  0,
+                  Math.ceil(
+                    (new Date(
+                      Date.UTC(
+                        startedAt.getUTCFullYear(),
+                        startedAt.getUTCMonth(),
+                        startedAt.getUTCDate() + 1,
+                      ),
+                    ).valueOf() -
+                      startedAt.valueOf()) /
+                      1000,
+                  ),
+                ),
+                new Date(
+                  Date.UTC(
+                    startedAt.getUTCFullYear(),
+                    startedAt.getUTCMonth(),
+                    startedAt.getUTCDate() + 1,
+                  ),
+                ),
+              )
+            : serviceUnavailable();
+      });
+    if (persistence.readMessages === undefined)
+      return yield* fail("service_unavailable");
+    const loaded = yield* persistence
+      .readMessages({
+        ...authorization,
+        auditLogId,
+        connectionPublicId: input.connection_id,
+        conversationPublicId: input.conversation_id,
+        cursorSentAt: sentAt,
+        cursorPublicId: publicId,
+        dailyRecordLimit,
+        limit: input.limit,
+        observedAt: yield* clock.now,
+      })
+      .pipe(Effect.either);
+    if (loaded._tag === "Left") return yield* fail("service_unavailable");
+    if (loaded.right === null) return yield* fail("authorization_denied");
+    if (loaded.right.outcome === "record_quota_exhausted")
+      return yield* fail("rate_limited");
+    const page = loaded.right.page;
+    const decrypted = yield* Effect.forEach(
+      page.messages,
+      (message) =>
+        encryption
+          .decrypt({
+            accountKey: page.accountKey,
+            connectionKey: page.connectionKey,
+            ciphertext: message.content,
+            context: {
+              accountId: page.accountKey.personalAccountId,
+              connectionId: page.connectionKey.connectionId,
+              entity: "stored-message",
+              fieldOrObjectPurpose: "content",
+              recordId: message.messageIdentity,
+            },
+          })
+          .pipe(
+            Effect.map((bytes) => {
+              try {
+                const value = JSON.parse(
+                  new TextDecoder("utf-8", {
+                    fatal: true,
+                    ignoreBOM: false,
+                  }).decode(bytes),
+                ) as unknown;
+                if (
+                  typeof value !== "object" ||
+                  value === null ||
+                  !("text" in value) ||
+                  ((value as { text: unknown }).text !== null &&
+                    typeof (value as { text: unknown }).text !== "string")
+                )
+                  throw new Error();
+                return {
+                  message,
+                  text: (value as { text: string | null }).text,
+                };
+              } finally {
+                bytes.fill(0);
+              }
+            }),
+          ),
+      { concurrency: 4 },
+    ).pipe(Effect.either);
+    if (decrypted._tag === "Left") return yield* fail("service_unavailable");
+    let olderCursor: string | null = null;
+    const oldest = page.messages.at(-1);
+    if (page.hasOlder && oldest !== undefined)
+      olderCursor = yield* codec.encode({
+        boundary: [oldest.sentAt, oldest.publicId],
+        context,
+        expiresAtEpochSeconds: Math.floor(startedAt.valueOf() / 1000) + 900,
+      });
+    const encoder = new TextEncoder();
+    const fitText = (text: string | null) => {
+      if (text === null) return { text, truncated: false, totalBytes: null };
+      const totalBytes = encoder.encode(text).byteLength;
+      if (totalBytes <= 48_000) return { text, truncated: false, totalBytes };
+      let prefix = "";
+      let bytes = 0;
+      for (const character of text) {
+        const next = encoder.encode(character).byteLength;
+        if (bytes + next > 48_000) break;
+        prefix += character;
+        bytes += next;
+      }
+      return { text: prefix, truncated: true, totalBytes };
+    };
+    const output: ReadMessagesOutput = ReadMessagesOutputContract.decodeUnknown(
+      {
+        messages: decrypted.right.reverse().map(({ message, text }) => ({
+          message_id: message.publicId,
+          sent_at: message.sentAt,
+          direction: message.direction,
+          sender: {
+            kind:
+              message.direction === "outbound"
+                ? "self"
+                : message.conversationKind === "group"
+                  ? "group_participant"
+                  : "contact",
+            display_name: null,
+            phone_last_four: null,
+          },
+          content_type: message.contentType,
+          text: fitText(text).text,
+          text_truncated: fitText(text).truncated,
+          text_total_utf8_bytes: fitText(text).totalBytes,
+          edited_at: null,
+          deleted: false,
+          media: null,
+        })),
+        size_limited:
+          page.sizeLimited ||
+          decrypted.right.some(({ text }) => fitText(text).truncated),
+        has_older: page.hasOlder,
+        older_cursor: olderCursor,
+        history_starts_at: page.historyStartsAt,
+        history_start_reason: page.historyStartReason,
+        gaps: page.gaps.map((gap) => ({
+          starts_at: gap.startsAt,
+          ends_at: gap.endsAt,
+          cause: gap.cause,
+        })),
+      },
+    );
+    yield* emitToolCompletion(
+      "read_messages",
+      "success",
+      output.messages.length,
+    );
+    return buildReadMessagesResult(output);
+  }).pipe(Effect.catchAll(() => Effect.succeed(auditUnavailable())));
+
 export const createMcpRequestHandler =
   (options: McpRequestHandlerOptions) =>
   async (
@@ -1687,6 +2016,31 @@ export const createMcpRequestHandler =
               input,
               options.hourLimit,
               options.minuteLimit,
+            ).pipe(Effect.provide(options.layer)),
+          );
+          return {
+            ...result,
+            content: result.content.map((block) => ({ ...block })),
+          } as CallToolResult;
+        },
+      );
+      server.registerTool(
+        "read_messages",
+        {
+          description:
+            "Read a chronological page of observed Stored Messages and traverse toward older retained history with honest history-window and Ingestion Gap metadata.",
+          inputSchema: ReadMessagesInput,
+          outputSchema: ReadMessagesOutputSchema,
+          title: "Read WhatsApp Messages",
+        },
+        async (input) => {
+          const result = await Effect.runPromise(
+            readMessages(
+              authorization,
+              input,
+              options.hourLimit,
+              options.minuteLimit,
+              options.readMessageDailyRecordLimit ?? 10_000,
             ).pipe(Effect.provide(options.layer)),
           );
           return {
@@ -1823,6 +2177,18 @@ export const createMcpRequestHandler =
               target: "draft-2020-12",
             }),
             title: "List WhatsApp Chats",
+          });
+          tools.push({
+            description:
+              "Read a chronological page of observed Stored Messages and traverse toward older retained history with honest history-window and Ingestion Gap metadata.",
+            inputSchema: z.toJSONSchema(ReadMessagesInput, {
+              target: "draft-2020-12",
+            }),
+            name: "read_messages",
+            outputSchema: z.toJSONSchema(ReadMessagesOutputSchema, {
+              target: "draft-2020-12",
+            }),
+            title: "Read WhatsApp Messages",
           });
         }
         server.server.setRequestHandler("tools/list", () => ({

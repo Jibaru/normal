@@ -182,6 +182,7 @@ for (const deployable of deployables) {
             OAUTH_RESOURCE: "https://api.example.test/mcp",
             MCP_REQUESTS_PER_HOUR: "600",
             MCP_REQUESTS_PER_MINUTE: "60",
+            READ_MESSAGE_RECORDS_PER_DAY: "10000",
             SENDS_PER_DAY: "200",
             SENDS_PER_MINUTE: "10",
             PROVIDER_APPROVED_SESSION_CAPACITY: "3",
@@ -269,6 +270,7 @@ for (const deployable of deployables) {
         'env.OAUTH_RESOURCE ("https://api.example.test/mcp")',
         'env.MCP_REQUESTS_PER_HOUR ("600")',
         'env.MCP_REQUESTS_PER_MINUTE ("60")',
+        'env.READ_MESSAGE_RECORDS_PER_DAY ("10000")',
         'env.PROVIDER_APPROVED_SESSION_CAPACITY ("3")',
       ]) {
         if (!output.includes(binding)) {

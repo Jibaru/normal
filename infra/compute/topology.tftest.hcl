@@ -20,6 +20,7 @@ run "development_topology" {
     provider_approved_session_capacity = 3
     mcp_requests_per_minute            = 60
     mcp_requests_per_hour              = 600
+    read_message_records_per_day       = 10000
     sends_per_minute                   = 10
     sends_per_day                      = 200
     oauth_clients = [{
@@ -106,6 +107,7 @@ run "development_topology" {
       "plain_text:OAUTH_RESOURCE",
       "plain_text:MCP_REQUESTS_PER_HOUR",
       "plain_text:MCP_REQUESTS_PER_MINUTE",
+      "plain_text:READ_MESSAGE_RECORDS_PER_DAY",
       "plain_text:SENDS_PER_DAY",
       "plain_text:SENDS_PER_MINUTE",
       "plain_text:PROVIDER_APPROVED_SESSION_CAPACITY",
@@ -210,6 +212,7 @@ run "preview_topology" {
     provider_approved_session_capacity = 3
     mcp_requests_per_minute            = 60
     mcp_requests_per_hour              = 600
+    read_message_records_per_day       = 10000
     sends_per_minute                   = 10
     sends_per_day                      = 200
     oauth_clients = [{
@@ -255,6 +258,7 @@ run "production_topology" {
     provider_approved_session_capacity = 3
     mcp_requests_per_minute            = 60
     mcp_requests_per_hour              = 600
+    read_message_records_per_day       = 10000
     sends_per_minute                   = 10
     sends_per_day                      = 200
     oauth_clients = [{
@@ -365,6 +369,7 @@ run "reject_same_web_and_api_origin" {
     provider_approved_session_capacity = 3
     mcp_requests_per_minute            = 60
     mcp_requests_per_hour              = 600
+    read_message_records_per_day       = 10000
     sends_per_minute                   = 10
     sends_per_day                      = 200
     oauth_clients = [{

@@ -136,7 +136,12 @@ describe("MCP tool repository", () => {
       expiresAt: new Date("2026-10-29T12:00:00.000Z"),
       oauthSubject,
       reverifiedAt: new Date("2026-07-31T11:59:00.000Z"),
-      scopes: ["connections:read", "directory:read", "messages:send"],
+      scopes: [
+        "connections:read",
+        "directory:read",
+        "messages:read",
+        "messages:send",
+      ],
     });
     repository = makeMcpToolRepository(provider);
     sends = makePgAtomicSendRepository(provider);
@@ -158,7 +163,12 @@ describe("MCP tool repository", () => {
       observedAt,
     });
     expect(inspected).toEqual({
-      scopes: ["connections:read", "directory:read", "messages:send"],
+      scopes: [
+        "connections:read",
+        "directory:read",
+        "messages:read",
+        "messages:send",
+      ],
     });
 
     await expect(
@@ -1022,7 +1032,12 @@ describe("MCP tool repository", () => {
         observedAt,
       }),
     ).resolves.toEqual({
-      scopes: ["connections:read", "directory:read", "messages:send"],
+      scopes: [
+        "connections:read",
+        "directory:read",
+        "messages:read",
+        "messages:send",
+      ],
     });
     await expect(
       repository.beginToolCall({
@@ -1040,6 +1055,83 @@ describe("MCP tool repository", () => {
         observedAt,
       }),
     ).resolves.toEqual([]);
+  });
+
+  test("selects newest Stored Messages and atomically commits exact returned-record quota", async () => {
+    const conversationId = "70000000-0000-4000-8000-000000000042";
+    const conversationPublicId = "cvs_123456789012345678942";
+    await database.query(
+      "UPDATE app.whatsapp_connections SET created_at=$2 WHERE personal_account_id=$1 AND public_id=$3",
+      [accountId, observedAt, connectionA],
+    );
+    await database.query(
+      `INSERT INTO app.whatsapp_conversations (id, personal_account_id, whatsapp_connection_id, public_id, kind, recipient_locator, recipient_public_id, last_activity_at, last_activity_direction)
+       VALUES ($1,$2,'20000000-0000-4000-8000-000000000030',$3,'direct',$4,'ctc_123456789012345678942',$5,'inbound')`,
+      [
+        conversationId,
+        accountId,
+        conversationPublicId,
+        `di1_${"C".repeat(43)}`,
+        new Date("2026-07-31T12:03:00Z"),
+      ],
+    );
+    for (const [suffix, sentAt] of [
+      ["1", "2026-07-31T12:01:00Z"],
+      ["2", "2026-07-31T12:02:00Z"],
+      ["3", "2026-07-31T12:03:00Z"],
+    ] as const) {
+      await database.query(
+        `INSERT INTO app.stored_messages (id, personal_account_id, whatsapp_connection_id, conversation_id, public_id, message_identity, direction, sent_at, content_type, content_ciphertext_version, content_key_version, content_nonce, content_ciphertext, received_at, webhook_item_identity)
+         VALUES ($1,$2,'20000000-0000-4000-8000-000000000030',$3,$4,$5,'inbound',$6,'text',1,1,decode(repeat('11',12),'hex'),decode(repeat('12',32),'hex'),$6,$7)`,
+        [
+          `71000000-0000-4000-8000-00000000004${suffix}`,
+          accountId,
+          conversationId,
+          `msg_12345678901234567894${suffix}`,
+          `wi1_${suffix.repeat(43)}`,
+          new Date(sentAt),
+          `wi1_${suffix.repeat(43)}`,
+        ],
+      );
+    }
+    const readAt = new Date("2026-08-01T12:00:00Z");
+    const auditLogId = "50000000-0000-4000-8000-000000000042";
+    await expect(
+      repository.beginToolCall({
+        ...authorization,
+        auditLogId,
+        hourLimit: 10,
+        minuteLimit: 10,
+        observedAt: readAt,
+        toolName: "read_messages",
+      }),
+    ).resolves.toMatchObject({ outcome: "started" });
+    const result = await repository.readMessages({
+      ...authorization,
+      auditLogId,
+      connectionPublicId: connectionA,
+      conversationPublicId,
+      cursorSentAt: null,
+      cursorPublicId: null,
+      dailyRecordLimit: 2,
+      limit: 2,
+      observedAt: readAt,
+    });
+    expect(result).toMatchObject({
+      outcome: "success",
+      page: {
+        hasOlder: true,
+        messages: [
+          { publicId: "msg_123456789012345678943" },
+          { publicId: "msg_123456789012345678942" },
+        ],
+      },
+    });
+    const log = await database.query(
+      `SELECT outcome, result_count FROM app.tool_call_logs WHERE id=$1`,
+      [auditLogId],
+    );
+    expect(log.rows).toEqual([{ outcome: "success", result_count: 2 }]);
   });
 
   test("rechecks directory scope, selected connection, and joined state for encrypted groups", async () => {

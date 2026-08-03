@@ -190,7 +190,10 @@ const makeHarness = (
         const requiredScope =
           input.toolName === "list_connections"
             ? "connections:read"
-            : "directory:read";
+            : input.toolName === "list_chats" ||
+                input.toolName === "read_messages"
+              ? "messages:read"
+              : "directory:read";
         if (
           overrides.scopes !== undefined &&
           !overrides.scopes.includes(requiredScope)
@@ -258,6 +261,75 @@ const makeHarness = (
             stateChangedAt: "2026-07-30T12:00:00.000Z",
           },
         ]);
+      },
+      readMessages: () => {
+        observations.push("read-messages");
+        return Effect.succeed({
+          outcome: "success" as const,
+          page: {
+            accountKey: {
+              ciphertext: "AQI=",
+              keyVersion: 1,
+              kmsKeyId: "kms-content-root",
+              personalAccountId: "10000000-0000-4000-8000-000000000030",
+              version: 1 as const,
+            },
+            connectionKey: {
+              accountKeyVersion: 1,
+              ciphertext: "AQI=",
+              connectionId: "20000000-0000-4000-8000-000000000030",
+              keyVersion: 1,
+              nonce: "AQIDBAUGBwgJCgsM",
+              personalAccountId: "10000000-0000-4000-8000-000000000030",
+              version: 1 as const,
+            },
+            messages: [
+              {
+                publicId: "msg_222222222222222222222",
+                messageIdentity: `wi1_${"B".repeat(43)}`,
+                sentAt: "2026-07-31T11:59:00.000Z",
+                direction: "inbound" as const,
+                conversationKind: "direct" as const,
+                contentType: "text" as const,
+                content: {
+                  ciphertext: btoa(
+                    JSON.stringify({ text: "newest", mediaSource: null }),
+                  ),
+                  keyVersion: 1,
+                  nonce: "AQIDBAUGBwgJCgsM",
+                  version: 1 as const,
+                },
+              },
+              {
+                publicId: "msg_111111111111111111111",
+                messageIdentity: `wi1_${"A".repeat(43)}`,
+                sentAt: "2026-07-31T11:58:00.000Z",
+                direction: "outbound" as const,
+                conversationKind: "direct" as const,
+                contentType: "text" as const,
+                content: {
+                  ciphertext: btoa(
+                    JSON.stringify({ text: "older", mediaSource: null }),
+                  ),
+                  keyVersion: 1,
+                  nonce: "AQIDBAUGBwgJCgsM",
+                  version: 1 as const,
+                },
+              },
+            ],
+            hasOlder: true,
+            sizeLimited: false,
+            historyStartsAt: "2026-07-01T00:00:00.000Z",
+            historyStartReason: "retention_policy" as const,
+            gaps: [
+              {
+                startsAt: "2026-07-15T00:00:00.000Z",
+                endsAt: null,
+                cause: "processing_failure" as const,
+              },
+            ],
+          },
+        });
       },
       listGroups: (input) => {
         observations.push("list-groups");
@@ -486,7 +558,7 @@ describe("stateless MCP list_connections boundary", () => {
       authorization,
     );
     expect(await omittedResponse.json()).toMatchObject({
-      result: { tools: [] },
+      result: { tools: [{ name: "list_chats" }, { name: "read_messages" }] },
     });
   });
 
@@ -518,7 +590,7 @@ describe("stateless MCP list_connections boundary", () => {
 
     expect(response.status).toBe(200);
     expect(await responseJson(response)).toMatchObject({
-      result: { tools: [] },
+      result: { tools: [{ name: "list_chats" }, { name: "read_messages" }] },
     });
   });
 
@@ -559,7 +631,12 @@ describe("stateless MCP list_connections boundary", () => {
       expect.arrayContaining([
         expect.objectContaining({
           id: "discovery-request",
-          result: { tools: [] },
+          result: expect.objectContaining({
+            tools: [
+              expect.objectContaining({ name: "list_chats" }),
+              expect.objectContaining({ name: "read_messages" }),
+            ],
+          }),
         }),
         expect.objectContaining({
           id: "call-request",
@@ -1197,6 +1274,69 @@ describe("stateless MCP list_groups boundary", () => {
         structuredContent: { error_code: "invalid_cursor" },
       },
     });
+  });
+});
+
+describe("read_messages MCP boundary", () => {
+  test("returns newest selection chronologically with bound older traversal metadata", async () => {
+    const harness = makeHarness({ scopes: ["messages:read"] });
+    const response = await harness.handler(
+      jsonRpcRequest("tools/call", {
+        name: "read_messages",
+        arguments: {
+          connection_id: "con_123456789012345678901",
+          conversation_id: "cvs_123456789012345678901",
+          limit: 2,
+        },
+      }),
+      {},
+      executionContext,
+      authorization,
+    );
+    const body = (await response.json()) as {
+      result: { structuredContent: Record<string, unknown> };
+    };
+    expect(body.result.structuredContent).toMatchObject({
+      messages: [
+        {
+          message_id: "msg_111111111111111111111",
+          text: "older",
+          direction: "outbound",
+          sender: { kind: "self" },
+          media: null,
+        },
+        {
+          message_id: "msg_222222222222222222222",
+          text: "newest",
+          direction: "inbound",
+          sender: { kind: "contact" },
+          media: null,
+        },
+      ],
+      has_older: true,
+      history_start_reason: "retention_policy",
+      gaps: [{ cause: "processing_failure", ends_at: null }],
+    });
+    expect(body.result.structuredContent.older_cursor).toEqual(
+      expect.any(String),
+    );
+    expect(harness.observations).toContain("read-messages");
+  });
+
+  test("is discovered only with messages:read", async () => {
+    const harness = makeHarness({ scopes: ["messages:read"] });
+    const body = (await (
+      await harness.handler(
+        jsonRpcRequest("tools/list"),
+        {},
+        executionContext,
+        authorization,
+      )
+    ).json()) as { result: { tools: Array<{ name: string }> } };
+    expect(body.result.tools.map((tool) => tool.name)).toEqual([
+      "list_chats",
+      "read_messages",
+    ]);
   });
 });
 

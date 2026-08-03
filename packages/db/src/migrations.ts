@@ -269,6 +269,14 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 24,
   },
+  {
+    name: "core read_messages traversal",
+    sql: await readFile(
+      new NodeUrl("../migrations/0025_read_messages.sql", import.meta.url),
+      "utf8",
+    ),
+    version: 25,
+  },
 ];
 
 const checksum = (sql: string): string =>
