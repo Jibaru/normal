@@ -162,6 +162,61 @@ describe("atomic send workflow", () => {
     ]);
   });
 
+  test("returns an exact replay without encryption or provider work", async () => {
+    const repository: AtomicSendRepository = {
+      commit: async (_request, encrypt) => {
+        expect(encrypt).toBeTypeOf("function");
+        return {
+          outcome: "replay",
+          receipt: {
+            createdAt: new Date("2026-08-03T12:00:00.000Z"),
+            publicId: "snd_123456789012345678947",
+            status: "unknown",
+            statusChangedAt: new Date("2026-08-03T12:00:30.000Z"),
+          },
+        };
+      },
+      recordProviderOutcome: vi.fn(),
+    };
+    const encryption: EnvelopeEncryption = {
+      createConnectionKey: () => Effect.die("unused"),
+      createPersonalAccountKey: () => Effect.die("unused"),
+      decrypt: () => Effect.die("replay must not decrypt provider material"),
+      encrypt: () => Effect.die("replay must not encrypt pending content"),
+    };
+    const providerAttempt = vi.fn();
+    vi.stubGlobal("fetch", providerAttempt);
+    const service = makeAtomicSendTextMessageService({
+      encryption,
+      fingerprintKey: await importSendFingerprintKey("47".repeat(32)),
+      hourRequestLimit: 600,
+      minuteRequestLimit: 60,
+      nextAuditLogId: () => "50000000-0000-4000-8000-000000000048",
+      nextSend: () => ({
+        id: "60000000-0000-4000-8000-000000000048",
+        publicId: "snd_123456789012345678948",
+      }),
+      now: () => new Date("2026-08-03T12:01:00.000Z"),
+      repository,
+      sendDailyLimit: 200,
+      sendPerMinuteLimit: 10,
+      telemetry: () => undefined,
+    });
+
+    await expect(Effect.runPromise(service.send(input))).resolves.toEqual({
+      outcome: "receipt",
+      receipt: {
+        created_at: "2026-08-03T12:00:00.000Z",
+        idempotent_replay: true,
+        send_id: "snd_123456789012345678947",
+        status: "unknown",
+        status_changed_at: "2026-08-03T12:00:30.000Z",
+      },
+    });
+    expect(providerAttempt).not.toHaveBeenCalled();
+    expect(repository.recordProviderOutcome).not.toHaveBeenCalled();
+  });
+
   test("accepts an uppercase hexadecimal fingerprint key", async () => {
     await expect(
       importSendFingerprintKey("AB".repeat(32)),

@@ -7,6 +7,7 @@ import type {
 import { Effect, Layer } from "effect";
 import { describe, expect, test } from "vitest";
 import { EnvelopeEncryptionService } from "../src/encryption/envelope";
+import type { SendTextMessageResult } from "../src/mcp";
 import {
   createMcpRequestHandler,
   McpCursorCodec,
@@ -121,6 +122,7 @@ const makeHarness = (
     >;
     readonly groupPage?: McpToolGroupPage | null;
     readonly cursorKey?: CryptoKey;
+    readonly sendResult?: SendTextMessageResult;
   } = {},
 ) => {
   const observations: Array<string> = [];
@@ -167,16 +169,18 @@ const makeHarness = (
     }),
     Layer.succeed(SendTextMessage, {
       send: () =>
-        Effect.succeed({
-          outcome: "receipt" as const,
-          receipt: {
-            send_id: "snd_123456789012345678901" as never,
-            status: "accepted" as const,
-            created_at: "2026-08-03T12:00:00.000Z" as never,
-            status_changed_at: "2026-08-03T12:00:01.000Z" as never,
-            idempotent_replay: false,
+        Effect.succeed(
+          overrides.sendResult ?? {
+            outcome: "receipt" as const,
+            receipt: {
+              send_id: "snd_123456789012345678901" as never,
+              status: "accepted" as const,
+              created_at: "2026-08-03T12:00:00.000Z" as never,
+              status_changed_at: "2026-08-03T12:00:01.000Z" as never,
+              idempotent_replay: false,
+            },
           },
-        }),
+        ),
     }),
     Layer.succeed(McpToolPersistence, {
       beginToolCall: (input) => {
@@ -1262,6 +1266,43 @@ describe("atomic send_text_message MCP boundary", () => {
           idempotent_replay: false,
         },
       },
+    });
+  });
+
+  test("returns changed-input idempotency reuse as a non-retryable conflict", async () => {
+    const harness = makeHarness({
+      scopes: ["messages:send"],
+      sendResult: { outcome: "idempotency_conflict" },
+    });
+    const response = await harness.handler(
+      jsonRpcRequest("tools/call", {
+        name: "send_text_message",
+        arguments: {
+          connection_id: "con_123456789012345678901",
+          recipient_id: "ctc_123456789012345678902",
+          text: "changed exact bytes",
+          idempotency_key: "123456789012345678901",
+        },
+      }),
+      {},
+      executionContext,
+      authorization,
+    );
+
+    expect(await response.json()).toMatchObject({
+      result: {
+        isError: true,
+        structuredContent: {
+          error_code: "idempotency_conflict",
+          retryable: false,
+        },
+      },
+    });
+    expect(harness.telemetry).toContainEqual({
+      event: "mcp.tool_call.completed",
+      outcome: "execution_error",
+      service: "api",
+      tool: "send_text_message",
     });
   });
 

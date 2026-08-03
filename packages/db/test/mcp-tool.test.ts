@@ -282,13 +282,17 @@ describe("MCP tool repository", () => {
     expect(encrypted).toBe(1);
 
     await database.query(
-      `UPDATE app.whatsapp_connections SET state='disconnected'
+      `UPDATE app.whatsapp_connections SET state='degraded'
        WHERE public_id=$1`,
       [connectionA],
     );
     await database.query(
       `UPDATE app.directory_contacts SET active=false
        WHERE public_id='ctc_123456789012345678930'`,
+    );
+    await database.query(
+      `UPDATE app.directory_contact_projections SET stale=true
+       WHERE whatsapp_connection_id='20000000-0000-4000-8000-000000000030'`,
     );
 
     const replay = await sends.commit(
@@ -300,6 +304,47 @@ describe("MCP tool repository", () => {
     );
     expect(replay).toMatchObject({ outcome: "replay" });
     expect(encrypted).toBe(1);
+
+    await database.query(
+      `UPDATE app.whatsapp_connections SET state='disconnected'
+       WHERE public_id=$1`,
+      [connectionA],
+    );
+    await expect(
+      sends.commit(
+        { ...input, auditLogId: "50000000-0000-4000-8000-000000000097" },
+        async () => {
+          throw new Error("disconnected replay must not encrypt");
+        },
+      ),
+    ).resolves.toMatchObject({ outcome: "replay" });
+
+    for (const [auditLogId, changed] of [
+      [
+        "50000000-0000-4000-8000-000000000096",
+        { fingerprint: `sf1_${"C".repeat(43)}` },
+      ],
+      [
+        "50000000-0000-4000-8000-000000000095",
+        {
+          fingerprint: `sf1_${"D".repeat(43)}`,
+          recipientPublicId: "grp_123456789012345678930",
+        },
+      ],
+      [
+        "50000000-0000-4000-8000-000000000094",
+        {
+          connectionPublicId: connectionWithoutSuffix,
+          fingerprint: `sf1_${"E".repeat(43)}`,
+        },
+      ],
+    ] as const) {
+      await expect(
+        sends.commit({ ...input, ...changed, auditLogId }, async () => {
+          throw new Error("conflicting replay must not encrypt");
+        }),
+      ).resolves.toEqual({ outcome: "idempotency_conflict" });
+    }
 
     const rows = await database.query<{ count: number }>(
       `SELECT count(*)::int AS count FROM app.send_operations
@@ -316,9 +361,39 @@ describe("MCP tool repository", () => {
          (SELECT count(*)::int FROM app.send_quota_reservations) AS quota_count`,
     );
     expect(auditAndQuota.rows[0]).toEqual({
-      audit_count: 2,
+      audit_count: 6,
       quota_count: 1,
     });
+    const replayAudits = await database.query<{
+      error_code: string | null;
+      outcome: string;
+      quota_reserved: boolean;
+    }>(
+      `SELECT error_code, outcome, quota_reserved
+       FROM app.tool_call_logs
+       WHERE id <> '50000000-0000-4000-8000-000000000099'
+         AND tool_name='send_text_message'
+       ORDER BY id`,
+    );
+    expect(replayAudits.rows).toEqual([
+      {
+        error_code: "idempotency_conflict",
+        outcome: "execution_error",
+        quota_reserved: false,
+      },
+      {
+        error_code: "idempotency_conflict",
+        outcome: "execution_error",
+        quota_reserved: false,
+      },
+      {
+        error_code: "idempotency_conflict",
+        outcome: "execution_error",
+        quota_reserved: false,
+      },
+      { error_code: null, outcome: "success", quota_reserved: false },
+      { error_code: null, outcome: "success", quota_reserved: false },
+    ]);
   });
 
   test("atomically audits rate-limit rejection without another reservation", async () => {

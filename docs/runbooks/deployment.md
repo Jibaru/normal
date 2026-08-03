@@ -950,6 +950,17 @@ Send Operation, idempotency binding, fingerprint, lease, or quota reservation
 to force a retry. A post-attempt Tool Call Log update failure is investigated
 as audit degradation; the Send Operation remains authoritative.
 
+During the send smoke check, repeat the exact authorization, Connection,
+WhatsApp Recipient, text bytes, and idempotency key after marking the test
+Connection degraded and its Directory projection stale. Confirm the original
+Send Operation is returned with `idempotent_replay: true`, no provider request
+or send-quota reservation is added, and the replay Tool Call Log has
+`quota_reserved = false`. Restore the test state, then reuse the bound key with
+one changed Connection, recipient, and exact-text case in turn. Each must return
+the non-retryable `idempotency_conflict` before recipient or connection-health
+resolution and must not dispatch. Never print the key, recipient, or text while
+performing or investigating this check.
+
 ### Wasender Directory
 
 Perform the Directory smoke check with a non-production WhatsApp Connection
