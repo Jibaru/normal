@@ -2977,6 +2977,7 @@ export const createProductionScheduledHandler =
         limit: number,
       ) => Promise<number>;
       readonly purgeExpiredToolCallLogs?: (limit: number) => Promise<number>;
+      readonly purgePersonalAccounts?: (observedAt: string) => Promise<void>;
       readonly now?: () => string;
       readonly retainWebhookSources?: (observedAt: string) => Promise<void>;
       readonly sweepWebhookIngress?: (observedAt: string) => Promise<void>;
@@ -3051,6 +3052,34 @@ export const createProductionScheduledHandler =
         )(500);
         if (count < 500) break;
       }
+      await (
+        dependencies.purgePersonalAccounts ??
+        (async (value) => {
+          const accountRepository =
+            makePgPersonalAccountRepository(connectionString);
+          while (true) {
+            const candidates =
+              await accountRepository.listDeletionPurgeCandidates({
+                limit: 100,
+                observedAt: value,
+              });
+            await Promise.all(
+              candidates.map((candidate) =>
+                accountRepository.purgeDeletion({
+                  completedAt: value,
+                  deletionMarkerId: candidate.deletionMarkerId,
+                }),
+              ),
+            );
+            if (candidates.length < 100) break;
+          }
+          while (
+            (await accountRepository.purgeExpiredDeletionRecords(500)) === 500
+          ) {
+            // Drain bounded expiry batches.
+          }
+        })
+      )(observedAt);
       return;
     }
     if (controller.cron === "*/5 * * * *") {

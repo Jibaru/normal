@@ -64,6 +64,26 @@ projector fix. Never copy ciphertext from a Webhook Event into a tombstone.
    Number reservation. The public handle is copied to a content-free tombstone
    before the Connection row is removed, so it can never be reused.
 
+## Personal Account purge completion
+
+The hourly API cleanup schedule selects a deleting Personal Account only after
+its locked marker is durable and every WhatsApp Connection row has completed
+Connection Deletion. The restricted purge function transforms each ordinary
+Tool Call Log into a Security Record containing only category, allowlisted
+client class, outcome, counts, timing, and latency, then deletes the Personal
+Account row so its Clerk identity mapping and all remaining tenant rows cascade
+away. Security Records keep the source log's original 90-day expiry. The only
+cleanup audit retains the deletion marker digest and completion time and expires
+90 days after completion; the locked R2 marker remains indefinitely as the
+restore guard.
+
+If a purge candidate approaches 24 hours, treat any remaining Connection
+Deletion or object cleanup as the blocker and use marker-only diagnostics. Do
+not copy tenant identifiers or content into tickets or telemetry. After a
+restore, replay locked markers and complete Connection Deletion before running
+the same account purge; a later Clerk signup then creates a new Personal
+Account because the old Clerk identity mapping no longer exists.
+
 The deletion coordinator receives only its Deletion Capsule KMS decrypt
 authority, provider cleanup seam, Deletion Capsule binding, and the
 `whatsapp_deletion_runtime` database role. It must not receive the content-root role,

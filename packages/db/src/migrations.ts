@@ -406,6 +406,17 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 37,
   },
+  {
+    name: "safe Personal Account purge",
+    sql: await readFile(
+      new NodeUrl(
+        "../migrations/0038_personal_account_purge.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    version: 38,
+  },
 ];
 
 const checksum = (sql: string): string =>
