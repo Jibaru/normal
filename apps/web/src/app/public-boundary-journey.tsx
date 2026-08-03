@@ -168,6 +168,8 @@ interface SafeWhatsAppConnection {
     | "disconnected"
     | "reconnect_required";
   readonly stateChangedAt: string;
+  readonly retentionDays: number | null;
+  readonly retentionOptions: ReadonlyArray<number>;
 }
 
 const decodeSafeWhatsAppConnection = (
@@ -196,6 +198,8 @@ const decodeSafeWhatsAppConnection = (
     numberSuffix: connection.number_suffix,
     state: connection.state,
     stateChangedAt: connection.state_changed_at,
+    retentionDays: 30,
+    retentionOptions: [],
   };
 };
 
@@ -227,6 +231,15 @@ export function PublicBoundaryJourney({
     string | null
   >(null);
   const [connectionLifecycleStatus, setConnectionLifecycleStatus] = useState<
+    Readonly<Record<string, string>>
+  >({});
+  const [retentionDrafts, setRetentionDrafts] = useState<
+    Readonly<Record<string, string>>
+  >({});
+  const [retentionAcknowledgements, setRetentionAcknowledgements] = useState<
+    Readonly<Record<string, boolean>>
+  >({});
+  const [retentionStatus, setRetentionStatus] = useState<
     Readonly<Record<string, string>>
   >({});
   const [reconnectQr, setReconnectQr] = useState<{
@@ -326,8 +339,103 @@ export function PublicBoundaryJourney({
       if (decoded === null) return false;
       parsed.push(decoded);
     }
-    setConnections(parsed);
+    const withPolicies = await Promise.all(
+      parsed.map(async (connection) => {
+        const response = await fetch(
+          `${connectionsEndpoint}/${encodeURIComponent(connection.id)}/retention-policy`,
+          {
+            headers: { authorization: `Bearer ${token}` },
+          },
+        );
+        if (!response.ok) throw new Error("retention unavailable");
+        const body = (await response.json()) as {
+          readonly allowed_days?: unknown;
+          readonly policy?: { readonly days?: unknown };
+        };
+        if (
+          !Array.isArray(body.allowed_days) ||
+          body.allowed_days.some((day) => typeof day !== "number") ||
+          (body.policy?.days !== null && typeof body.policy?.days !== "number")
+        )
+          throw new Error("invalid retention policy");
+        return {
+          ...connection,
+          retentionDays: body.policy.days as number | null,
+          retentionOptions: body.allowed_days as number[],
+        };
+      }),
+    );
+    setConnections(withPolicies);
+    setRetentionDrafts(
+      Object.fromEntries(
+        withPolicies.map((connection) => [
+          connection.id,
+          connection.retentionDays === null
+            ? "until-deletion"
+            : String(connection.retentionDays),
+        ]),
+      ),
+    );
     return true;
+  };
+
+  const updateRetention = async (connection: SafeWhatsAppConnection) => {
+    const draft = retentionDrafts[connection.id];
+    const days = draft === "until-deletion" ? null : Number(draft);
+    const broadens =
+      days === null ||
+      (connection.retentionDays !== null && days > connection.retentionDays);
+    setRetentionStatus((current) => ({
+      ...current,
+      [connection.id]: "Saving Message Retention Policy…",
+    }));
+    try {
+      const token = await getToken();
+      if (token === null) throw new Error("signed out");
+      const response = await fetch(
+        `${connectionsEndpoint}/${encodeURIComponent(connection.id)}/retention-policy`,
+        {
+          body: JSON.stringify({
+            acknowledge_extension: broadens
+              ? retentionAcknowledgements[connection.id] === true
+              : undefined,
+            days,
+            expected_days: connection.retentionDays,
+          }),
+          headers: {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/json",
+          },
+          method: "PUT",
+        },
+      );
+      if (!response.ok) throw new Error("update failed");
+      const body = (await response.json()) as {
+        readonly policy?: { readonly days?: number | null };
+      };
+      if (body.policy?.days !== null && typeof body.policy?.days !== "number")
+        throw new Error("invalid policy");
+      setConnections((current) =>
+        current.map((candidate) =>
+          candidate.id === connection.id
+            ? { ...candidate, retentionDays: body.policy?.days ?? null }
+            : candidate,
+        ),
+      );
+      setRetentionAcknowledgements((current) => ({
+        ...current,
+        [connection.id]: false,
+      }));
+      setRetentionStatus((current) => ({
+        ...current,
+        [connection.id]: `Message Retention Policy saved. Current policy: ${body.policy?.days === null ? "retain until Connection Deletion" : `${body.policy?.days} days`}. Shorter policies apply promptly to retained content.`,
+      }));
+    } catch {
+      setRetentionStatus((current) => ({
+        ...current,
+        [connection.id]: "Message Retention Policy could not be saved.",
+      }));
+    }
   };
 
   const reconcileConnectionLifecycle = async (
@@ -402,7 +510,13 @@ export function PublicBoundaryJourney({
       }
       setConnections((current) =>
         current.map((candidate) =>
-          candidate.id === connectionId ? connection : candidate,
+          candidate.id === connectionId
+            ? {
+                ...connection,
+                retentionDays: candidate.retentionDays,
+                retentionOptions: candidate.retentionOptions,
+              }
+            : candidate,
         ),
       );
       if (body.lifecycle.outcome === "in_progress") {
@@ -1077,6 +1191,97 @@ export function PublicBoundaryJourney({
                   >
                     State changed {connection.stateChangedAt}
                   </time>
+                  <div className="mt-3 space-y-2 rounded border border-zinc-700 p-3">
+                    <label
+                      className="block text-sm font-medium"
+                      htmlFor={`retention-${connection.id}`}
+                    >
+                      Message Retention Policy
+                    </label>
+                    <select
+                      className="rounded border border-zinc-700 bg-zinc-950 px-3 py-2"
+                      id={`retention-${connection.id}`}
+                      onChange={(event) => {
+                        setRetentionDrafts((current) => ({
+                          ...current,
+                          [connection.id]: event.target.value,
+                        }));
+                        setRetentionAcknowledgements((current) => ({
+                          ...current,
+                          [connection.id]: false,
+                        }));
+                      }}
+                      value={
+                        retentionDrafts[connection.id] ??
+                        (connection.retentionDays === null
+                          ? "until-deletion"
+                          : String(connection.retentionDays))
+                      }
+                    >
+                      {connection.retentionOptions.map((days) => (
+                        <option key={days} value={days}>
+                          {days} days
+                        </option>
+                      ))}
+                      <option value="until-deletion">
+                        Retain until Connection Deletion
+                      </option>
+                    </select>
+                    {(() => {
+                      const draft = retentionDrafts[connection.id];
+                      const next =
+                        draft === "until-deletion"
+                          ? null
+                          : Number(draft ?? connection.retentionDays);
+                      const broadens =
+                        next === null ||
+                        (connection.retentionDays !== null &&
+                          next > connection.retentionDays);
+                      return broadens ? (
+                        <label className="block text-sm text-amber-200">
+                          <input
+                            checked={
+                              retentionAcknowledgements[connection.id] === true
+                            }
+                            className="mr-2"
+                            onChange={(event) =>
+                              setRetentionAcknowledgements((current) => ({
+                                ...current,
+                                [connection.id]: event.target.checked,
+                              }))
+                            }
+                            type="checkbox"
+                          />
+                          I explicitly choose to retain message content for
+                          longer.
+                        </label>
+                      ) : null;
+                    })()}
+                    <button
+                      className="block rounded border border-emerald-500 px-3 py-2 text-sm text-emerald-300 disabled:opacity-50"
+                      disabled={(() => {
+                        const draft = retentionDrafts[connection.id];
+                        const next =
+                          draft === "until-deletion"
+                            ? null
+                            : Number(draft ?? connection.retentionDays);
+                        return (
+                          (next === null ||
+                            (connection.retentionDays !== null &&
+                              next > connection.retentionDays)) &&
+                          retentionAcknowledgements[connection.id] !== true
+                        );
+                      })()}
+                      onClick={() => void updateRetention(connection)}
+                      type="button"
+                    >
+                      Save retention policy
+                    </button>
+                    <p aria-live="polite" className="text-sm text-zinc-400">
+                      {retentionStatus[connection.id] ??
+                        `Current policy: ${connection.retentionDays === null ? "retain until Connection Deletion" : `${connection.retentionDays} days`}.`}
+                    </p>
+                  </div>
                   {connection.state === "disconnected" ? (
                     <p className="mt-2 text-sm text-zinc-400">
                       Retained history remains available under your Message

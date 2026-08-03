@@ -72,7 +72,11 @@ the restore gate completes:
    match those IDs against the enumerated marker set. Marker bodies deliberately
    contain no reversible identifier. Make every match's key unavailable first,
    then re-purge its restored rows and active object references.
-4. Apply current wall-clock expiry and retention rules required by ADR 0021.
+4. Run the same `app_private.purge_expired_message_content` wall-clock expiry
+   gate used by the hourly worker until it returns fewer than the batch limit,
+   then drain `stored_media_object_deletions`, before verification access or
+   serving traffic. This applies current per-connection policy as required by
+   ADR 0021 without reopening content from the restored snapshot.
 5. Verify no marked identifier has an available key envelope or readable
    content. Record marker count, normalized outcomes, RPO, and elapsed RTO
    without recording tenant or provider identifiers.

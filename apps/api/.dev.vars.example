@@ -3,6 +3,7 @@ DEPLOYMENT_ENVIRONMENT=development
 AWS_KMS_REGION=us-east-1
 PROVIDER_APPROVED_SESSION_CAPACITY=replace-with-vendor-approved-session-capacity
 MCP_REQUESTS_PER_MINUTE=replace-with-approved-minute-request-limit
+MESSAGE_RETENTION_DAY_OPTIONS=7,30,90
 SENDS_PER_MINUTE=replace-with-approved-send-minute-limit
 SENDS_PER_DAY=replace-with-approved-daily-send-limit
 MCP_REQUESTS_PER_HOUR=replace-with-approved-hour-request-limit

@@ -144,6 +144,7 @@ const apiVariables = {
   DECRYPTED_MEDIA_BYTES_PER_DAY: String(decryptedMediaBytesPerDay),
   MCP_REQUESTS_PER_HOUR: String(mcpRequestsPerHour),
   MCP_REQUESTS_PER_MINUTE: String(mcpRequestsPerMinute),
+  MESSAGE_RETENTION_DAY_OPTIONS: "7,30,90",
   READ_MESSAGE_RECORDS_PER_DAY: String(readMessageRecordsPerDay),
   SENDS_PER_DAY: String(sendsPerDay),
   SENDS_PER_MINUTE: String(sendsPerMinute),

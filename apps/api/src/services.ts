@@ -311,6 +311,18 @@ export interface SendDispatchLeaseSweepCompletedEvent {
   readonly service: "api";
 }
 
+export interface MessageRetentionPolicyUpdateCompletedEvent {
+  readonly event: "message_retention.policy_update.completed";
+  readonly outcome: "conflict_or_not_found" | "success";
+  readonly service: "api";
+}
+
+export interface MessageRetentionPurgeCompletedEvent {
+  readonly event: "message_retention.purge.completed";
+  readonly purgedCount: number;
+  readonly service: "api";
+}
+
 export interface SafeTelemetry {
   readonly emit: (event: SafeTelemetryEvent) => Effect.Effect<void>;
 }
@@ -330,6 +342,8 @@ export type SafeTelemetryEvent =
   | HttpCompletedEvent
   | McpAuthorizationManagementCompletedEvent
   | McpToolCallCompletedEvent
+  | MessageRetentionPolicyUpdateCompletedEvent
+  | MessageRetentionPurgeCompletedEvent
   | OAuthAuthorizationDecisionCompletedEvent
   | OAuthAuthorizationRequestCompletedEvent
   | OAuthProtocolRequestFailedEvent

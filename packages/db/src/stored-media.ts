@@ -216,8 +216,7 @@ export const makeStoredMediaRepository = (
       transaction(connection, async () => {
         await enterAccount(connection, input.personalAccountId);
         await connection.query(
-          `DELETE FROM app.stored_media_object_deletions
-           WHERE personal_account_id=$1 AND object_key=$2`,
+          `SELECT app_private.finish_stored_media_object_deletion($1,$2)`,
           [input.personalAccountId, input.objectKey],
         );
       }),

@@ -24,6 +24,12 @@ import {
   McpAuthorizationPersistence,
 } from "../../src/mcp-authorization";
 import {
+  createMessageRetentionHandler,
+  isMessageRetentionRequest,
+  MessageRetentionClock,
+  MessageRetentionPersistence,
+} from "../../src/message-retention";
+import {
   PersonalAccountIdentifiers,
   PersonalAccountPersistence,
   PrivateBetaConfig,
@@ -113,6 +119,7 @@ let providerConnectionState:
   | "reconnect_required"
   | "degraded" = "disconnected";
 let lifecycleClaimId: string | null = null;
+const retentionPolicies = new Map<string, number | null>();
 const whatsAppConnections: Array<{
   displayName: null;
   numberSuffix: string;
@@ -381,6 +388,35 @@ const makeTestLayer = (
     }),
     Layer.succeed(McpAuthorizationClock, {
       now: Effect.succeed(new Date("2026-01-02T03:05:00.000Z")),
+    }),
+    Layer.succeed(MessageRetentionClock, {
+      now: Effect.succeed("2026-08-03T12:00:00.000Z"),
+    }),
+    Layer.succeed(MessageRetentionPersistence, {
+      get: ({ connectionPublicId }) =>
+        Effect.succeed(
+          whatsAppConnections.some(
+            (connection) => connection.publicId === connectionPublicId,
+          )
+            ? {
+                days: retentionPolicies.get(connectionPublicId) ?? 30,
+                updatedAt: "2026-08-03T12:00:00.000Z",
+              }
+            : null,
+        ),
+      update: ({ connectionPublicId, days, expectedDays, updatedAt }) =>
+        Effect.sync(() => {
+          if (
+            !whatsAppConnections.some(
+              (connection) => connection.publicId === connectionPublicId,
+            ) ||
+            (retentionPolicies.get(connectionPublicId) ?? 30) !== expectedDays
+          ) {
+            return null;
+          }
+          retentionPolicies.set(connectionPublicId, days);
+          return { days, updatedAt };
+        }),
     }),
     Layer.succeed(McpAuthorizationPersistence, {
       create: () => Effect.die("not used"),
@@ -1090,59 +1126,65 @@ const selectedFailure = (request: Request): FailureTarget | undefined => {
 const worker = createPublicBoundaryWorker({
   browserOrigin,
   fallback: (request, environment) =>
-    new URL(request.url).pathname === "/test/webhook-queue"
-      ? Promise.resolve(
-          new Response(JSON.stringify(publishedWebhookMessages), {
-            headers: {
-              "cache-control": "no-store",
-              "content-type": "application/json; charset=utf-8",
-            },
-          }),
-        )
-      : new URL(request.url).pathname === "/test/webhook-dead-letters"
+    isMessageRetentionRequest(request)
+      ? createMessageRetentionHandler(
+          makeTestLayer(selectedFailure(request), environment),
+          browserOrigin,
+          [7, 30, 90],
+        )(request)
+      : new URL(request.url).pathname === "/test/webhook-queue"
         ? Promise.resolve(
-            new Response(JSON.stringify([...deadLetteredWebhookEvents]), {
+            new Response(JSON.stringify(publishedWebhookMessages), {
               headers: {
                 "cache-control": "no-store",
                 "content-type": "application/json; charset=utf-8",
               },
             }),
           )
-        : new URL(request.url).pathname === "/test/webhook-replay-attempts"
+        : new URL(request.url).pathname === "/test/webhook-dead-letters"
           ? Promise.resolve(
-              new Response(
-                JSON.stringify(
-                  [...webhookReplayAttempts.entries()].map(
-                    ([requestId, attempt]) => ({
-                      requestId,
-                      status: attempt.status,
-                    }),
-                  ),
-                ),
-                {
-                  headers: {
-                    "cache-control": "no-store",
-                    "content-type": "application/json; charset=utf-8",
-                  },
+              new Response(JSON.stringify([...deadLetteredWebhookEvents]), {
+                headers: {
+                  "cache-control": "no-store",
+                  "content-type": "application/json; charset=utf-8",
                 },
-              ),
+              }),
             )
-          : new URL(request.url).pathname === "/test/provider-observations"
+          : new URL(request.url).pathname === "/test/webhook-replay-attempts"
             ? Promise.resolve(
-                new Response(JSON.stringify(providerObservations), {
-                  headers: {
-                    "cache-control": "no-store",
-                    "content-type": "application/json; charset=utf-8",
+                new Response(
+                  JSON.stringify(
+                    [...webhookReplayAttempts.entries()].map(
+                      ([requestId, attempt]) => ({
+                        requestId,
+                        status: attempt.status,
+                      }),
+                    ),
+                  ),
+                  {
+                    headers: {
+                      "cache-control": "no-store",
+                      "content-type": "application/json; charset=utf-8",
+                    },
                   },
-                }),
+                ),
               )
-            : createProductionHandler({
-                ...environment,
-                WEBHOOK_HYPERDRIVE: {
-                  connectionString:
-                    "postgresql://webhook-runtime@hyperdrive.test/database",
-                },
-              } as Env)(request),
+            : new URL(request.url).pathname === "/test/provider-observations"
+              ? Promise.resolve(
+                  new Response(JSON.stringify(providerObservations), {
+                    headers: {
+                      "cache-control": "no-store",
+                      "content-type": "application/json; charset=utf-8",
+                    },
+                  }),
+                )
+              : createProductionHandler({
+                  ...environment,
+                  WEBHOOK_HYPERDRIVE: {
+                    connectionString:
+                      "postgresql://webhook-runtime@hyperdrive.test/database",
+                  },
+                } as Env)(request),
   layerFor: (request, environment) =>
     makeTestLayer(selectedFailure(request), environment),
   provisioningLayer: makeTestLayer(undefined),

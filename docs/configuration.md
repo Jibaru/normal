@@ -832,6 +832,12 @@ completion can publish the same canonical envelope again, which safely
 converges through the ordinary parser, validator, normalizer, and Webhook Item
 deduplication transaction. No replay flag or payload field exists.
 
+The `MESSAGE_RETENTION_DAY_OPTIONS` API variable is the strictly increasing,
+comma-separated set of finite choices shown in the product. It must include
+the 30-day default; `7,30,90` is the private-beta configuration. Retain until
+Connection Deletion is a separate explicit choice and is never inferred from
+an omitted API value.
+
 The hourly retention handler explicitly removes each expired R2 object before
 deleting its `webhook_events` row and quarantine references. Dead-letter
 incident source links become null at that point, while `webhook_items` retain

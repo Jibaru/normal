@@ -343,6 +343,14 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 31,
   },
+  {
+    name: "Message Retention Policy management and enforcement",
+    sql: await readFile(
+      new NodeUrl("../migrations/0032_message_retention.sql", import.meta.url),
+      "utf8",
+    ),
+    version: 32,
+  },
 ];
 
 const checksum = (sql: string): string =>

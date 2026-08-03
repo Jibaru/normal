@@ -108,6 +108,7 @@ run "development_topology" {
       "plain_text:OAUTH_RESOURCE",
       "plain_text:MCP_REQUESTS_PER_HOUR",
       "plain_text:MCP_REQUESTS_PER_MINUTE",
+      "plain_text:MESSAGE_RETENTION_DAY_OPTIONS",
       "plain_text:READ_MESSAGE_RECORDS_PER_DAY",
       "plain_text:DECRYPTED_MEDIA_BYTES_PER_DAY",
       "plain_text:SENDS_PER_DAY",

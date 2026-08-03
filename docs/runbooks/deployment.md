@@ -769,6 +769,10 @@ from that envelope.
 
 At the first hourly boundary after source expiry, confirm
 `webhook_event.source_retention.completed` advances its bounded deletion count.
+`message_retention.purge.completed` reports only the number of Stored Messages
+whose readable content expired. Investigate repeated failures of the hourly
+schedule; do not release retained-media quota manually. The worker first marks
+Stored Media unavailable, deletes its R2 object, and only then releases quota.
 The R2 object, Webhook Event row, quarantine rows, and incident-to-source link
 must be gone, while the content-free Webhook Item deduplication identity
 remains. Treat any replay after that point as `source_unavailable`; never

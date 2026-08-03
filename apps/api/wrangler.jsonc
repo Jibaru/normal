@@ -24,6 +24,7 @@
     "DEPLOYMENT_ENVIRONMENT": "production",
     "PROVIDER_APPROVED_SESSION_CAPACITY": "replace-with-approved-session-capacity",
     "MCP_REQUESTS_PER_MINUTE": "replace-with-approved-minute-request-limit",
+    "MESSAGE_RETENTION_DAY_OPTIONS": "7,30,90",
     "MCP_REQUESTS_PER_HOUR": "replace-with-approved-hour-request-limit",
     "READ_MESSAGE_RECORDS_PER_DAY": "replace-with-approved-daily-returned-record-limit",
     "DECRYPTED_MEDIA_BYTES_PER_DAY": "replace-with-approved-daily-decrypted-media-byte-limit",
@@ -133,6 +134,7 @@
         "DEPLOYMENT_ENVIRONMENT": "development",
         "PROVIDER_APPROVED_SESSION_CAPACITY": "replace-with-approved-session-capacity",
         "MCP_REQUESTS_PER_MINUTE": "replace-with-approved-minute-request-limit",
+        "MESSAGE_RETENTION_DAY_OPTIONS": "7,30,90",
         "MCP_REQUESTS_PER_HOUR": "replace-with-approved-hour-request-limit",
         "READ_MESSAGE_RECORDS_PER_DAY": "replace-with-approved-daily-returned-record-limit",
         "DECRYPTED_MEDIA_BYTES_PER_DAY": "replace-with-approved-daily-decrypted-media-byte-limit"
@@ -240,6 +242,7 @@
         "DEPLOYMENT_ENVIRONMENT": "preview",
         "PROVIDER_APPROVED_SESSION_CAPACITY": "replace-with-approved-session-capacity",
         "MCP_REQUESTS_PER_MINUTE": "replace-with-approved-minute-request-limit",
+        "MESSAGE_RETENTION_DAY_OPTIONS": "7,30,90",
         "MCP_REQUESTS_PER_HOUR": "replace-with-approved-hour-request-limit",
         "READ_MESSAGE_RECORDS_PER_DAY": "replace-with-approved-daily-returned-record-limit",
         "DECRYPTED_MEDIA_BYTES_PER_DAY": "replace-with-approved-daily-decrypted-media-byte-limit"
@@ -347,6 +350,7 @@
         "DEPLOYMENT_ENVIRONMENT": "production",
         "PROVIDER_APPROVED_SESSION_CAPACITY": "replace-with-approved-session-capacity",
         "MCP_REQUESTS_PER_MINUTE": "replace-with-approved-minute-request-limit",
+        "MESSAGE_RETENTION_DAY_OPTIONS": "7,30,90",
         "MCP_REQUESTS_PER_HOUR": "replace-with-approved-hour-request-limit",
         "READ_MESSAGE_RECORDS_PER_DAY": "replace-with-approved-daily-returned-record-limit",
         "DECRYPTED_MEDIA_BYTES_PER_DAY": "replace-with-approved-daily-decrypted-media-byte-limit"

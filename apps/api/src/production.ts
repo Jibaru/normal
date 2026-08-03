@@ -25,6 +25,7 @@ import {
 import { makePgGroupRepository } from "@whatsapp-mcp/db/group";
 import { makePgMcpAuthorizationRepository } from "@whatsapp-mcp/db/mcp-authorization";
 import { makePgMcpToolRepository } from "@whatsapp-mcp/db/mcp-tool";
+import { makePgMessageRetentionRepository } from "@whatsapp-mcp/db/message-retention";
 import { makePgPersonalAccountRepository } from "@whatsapp-mcp/db/personal-account";
 import {
   type AtomicSendRepository,
@@ -148,6 +149,13 @@ import {
   McpAuthorizationPersistenceError,
 } from "./mcp-authorization";
 import {
+  createMessageRetentionHandler,
+  isMessageRetentionRequest,
+  MessageRetentionClock,
+  MessageRetentionPersistence,
+  MessageRetentionPersistenceError,
+} from "./message-retention";
+import {
   accessAuthorizationFrom,
   createOAuthHandler,
   loadOAuthConfiguration,
@@ -250,6 +258,7 @@ export interface ApiEnvironment {
   readonly KMS_DELETION_COORDINATOR_KEY_ARN?: string | undefined;
   readonly MCP_REQUESTS_PER_HOUR?: string | undefined;
   readonly MCP_REQUESTS_PER_MINUTE?: string | undefined;
+  readonly MESSAGE_RETENTION_DAY_OPTIONS?: string | undefined;
   readonly READ_MESSAGE_RECORDS_PER_DAY?: string | undefined;
   readonly MCP_CURSOR_HMAC_SECRET?: string | undefined;
   readonly SEND_FINGERPRINT_HMAC_SECRET?: string | undefined;
@@ -1041,6 +1050,60 @@ const whatsAppConnectionPersistenceLayer = (environment: ApiEnvironment) =>
         catch: () => new WhatsAppConnectionPersistenceError(),
       }),
   });
+
+const messageRetentionLayer = (environment: ApiEnvironment) =>
+  Layer.mergeAll(
+    Layer.succeed(MessageRetentionClock, {
+      now: Effect.sync(() => new Date().toISOString()),
+    }),
+    Layer.succeed(MessageRetentionPersistence, {
+      get: (input) =>
+        Effect.tryPromise({
+          try: () => {
+            const connectionString = environment.HYPERDRIVE?.connectionString;
+            if (typeof connectionString !== "string")
+              throw new Error("database unavailable");
+            return makePgMessageRetentionRepository(
+              connectionString,
+            ).getForUser(input);
+          },
+          catch: () => new MessageRetentionPersistenceError(),
+        }),
+      update: (input) =>
+        Effect.tryPromise({
+          try: () => {
+            const connectionString = environment.HYPERDRIVE?.connectionString;
+            if (typeof connectionString !== "string")
+              throw new Error("database unavailable");
+            return makePgMessageRetentionRepository(
+              connectionString,
+            ).updateForUser(input);
+          },
+          catch: () => new MessageRetentionPersistenceError(),
+        }),
+    }),
+  );
+
+const retentionDayOptions = (
+  value: string | undefined,
+): ReadonlyArray<number> => {
+  if (value === undefined || !/^\d+(,\d+)*$/u.test(value))
+    throw new Error("invalid MESSAGE_RETENTION_DAY_OPTIONS");
+  const options = value.split(",").map(Number);
+  if (
+    options.some(
+      (day, index) =>
+        !Number.isSafeInteger(day) ||
+        day < 1 ||
+        day > 3650 ||
+        (index > 0 && day <= (options[index - 1] ?? 0)),
+    ) ||
+    !options.includes(30)
+  ) {
+    throw new Error("invalid MESSAGE_RETENTION_DAY_OPTIONS");
+  }
+  return options;
+};
 
 const webhookIngressPersistenceLayer = (environment: ApiEnvironment) =>
   Layer.succeed(WebhookIngressPersistence, {
@@ -2202,6 +2265,7 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     whatsAppConnectionRuntimeLayer,
     mcpAuthorizationPersistenceLayer(environment),
     mcpAuthorizationRuntimeLayer,
+    messageRetentionLayer(environment),
     webhookIngressPersistenceLayer(environment),
     webhookIngressCloudflareLayer(environment),
     mcpToolPersistenceLayer(environment),
@@ -2226,6 +2290,11 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
   const whatsAppConnectionHandler = createWhatsAppConnectionHandler(
     layer,
     environment.CLERK_AUTHORIZED_PARTY ?? "",
+  );
+  const messageRetentionHandler = createMessageRetentionHandler(
+    layer,
+    environment.CLERK_AUTHORIZED_PARTY ?? "",
+    retentionDayOptions(environment.MESSAGE_RETENTION_DAY_OPTIONS),
   );
   const webhookIngressHandler = createWebhookIngressHandler(layer);
   const oauthConfiguration = Effect.runPromise(
@@ -2306,6 +2375,9 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
         }
         if (isWhatsAppConnectionRequest(nextRequest)) {
           return whatsAppConnectionHandler(nextRequest);
+        }
+        if (isMessageRetentionRequest(nextRequest)) {
+          return messageRetentionHandler(nextRequest);
         }
         if (isPersonalAccountRequest(nextRequest)) {
           return personalAccountHandler(nextRequest);
@@ -2729,6 +2801,10 @@ export const createProductionScheduledHandler =
       readonly processPendingStoredMedia?: (
         candidate: PendingStoredMediaCandidate,
       ) => Promise<void>;
+      readonly purgeExpiredMessages?: (
+        observedAt: string,
+        limit: number,
+      ) => Promise<number>;
       readonly now?: () => string;
       readonly retainWebhookSources?: (observedAt: string) => Promise<void>;
       readonly sweepWebhookIngress?: (observedAt: string) => Promise<void>;
@@ -2775,6 +2851,26 @@ export const createProductionScheduledHandler =
             ),
           ))
       )(observedAt);
+      let purgedCount = 0;
+      while (true) {
+        const count = await (
+          dependencies.purgeExpiredMessages ??
+          ((value, limit) =>
+            makePgMessageRetentionRepository(connectionString).purgeExpired(
+              value,
+              limit,
+            ))
+        )(observedAt, 500);
+        purgedCount += count;
+        if (count < 500) break;
+      }
+      Effect.runSync(
+        safeTelemetry.emit({
+          event: "message_retention.purge.completed",
+          purgedCount,
+          service: "api",
+        }),
+      );
       return;
     }
     if (controller.cron === "*/5 * * * *") {

@@ -175,10 +175,25 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(page.getByTestId("whatsapp-connection")).toContainText(
     "connected",
   );
+  const connection = page.getByTestId("whatsapp-connection");
+  await expect(page.getByLabel("Message Retention Policy")).toHaveValue("30");
+  await page.getByLabel("Message Retention Policy").selectOption("7");
+  await page.getByRole("button", { name: "Save retention policy" }).click();
+  await expect(connection).toContainText("Current policy: 7 days");
+  await page
+    .getByLabel("Message Retention Policy")
+    .selectOption("until-deletion");
+  await expect(
+    page.getByRole("button", { name: "Save retention policy" }),
+  ).toBeDisabled();
+  await page
+    .getByLabel("I explicitly choose to retain message content for longer.")
+    .check();
+  await page.getByRole("button", { name: "Save retention policy" }).click();
+  await expect(connection).toContainText("retain until Connection Deletion");
   await expect(page.getByTestId("whatsapp-connection")).not.toContainText(
     "session-authority",
   );
-  const connection = page.getByTestId("whatsapp-connection");
   await connection
     .getByRole("button", {
       name: "Disconnect WhatsApp Connection ending 3456",

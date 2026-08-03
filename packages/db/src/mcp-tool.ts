@@ -1259,6 +1259,11 @@ export const makeMcpToolRepository = (
            LEFT JOIN app.directory_contacts contacts ON conversations.kind='direct' AND contacts.personal_account_id=conversations.personal_account_id AND contacts.whatsapp_connection_id=conversations.whatsapp_connection_id AND contacts.public_id=conversations.recipient_public_id
            LEFT JOIN app.whatsapp_groups groups ON conversations.kind='group' AND groups.personal_account_id=conversations.personal_account_id AND groups.whatsapp_connection_id=conversations.whatsapp_connection_id AND groups.public_id=conversations.recipient_public_id
            WHERE conversations.personal_account_id=$1 AND conversations.whatsapp_connection_id=$2
+             AND EXISTS (SELECT 1 FROM app.stored_messages retained
+               WHERE retained.personal_account_id=conversations.personal_account_id
+                 AND retained.whatsapp_connection_id=conversations.whatsapp_connection_id
+                 AND retained.conversation_id=conversations.id
+                 AND retained.content_expired_at IS NULL)
              AND ($3='all' OR conversations.kind=$3)
              AND ($4::timestamptz IS NULL OR conversations.last_activity_at < $4 OR (conversations.last_activity_at=$4 AND conversations.public_id > $5))
            ORDER BY conversations.last_activity_at DESC, conversations.public_id LIMIT $6`,
@@ -1412,16 +1417,15 @@ export const makeMcpToolRepository = (
                 },
               };
         const connectionStarted = timestamp(row?.connection_created_at);
-        const retentionDays = positiveInteger(row?.message_retention_days);
-        if (
-          material === null ||
-          connectionStarted === null ||
+        const retentionDays =
+          row?.message_retention_days === null
+            ? null
+            : positiveInteger(row?.message_retention_days);
+        if (material === null || connectionStarted === null) return null;
+        const retentionStart =
           retentionDays === null
-        )
-          return null;
-        const retentionStart = new Date(
-          input.observedAt.valueOf() - retentionDays * 86_400_000,
-        );
+            ? connectionStarted
+            : new Date(input.observedAt.valueOf() - retentionDays * 86_400_000);
         const historyStart =
           retentionStart > connectionStarted
             ? retentionStart
@@ -1439,6 +1443,7 @@ export const makeMcpToolRepository = (
            LEFT JOIN app.stored_media media ON media.personal_account_id=messages.personal_account_id
              AND media.whatsapp_connection_id=messages.whatsapp_connection_id AND media.stored_message_id=messages.id
            WHERE messages.personal_account_id=$1 AND messages.whatsapp_connection_id=$2
+             AND messages.content_expired_at IS NULL
              AND conversations.public_id=$3 AND messages.sent_at >= $4
              AND ($5::timestamptz IS NULL OR messages.sent_at < $5 OR (messages.sent_at=$5 AND messages.public_id < $6))
            ORDER BY messages.sent_at DESC, messages.public_id DESC LIMIT $7`,
@@ -1605,7 +1610,8 @@ export const makeMcpToolRepository = (
               encryptedBytes > 24_000,
             historyStartsAt: historyStart.toISOString(),
             historyStartReason:
-              historyStart === retentionStart
+              retentionDays !== null &&
+              historyStart.valueOf() === retentionStart.valueOf()
                 ? ("retention_policy" as const)
                 : ("connection_started" as const),
             gaps,
