@@ -233,6 +233,11 @@ BEGIN
       AND events.id = incident.webhook_event_id;
 
     IF source.id IS NULL OR observed_at >= source.source_expires_at THEN
+      UPDATE app.webhook_replay_attempts AS attempts
+      SET status = 'source_unavailable'
+      WHERE attempts.id = existing.id
+        AND attempts.status = 'pending';
+
       RETURN QUERY SELECT
         'source_unavailable'::text,
         NULL::uuid,

@@ -191,6 +191,21 @@ describe("Webhook Event replay and source retention repository", () => {
       await replay.prepare({
         ...base,
         observedAt: "2026-08-07T12:10:00.000Z",
+      }),
+    ).toEqual({ outcome: "source_unavailable" });
+    const expiredPendingAttempt = await database.query<{ status: string }>(
+      `SELECT status
+       FROM app.webhook_replay_attempts
+       WHERE id = $1`,
+      [requestId],
+    );
+    expect(expiredPendingAttempt.rows).toEqual([
+      { status: "source_unavailable" },
+    ]);
+    expect(
+      await replay.prepare({
+        ...base,
+        observedAt: "2026-08-07T12:10:00.000Z",
         requestId: "60000000-0000-4000-8000-000000000036",
       }),
     ).toEqual({ outcome: "source_unavailable" });
