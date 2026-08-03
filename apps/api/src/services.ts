@@ -275,6 +275,12 @@ export interface McpToolCallCompletedEvent {
     | "read_messages";
 }
 
+export interface ToolCallLogReviewCompletedEvent {
+  readonly event: "tool_call_log.review.completed";
+  readonly logCount: number;
+  readonly service: "api";
+}
+
 export interface GroupDirectoryReconciliationCompletedEvent {
   readonly appliedCount?: number | undefined;
   readonly event: "group_directory.reconciliation.completed";
@@ -373,6 +379,7 @@ export type SafeTelemetryEvent =
   | ProviderTextSendCompletedEvent
   | SendDispatchLeaseSweepCompletedEvent
   | StoredMediaContainerEvent
+  | ToolCallLogReviewCompletedEvent
   | WebhookEventDeadLetterCompletedEvent
   | WebhookEventReplayCompletedEvent
   | WebhookEventSourceRetentionCompletedEvent

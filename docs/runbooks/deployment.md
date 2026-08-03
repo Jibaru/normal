@@ -56,7 +56,7 @@ create the backend that stores its own state. For each environment:
    `kms:GenerateDataKey`, and `kms:DescribeKey` to its state key.
 4. Explicitly deny development and preview principals access to the production
    state prefix and KMS key. Restrict production role assumption to the
-   protected production deployment identity and audited break-glass operators.
+    protected production deployment identity and audited break-glass operators.
 5. Copy the matching file under `infra/compute/backends/` outside the
    repository, replace its bucket and KMS key placeholders, and keep the
    resulting backend file out of source control.
@@ -771,7 +771,11 @@ At the first hourly boundary after source expiry, confirm
 `webhook_event.source_retention.completed` advances its bounded deletion count.
 `message_retention.purge.completed` reports only the number of Stored Messages
 whose readable content expired. Investigate repeated failures of the hourly
-schedule; do not release retained-media quota manually. The worker first marks
+schedule. The same run calls the bounded
+`app_private.purge_expired_tool_call_logs` function until fewer than 500 rows
+remain, ensuring no Tool Call Log can be listed after its 90-day expiry. Verify
+that function through the restricted API role; never grant that role broad
+cross-tenant table deletion. Do not release retained-media quota manually. The worker first marks
 Stored Media unavailable, deletes its R2 object, and only then releases quota.
 The R2 object, Webhook Event row, quarantine rows, and incident-to-source link
 must be gone, while the content-free Webhook Item deduplication identity

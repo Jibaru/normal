@@ -384,6 +384,17 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 35,
   },
+  {
+    name: "Tool Call Log review and expiry",
+    sql: await readFile(
+      new NodeUrl(
+        "../migrations/0036_tool_call_log_review.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    version: 36,
+  },
 ];
 
 const checksum = (sql: string): string =>

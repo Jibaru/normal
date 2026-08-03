@@ -29,6 +29,12 @@ import {
   createPublicBoundaryHandler,
 } from "./public-boundary";
 import {
+  createToolCallLogHandler,
+  isToolCallLogRequest,
+  type ToolCallLogClockService,
+  type ToolCallLogPersistenceService,
+} from "./tool-call-log";
+import {
   handleWebhookDeadLetterBatch,
   handleWebhookEventBatch,
   type WebhookEventRequirements,
@@ -67,6 +73,8 @@ type PublicBoundaryRequirements =
   | McpAuthorizationClockService
   | McpAuthorizationPersistenceService
   | PersonalAccountRequirements
+  | ToolCallLogClockService
+  | ToolCallLogPersistenceService
   | WebhookIngressRequirements
   | WhatsAppConnectionRequirements;
 
@@ -172,6 +180,13 @@ export const createPublicBoundaryWorker = (
 
       if (isMcpAuthorizationManagementRequest(request)) {
         return createMcpAuthorizationManagementHandler(
+          options.layerFor(request, environment),
+          options.browserOrigin,
+        )(request);
+      }
+
+      if (isToolCallLogRequest(request)) {
+        return createToolCallLogHandler(
           options.layerFor(request, environment),
           options.browserOrigin,
         )(request);

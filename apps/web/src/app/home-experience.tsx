@@ -21,6 +21,10 @@ const personalAccountConfiguration =
           "/v1/mcp-authorizations",
           apiOrigin,
         ).toString(),
+        toolCallLogsEndpoint: new URL(
+          "/v1/tool-call-logs",
+          apiOrigin,
+        ).toString(),
         connectionsEndpoint: new URL(
           "/v1/whatsapp-connections",
           apiOrigin,

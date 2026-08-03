@@ -227,14 +227,24 @@ serving.
 
 Tool Call Logs expire after 90 days and contain only the tenant, authorization,
 tool name, timestamps, normalized outcome and error code, bounded result count,
-latency, and whether request quota was reserved. They never contain OAuth
-credentials, Connection handles, display names, phone suffixes, provider
-identifiers, scope sets, request or response content, or raw payloads. MCP tool
+latency, and whether request quota was reserved. The signed-in
+`GET /v1/tool-call-logs` view resolves the owning MCP Client and, when a Send
+Operation exists, public `mca_`, `con_`, and `snd_` handles. Its response is an
+explicit allowlist and never exposes internal IDs, message or media content,
+full phone numbers, credentials, OAuth tokens, provider identifiers, scope
+sets, request or response content, or raw payloads. MCP tool
 telemetry is limited to `mcp.tool_call.completed`, the fixed
 `list_connections` or `list_groups` tool name, an allowlisted outcome, the API service name, and
 the bounded result count on success. Do not enrich it with tenant,
 authorization, client, Connection, quota, credential, request, or response
 fields.
+
+The hourly Worker schedule removes expired Tool Call Logs in bounded batches
+through `app_private.purge_expired_tool_call_logs`. The runtime role can execute
+that fixed-search-path function but has no broad cross-tenant delete grant.
+Review telemetry contains only `tool_call_log.review.completed`, a bounded log
+count, and the API service name; do not add tenant, Client, authorization,
+Connection, send, network, or capability identifiers.
 
 Declare the reviewed per-environment allowlist through `oauth_clients`:
 

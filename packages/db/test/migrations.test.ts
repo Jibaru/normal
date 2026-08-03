@@ -714,6 +714,7 @@ describe("production migrations", () => {
           'admit_personal_account_for_clerk',
           'load_connection_setup_webhook_ingress_for_user',
           'load_connection_setup_webhook_ingress_for_worker',
+          'purge_expired_tool_call_logs',
           'resolve_personal_account_for_clerk'
         )
       ORDER BY proname
@@ -777,6 +778,11 @@ describe("production migrations", () => {
       {
         config: ["search_path=pg_catalog, pg_temp"],
         proname: "load_connection_setup_webhook_ingress_for_worker",
+        prosecdef: true,
+      },
+      {
+        config: ["search_path=pg_catalog, pg_temp"],
+        proname: "purge_expired_tool_call_logs",
         prosecdef: true,
       },
       {

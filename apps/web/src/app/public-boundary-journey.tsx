@@ -12,6 +12,7 @@ interface PublicBoundaryJourneyProps {
   readonly mcpAuthorizationsEndpoint: string;
   readonly personalAccountEndpoint: string;
   readonly personalAccountDeletionEndpoint: string;
+  readonly toolCallLogsEndpoint: string;
 }
 
 type JourneyState =
@@ -59,6 +60,96 @@ interface McpAuthorization {
 }
 
 type AuthorizationState = "idle" | "loading" | "ok" | "unavailable";
+
+interface ToolCallLog {
+  readonly capability: string;
+  readonly client: { readonly id: string; readonly name: string };
+  readonly completedAt: string | null;
+  readonly counts: {
+    readonly mediaBytes: number;
+    readonly results: number | null;
+  };
+  readonly errorCode: string | null;
+  readonly latencyMs: number | null;
+  readonly outcome:
+    | "started"
+    | "success"
+    | "execution_error"
+    | "rate_limited"
+    | "authorization_denied";
+  readonly references: ReadonlyArray<string>;
+  readonly startedAt: string;
+}
+
+const decodeToolCallLogs = (
+  value: unknown,
+): ReadonlyArray<ToolCallLog> | null => {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !Array.isArray((value as { tool_call_logs?: unknown }).tool_call_logs)
+  ) {
+    return null;
+  }
+  const decoded: ToolCallLog[] = [];
+  for (const candidate of (value as { tool_call_logs: unknown[] })
+    .tool_call_logs) {
+    if (typeof candidate !== "object" || candidate === null) return null;
+    const log = candidate as Record<string, unknown>;
+    const client = log.client as Record<string, unknown> | undefined;
+    const counts = log.counts as Record<string, unknown> | undefined;
+    const references = log.references as Record<string, unknown> | undefined;
+    if (
+      typeof log.capability !== "string" ||
+      !/^[a-z][a-z0-9_]{0,63}$/u.test(log.capability) ||
+      typeof client?.id !== "string" ||
+      typeof client.name !== "string" ||
+      (log.completed_at !== null && !isIsoDate(log.completed_at)) ||
+      typeof counts?.media_bytes !== "number" ||
+      (counts.results !== null && typeof counts.results !== "number") ||
+      (log.error_code !== null && typeof log.error_code !== "string") ||
+      (log.latency_ms !== null && typeof log.latency_ms !== "number") ||
+      (log.outcome !== "started" &&
+        log.outcome !== "success" &&
+        log.outcome !== "execution_error" &&
+        log.outcome !== "rate_limited" &&
+        log.outcome !== "authorization_denied") ||
+      typeof references !== "object" ||
+      references === null ||
+      typeof references.mcp_authorization_id !== "string" ||
+      !/^mca_[A-Za-z0-9_-]{21}$/u.test(references.mcp_authorization_id) ||
+      (references.whatsapp_connection_id !== null &&
+        (typeof references.whatsapp_connection_id !== "string" ||
+          !/^con_[A-Za-z0-9_-]{21}$/u.test(
+            references.whatsapp_connection_id,
+          ))) ||
+      (references.send_id !== null &&
+        (typeof references.send_id !== "string" ||
+          !/^snd_[A-Za-z0-9_-]{21}$/u.test(references.send_id))) ||
+      !isIsoDate(log.started_at)
+    ) {
+      return null;
+    }
+    decoded.push({
+      capability: log.capability,
+      client: { id: client.id, name: client.name },
+      completedAt: log.completed_at,
+      counts: { mediaBytes: counts.media_bytes, results: counts.results },
+      errorCode: log.error_code,
+      latencyMs: log.latency_ms,
+      outcome: log.outcome,
+      references: [
+        references.mcp_authorization_id,
+        ...(typeof references.whatsapp_connection_id === "string"
+          ? [references.whatsapp_connection_id]
+          : []),
+        ...(typeof references.send_id === "string" ? [references.send_id] : []),
+      ],
+      startedAt: log.started_at,
+    });
+  }
+  return decoded;
+};
 
 const scopeLabels: Record<McpAuthorization["scopes"][number], string> = {
   "connections:read": "Connection metadata",
@@ -212,6 +303,7 @@ export function PublicBoundaryJourney({
   mcpAuthorizationsEndpoint,
   personalAccountEndpoint,
   personalAccountDeletionEndpoint,
+  toolCallLogsEndpoint,
 }: PublicBoundaryJourneyProps) {
   const [state, setState] = useState<JourneyState>("idle");
   const [setupState, setSetupState] = useState<SetupState>("idle");
@@ -220,6 +312,11 @@ export function PublicBoundaryJourney({
   const [authorizations, setAuthorizations] = useState<
     ReadonlyArray<McpAuthorization>
   >([]);
+  const [toolCallLogState, setToolCallLogState] =
+    useState<AuthorizationState>("idle");
+  const [toolCallLogs, setToolCallLogs] = useState<ReadonlyArray<ToolCallLog>>(
+    [],
+  );
   const [revokingAuthorization, setRevokingAuthorization] = useState<
     string | null
   >(null);
@@ -735,23 +832,38 @@ export function PublicBoundaryJourney({
       }
       setState("ok");
       setAuthorizationState("loading");
+      setToolCallLogState("loading");
       try {
-        const authorizationsResponse = await fetch(mcpAuthorizationsEndpoint, {
-          headers: {
-            authorization: `Bearer ${token}`,
-          },
-        });
-        const authorizationsBody = await authorizationsResponse.json();
+        const [authorizationsResponse, logsResponse] = await Promise.all([
+          fetch(mcpAuthorizationsEndpoint, {
+            headers: { authorization: `Bearer ${token}` },
+          }),
+          fetch(toolCallLogsEndpoint, {
+            headers: { authorization: `Bearer ${token}` },
+          }),
+        ]);
+        const [authorizationsBody, logsBody] = await Promise.all([
+          authorizationsResponse.json(),
+          logsResponse.json(),
+        ]);
         const decodedAuthorizations =
           decodeMcpAuthorizations(authorizationsBody);
+        const decodedLogs = decodeToolCallLogs(logsBody);
         if (!authorizationsResponse.ok || decodedAuthorizations === null) {
           setAuthorizationState("unavailable");
-          return;
+        } else {
+          setAuthorizations(decodedAuthorizations);
+          setAuthorizationState("ok");
         }
-        setAuthorizations(decodedAuthorizations);
-        setAuthorizationState("ok");
+        if (!logsResponse.ok || decodedLogs === null) {
+          setToolCallLogState("unavailable");
+        } else {
+          setToolCallLogs(decodedLogs);
+          setToolCallLogState("ok");
+        }
       } catch {
         setAuthorizationState("unavailable");
+        setToolCallLogState("unavailable");
       }
     } catch {
       setState("unavailable");
@@ -1084,6 +1196,78 @@ export function PublicBoundaryJourney({
                     </li>
                   );
                 })}
+              </ul>
+            )}
+          </section>
+          <section
+            aria-label="Tool Call Logs"
+            className="space-y-3 rounded-lg border border-zinc-800 bg-zinc-900 p-4"
+          >
+            <div>
+              <h2 className="text-lg font-medium">Tool Call Logs</h2>
+              <p className="text-sm text-zinc-400">
+                Metadata-only activity from the last 90 days. Message content,
+                full numbers, credentials, and provider data are never shown.
+              </p>
+            </div>
+            {toolCallLogState === "loading" ? (
+              <p aria-live="polite">Loading Tool Call Logs…</p>
+            ) : toolCallLogState === "unavailable" ? (
+              <p aria-live="polite">
+                Tool Call Logs are temporarily unavailable.
+              </p>
+            ) : toolCallLogs.length === 0 ? (
+              <p>No tool activity in the last 90 days.</p>
+            ) : (
+              <ul className="space-y-3">
+                {toolCallLogs.map((log, index) => (
+                  <li
+                    className="space-y-3 rounded border border-zinc-700 bg-zinc-950 p-4"
+                    data-testid="tool-call-log"
+                    key={`${log.startedAt}:${log.references[0]}:${index}`}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <h3 className="font-medium">
+                          {log.capability.replaceAll("_", " ")}
+                        </h3>
+                        <p className="text-sm text-zinc-400">
+                          {log.client.name}
+                        </p>
+                      </div>
+                      <span className="rounded-full border border-zinc-700 px-2 py-1 text-xs capitalize">
+                        {log.outcome.replaceAll("_", " ")}
+                      </span>
+                    </div>
+                    <dl className="grid gap-2 text-sm sm:grid-cols-3">
+                      <div>
+                        <dt className="text-zinc-500">Started</dt>
+                        <dd>
+                          <time dateTime={log.startedAt}>
+                            {displayTime(log.startedAt)} UTC
+                          </time>
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-zinc-500">Results</dt>
+                        <dd>{log.counts.results ?? "Pending"}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-zinc-500">Latency</dt>
+                        <dd>
+                          {log.latencyMs === null
+                            ? "Pending"
+                            : `${log.latencyMs} ms`}
+                        </dd>
+                      </div>
+                    </dl>
+                    <ul className="space-y-1 font-mono text-xs text-zinc-500">
+                      {log.references.map((reference) => (
+                        <li key={reference}>{reference}</li>
+                      ))}
+                    </ul>
+                  </li>
+                ))}
               </ul>
             )}
           </section>

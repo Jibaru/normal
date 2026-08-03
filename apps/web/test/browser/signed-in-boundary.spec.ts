@@ -121,6 +121,18 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(
     authorizations.getByTestId("mcp-authorization-state"),
   ).toHaveText("Active");
+  const toolCallLogs = page.getByRole("region", { name: "Tool Call Logs" });
+  await expect(toolCallLogs.getByTestId("tool-call-log")).toContainText(
+    "list connections",
+  );
+  await expect(toolCallLogs).toContainText("Approved MCP Client");
+  await expect(toolCallLogs).toContainText("success");
+  await expect(toolCallLogs).toContainText("1");
+  await expect(toolCallLogs).toContainText("120 ms");
+  await expect(toolCallLogs).toContainText("mca_123456789012345678901");
+  await expect(toolCallLogs.getByTestId("tool-call-log")).not.toContainText(
+    /message text|phone|provider/iu,
+  );
   await authorizations
     .getByRole("button", { name: "Revoke Approved MCP Client" })
     .click();

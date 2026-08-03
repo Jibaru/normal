@@ -47,6 +47,10 @@ import {
 import { createPublicBoundaryWorker } from "../../src/public-boundary-worker";
 import { RestoreSafeDeletion, SafeTelemetry } from "../../src/services";
 import {
+  ToolCallLogClock,
+  ToolCallLogPersistence,
+} from "../../src/tool-call-log";
+import {
   WebhookEventClock,
   WebhookEventIdentifiers,
   WebhookEventObjectStore,
@@ -388,6 +392,33 @@ const makeTestLayer = (
     }),
     Layer.succeed(McpAuthorizationClock, {
       now: Effect.succeed(new Date("2026-01-02T03:05:00.000Z")),
+    }),
+    Layer.succeed(ToolCallLogClock, {
+      now: Effect.succeed(new Date("2026-01-02T03:05:00.000Z")),
+    }),
+    Layer.succeed(ToolCallLogPersistence, {
+      list: (clerkUserId) =>
+        Effect.succeed(
+          clerkUserId === "user_test_public_boundary"
+            ? [
+                {
+                  authorizationId: testAuthorizationId,
+                  clientId: "approved-client",
+                  clientName: "Approved MCP Client",
+                  completedAt: new Date("2026-01-02T03:04:05.120Z"),
+                  connectionId: "con_123456789012345678901",
+                  errorCode: null,
+                  latencyMs: 120,
+                  mediaBytes: 0,
+                  outcome: "success" as const,
+                  resultCount: 1,
+                  sendId: null,
+                  startedAt: new Date("2026-01-02T03:04:05.000Z"),
+                  toolName: "list_connections",
+                },
+              ]
+            : null,
+        ),
     }),
     Layer.succeed(MessageRetentionClock, {
       now: Effect.succeed("2026-08-03T12:00:00.000Z"),

@@ -15,6 +15,8 @@ export default defineConfig({
           CLERK_AUTHORIZED_PARTY: "https://app.example.test",
           CLERK_ISSUER: "https://clerk.example.test",
           CLERK_JWT_KEY: TEST_CLERK_JWT_PUBLIC_KEY,
+          CLERK_SECRET_KEY: `sk_test_${"a".repeat(32)}`,
+          CLERK_WEBHOOK_SIGNING_SECRET: `whsec_${"b".repeat(32)}`,
           DECRYPTED_MEDIA_BYTES_PER_DAY: "268435456",
           DELETION_MARKER_HMAC_SECRET:
             "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",

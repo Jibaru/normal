@@ -37,6 +37,7 @@ import {
   makePgStoredMediaRepository,
   type PendingStoredMediaCandidate,
 } from "@whatsapp-mcp/db/stored-media";
+import { makePgToolCallLogRepository } from "@whatsapp-mcp/db/tool-call-log";
 import { makePgWebhookEventRepository } from "@whatsapp-mcp/db/webhook-event";
 import { makePgWebhookIngressRepository } from "@whatsapp-mcp/db/webhook-ingress";
 import { makePgWebhookReplayRepository } from "@whatsapp-mcp/db/webhook-replay";
@@ -194,6 +195,13 @@ import {
   type SafeTelemetryEvent,
 } from "./services";
 import { processStoredMedia } from "./stored-media-ingestion";
+import {
+  createToolCallLogHandler,
+  isToolCallLogRequest,
+  ToolCallLogClock,
+  ToolCallLogPersistence,
+  ToolCallLogPersistenceError,
+} from "./tool-call-log";
 import {
   handleWebhookDeadLetterBatch,
   handleWebhookEventBatch,
@@ -2058,6 +2066,29 @@ const mcpToolPersistenceLayer = (environment: ApiEnvironment) =>
       }),
   });
 
+const toolCallLogLayer = (environment: ApiEnvironment) =>
+  Layer.mergeAll(
+    Layer.succeed(ToolCallLogClock, {
+      now: Effect.sync(() => new Date()),
+    }),
+    Layer.succeed(ToolCallLogPersistence, {
+      list: (clerkUserId, observedAt) =>
+        Effect.tryPromise({
+          try: () => {
+            const connectionString = environment.HYPERDRIVE?.connectionString;
+            if (typeof connectionString !== "string") {
+              throw new Error("database unavailable");
+            }
+            return makePgToolCallLogRepository(connectionString).listForUser(
+              clerkUserId,
+              observedAt,
+            );
+          },
+          catch: () => new ToolCallLogPersistenceError(),
+        }),
+    }),
+  );
+
 const mcpToolRuntimeLayer = (environment: ApiEnvironment) =>
   Layer.mergeAll(
     Layer.succeed(McpToolClock, {
@@ -2388,6 +2419,7 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     webhookIngressCloudflareLayer(environment),
     mcpToolPersistenceLayer(environment),
     mcpToolRuntimeLayer(environment),
+    toolCallLogLayer(environment),
     sendLayer,
     mcpCursorSigningLayer(environment),
   );
@@ -2414,6 +2446,10 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
       layer,
       environment.CLERK_AUTHORIZED_PARTY ?? "",
     );
+  const toolCallLogHandler = createToolCallLogHandler(
+    layer,
+    environment.CLERK_AUTHORIZED_PARTY ?? "",
+  );
   const whatsAppConnectionHandler = createWhatsAppConnectionHandler(
     layer,
     environment.CLERK_AUTHORIZED_PARTY ?? "",
@@ -2502,6 +2538,9 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
         }
         if (isMcpAuthorizationManagementRequest(nextRequest)) {
           return mcpAuthorizationManagementHandler(nextRequest);
+        }
+        if (isToolCallLogRequest(nextRequest)) {
+          return toolCallLogHandler(nextRequest);
         }
         if (isWhatsAppConnectionRequest(nextRequest)) {
           return whatsAppConnectionHandler(nextRequest);
@@ -2935,6 +2974,10 @@ export const createProductionScheduledHandler =
         observedAt: string,
         limit: number,
       ) => Promise<number>;
+      readonly purgeExpiredToolCallLogs?: (
+        observedAt: Date,
+        limit: number,
+      ) => Promise<number>;
       readonly now?: () => string;
       readonly retainWebhookSources?: (observedAt: string) => Promise<void>;
       readonly sweepWebhookIngress?: (observedAt: string) => Promise<void>;
@@ -3001,6 +3044,17 @@ export const createProductionScheduledHandler =
           service: "api",
         }),
       );
+      while (true) {
+        const count = await (
+          dependencies.purgeExpiredToolCallLogs ??
+          ((value, limit) =>
+            makePgToolCallLogRepository(connectionString).purgeExpired(
+              value,
+              limit,
+            ))
+        )(new Date(observedAt), 500);
+        if (count < 500) break;
+      }
       return;
     }
     if (controller.cron === "*/5 * * * *") {

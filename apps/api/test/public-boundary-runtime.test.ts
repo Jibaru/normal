@@ -372,6 +372,38 @@ describe("public-boundary Worker harness", () => {
     });
   });
 
+  test("lists safe Tool Call Logs through the signed-in product boundary", async () => {
+    const response = await exports.default.fetch(
+      new Request("https://api.example.test/v1/tool-call-logs", {
+        headers: {
+          authorization: "Bearer signed-test-user",
+          origin: "http://127.0.0.1:3000",
+        },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      tool_call_logs: [
+        {
+          capability: "list_connections",
+          client: { id: "approved-client", name: "Approved MCP Client" },
+          completed_at: "2026-01-02T03:04:05.120Z",
+          counts: { media_bytes: 0, results: 1 },
+          error_code: null,
+          latency_ms: 120,
+          outcome: "success",
+          references: {
+            mcp_authorization_id: "mca_123456789012345678901",
+            send_id: null,
+            whatsapp_connection_id: "con_123456789012345678901",
+          },
+          started_at: "2026-01-02T03:04:05.000Z",
+        },
+      ],
+    });
+  });
+
   test("injects deterministic external failures only in the test root", async () => {
     const response = await exports.default.fetch(
       new Request("https://api.example.test/v1/personal-account", {
