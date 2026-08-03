@@ -23,6 +23,11 @@ output "deletion_coordinator_service" {
   value       = cloudflare_worker.deletion_coordinator.name
 }
 
+output "restore_coordinator_service" {
+  description = "Private scheduled deletion-marker and wall-clock expiry restore gate."
+  value       = cloudflare_worker.restore_coordinator.name
+}
+
 output "oauth_kv_namespace_id" {
   description = "OAuth KV namespace identifier consumed by the API Wrangler config renderer."
   value       = cloudflare_workers_kv_namespace.oauth.id

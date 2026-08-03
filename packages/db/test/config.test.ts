@@ -5,7 +5,21 @@ import {
   migrationConfig,
   restrictedApiRuntimeConnectionString,
   restrictedDeletionRuntimeConnectionString,
+  restrictedRestoreRuntimeConnectionString,
 } from "../src/config";
+
+describe("restrictedRestoreRuntimeConnectionString", () => {
+  test("accepts only the restore role over TLS to Neon", () => {
+    const value =
+      "postgresql://whatsapp_restore_runtime:secret@ep-example.neon.tech/database?sslmode=require";
+    expect(restrictedRestoreRuntimeConnectionString(value)).toBe(value);
+    expect(() =>
+      restrictedRestoreRuntimeConnectionString(
+        "postgresql://whatsapp_api_runtime:secret@ep-example.neon.tech/database?sslmode=require",
+      ),
+    ).toThrow("database URL is not the restricted TLS restore runtime");
+  });
+});
 
 describe("databaseConfig", () => {
   test("keeps the Neon connection string redacted", async () => {

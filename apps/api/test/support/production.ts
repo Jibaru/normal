@@ -30,6 +30,7 @@ export const validEnvironment = () => ({
   HYPERDRIVE: {
     connectionString: "postgresql://runtime@hyperdrive.internal/database",
   },
+  NEON_BRANCH_ID: "br-production-test",
   INGESTION_QUEUE: {
     send: async () => undefined,
   },

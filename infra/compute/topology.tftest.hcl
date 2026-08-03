@@ -95,6 +95,7 @@ run "development_topology" {
       ]) == toset([
       "inherit:CLERK_JWT_KEY",
       "inherit:MCP_CURSOR_HMAC_SECRET",
+      "inherit:NEON_BRANCH_ID",
       "inherit:SEND_FINGERPRINT_HMAC_SECRET",
       "inherit:OAUTH_PROTOCOL_ENCRYPTION_KEY",
       "inherit:WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
@@ -193,6 +194,26 @@ run "development_topology" {
       "plain_text:DEPLOYMENT_ENVIRONMENT",
     ])
     error_message = "Provider-control must receive only its environment and inherited Wasender secrets."
+  }
+
+  assert {
+    condition = (
+      cloudflare_worker.restore_coordinator.subdomain.enabled == false &&
+      cloudflare_worker.restore_coordinator.subdomain.previews_enabled == false &&
+      toset([
+        for binding in cloudflare_worker_version.restore_coordinator.bindings :
+        "${binding.type}:${binding.name}"
+        ]) == toset([
+        "inherit:DELETION_MARKER_HMAC_SECRET",
+        "inherit:NEON_BRANCH_ID",
+        "inherit:RESTORE_DATABASE_URL",
+        "plain_text:DEPLOYMENT_ENVIRONMENT",
+        "r2_bucket:DELETION_MARKERS",
+        "r2_bucket:STORED_MEDIA",
+        "r2_bucket:WEBHOOK_INGRESS",
+      ])
+    )
+    error_message = "The restore coordinator must have only marker replay, object purge, and restore-role authority."
   }
 }
 

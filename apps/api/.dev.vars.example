@@ -1,5 +1,6 @@
 # Non-secret local values
 DEPLOYMENT_ENVIRONMENT=development
+NEON_BRANCH_ID=br_replace_with_neon_branch_id
 AWS_KMS_REGION=us-east-1
 PROVIDER_APPROVED_SESSION_CAPACITY=replace-with-vendor-approved-session-capacity
 MCP_REQUESTS_PER_MINUTE=replace-with-approved-minute-request-limit

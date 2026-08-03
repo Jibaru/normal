@@ -14,6 +14,7 @@ describe("Personal Account purge schedule", () => {
     const handler = createProductionScheduledHandler(
       {
         HYPERDRIVE: { connectionString: "test-connection-string" },
+        NEON_BRANCH_ID: "br-test",
       },
       {
         makeGroupRepository: () => ({ claim: async () => [] }),

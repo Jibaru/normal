@@ -1,0 +1,23 @@
+{
+  "name": "@whatsapp-mcp/restore-coordinator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "CI=true wrangler deploy --dry-run --env production --outdir dist",
+    "lint": "biome check .",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@whatsapp-mcp/api": "workspace:*",
+    "@whatsapp-mcp/db": "workspace:*",
+    "effect": "3.22.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260730.1",
+    "typescript": "^5",
+    "vitest": "4.1.10",
+    "wrangler": "4.116.0"
+  }
+}

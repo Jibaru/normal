@@ -107,6 +107,14 @@ content.
 No restored Neon branch may receive verification or application traffic before
 the restore gate completes:
 
+Set the restore coordinator's `NEON_BRANCH_ID` to the new branch's exact Neon
+identity and `RESTORE_DATABASE_URL` to that branch's restricted
+`whatsapp_restore_runtime` credential. The API, Queue consumers, and scheduled
+handlers compare their configured branch identity to aggregate completion
+evidence in the database; a mismatch returns unavailable before authentication,
+tenant lookup, KMS use, or data-plane work. The restore coordinator has no KMS,
+provider-control, OAuth, or public-route binding.
+
 1. Keep public and internal data-plane routes disabled.
 2. Enumerate every `markers/v1/` object from the locked marker bucket across all
    R2 list pages. Reject an invalid object key, missing object, malformed body,

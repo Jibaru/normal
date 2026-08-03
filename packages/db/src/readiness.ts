@@ -8,7 +8,7 @@ export interface SchemaVersionConnection {
   readonly query: (
     text: string,
     values?: Array<unknown>,
-  ) => Promise<QueryResult<{ version: number }>>;
+  ) => Promise<QueryResult<{ ready?: boolean; version?: number }>>;
 }
 
 export class SchemaVersionMismatch extends Error {
@@ -23,8 +23,16 @@ export class SchemaVersionMismatch extends Error {
   }
 }
 
+export class RestoreReplayRequired extends Error {
+  constructor() {
+    super("database restore replay is not complete");
+    this.name = "RestoreReplayRequired";
+  }
+}
+
 export const assertExpectedSchemaVersion = async (
   connection: SchemaVersionConnection,
+  branchId?: string,
 ): Promise<void> => {
   let actual = 0;
 
@@ -48,5 +56,13 @@ export const assertExpectedSchemaVersion = async (
 
   if (actual !== EXPECTED_SCHEMA_VERSION) {
     throw new SchemaVersionMismatch(actual, EXPECTED_SCHEMA_VERSION);
+  }
+
+  if (branchId !== undefined) {
+    const readiness = await connection.query(
+      "SELECT app_private.is_restore_ready($1) AS ready",
+      [branchId],
+    );
+    if (readiness.rows[0]?.ready !== true) throw new RestoreReplayRequired();
   }
 };

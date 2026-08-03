@@ -219,6 +219,8 @@ describe("Connection Setup cleanup saga", () => {
       }) as Message<unknown>;
     const handler = createProductionQueueHandler({
       DEPLOYMENT_ENVIRONMENT: "development",
+      HYPERDRIVE: { connectionString: "test-connection-string" },
+      NEON_BRANCH_ID: "br-test",
     });
 
     await handler({
@@ -270,6 +272,7 @@ describe("Connection Setup cleanup saga", () => {
           },
         },
         DEPLOYMENT_ENVIRONMENT: "development",
+        NEON_BRANCH_ID: "br-test",
         HYPERDRIVE: { connectionString: "test-connection-string" },
       },
       {

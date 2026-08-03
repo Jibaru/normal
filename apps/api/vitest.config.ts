@@ -63,6 +63,7 @@ export default defineConfig({
     }),
   ],
   test: {
+    setupFiles: ["./test/support/database-readiness.ts"],
     server: {
       deps: {
         inline: ["pg"],

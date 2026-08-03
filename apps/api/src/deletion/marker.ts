@@ -120,13 +120,16 @@ const serializeMarker = (marker: DeletionMarker) =>
     version: marker.version,
   });
 
-const decodeHex = (value: string): Uint8Array => {
+const decodeHex = (value: string): Uint8Array<ArrayBuffer> => {
   if (!/^[a-f0-9]{64}$/iu.test(value)) {
     throw operationError("create-marker");
   }
-  return Uint8Array.from(value.match(/.{2}/gu) ?? [], (byte) =>
-    Number.parseInt(byte, 16),
-  );
+  const bytes = value.match(/.{2}/gu) ?? [];
+  const decoded = new Uint8Array(new ArrayBuffer(bytes.length));
+  bytes.forEach((byte, index) => {
+    decoded[index] = Number.parseInt(byte, 16);
+  });
+  return decoded;
 };
 
 const toHex = (value: ArrayBuffer) =>
@@ -134,7 +137,7 @@ const toHex = (value: ArrayBuffer) =>
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
 
-const markerIdFor = async (
+export const deriveDeletionMarkerId = async (
   environment: DeploymentEnvironment,
   hmacSecret: Redacted.Redacted<string>,
   deletionKind: DeletionKind,
@@ -182,7 +185,7 @@ export const makeDeletionMarkerStore = ({
             version: markerVersion,
           }),
         );
-        const markerId = await markerIdFor(
+        const markerId = await deriveDeletionMarkerId(
           environment,
           hmacSecret,
           input.deletionKind,

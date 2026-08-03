@@ -428,6 +428,17 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 39,
   },
+  {
+    name: "restore deletion and expiry replay gate",
+    sql: await readFile(
+      new NodeUrl(
+        "../migrations/0040_restore_replay_gate.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    version: 40,
+  },
 ];
 
 const checksum = (sql: string): string =>

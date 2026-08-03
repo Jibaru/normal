@@ -73,6 +73,7 @@ export default defineConfig({
   ],
   test: {
     include: ["test/public-boundary-runtime.test.ts"],
+    setupFiles: ["./test/support/database-readiness.ts"],
     testTimeout: 30_000,
   },
 });

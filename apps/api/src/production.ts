@@ -290,6 +290,7 @@ export interface ApiEnvironment {
   readonly MCP_REQUESTS_PER_HOUR?: string | undefined;
   readonly MCP_REQUESTS_PER_MINUTE?: string | undefined;
   readonly MESSAGE_RETENTION_DAY_OPTIONS?: string | undefined;
+  readonly NEON_BRANCH_ID?: string | undefined;
   readonly READ_MESSAGE_RECORDS_PER_DAY?: string | undefined;
   readonly MCP_CURSOR_HMAC_SECRET?: string | undefined;
   readonly SEND_FINGERPRINT_HMAC_SECRET?: string | undefined;
@@ -2378,6 +2379,7 @@ const databaseLayer = (environment: ApiEnvironment) =>
             try: () =>
               checkDatabaseReadiness(
                 environment.HYPERDRIVE?.connectionString ?? "",
+                environment.NEON_BRANCH_ID,
               ),
             catch: (cause) => cause,
           })
@@ -2482,6 +2484,15 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     context?: ExecutionContext,
   ): Promise<Response> => {
     try {
+      const path = new URL(request.url).pathname;
+      if (!(request.method === "GET" && path === "/health")) {
+        if (!environment.NEON_BRANCH_ID)
+          throw new Error("Neon branch identity unavailable");
+        await checkDatabaseReadiness(
+          environment.HYPERDRIVE?.connectionString ?? "",
+          environment.NEON_BRANCH_ID,
+        );
+      }
       if (isWebhookIngressRequest(request)) {
         return webhookIngressHandler(request);
       }
@@ -2682,6 +2693,12 @@ const replayQueueName = (environment: ApiEnvironment): string | null => {
 export const createProductionQueueHandler =
   (environment: ApiEnvironment) =>
   async (batch: MessageBatch): Promise<void> => {
+    if (!environment.NEON_BRANCH_ID)
+      throw new Error("Neon branch identity unavailable");
+    await checkDatabaseReadiness(
+      environment.HYPERDRIVE?.connectionString ?? "",
+      environment.NEON_BRANCH_ID,
+    );
     if (batch.queue === replayQueueName(environment)) {
       const layer = Layer.mergeAll(
         telemetryLayer,
@@ -3001,6 +3018,12 @@ export const createProductionScheduledHandler =
     } = {},
   ) =>
   async (controller: ScheduledController): Promise<void> => {
+    if (!environment.NEON_BRANCH_ID)
+      throw new Error("Neon branch identity unavailable");
+    await checkDatabaseReadiness(
+      environment.HYPERDRIVE?.connectionString ?? "",
+      environment.NEON_BRANCH_ID,
+    );
     if (controller.cron === "0 * * * *") {
       const connectionString = environment.HYPERDRIVE?.connectionString;
       if (typeof connectionString !== "string") {

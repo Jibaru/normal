@@ -24,6 +24,14 @@ const requireIdentifier = (name: string): string => {
   return value;
 };
 
+const requireNeonBranchId = (): string => {
+  const value = process.env.NEON_BRANCH_ID;
+  if (!value || !/^br-[A-Za-z0-9_-]{1,120}$/u.test(value)) {
+    throw new Error("NEON_BRANCH_ID must be an opaque Neon branch identity");
+  }
+  return value;
+};
+
 const requireHttpsOrigin = (name: string): string => {
   const value = process.env[name];
   try {
@@ -145,6 +153,7 @@ const apiVariables = {
   MCP_REQUESTS_PER_HOUR: String(mcpRequestsPerHour),
   MCP_REQUESTS_PER_MINUTE: String(mcpRequestsPerMinute),
   MESSAGE_RETENTION_DAY_OPTIONS: "7,30,90",
+  NEON_BRANCH_ID: requireNeonBranchId(),
   READ_MESSAGE_RECORDS_PER_DAY: String(readMessageRecordsPerDay),
   SENDS_PER_DAY: String(sendsPerDay),
   SENDS_PER_MINUTE: String(sendsPerMinute),

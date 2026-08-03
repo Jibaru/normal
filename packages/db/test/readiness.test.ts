@@ -16,6 +16,21 @@ describe("assertExpectedSchemaVersion", () => {
     ).resolves.toBeUndefined();
   });
 
+  test("fails closed when restore replay has not approved this Neon branch", async () => {
+    await expect(
+      assertExpectedSchemaVersion(
+        {
+          query: async (text) => ({
+            rows: text.includes("schema_migrations")
+              ? [{ version: EXPECTED_SCHEMA_VERSION }]
+              : [{ ready: false }],
+          }),
+        },
+        "br-restored",
+      ),
+    ).rejects.toMatchObject({ name: "RestoreReplayRequired" });
+  });
+
   test.each([0, EXPECTED_SCHEMA_VERSION + 1])(
     "fails closed for schema version %i",
     async (version) => {

@@ -3,12 +3,13 @@ locals {
   api_worker_name                  = "whatsapp-mcp-api${local.environment_suffix}"
   provider_control_worker_name     = "whatsapp-mcp-provider-control${local.environment_suffix}"
   deletion_coordinator_worker_name = "whatsapp-mcp-deletion-coordinator${local.environment_suffix}"
+  restore_coordinator_worker_name  = "whatsapp-mcp-restore-coordinator${local.environment_suffix}"
   web_project_name                 = "whatsapp-mcp-web${local.environment_suffix}"
-  webhook_ingress_bucket_name   = "whatsapp-mcp-webhook-ingress${local.environment_suffix}"
-  stored_media_bucket_name      = "whatsapp-mcp-stored-media${local.environment_suffix}"
-  deletion_capsules_bucket_name = "whatsapp-mcp-deletion-capsules${local.environment_suffix}"
-  deletion_markers_bucket_name  = "whatsapp-mcp-deletion-markers${local.environment_suffix}"
-  oauth_kv_namespace_name       = "whatsapp-mcp-oauth${local.environment_suffix}"
+  webhook_ingress_bucket_name      = "whatsapp-mcp-webhook-ingress${local.environment_suffix}"
+  stored_media_bucket_name         = "whatsapp-mcp-stored-media${local.environment_suffix}"
+  deletion_capsules_bucket_name    = "whatsapp-mcp-deletion-capsules${local.environment_suffix}"
+  deletion_markers_bucket_name     = "whatsapp-mcp-deletion-markers${local.environment_suffix}"
+  oauth_kv_namespace_name          = "whatsapp-mcp-oauth${local.environment_suffix}"
   oauth_client_registry = jsonencode([
     for client in var.oauth_clients : {
       clientClass  = client.client_class
@@ -24,6 +25,7 @@ locals {
   api_bundle_path                          = abspath("${path.root}/../../apps/api/dist/index.js")
   provider_control_bundle_path             = abspath("${path.root}/../../apps/provider-control/dist/index.js")
   deletion_coordinator_bundle_path         = abspath("${path.root}/../../apps/deletion-coordinator/dist/index.js")
+  restore_coordinator_bundle_path          = abspath("${path.root}/../../apps/restore-coordinator/dist/index.js")
 }
 
 resource "cloudflare_r2_bucket" "webhook_ingress" {
@@ -284,9 +286,9 @@ resource "cloudflare_worker" "deletion_coordinator" {
 }
 
 resource "cloudflare_worker_version" "deletion_coordinator" {
-  account_id  = var.cloudflare_account_id
-  worker_id   = cloudflare_worker.deletion_coordinator.id
-  main_module = "index.js"
+  account_id          = var.cloudflare_account_id
+  worker_id           = cloudflare_worker.deletion_coordinator.id
+  main_module         = "index.js"
   compatibility_date  = "2026-07-31"
   compatibility_flags = ["nodejs_compat"]
   modules = [{
@@ -321,8 +323,71 @@ resource "cloudflare_workers_deployment" "deletion_coordinator" {
 resource "cloudflare_workers_cron_trigger" "deletion_coordinator" {
   account_id  = var.cloudflare_account_id
   script_name = cloudflare_worker.deletion_coordinator.name
-  schedules = [{ cron = "* * * * *" }]
-  depends_on = [cloudflare_workers_deployment.deletion_coordinator]
+  schedules   = [{ cron = "* * * * *" }]
+  depends_on  = [cloudflare_workers_deployment.deletion_coordinator]
+}
+
+resource "cloudflare_worker" "restore_coordinator" {
+  account_id = var.cloudflare_account_id
+  name       = local.restore_coordinator_worker_name
+  subdomain = {
+    enabled          = false
+    previews_enabled = false
+  }
+  observability = {
+    enabled            = true
+    head_sampling_rate = 1
+    logs = {
+      enabled            = true
+      head_sampling_rate = 1
+      invocation_logs    = true
+      persist            = true
+    }
+    traces = {
+      enabled            = true
+      head_sampling_rate = 1
+      persist            = true
+    }
+  }
+}
+
+resource "cloudflare_worker_version" "restore_coordinator" {
+  account_id          = var.cloudflare_account_id
+  worker_id           = cloudflare_worker.restore_coordinator.id
+  main_module         = "index.js"
+  compatibility_date  = "2026-07-31"
+  compatibility_flags = ["nodejs_compat"]
+  modules = [{
+    name         = "index.js"
+    content_file = local.restore_coordinator_bundle_path
+    content_type = "application/javascript+module"
+  }]
+  bindings = [
+    { name = "DEPLOYMENT_ENVIRONMENT", text = var.deployment_environment, type = "plain_text" },
+    { name = "RESTORE_DATABASE_URL", type = "inherit" },
+    { name = "NEON_BRANCH_ID", type = "inherit" },
+    { name = "DELETION_MARKER_HMAC_SECRET", type = "inherit" },
+    { name = "DELETION_MARKERS", bucket_name = cloudflare_r2_bucket.deletion_markers.name, type = "r2_bucket" },
+    { name = "STORED_MEDIA", bucket_name = cloudflare_r2_bucket.stored_media.name, type = "r2_bucket" },
+    { name = "WEBHOOK_INGRESS", bucket_name = cloudflare_r2_bucket.webhook_ingress.name, type = "r2_bucket" }
+  ]
+}
+
+resource "cloudflare_workers_deployment" "restore_coordinator" {
+  account_id  = var.cloudflare_account_id
+  script_name = cloudflare_worker.restore_coordinator.name
+  strategy    = "percentage"
+  versions = [{
+    percentage = 100
+    version_id = cloudflare_worker_version.restore_coordinator.id
+  }]
+}
+
+resource "cloudflare_workers_cron_trigger" "restore_coordinator" {
+  account_id  = var.cloudflare_account_id
+  script_name = cloudflare_worker.restore_coordinator.name
+  schedules   = [{ cron = "*/5 * * * *" }]
+  depends_on  = [cloudflare_workers_deployment.restore_coordinator]
 }
 
 resource "cloudflare_worker" "api" {
@@ -371,6 +436,10 @@ resource "cloudflare_worker_version" "api" {
       name = "DEPLOYMENT_ENVIRONMENT"
       text = var.deployment_environment
       type = "plain_text"
+    },
+    {
+      name = "NEON_BRANCH_ID"
+      type = "inherit"
     },
     {
       name = "CLERK_API_AUDIENCE"

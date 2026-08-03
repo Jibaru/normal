@@ -4,6 +4,7 @@ const deployables = [
   "api",
   "deletion-coordinator",
   "provider-control",
+  "restore-coordinator",
 ] as const;
 const oauthKvValidationId = "22222222222222222222222222222222";
 
@@ -89,6 +90,44 @@ for (const deployable of deployables) {
           throw new Error(
             `Deletion coordinator must not declare ${forbidden}.`,
           );
+      }
+    }
+  } else if (deployable === "restore-coordinator") {
+    const configurations = [
+      ["top level", manifest],
+      ...Object.entries(
+        (manifest.env as Record<string, Record<string, unknown>> | undefined) ??
+          {},
+      ),
+    ] as const;
+    const required = [
+      "DELETION_MARKER_HMAC_SECRET",
+      "NEON_BRANCH_ID",
+      "RESTORE_DATABASE_URL",
+    ].sort();
+    for (const [name, configuration] of configurations) {
+      const secrets = (
+        configuration.secrets as
+          | { readonly required?: ReadonlyArray<string> }
+          | undefined
+      )?.required;
+      if (
+        JSON.stringify([...(secrets ?? [])].sort()) !== JSON.stringify(required)
+      ) {
+        throw new Error(
+          `Restore coordinator ${name} must require only its marker and restricted database credentials.`,
+        );
+      }
+      for (const forbidden of [
+        "d1_databases",
+        "durable_objects",
+        "hyperdrive",
+        "kv_namespaces",
+        "queues",
+        "services",
+      ]) {
+        if (forbidden in configuration)
+          throw new Error(`Restore coordinator must not declare ${forbidden}.`);
       }
     }
   } else {
@@ -197,7 +236,11 @@ for (const deployable of deployables) {
     );
   }
 
-  for (const environment of environments) {
+  const validatedEnvironments =
+    deployable === "restore-coordinator"
+      ? (["production"] as const)
+      : environments;
+  for (const environment of validatedEnvironments) {
     const workerSuffix = environment === "production" ? "" : `-${environment}`;
     const outputDirectory = `${repositoryRoot}/.wrangler/manifest-validation/${deployable}-${environment}`;
     let configPath = manifestPath;
@@ -224,6 +267,7 @@ for (const deployable of deployables) {
             OAUTH_RESOURCE: "https://api.example.test/mcp",
             MCP_REQUESTS_PER_HOUR: "600",
             MCP_REQUESTS_PER_MINUTE: "60",
+            NEON_BRANCH_ID: "br-manifest-validation",
             READ_MESSAGE_RECORDS_PER_DAY: "10000",
             SENDS_PER_DAY: "200",
             SENDS_PER_MINUTE: "10",
@@ -362,6 +406,18 @@ for (const deployable of deployables) {
       throw new Error(
         `Provider-control ${environment} must receive no OAuth, Queue, or R2 authority.`,
       );
+    } else if (deployable === "restore-coordinator") {
+      for (const binding of [
+        `env.DELETION_MARKERS (whatsapp-mcp-deletion-markers${workerSuffix})`,
+        `env.STORED_MEDIA (whatsapp-mcp-stored-media${workerSuffix})`,
+        `env.WEBHOOK_INGRESS (whatsapp-mcp-webhook-ingress${workerSuffix})`,
+      ]) {
+        if (!output.includes(binding)) {
+          throw new Error(
+            `Restore coordinator ${environment} is missing required binding ${binding}.`,
+          );
+        }
+      }
     }
   }
 }
