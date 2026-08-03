@@ -261,9 +261,11 @@ export interface McpToolRepository {
   readonly beginToolCall: (
     input: McpAccessAuthorization & {
       readonly auditLogId: string;
+      readonly connectionPublicId?: string;
       readonly hourLimit: number;
       readonly minuteLimit: number;
       readonly observedAt: Date;
+      readonly sendPublicId?: string;
       readonly toolName: McpToolName;
     },
   ) => Promise<BeginToolCallResult>;
@@ -359,8 +361,10 @@ export interface McpToolRepository {
   readonly rejectToolCall: (
     input: McpAccessAuthorization & {
       readonly auditLogId: string;
+      readonly connectionPublicId?: string;
       readonly errorCode: string;
       readonly observedAt: Date;
+      readonly sendPublicId?: string;
       readonly toolName: "list_connections" | "list_contacts";
     },
   ) => Promise<RejectToolCallResult>;
@@ -769,6 +773,7 @@ const insertToolCallLog = (
     readonly auditLogId: string;
     readonly authorizationId: string;
     readonly completed: boolean;
+    readonly connectionPublicId?: string | undefined;
     readonly errorCode: string | null;
     readonly observedAt: Date;
     readonly outcome:
@@ -778,6 +783,7 @@ const insertToolCallLog = (
       | "execution_error";
     readonly personalAccountId: string;
     readonly quotaReserved: boolean;
+    readonly sendPublicId?: string | undefined;
     readonly toolName: string;
   },
 ) =>
@@ -785,13 +791,14 @@ const insertToolCallLog = (
     `INSERT INTO app.tool_call_logs (
        id, personal_account_id, mcp_authorization_id, tool_name,
        started_at, completed_at, outcome, error_code, result_count,
-       latency_ms, quota_reserved, expires_at
+       latency_ms, quota_reserved, expires_at, connection_public_id,
+       send_public_id
      ) VALUES (
        $1, $2, $3, $4, $5,
        CASE WHEN $6::boolean THEN $5::timestamptz ELSE NULL END,
        $7, $8, NULL,
        CASE WHEN $6::boolean THEN 0 ELSE NULL END,
-       $9, $5::timestamptz + interval '90 days'
+       $9, $5::timestamptz + interval '90 days', $10, $11
      )`,
     [
       input.auditLogId,
@@ -803,6 +810,8 @@ const insertToolCallLog = (
       input.outcome,
       input.errorCode,
       input.quotaReserved,
+      input.connectionPublicId ?? null,
+      input.sendPublicId ?? null,
     ],
   );
 
@@ -894,6 +903,7 @@ export const makeMcpToolRepository = (
           auditLogId: input.auditLogId,
           authorizationId: input.authorizationId,
           completed: false,
+          connectionPublicId: input.connectionPublicId,
           errorCode: null,
           observedAt: input.observedAt,
           outcome: "started",
@@ -999,11 +1009,13 @@ export const makeMcpToolRepository = (
             auditLogId: input.auditLogId,
             authorizationId: input.authorizationId,
             completed: true,
+            connectionPublicId: input.connectionPublicId,
             errorCode: "authorization_denied",
             observedAt: input.observedAt,
             outcome: "authorization_denied",
             personalAccountId,
             quotaReserved: false,
+            sendPublicId: input.sendPublicId,
             toolName: input.toolName,
           });
           return {
@@ -1057,11 +1069,13 @@ export const makeMcpToolRepository = (
             auditLogId: input.auditLogId,
             authorizationId: input.authorizationId,
             completed: true,
+            connectionPublicId: input.connectionPublicId,
             errorCode: "rate_limited",
             observedAt: input.observedAt,
             outcome: "rate_limited",
             personalAccountId,
             quotaReserved: false,
+            sendPublicId: input.sendPublicId,
             toolName: input.toolName,
           });
           return {
@@ -1081,11 +1095,13 @@ export const makeMcpToolRepository = (
           auditLogId: input.auditLogId,
           authorizationId: input.authorizationId,
           completed: false,
+          connectionPublicId: input.connectionPublicId,
           errorCode: null,
           observedAt: input.observedAt,
           outcome: "started",
           personalAccountId,
           quotaReserved: true,
+          sendPublicId: input.sendPublicId,
           toolName: input.toolName,
         });
         return {
@@ -2033,11 +2049,13 @@ export const makeMcpToolRepository = (
             auditLogId: input.auditLogId,
             authorizationId: input.authorizationId,
             completed: true,
+            connectionPublicId: input.connectionPublicId,
             errorCode: "authorization_denied",
             observedAt: input.observedAt,
             outcome: "authorization_denied",
             personalAccountId,
             quotaReserved: false,
+            sendPublicId: input.sendPublicId,
             toolName: input.toolName,
           });
           return "authorization_denied" as const;
@@ -2046,11 +2064,13 @@ export const makeMcpToolRepository = (
           auditLogId: input.auditLogId,
           authorizationId: input.authorizationId,
           completed: true,
+          connectionPublicId: input.connectionPublicId,
           errorCode: input.errorCode,
           observedAt: input.observedAt,
           outcome: "execution_error",
           personalAccountId,
           quotaReserved: false,
+          sendPublicId: input.sendPublicId,
           toolName: input.toolName,
         });
         return "rejected" as const;

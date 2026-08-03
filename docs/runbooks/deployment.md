@@ -774,8 +774,9 @@ whose readable content expired. Investigate repeated failures of the hourly
 schedule. The same run calls the bounded
 `app_private.purge_expired_tool_call_logs` function until fewer than 500 rows
 remain, ensuring no Tool Call Log can be listed after its 90-day expiry. Verify
-that function through the restricted API role; never grant that role broad
-cross-tenant table deletion. Do not release retained-media quota manually. The worker first marks
+that the restricted API role can call only the integer-limit function and that
+the function uses database time; never grant that role a caller-controlled
+cutoff or broad cross-tenant table deletion. Do not release retained-media quota manually. The worker first marks
 Stored Media unavailable, deletes its R2 object, and only then releases quota.
 The R2 object, Webhook Event row, quarantine rows, and incident-to-source link
 must be gone, while the content-free Webhook Item deduplication identity

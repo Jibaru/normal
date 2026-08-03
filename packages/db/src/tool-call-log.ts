@@ -25,12 +25,19 @@ export interface ToolCallLogSummary {
   readonly toolName: string;
 }
 
+export interface ToolCallLogPage {
+  readonly logs: ReadonlyArray<ToolCallLogSummary>;
+  readonly nextCursor: string | null;
+}
+
 export interface ToolCallLogRepository {
   readonly listForUser: (
     clerkUserId: string,
     observedAt: Date,
-  ) => Promise<ReadonlyArray<ToolCallLogSummary> | null>;
-  readonly purgeExpired: (observedAt: Date, limit: number) => Promise<number>;
+    cursor: string | null,
+    limit: number,
+  ) => Promise<ToolCallLogPage | null>;
+  readonly purgeExpired: (limit: number) => Promise<number>;
 }
 
 const withTransaction = async <Value>(
@@ -51,9 +58,12 @@ const withTransaction = async <Value>(
 export const makeToolCallLogRepository = (
   provider: PersonalAccountConnectionProvider,
 ): ToolCallLogRepository => ({
-  listForUser: (clerkUserId, observedAt) =>
+  listForUser: (clerkUserId, observedAt, cursor, limit) =>
     provider.withConnection((connection) =>
       withTransaction(connection, async () => {
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+          throw new Error("invalid Tool Call Log page limit");
+        }
         const context = await connection.query<{
           personal_account_id: string | null;
         }>(
@@ -83,12 +93,19 @@ export const makeToolCallLogRepository = (
           latency_ms: number | null;
           media_bytes_reserved: number;
           outcome: ToolCallLogSummary["outcome"];
+          public_id: string;
           result_count: number | null;
           send_public_id: string | null;
           started_at: Date;
           tool_name: string;
         }>(
-          `SELECT
+          `WITH boundary AS (
+             SELECT logs.started_at, logs.public_id
+             FROM app.tool_call_logs AS logs
+             WHERE logs.personal_account_id = $4
+               AND logs.public_id = $2
+           )
+           SELECT
              authorizations.public_id AS authorization_public_id,
              authorizations.client_id,
              authorizations.client_name,
@@ -100,8 +117,10 @@ export const makeToolCallLogRepository = (
              logs.result_count,
              logs.latency_ms,
              logs.media_bytes_reserved,
-             connections.public_id AS connection_public_id,
-             sends.public_id AS send_public_id
+             COALESCE(logs.connection_public_id, connections.public_id)
+               AS connection_public_id,
+             COALESCE(logs.send_public_id, sends.public_id) AS send_public_id,
+             logs.public_id
            FROM app.tool_call_logs AS logs
            JOIN app.mcp_authorizations AS authorizations
              ON authorizations.personal_account_id=logs.personal_account_id
@@ -112,11 +131,21 @@ export const makeToolCallLogRepository = (
            LEFT JOIN app.whatsapp_connections AS connections
              ON connections.personal_account_id=sends.personal_account_id
             AND connections.id=sends.whatsapp_connection_id
-           WHERE logs.expires_at > $1
-           ORDER BY logs.started_at DESC, logs.id DESC`,
-          [observedAt],
+           WHERE logs.personal_account_id = $4
+             AND logs.expires_at > $1
+             AND (
+               $2::text IS NULL
+               OR (logs.started_at, logs.public_id) < (
+                 SELECT boundary.started_at, boundary.public_id
+                 FROM boundary
+               )
+             )
+           ORDER BY logs.started_at DESC, logs.public_id DESC
+           LIMIT $3`,
+          [observedAt, cursor, limit + 1, personalAccountId],
         );
-        return result.rows.map((row) => ({
+        const pageRows = result.rows.slice(0, limit);
+        const logs = pageRows.map((row) => ({
           authorizationId: row.authorization_public_id,
           clientId: row.client_id,
           clientName: row.client_name ?? row.client_id,
@@ -131,13 +160,20 @@ export const makeToolCallLogRepository = (
           startedAt: row.started_at,
           toolName: row.tool_name,
         }));
+        return {
+          logs,
+          nextCursor:
+            result.rows.length > limit
+              ? (pageRows.at(-1)?.public_id ?? null)
+              : null,
+        };
       }),
     ),
-  purgeExpired: (observedAt, limit) =>
+  purgeExpired: (limit) =>
     provider.withConnection(async (connection) => {
       const result = await connection.query<{ purged: number }>(
-        `SELECT app_private.purge_expired_tool_call_logs($1, $2) AS purged`,
-        [observedAt, limit],
+        `SELECT app_private.purge_expired_tool_call_logs($1) AS purged`,
+        [limit],
       );
       return Number(result.rows[0]?.purged ?? 0);
     }),

@@ -564,6 +564,7 @@ describe("MCP tool repository", () => {
       repository.rejectToolCall({
         ...authorization,
         auditLogId: "50000000-0000-4000-8000-000000000033",
+        connectionPublicId: connectionA,
         errorCode: "invalid_cursor",
         observedAt,
         toolName: "list_contacts",
@@ -571,19 +572,52 @@ describe("MCP tool repository", () => {
     ).resolves.toBe("rejected");
 
     const persisted = await database.query<{
+      connection_public_id: string | null;
       error_code: string | null;
       outcome: string;
       quota_reserved: boolean;
     }>(
-      `SELECT outcome, error_code, quota_reserved
+      `SELECT connection_public_id, outcome, error_code, quota_reserved
        FROM app.tool_call_logs
        WHERE id = '50000000-0000-4000-8000-000000000033'`,
     );
     expect(persisted.rows).toEqual([
       {
+        connection_public_id: connectionA,
         error_code: "invalid_cursor",
         outcome: "execution_error",
         quota_reserved: false,
+      },
+    ]);
+  });
+
+  test("persists safe connection and send targets with the invocation", async () => {
+    const sendPublicId = "snd_123456789012345678901";
+    await expect(
+      repository.beginToolCall({
+        ...authorization,
+        auditLogId: "50000000-0000-4000-8000-000000000034",
+        connectionPublicId: connectionA,
+        hourLimit: 3,
+        minuteLimit: 2,
+        observedAt,
+        sendPublicId,
+        toolName: "get_send_status",
+      }),
+    ).resolves.toMatchObject({ outcome: "started" });
+
+    const persisted = await database.query<{
+      connection_public_id: string | null;
+      send_public_id: string | null;
+    }>(
+      `SELECT connection_public_id, send_public_id
+       FROM app.tool_call_logs
+       WHERE id = '50000000-0000-4000-8000-000000000034'`,
+    );
+    expect(persisted.rows).toEqual([
+      {
+        connection_public_id: connectionA,
+        send_public_id: sendPublicId,
       },
     ]);
   });

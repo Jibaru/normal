@@ -395,6 +395,17 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 36,
   },
+  {
+    name: "Tool Call Log review hardening",
+    sql: await readFile(
+      new NodeUrl(
+        "../migrations/0037_tool_call_log_review_hardening.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    version: 37,
+  },
 ];
 
 const checksum = (sql: string): string =>

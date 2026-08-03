@@ -81,13 +81,24 @@ interface ToolCallLog {
   readonly startedAt: string;
 }
 
-const decodeToolCallLogs = (
-  value: unknown,
-): ReadonlyArray<ToolCallLog> | null => {
+interface ToolCallLogPage {
+  readonly logs: ReadonlyArray<ToolCallLog>;
+  readonly nextCursor: string | null;
+}
+
+const decodeToolCallLogs = (value: unknown): ToolCallLogPage | null => {
   if (
     typeof value !== "object" ||
     value === null ||
     !Array.isArray((value as { tool_call_logs?: unknown }).tool_call_logs)
+  ) {
+    return null;
+  }
+  const nextCursor = (value as { next_cursor?: unknown }).next_cursor;
+  if (
+    nextCursor !== null &&
+    (typeof nextCursor !== "string" ||
+      !/^tcl_[A-Za-z0-9_-]{21}$/u.test(nextCursor))
   ) {
     return null;
   }
@@ -148,7 +159,7 @@ const decodeToolCallLogs = (
       startedAt: log.started_at,
     });
   }
-  return decoded;
+  return { logs: decoded, nextCursor };
 };
 
 const scopeLabels: Record<McpAuthorization["scopes"][number], string> = {
@@ -317,6 +328,12 @@ export function PublicBoundaryJourney({
   const [toolCallLogs, setToolCallLogs] = useState<ReadonlyArray<ToolCallLog>>(
     [],
   );
+  const [toolCallLogCursor, setToolCallLogCursor] = useState<string | null>(
+    null,
+  );
+  const [toolCallLogPageState, setToolCallLogPageState] = useState<
+    "idle" | "loading" | "unavailable"
+  >("idle");
   const [revokingAuthorization, setRevokingAuthorization] = useState<
     string | null
   >(null);
@@ -391,6 +408,28 @@ export function PublicBoundaryJourney({
       return null;
     }
     return token;
+  };
+
+  const loadMoreToolCallLogs = async () => {
+    if (toolCallLogCursor === null || toolCallLogPageState === "loading")
+      return;
+    setToolCallLogPageState("loading");
+    try {
+      const token = await getToken();
+      if (token === null) throw new Error("signed out");
+      const nextPageUrl = new URL(toolCallLogsEndpoint);
+      nextPageUrl.searchParams.set("cursor", toolCallLogCursor);
+      const response = await fetch(nextPageUrl, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      const page = decodeToolCallLogs(await response.json());
+      if (!response.ok || page === null) throw new Error("logs unavailable");
+      setToolCallLogs((current) => [...current, ...page.logs]);
+      setToolCallLogCursor(page.nextCursor);
+      setToolCallLogPageState("idle");
+    } catch {
+      setToolCallLogPageState("unavailable");
+    }
   };
 
   const deletePersonalAccount = async () => {
@@ -858,7 +897,9 @@ export function PublicBoundaryJourney({
         if (!logsResponse.ok || decodedLogs === null) {
           setToolCallLogState("unavailable");
         } else {
-          setToolCallLogs(decodedLogs);
+          setToolCallLogs(decodedLogs.logs);
+          setToolCallLogCursor(decodedLogs.nextCursor);
+          setToolCallLogPageState("idle");
           setToolCallLogState("ok");
         }
       } catch {
@@ -1270,6 +1311,21 @@ export function PublicBoundaryJourney({
                 ))}
               </ul>
             )}
+            {toolCallLogState === "ok" && toolCallLogCursor !== null ? (
+              <button
+                className="rounded border border-zinc-700 px-3 py-2 text-sm disabled:opacity-50"
+                disabled={toolCallLogPageState === "loading"}
+                onClick={loadMoreToolCallLogs}
+                type="button"
+              >
+                {toolCallLogPageState === "loading"
+                  ? "Loading more…"
+                  : "Load more"}
+              </button>
+            ) : null}
+            {toolCallLogPageState === "unavailable" ? (
+              <p aria-live="polite">More Tool Call Logs are unavailable.</p>
+            ) : null}
           </section>
           <form
             className="space-y-3 rounded-lg border border-zinc-800 bg-zinc-900 p-4"

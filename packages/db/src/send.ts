@@ -169,10 +169,11 @@ export const makePgAtomicSendRepository = (
             | "rate_limited"
             | "success",
           errorCode: string | null,
+          sendPublicId: string | null = null,
         ) => {
           await connection.query(
-            `INSERT INTO app.tool_call_logs (id,personal_account_id,mcp_authorization_id,tool_name,started_at,completed_at,outcome,error_code,result_count,latency_ms,quota_reserved,expires_at)
-             VALUES ($1,$2,$3,'send_text_message',$4,$4,$5,$6,CASE WHEN $5='success' THEN 1 ELSE NULL END,0,false,$4::timestamptz+interval '90 days')`,
+            `INSERT INTO app.tool_call_logs (id,personal_account_id,mcp_authorization_id,tool_name,started_at,completed_at,outcome,error_code,result_count,latency_ms,quota_reserved,expires_at,connection_public_id,send_public_id)
+             VALUES ($1,$2,$3,'send_text_message',$4,$4,$5,$6,CASE WHEN $5='success' THEN 1 ELSE NULL END,0,false,$4::timestamptz+interval '90 days',$7,$8)`,
             [
               input.auditLogId,
               accountId,
@@ -180,6 +181,8 @@ export const makePgAtomicSendRepository = (
               input.observedAt,
               outcome,
               errorCode,
+              input.connectionPublicId,
+              sendPublicId,
             ],
           );
           await connection.query("COMMIT");
@@ -252,6 +255,7 @@ export const makePgAtomicSendRepository = (
           await finishAudit(
             result.outcome === "replay" ? "success" : "execution_error",
             result.outcome === "replay" ? null : "idempotency_conflict",
+            scalar(bound.rows[0], "public_id"),
           );
           return result;
         }
@@ -356,13 +360,15 @@ export const makePgAtomicSendRepository = (
           };
         }
         await connection.query(
-          `INSERT INTO app.tool_call_logs (id,personal_account_id,mcp_authorization_id,tool_name,started_at,completed_at,outcome,error_code,result_count,latency_ms,quota_reserved,expires_at)
-           VALUES ($1,$2,$3,'send_text_message',$4::timestamptz,NULL,'started',NULL,NULL,NULL,true,$4::timestamptz+interval '90 days')`,
+          `INSERT INTO app.tool_call_logs (id,personal_account_id,mcp_authorization_id,tool_name,started_at,completed_at,outcome,error_code,result_count,latency_ms,quota_reserved,expires_at,connection_public_id,send_public_id)
+           VALUES ($1,$2,$3,'send_text_message',$4::timestamptz,NULL,'started',NULL,NULL,NULL,true,$4::timestamptz+interval '90 days',$5,$6)`,
           [
             input.auditLogId,
             accountId,
             input.authorizationId,
             input.observedAt,
+            input.connectionPublicId,
+            input.sendPublicId,
           ],
         );
         const materialRows = await connection.query<Record<string, unknown>>(

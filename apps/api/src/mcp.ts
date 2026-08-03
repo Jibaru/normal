@@ -100,9 +100,11 @@ export interface McpToolPersistenceService {
   readonly beginToolCall: (
     input: McpAccessAuthorization & {
       readonly auditLogId: string;
+      readonly connectionPublicId?: string;
       readonly hourLimit: number;
       readonly minuteLimit: number;
       readonly observedAt: Date;
+      readonly sendPublicId?: string;
       readonly toolName: McpToolName;
     },
   ) => Effect.Effect<BeginToolCallResult, McpToolPersistenceError>;
@@ -220,8 +222,10 @@ export interface McpToolPersistenceService {
   readonly rejectToolCall: (
     input: McpAccessAuthorization & {
       readonly auditLogId: string;
+      readonly connectionPublicId?: string;
       readonly errorCode: string;
       readonly observedAt: Date;
+      readonly sendPublicId?: string;
       readonly toolName: "list_connections" | "list_contacts";
     },
   ) => Effect.Effect<RejectToolCallResult, McpToolPersistenceError>;
@@ -907,9 +911,11 @@ const getSendStatus = (
       .beginToolCall({
         ...authorization,
         auditLogId,
+        connectionPublicId: input.connection_id,
         hourLimit,
         minuteLimit,
         observedAt,
+        sendPublicId: input.send_id,
         toolName: "get_send_status",
       })
       .pipe(Effect.either);
@@ -1031,6 +1037,7 @@ const listGroups = (
       .beginToolCall({
         ...authorization,
         auditLogId,
+        connectionPublicId: input.connection_id,
         hourLimit,
         minuteLimit,
         observedAt: startedAt,
@@ -1339,6 +1346,7 @@ const listContacts = (
           .rejectToolCall({
             ...authorization,
             auditLogId,
+            connectionPublicId: input.connection_id,
             errorCode: "invalid_cursor",
             observedAt: startedAt,
             toolName: "list_contacts",
@@ -1365,6 +1373,7 @@ const listContacts = (
       .beginToolCall({
         ...authorization,
         auditLogId,
+        connectionPublicId: input.connection_id,
         hourLimit,
         minuteLimit,
         observedAt: startedAt,
@@ -1743,6 +1752,7 @@ const listChats = (
       .beginToolCall({
         ...authorization,
         auditLogId,
+        connectionPublicId: input.connection_id,
         hourLimit,
         minuteLimit,
         observedAt: startedAt,
@@ -1958,6 +1968,7 @@ const readMessages = (
       .beginToolCall({
         ...authorization,
         auditLogId,
+        connectionPublicId: input.connection_id,
         hourLimit,
         minuteLimit,
         observedAt: startedAt,

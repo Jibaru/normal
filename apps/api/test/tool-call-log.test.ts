@@ -30,7 +30,13 @@ const safeLog: ToolCallLogSummary = {
   toolName: "list_connections",
 };
 
-const makeHandler = (options: { readonly unavailable?: boolean } = {}) => {
+const makeHandler = (
+  options: {
+    readonly nextCursor?: string;
+    readonly unavailable?: boolean;
+  } = {},
+) => {
+  const cursors: Array<string | null> = [];
   const telemetry: SafeTelemetryEvent[] = [];
   const layer = Layer.mergeAll(
     Layer.succeed(HumanIdentity, {
@@ -44,16 +50,29 @@ const makeHandler = (options: { readonly unavailable?: boolean } = {}) => {
       now: Effect.succeed(new Date("2026-08-01T12:01:00.000Z")),
     }),
     Layer.succeed(ToolCallLogPersistence, {
-      list: (clerkUserId) =>
-        options.unavailable
+      list: (clerkUserId, _observedAt, cursor) => {
+        cursors.push(cursor);
+        return options.unavailable
           ? Effect.fail(new ToolCallLogPersistenceError())
-          : Effect.succeed(clerkUserId === "user_owner" ? [safeLog] : null),
+          : Effect.succeed(
+              clerkUserId === "user_owner"
+                ? {
+                    logs: [safeLog],
+                    nextCursor: options.nextCursor ?? null,
+                  }
+                : null,
+            );
+      },
     }),
     Layer.succeed(SafeTelemetry, {
       emit: (event) => Effect.sync(() => telemetry.push(event)),
     }),
   );
-  return { handler: createToolCallLogHandler(layer, browserOrigin), telemetry };
+  return {
+    cursors,
+    handler: createToolCallLogHandler(layer, browserOrigin),
+    telemetry,
+  };
 };
 
 const request = (authorization = "Bearer owner", origin = browserOrigin) =>
@@ -70,6 +89,7 @@ describe("Tool Call Log product boundary", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(body).toEqual({
+      next_cursor: null,
       tool_call_logs: [
         {
           capability: "list_connections",
@@ -114,5 +134,35 @@ describe("Tool Call Log product boundary", () => {
     expect(
       (await makeHandler({ unavailable: true }).handler(request())).status,
     ).toBe(503);
+    expect(
+      (
+        await makeHandler().handler(
+          new Request(
+            "https://api.example.test/v1/tool-call-logs?cursor=not-a-cursor",
+            {
+              headers: { authorization: "Bearer owner", origin: browserOrigin },
+            },
+          ),
+        )
+      ).status,
+    ).toBe(400);
+  });
+
+  test("accepts only opaque public cursors for bounded pages", async () => {
+    const cursor = "tcl_123456789012345678901";
+    const harness = makeHandler({ nextCursor: cursor });
+    const first = await harness.handler(request());
+    const firstBody = (await first.json()) as {
+      readonly next_cursor?: unknown;
+    };
+    expect(firstBody.next_cursor).toBe(cursor);
+    const next = await harness.handler(
+      new Request(
+        `https://api.example.test/v1/tool-call-logs?cursor=${cursor}`,
+        { headers: { authorization: "Bearer owner", origin: browserOrigin } },
+      ),
+    );
+    expect(next.status).toBe(200);
+    expect(harness.cursors).toEqual([null, cursor]);
   });
 });

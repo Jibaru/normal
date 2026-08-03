@@ -384,6 +384,7 @@ describe("public-boundary Worker harness", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
+      next_cursor: "tcl_123456789012345678901",
       tool_call_logs: [
         {
           capability: "list_connections",

@@ -138,6 +138,11 @@ const makeHarness = (
 ) => {
   const observations: Array<string> = [];
   const telemetry: Array<SafeTelemetryEvent> = [];
+  const beginTargets: Array<{
+    readonly connectionPublicId: string | null;
+    readonly sendPublicId: string | null;
+    readonly toolName: string;
+  }> = [];
   const contactQueries: Array<{
     readonly searchIndex: string | null;
     readonly searchKind: "name" | "phone" | null;
@@ -214,6 +219,11 @@ const makeHarness = (
       },
       beginToolCall: (input) => {
         observations.push("begin");
+        beginTargets.push({
+          connectionPublicId: input.connectionPublicId ?? null,
+          sendPublicId: input.sendPublicId ?? null,
+          toolName: input.toolName,
+        });
         if (overrides.failBegin) {
           return Effect.fail(new McpToolPersistenceError());
         }
@@ -603,6 +613,7 @@ const makeHarness = (
   );
 
   return {
+    beginTargets,
     handler: createMcpRequestHandler({
       browserOrigin: "https://app.example.test",
       hourLimit: 10,
@@ -1863,6 +1874,13 @@ describe("atomic send_text_message MCP boundary", () => {
     expect(await (await call()).json()).toMatchObject({
       result: { structuredContent: { status: "delivered" } },
     });
+    expect(harness.beginTargets).toEqual([
+      {
+        connectionPublicId: "con_123456789012345678901",
+        sendPublicId: "snd_123456789012345678901",
+        toolName: "get_send_status",
+      },
+    ]);
     expect(await (await call(true)).json()).toMatchObject({
       result: {
         isError: true,

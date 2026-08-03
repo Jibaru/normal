@@ -1,4 +1,4 @@
-import type { ToolCallLogSummary } from "@whatsapp-mcp/db/tool-call-log";
+import type { ToolCallLogPage } from "@whatsapp-mcp/db/tool-call-log";
 import { Context, Data, Effect, type Layer } from "effect";
 import {
   HumanIdentity,
@@ -19,10 +19,8 @@ export interface ToolCallLogPersistenceService {
   readonly list: (
     clerkUserId: string,
     observedAt: Date,
-  ) => Effect.Effect<
-    ReadonlyArray<ToolCallLogSummary> | null,
-    ToolCallLogPersistenceError
-  >;
+    cursor: string | null,
+  ) => Effect.Effect<ToolCallLogPage | null, ToolCallLogPersistenceError>;
 }
 
 export const ToolCallLogPersistence =
@@ -74,7 +72,8 @@ export const createToolCallLogHandler =
     browserOrigin: string,
   ) =>
   (request: Request): Promise<Response> => {
-    const path = new URL(request.url).pathname;
+    const url = new URL(request.url);
+    const path = url.pathname;
     if (
       path !== TOOL_CALL_LOGS_PATH ||
       request.headers.get("origin") !== browserOrigin
@@ -92,6 +91,16 @@ export const createToolCallLogHandler =
     if (request.method !== "GET") {
       return Promise.resolve(notFound(browserOrigin));
     }
+    const cursor = url.searchParams.get("cursor");
+    if (
+      [...url.searchParams.keys()].some((key) => key !== "cursor") ||
+      url.searchParams.getAll("cursor").length > 1 ||
+      (cursor !== null && !/^tcl_[A-Za-z0-9_-]{21}$/u.test(cursor))
+    ) {
+      return Promise.resolve(
+        jsonResponse({ error: "invalid_cursor" }, 400, browserOrigin),
+      );
+    }
 
     return Effect.runPromise(
       Effect.gen(function* () {
@@ -99,16 +108,20 @@ export const createToolCallLogHandler =
         const clerkUserId = yield* identity.verify(request);
         const clock = yield* ToolCallLogClock;
         const persistence = yield* ToolCallLogPersistence;
-        const logs = yield* persistence.list(clerkUserId, yield* clock.now);
-        if (logs === null)
+        const page = yield* persistence.list(
+          clerkUserId,
+          yield* clock.now,
+          cursor,
+        );
+        if (page === null)
           return yield* Effect.fail(new InvalidToolCallLogOwner());
         const telemetry = yield* SafeTelemetry;
         yield* telemetry.emit({
           event: "tool_call_log.review.completed",
-          logCount: logs.length,
+          logCount: page.logs.length,
           service: "api",
         });
-        return logs;
+        return page;
       }).pipe(
         Effect.provide(layer),
         Effect.match({
@@ -120,10 +133,11 @@ export const createToolCallLogHandler =
               failure._tag === "InvalidToolCallLogOwner")
               ? notFound(browserOrigin)
               : jsonResponse({ error: "unavailable" }, 503, browserOrigin),
-          onSuccess: (logs) =>
+          onSuccess: (page) =>
             jsonResponse(
               {
-                tool_call_logs: logs.map((log) => ({
+                next_cursor: page.nextCursor,
+                tool_call_logs: page.logs.map((log) => ({
                   capability: log.toolName,
                   client: { id: log.clientId, name: log.clientName },
                   completed_at: log.completedAt?.toISOString() ?? null,

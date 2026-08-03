@@ -133,6 +133,9 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(toolCallLogs.getByTestId("tool-call-log")).not.toContainText(
     /message text|phone|provider/iu,
   );
+  await toolCallLogs.getByRole("button", { name: "Load more" }).click();
+  await expect(toolCallLogs.getByTestId("tool-call-log")).toHaveCount(2);
+  await expect(toolCallLogs).toContainText("read messages");
   await authorizations
     .getByRole("button", { name: "Revoke Approved MCP Client" })
     .click();

@@ -397,26 +397,46 @@ const makeTestLayer = (
       now: Effect.succeed(new Date("2026-01-02T03:05:00.000Z")),
     }),
     Layer.succeed(ToolCallLogPersistence, {
-      list: (clerkUserId) =>
+      list: (clerkUserId, _observedAt, cursor) =>
         Effect.succeed(
           clerkUserId === "user_test_public_boundary"
-            ? [
-                {
-                  authorizationId: testAuthorizationId,
-                  clientId: "approved-client",
-                  clientName: "Approved MCP Client",
-                  completedAt: new Date("2026-01-02T03:04:05.120Z"),
-                  connectionId: "con_123456789012345678901",
-                  errorCode: null,
-                  latencyMs: 120,
-                  mediaBytes: 0,
-                  outcome: "success" as const,
-                  resultCount: 1,
-                  sendId: null,
-                  startedAt: new Date("2026-01-02T03:04:05.000Z"),
-                  toolName: "list_connections",
-                },
-              ]
+            ? {
+                logs: [
+                  cursor === null
+                    ? {
+                        authorizationId: testAuthorizationId,
+                        clientId: "approved-client",
+                        clientName: "Approved MCP Client",
+                        completedAt: new Date("2026-01-02T03:04:05.120Z"),
+                        connectionId: "con_123456789012345678901",
+                        errorCode: null,
+                        latencyMs: 120,
+                        mediaBytes: 0,
+                        outcome: "success" as const,
+                        resultCount: 1,
+                        sendId: null,
+                        startedAt: new Date("2026-01-02T03:04:05.000Z"),
+                        toolName: "list_connections",
+                      }
+                    : {
+                        authorizationId: testAuthorizationId,
+                        clientId: "approved-client",
+                        clientName: "Approved MCP Client",
+                        completedAt: new Date("2026-01-02T03:03:05.045Z"),
+                        connectionId: "con_123456789012345678901",
+                        errorCode: null,
+                        latencyMs: 45,
+                        mediaBytes: 0,
+                        outcome: "success" as const,
+                        resultCount: 2,
+                        sendId: null,
+                        startedAt: new Date("2026-01-02T03:03:05.000Z"),
+                        toolName: "read_messages",
+                      },
+                ],
+                nextCursor:
+                  cursor === null ? "tcl_123456789012345678901" : null,
+              }
             : null,
         ),
     }),

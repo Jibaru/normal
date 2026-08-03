@@ -2072,7 +2072,7 @@ const toolCallLogLayer = (environment: ApiEnvironment) =>
       now: Effect.sync(() => new Date()),
     }),
     Layer.succeed(ToolCallLogPersistence, {
-      list: (clerkUserId, observedAt) =>
+      list: (clerkUserId, observedAt, cursor) =>
         Effect.tryPromise({
           try: () => {
             const connectionString = environment.HYPERDRIVE?.connectionString;
@@ -2082,6 +2082,8 @@ const toolCallLogLayer = (environment: ApiEnvironment) =>
             return makePgToolCallLogRepository(connectionString).listForUser(
               clerkUserId,
               observedAt,
+              cursor,
+              100,
             );
           },
           catch: () => new ToolCallLogPersistenceError(),
@@ -2974,10 +2976,7 @@ export const createProductionScheduledHandler =
         observedAt: string,
         limit: number,
       ) => Promise<number>;
-      readonly purgeExpiredToolCallLogs?: (
-        observedAt: Date,
-        limit: number,
-      ) => Promise<number>;
+      readonly purgeExpiredToolCallLogs?: (limit: number) => Promise<number>;
       readonly now?: () => string;
       readonly retainWebhookSources?: (observedAt: string) => Promise<void>;
       readonly sweepWebhookIngress?: (observedAt: string) => Promise<void>;
@@ -3047,12 +3046,9 @@ export const createProductionScheduledHandler =
       while (true) {
         const count = await (
           dependencies.purgeExpiredToolCallLogs ??
-          ((value, limit) =>
-            makePgToolCallLogRepository(connectionString).purgeExpired(
-              value,
-              limit,
-            ))
-        )(new Date(observedAt), 500);
+          ((limit) =>
+            makePgToolCallLogRepository(connectionString).purgeExpired(limit))
+        )(500);
         if (count < 500) break;
       }
       return;
