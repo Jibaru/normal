@@ -511,11 +511,13 @@ export const makeGroupRepository = (
         await connection.query(
           `INSERT INTO app.whatsapp_group_directory_states (
              personal_account_id, whatsapp_connection_id, as_of,
+             snapshot_observed_at,
              stale, partial, updated_at
-           ) VALUES ($1, $2, $3, $4, $5, $3)
+           ) VALUES ($1, $2, $3, $3, $4, $5, $3)
            ON CONFLICT (personal_account_id, whatsapp_connection_id)
            DO UPDATE SET
              as_of = EXCLUDED.as_of,
+             snapshot_observed_at = EXCLUDED.as_of,
              stale = EXCLUDED.stale,
              partial = EXCLUDED.partial,
              reconciliation_claim_id = NULL,

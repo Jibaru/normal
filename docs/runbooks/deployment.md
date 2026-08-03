@@ -920,8 +920,12 @@ counts. No session credential, provider identity, full phone number, contact
 name, response body, URL, ciphertext, or blind index may appear in Worker logs.
 An overdue snapshot (more than ten minutes old), a failed provider read, or a
 partial provider response must remain visible through `stale` or `partial`;
-do not clear those indicators manually. Webhook contact changes may advance a
-partial projection between complete snapshots. Remove the disposable
+do not clear those indicators manually. Connection health older than ten
+minutes also makes the projection stale. An Ingestion Gap after the latest
+complete Directory snapshot or a recorded retention limitation makes the
+projection partial; a complete reconciliation clears only limitations it can
+actually supersede. Webhook contact changes may advance a partial projection
+between complete snapshots. Remove the disposable
 connection through the normal Connection Deletion flow; do not print or pass
 its session API key on a command line.
 
