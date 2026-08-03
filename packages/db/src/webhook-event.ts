@@ -818,8 +818,8 @@ export const makeWebhookEventRepository = (
         const claimed = await connection.query(
           `INSERT INTO app.webhook_items (personal_account_id, whatsapp_connection_id,
              deduplication_identity, first_webhook_event_id, item_index, item_kind,
-             outcome, first_received_at)
-           VALUES ($1,$2,$3,$4,$5,'send_evidence','claimed',$6)
+             outcome, received_at)
+           VALUES ($1,$2,$3,$4,$5,'send_evidence','superseded',$6)
            ON CONFLICT (personal_account_id, whatsapp_connection_id, deduplication_identity)
            DO NOTHING RETURNING deduplication_identity`,
           [

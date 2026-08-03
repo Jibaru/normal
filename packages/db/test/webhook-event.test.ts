@@ -381,6 +381,100 @@ describe("Webhook Event repository", () => {
     }
   });
 
+  test("converges correlated Send Status evidence with the restricted webhook role", async () => {
+    const repository = makeWebhookEventRepository(webhookProvider);
+    const authorizationId = "40000000-0000-4000-8000-000000000050";
+    const auditLogId = "50000000-0000-4000-8000-000000000050";
+    const sendId = "60000000-0000-4000-8000-000000000050";
+    const messageIdentity = itemIdentity("send-message");
+    await database.query(
+      `INSERT INTO app.mcp_authorizations (
+         id, personal_account_id, oauth_subject, client_id, client_class,
+         scopes, reverified_at, authorized_at, absolute_expires_at
+       ) VALUES ($1,$2,$3,'send-status-client','approved',ARRAY['messages:send'],$4,$4,$4::timestamptz + interval '90 days')`,
+      [authorizationId, accountId, "S".repeat(43), receivedAt],
+    );
+    await database.query(
+      `INSERT INTO app.tool_call_logs (
+         id, personal_account_id, mcp_authorization_id, tool_name, started_at,
+         outcome, quota_reserved, expires_at
+       ) VALUES ($1,$2,$3,'send_text_message',$4,'started',true,$4::timestamptz + interval '90 days')`,
+      [auditLogId, accountId, authorizationId, receivedAt],
+    );
+    await database.query(
+      `INSERT INTO app.send_operations (
+         id, public_id, personal_account_id, mcp_authorization_id,
+         tool_call_log_id, whatsapp_connection_id, recipient_type,
+         recipient_public_id, status, created_at, status_changed_at,
+         attempt_claimed_at, lease_expires_at, expires_at, message_identity
+       ) VALUES ($1,'snd_000000000000000000050',$2,$3,$4,$5,'contact',
+         'ctc_000000000000000000050','processing',$6,$6,$6,
+         $6::timestamptz + interval '30 seconds',
+         $6::timestamptz + interval '90 days',$7)`,
+      [
+        sendId,
+        accountId,
+        authorizationId,
+        auditLogId,
+        connectionId,
+        receivedAt,
+        messageIdentity,
+      ],
+    );
+    await repository.prepare(eventInput(firstEventId));
+
+    const project = (
+      status: "sent" | "delivered" | "read" | "failed",
+      index: number,
+    ) =>
+      repository.projectSendEvidence({
+        eventId: firstEventId,
+        evidence: { occurredAt: null, version: null },
+        itemIdentity: itemIdentity(`send-${status}-${index}`),
+        itemIndex: index,
+        messageIdentity,
+        personalAccountId: accountId,
+        receivedAt,
+        status,
+        whatsappConnectionId: connectionId,
+      });
+
+    expect(await project("delivered", 0)).toBe("applied");
+    await expect(project("failed", 1)).resolves.toBe("superseded");
+    await expect(project("read", 2)).resolves.toBe("applied");
+    await expect(project("sent", 3)).resolves.toBe("superseded");
+    await database.query(
+      "UPDATE app.send_operations SET status='unknown' WHERE id=$1",
+      [sendId],
+    );
+    await expect(project("failed", 4)).resolves.toBe("applied");
+    await expect(project("sent", 5)).resolves.toBe("applied");
+    const persisted = await database.query<{ status: string }>(
+      "SELECT status FROM app.send_operations WHERE id=$1",
+      [sendId],
+    );
+    expect(persisted.rows).toEqual([{ status: "sent" }]);
+
+    const privileges = await database.query<{
+      can_delete_pending: boolean;
+      can_select_pending_identity: boolean;
+    }>(
+      `SELECT has_table_privilege(
+         'whatsapp_webhook_runtime', 'app.pending_send_contents', 'DELETE'
+       ) AS can_delete_pending,
+       has_column_privilege(
+         'whatsapp_webhook_runtime', 'app.pending_send_contents',
+         'personal_account_id', 'SELECT'
+       ) AND has_column_privilege(
+         'whatsapp_webhook_runtime', 'app.pending_send_contents',
+         'send_operation_id', 'SELECT'
+       ) AS can_select_pending_identity`,
+    );
+    expect(privileges.rows).toEqual([
+      { can_delete_pending: true, can_select_pending_identity: true },
+    ]);
+  });
+
   test("claims and projects connection state atomically across duplicates and reordering", async () => {
     const repository = makeWebhookEventRepository(webhookProvider);
     await repository.prepare(eventInput(firstEventId));

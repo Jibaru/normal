@@ -12,3 +12,5 @@ GRANT SELECT (id, public_id, personal_account_id, mcp_authorization_id,
   ON app.send_operations TO whatsapp_webhook_runtime;
 GRANT UPDATE (status, status_changed_at)
   ON app.send_operations TO whatsapp_webhook_runtime;
+GRANT SELECT (personal_account_id, send_operation_id), DELETE
+  ON app.pending_send_contents TO whatsapp_webhook_runtime;
