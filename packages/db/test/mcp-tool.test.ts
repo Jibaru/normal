@@ -265,12 +265,42 @@ describe("MCP tool repository", () => {
     ]);
   });
 
+  test("audits validation rejection without reserving request quota", async () => {
+    await expect(
+      repository.rejectToolCall({
+        ...authorization,
+        auditLogId: "50000000-0000-4000-8000-000000000033",
+        errorCode: "invalid_cursor",
+        observedAt,
+        toolName: "list_contacts",
+      }),
+    ).resolves.toBe("rejected");
+
+    const persisted = await database.query<{
+      error_code: string | null;
+      outcome: string;
+      quota_reserved: boolean;
+    }>(
+      `SELECT outcome, error_code, quota_reserved
+       FROM app.tool_call_logs
+       WHERE id = '50000000-0000-4000-8000-000000000033'`,
+    );
+    expect(persisted.rows).toEqual([
+      {
+        error_code: "invalid_cursor",
+        outcome: "execution_error",
+        quota_reserved: false,
+      },
+    ]);
+  });
+
   test("loads encrypted contact material only for the selected authorized Connection", async () => {
     await database.query(
       `INSERT INTO app.directory_contact_projections (
-         personal_account_id, whatsapp_connection_id, as_of, stale, partial
+         personal_account_id, whatsapp_connection_id, as_of, stale, partial,
+         snapshot_observed_at
        ) VALUES (
-         $1, '20000000-0000-4000-8000-000000000030', $2, false, false
+         $1, '20000000-0000-4000-8000-000000000030', $2, false, false, $2
        )`,
       [accountId, observedAt],
     );
@@ -326,15 +356,21 @@ describe("MCP tool repository", () => {
         searchIndex: `di1_${"n".repeat(43)}`,
         searchKind: "name",
       }),
-    ).resolves.toEqual([
-      expect.objectContaining({
-        displayNameCiphertext: expect.objectContaining({ keyVersion: 1 }),
-        displayNameSort: "ada",
-        phoneCiphertext: expect.objectContaining({ keyVersion: 1 }),
-        providerIdentityIndex: `di1_${"i".repeat(43)}`,
-        publicId: "ctc_123456789012345678901",
-      }),
-    ]);
+    ).resolves.toEqual({
+      asOf: observedAt.toISOString(),
+      contacts: [
+        expect.objectContaining({
+          displayNameCiphertext: expect.objectContaining({ keyVersion: 1 }),
+          displayNameSort: "ada",
+          phoneCiphertext: expect.objectContaining({ keyVersion: 1 }),
+          providerIdentityIndex: `di1_${"i".repeat(43)}`,
+          publicId: "ctc_123456789012345678901",
+        }),
+      ],
+      partial: false,
+      snapshotObservedAt: observedAt.toISOString(),
+      stale: false,
+    });
     await expect(
       repository.listEncryptedContacts({
         ...authorization,
@@ -346,7 +382,7 @@ describe("MCP tool repository", () => {
         searchIndex: null,
         searchKind: null,
       }),
-    ).resolves.toEqual([]);
+    ).resolves.toMatchObject({ contacts: [] });
     await expect(
       repository.loadContactReadMaterial({
         ...authorization,

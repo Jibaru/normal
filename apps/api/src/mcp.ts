@@ -19,7 +19,8 @@ import type {
   McpAccessAuthorization,
   McpToolConnectionRecord,
   McpToolContactReadMaterial,
-  McpToolEncryptedContactRecord,
+  McpToolEncryptedContactPage,
+  RejectToolCallResult,
 } from "@whatsapp-mcp/db/mcp-tool";
 import { createMcpHandler } from "agents/mcp/server";
 import { Context, Data, Effect, type Layer } from "effect";
@@ -99,9 +100,17 @@ export interface McpToolPersistenceService {
       readonly searchKind: "name" | "phone" | null;
     },
   ) => Effect.Effect<
-    ReadonlyArray<McpToolEncryptedContactRecord> | null,
+    McpToolEncryptedContactPage | null,
     McpToolPersistenceError
   >;
+  readonly rejectToolCall: (
+    input: McpAccessAuthorization & {
+      readonly auditLogId: string;
+      readonly errorCode: string;
+      readonly observedAt: Date;
+      readonly toolName: "list_connections" | "list_contacts";
+    },
+  ) => Effect.Effect<RejectToolCallResult, McpToolPersistenceError>;
 }
 
 export const McpToolPersistence = Context.GenericTag<McpToolPersistenceService>(
@@ -418,6 +427,14 @@ interface OpenContact {
   readonly publicId: string;
 }
 
+interface OpenContactPage {
+  readonly asOf: string;
+  readonly contacts: ReadonlyArray<OpenContact>;
+  readonly partial: boolean;
+  readonly snapshotObservedAt: string | null;
+  readonly stale: boolean;
+}
+
 const listContacts = (
   authorization: McpAccessAuthorization,
   input: z.infer<typeof ListContactsInput>,
@@ -461,8 +478,28 @@ const listContacts = (
         typeof decoded.right[1] !== "string" ||
         !/^ctc_[A-Za-z0-9_-]{21}$/u.test(decoded.right[1])
       ) {
-        yield* emitToolCompletion("list_contacts", "invalid_cursor");
-        return invalidCursor();
+        const auditLogId = yield* identifiers.nextAuditLogId;
+        const rejected = yield* persistence
+          .rejectToolCall({
+            ...authorization,
+            auditLogId,
+            errorCode: "invalid_cursor",
+            observedAt: startedAt,
+            toolName: "list_contacts",
+          })
+          .pipe(Effect.either);
+        const outcome =
+          rejected._tag === "Left"
+            ? ("audit_unavailable" as const)
+            : rejected.right === "authorization_denied"
+              ? ("authorization_denied" as const)
+              : ("invalid_cursor" as const);
+        yield* emitToolCompletion("list_contacts", outcome);
+        return rejected._tag === "Left"
+          ? auditUnavailable()
+          : rejected.right === "authorization_denied"
+            ? authorizationDenied()
+            : invalidCursor();
       }
       boundary = [decoded.right[0], decoded.right[1]];
     }
@@ -564,7 +601,7 @@ const listContacts = (
                   material.whatsappConnectionId,
                   normalizedSearch,
                 );
-          const encrypted = yield* persistence.listEncryptedContacts({
+          const encryptedPage = yield* persistence.listEncryptedContacts({
             ...authorization,
             connectionPublicId: input.connection_id,
             cursorDisplayNameSort: boundary?.[0] ?? null,
@@ -574,11 +611,11 @@ const listContacts = (
             searchIndex: search?.index ?? null,
             searchKind: search?.kind ?? null,
           });
-          if (encrypted === null) {
+          if (encryptedPage === null) {
             return null;
           }
-          return yield* Effect.forEach(
-            encrypted,
+          const contacts = yield* Effect.forEach(
+            encryptedPage.contacts,
             (contact) =>
               Effect.gen(function* () {
                 const common = {
@@ -622,6 +659,13 @@ const listContacts = (
               }),
             { concurrency: 16 },
           );
+          return {
+            asOf: encryptedPage.asOf,
+            contacts,
+            partial: encryptedPage.partial,
+            snapshotObservedAt: encryptedPage.snapshotObservedAt,
+            stale: encryptedPage.stale,
+          } satisfies OpenContactPage;
         }),
       (identityBytes) =>
         Effect.sync(() => {
@@ -634,9 +678,10 @@ const listContacts = (
     if (openedResult.right === null) {
       return yield* failAfterAudit("authorization_denied", true);
     }
+    const openedPage = openedResult.right;
 
-    const hasMore = openedResult.right.length > input.limit;
-    const page = openedResult.right.slice(0, input.limit);
+    const hasMore = openedPage.contacts.length > input.limit;
+    const page = openedPage.contacts.slice(0, input.limit);
     const last = page.at(-1);
     const nextCursorResult =
       hasMore && last !== undefined
@@ -655,11 +700,14 @@ const listContacts = (
     if (nextCursorResult._tag === "Left") {
       return yield* failAfterAudit("service_unavailable");
     }
-    const asOf = new Date(material.asOf);
+    const snapshotObservedAt =
+      openedPage.snapshotObservedAt === null
+        ? null
+        : new Date(openedPage.snapshotObservedAt);
     const outputResult = Effect.try({
       try: () =>
         ListContactsOutputContract.decodeUnknown({
-          as_of: material.asOf,
+          as_of: openedPage.asOf,
           contacts: page.map((contact) => ({
             contact_id: contact.publicId,
             display_name: contact.displayName,
@@ -667,11 +715,13 @@ const listContacts = (
           })),
           has_more: hasMore,
           next_cursor: nextCursorResult.right,
-          partial: material.partial,
+          partial: openedPage.partial,
           stale:
-            material.stale ||
-            !Number.isFinite(asOf.valueOf()) ||
-            startedAt.valueOf() - asOf.valueOf() > 10 * 60 * 1_000,
+            openedPage.stale ||
+            snapshotObservedAt === null ||
+            !Number.isFinite(snapshotObservedAt.valueOf()) ||
+            startedAt.valueOf() - snapshotObservedAt.valueOf() >
+              10 * 60 * 1_000,
         }),
       catch: () => new McpToolPersistenceError(),
     });

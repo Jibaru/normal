@@ -98,9 +98,16 @@ const responseMessages = async (
 const makeHarness = (
   overrides: {
     readonly beginResult?: BeginToolCallResult;
+    readonly contactPage?: {
+      readonly asOf: string;
+      readonly partial: boolean;
+      readonly snapshotObservedAt: string | null;
+      readonly stale: boolean;
+    };
     readonly failBegin?: boolean;
     readonly failComplete?: boolean;
     readonly failInspect?: boolean;
+    readonly failReject?: boolean;
     readonly scopes?: ReadonlyArray<
       "connections:read" | "directory:read" | "messages:read" | "messages:send"
     >;
@@ -247,8 +254,14 @@ const makeHarness = (
         ].sort((left, right) =>
           left.displayNameSort.localeCompare(right.displayNameSort),
         );
-        return Effect.succeed(
-          contacts
+        return Effect.succeed({
+          ...(overrides.contactPage ?? {
+            asOf: "2026-07-30T12:00:00.000Z",
+            partial: false,
+            snapshotObservedAt: "2026-07-30T12:00:00.000Z",
+            stale: false,
+          }),
+          contacts: contacts
             .filter(
               (contact) =>
                 input.cursorDisplayNameSort === null ||
@@ -257,6 +270,22 @@ const makeHarness = (
                   contact.publicId > (input.cursorPublicId ?? "")),
             )
             .slice(0, input.limit),
+        });
+      },
+      rejectToolCall: (input) => {
+        observations.push("reject");
+        if (overrides.failReject) {
+          return Effect.fail(new McpToolPersistenceError());
+        }
+        const requiredScope =
+          input.toolName === "list_contacts"
+            ? "directory:read"
+            : "connections:read";
+        return Effect.succeed(
+          overrides.scopes !== undefined &&
+            !overrides.scopes.includes(requiredScope)
+            ? ("authorization_denied" as const)
+            : ("rejected" as const),
         );
       },
     }),
@@ -689,6 +718,60 @@ describe("stateless MCP list_connections boundary", () => {
         },
       },
     });
+  });
+
+  test("keeps provider reconciliation staleness visible when webhooks advance as_of", async () => {
+    const harness = makeHarness({
+      contactPage: {
+        asOf: "2026-07-31T12:00:00.000Z",
+        partial: false,
+        snapshotObservedAt: "2026-07-31T11:40:00.000Z",
+        stale: false,
+      },
+      scopes: ["directory:read"],
+    });
+    const response = await harness.handler(
+      jsonRpcRequest("tools/call", {
+        arguments: { connection_id: "con_123456789012345678901" },
+        name: "list_contacts",
+      }),
+      {},
+      executionContext,
+      authorization,
+    );
+
+    expect(await response.json()).toMatchObject({
+      result: {
+        structuredContent: {
+          as_of: "2026-07-31T12:00:00.000Z",
+          stale: true,
+        },
+      },
+    });
+  });
+
+  test("audits invalid cursors without reserving request quota", async () => {
+    const harness = makeHarness({ scopes: ["directory:read"] });
+    const response = await harness.handler(
+      jsonRpcRequest("tools/call", {
+        arguments: {
+          connection_id: "con_123456789012345678901",
+          cursor: "not-a-cursor",
+        },
+        name: "list_contacts",
+      }),
+      {},
+      executionContext,
+      authorization,
+    );
+
+    expect(await response.json()).toMatchObject({
+      result: {
+        isError: true,
+        structuredContent: { error_code: "invalid_cursor" },
+      },
+    });
+    expect(harness.observations).toEqual(["reject"]);
   });
 
   test("audits direct list_contacts calls and withholds Directory data when completion fails", async () => {

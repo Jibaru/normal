@@ -79,6 +79,14 @@ export interface McpToolEncryptedContactRecord {
   readonly publicId: string;
 }
 
+export interface McpToolEncryptedContactPage {
+  readonly asOf: string;
+  readonly contacts: ReadonlyArray<McpToolEncryptedContactRecord>;
+  readonly partial: boolean;
+  readonly snapshotObservedAt: string | null;
+  readonly stale: boolean;
+}
+
 export type BeginToolCallResult =
   | {
       readonly auditLogId: string;
@@ -90,6 +98,8 @@ export type BeginToolCallResult =
       readonly resetsAt: Date;
       readonly retryAfterSeconds: number;
     };
+
+export type RejectToolCallResult = "authorization_denied" | "rejected";
 
 export interface McpToolRepository {
   readonly beginToolCall: (
@@ -132,7 +142,15 @@ export interface McpToolRepository {
       readonly searchIndex: string | null;
       readonly searchKind: "name" | "phone" | null;
     },
-  ) => Promise<ReadonlyArray<McpToolEncryptedContactRecord> | null>;
+  ) => Promise<McpToolEncryptedContactPage | null>;
+  readonly rejectToolCall: (
+    input: McpAccessAuthorization & {
+      readonly auditLogId: string;
+      readonly errorCode: string;
+      readonly observedAt: Date;
+      readonly toolName: "list_connections" | "list_contacts";
+    },
+  ) => Promise<RejectToolCallResult>;
 }
 
 const withTransaction = async <Value>(
@@ -350,7 +368,11 @@ const insertToolCallLog = (
     readonly completed: boolean;
     readonly errorCode: string | null;
     readonly observedAt: Date;
-    readonly outcome: "started" | "rate_limited" | "authorization_denied";
+    readonly outcome:
+      | "started"
+      | "execution_error"
+      | "rate_limited"
+      | "authorization_denied";
     readonly personalAccountId: string;
     readonly quotaReserved: boolean;
     readonly toolName: string;
@@ -634,11 +656,55 @@ export const makeMcpToolRepository = (
         ) {
           throw new Error("invalid MCP contact query");
         }
+        await connection.query(
+          "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+        );
         if ((await enterAuthorizationContext(connection, input)) === null) {
           return null;
         }
         const scopes = await loadAuthorizationScopes(connection, input);
         if (scopes === null || !scopes.includes("directory:read")) return null;
+        const projectionResult = await connection.query<{
+          projection_as_of: unknown;
+          projection_partial: unknown;
+          projection_snapshot_observed_at: unknown;
+          projection_stale: unknown;
+        }>(
+          `SELECT
+             coalesce(projections.as_of, connections.created_at)
+               AS projection_as_of,
+             coalesce(projections.stale, true) AS projection_stale,
+             coalesce(projections.partial, true) AS projection_partial,
+             projections.snapshot_observed_at
+               AS projection_snapshot_observed_at
+           FROM app.mcp_authorization_connections AS selected
+           JOIN app.whatsapp_connections AS connections
+             ON connections.personal_account_id = selected.personal_account_id
+            AND connections.id = selected.whatsapp_connection_id
+           LEFT JOIN app.directory_contact_projections AS projections
+             ON projections.personal_account_id = connections.personal_account_id
+            AND projections.whatsapp_connection_id = connections.id
+           WHERE selected.mcp_authorization_id = $1
+             AND connections.public_id = $2
+             AND connections.state <> 'deleting'`,
+          [input.authorizationId, input.connectionPublicId],
+        );
+        const projection = projectionResult.rows[0];
+        const asOf = timestampString(projection?.projection_as_of);
+        const snapshotObservedAt =
+          projection?.projection_snapshot_observed_at === null
+            ? null
+            : timestampString(projection?.projection_snapshot_observed_at);
+        if (
+          projection === undefined ||
+          asOf === null ||
+          typeof projection.projection_stale !== "boolean" ||
+          typeof projection.projection_partial !== "boolean" ||
+          (projection.projection_snapshot_observed_at !== null &&
+            snapshotObservedAt === null)
+        ) {
+          throw new Error("invalid MCP Directory projection metadata");
+        }
         const result = await connection.query<{
           display_name_ciphertext: unknown;
           display_name_ciphertext_version: unknown;
@@ -732,7 +798,7 @@ export const makeMcpToolRepository = (
             version: 1,
           };
         };
-        return result.rows.map((row) => {
+        const contacts = result.rows.map((row) => {
           if (
             typeof row.public_id !== "string" ||
             !/^ctc_[A-Za-z0-9_-]{21}$/u.test(row.public_id) ||
@@ -750,6 +816,53 @@ export const makeMcpToolRepository = (
             publicId: row.public_id,
           };
         });
+        return {
+          asOf,
+          contacts,
+          partial: projection.projection_partial,
+          snapshotObservedAt,
+          stale: projection.projection_stale,
+        };
+      }),
+    ),
+  rejectToolCall: (input) =>
+    provider.withConnection((connection) =>
+      withTransaction(connection, async () => {
+        const personalAccountId = await enterAuthorizationContext(
+          connection,
+          input,
+        );
+        if (personalAccountId === null) return "authorization_denied" as const;
+        const scopes = await loadAuthorizationScopes(connection, input);
+        if (
+          scopes === null ||
+          !scopes.includes(requiredScope(input.toolName))
+        ) {
+          await insertToolCallLog(connection, {
+            auditLogId: input.auditLogId,
+            authorizationId: input.authorizationId,
+            completed: true,
+            errorCode: "authorization_denied",
+            observedAt: input.observedAt,
+            outcome: "authorization_denied",
+            personalAccountId,
+            quotaReserved: false,
+            toolName: input.toolName,
+          });
+          return "authorization_denied" as const;
+        }
+        await insertToolCallLog(connection, {
+          auditLogId: input.auditLogId,
+          authorizationId: input.authorizationId,
+          completed: true,
+          errorCode: input.errorCode,
+          observedAt: input.observedAt,
+          outcome: "execution_error",
+          personalAccountId,
+          quotaReserved: false,
+          toolName: input.toolName,
+        });
+        return "rejected" as const;
       }),
     ),
   completeToolCall: (input) =>
