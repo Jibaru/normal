@@ -24,11 +24,17 @@ import {
   type DirectoryRepository,
   makePgDirectoryRepository,
 } from "@whatsapp-mcp/db/directory";
-import { makePgGroupRepository } from "@whatsapp-mcp/db/group";
+import {
+  type GroupRepository,
+  makePgGroupRepository,
+} from "@whatsapp-mcp/db/group";
 import { makePgMcpAuthorizationRepository } from "@whatsapp-mcp/db/mcp-authorization";
 import { makePgMcpToolRepository } from "@whatsapp-mcp/db/mcp-tool";
 import { makePgMessageRetentionRepository } from "@whatsapp-mcp/db/message-retention";
-import { makePgPersonalAccountRepository } from "@whatsapp-mcp/db/personal-account";
+import {
+  makePgPersonalAccountRepository,
+  type PersonalAccountRepository,
+} from "@whatsapp-mcp/db/personal-account";
 import {
   type AtomicSendRepository,
   makePgAtomicSendRepositoryFromConnectionString,
@@ -2960,6 +2966,17 @@ export const createProductionScheduledHandler =
         | "failContactReconciliation"
         | "finishContactReconciliation"
       >;
+      readonly makeGroupRepository?: (
+        connectionString: string,
+      ) => Pick<GroupRepository, "claim">;
+      readonly makePersonalAccountRepository?: (
+        connectionString: string,
+      ) => Pick<
+        PersonalAccountRepository,
+        | "listDeletionPurgeCandidates"
+        | "purgeDeletion"
+        | "purgeExpiredDeletionRecords"
+      >;
       readonly makeRepository?: (
         connectionString: string,
       ) => ConnectionSetupScheduledRepository;
@@ -2989,7 +3006,9 @@ export const createProductionScheduledHandler =
       if (typeof connectionString !== "string") {
         throw new Error("group Directory reconciliation unavailable");
       }
-      const repository = makePgGroupRepository(connectionString);
+      const repository = (
+        dependencies.makeGroupRepository ?? makePgGroupRepository
+      )(connectionString);
       const claimedAt = new Date(controller.scheduledTime).toISOString();
       const layer = Layer.mergeAll(
         encryptionLayer(environment),
@@ -3055,8 +3074,10 @@ export const createProductionScheduledHandler =
       await (
         dependencies.purgePersonalAccounts ??
         (async (value) => {
-          const accountRepository =
-            makePgPersonalAccountRepository(connectionString);
+          const accountRepository = (
+            dependencies.makePersonalAccountRepository ??
+            makePgPersonalAccountRepository
+          )(connectionString);
           while (true) {
             const candidates =
               await accountRepository.listDeletionPurgeCandidates({
@@ -3064,12 +3085,22 @@ export const createProductionScheduledHandler =
                 observedAt: value,
               });
             await Promise.all(
-              candidates.map((candidate) =>
-                accountRepository.purgeDeletion({
+              candidates.map((candidate) => {
+                if (candidate.deadlineRisk) {
+                  Effect.runSync(
+                    safeTelemetry.emit({
+                      deadlineAt: candidate.deadlineAt,
+                      event: "personal_account.deletion.deadline_risk",
+                      marker: candidate.deletionMarkerId,
+                      service: "api",
+                    }),
+                  );
+                }
+                return accountRepository.purgeDeletion({
                   completedAt: value,
                   deletionMarkerId: candidate.deletionMarkerId,
-                }),
-              ),
+                });
+              }),
             );
             if (candidates.length < 100) break;
           }

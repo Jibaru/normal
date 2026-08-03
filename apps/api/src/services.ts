@@ -202,6 +202,13 @@ export interface WhatsAppConnectionDeletionDeadlineRiskEvent {
   readonly service: "api";
 }
 
+export interface PersonalAccountDeletionDeadlineRiskEvent {
+  readonly deadlineAt: string;
+  readonly event: "personal_account.deletion.deadline_risk";
+  readonly marker: string;
+  readonly service: "api";
+}
+
 export interface ConnectionHealthReconciliationCompletedEvent {
   readonly event: "connection_health.reconciliation.completed";
   readonly gapEvidence:
@@ -375,6 +382,7 @@ export type SafeTelemetryEvent =
   | OAuthRefreshCompletedEvent
   | PersonalAccountBootstrapCompletedEvent
   | PersonalAccountDeletionCompletedEvent
+  | PersonalAccountDeletionDeadlineRiskEvent
   | ProviderDirectoryCompletedEvent
   | ProviderTextSendCompletedEvent
   | SendDispatchLeaseSweepCompletedEvent
