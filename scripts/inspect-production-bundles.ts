@@ -6,11 +6,15 @@ const forbiddenMarkers = [
   "TEST_FAULT_INJECTOR_DO_NOT_INCLUDE_IN_PRODUCTION",
   "signed-test-user",
   "x-test-failure",
+  "temporary-secret",
+  "test-webhook-secret",
+  "connection-webhook-secret",
 ] as const;
 const roots = [
   "apps/api/dist",
   "apps/deletion-coordinator/dist",
   "apps/provider-control/dist",
+  "apps/restore-coordinator/dist",
   "apps/web/.next/server",
   "apps/web/.next/static",
 ];
@@ -22,14 +26,14 @@ const inspect = async (path: string): Promise<void> => {
       await inspect(entryPath);
       continue;
     }
-    if (!entry.isFile() || entry.name.endsWith(".map")) {
+    if (!entry.isFile()) {
       continue;
     }
     const contents = await Bun.file(entryPath).text();
     for (const marker of forbiddenMarkers) {
       if (contents.includes(marker)) {
         throw new Error(
-          `Test-only marker ${JSON.stringify(marker)} found in production output: ${entryPath}`,
+          `Prohibited plaintext found at production artifact ${entryPath}`,
         );
       }
     }
@@ -48,12 +52,12 @@ const inspectForForbiddenAuthority = async (
       await inspectForForbiddenAuthority(entryPath, forbiddenValues);
       continue;
     }
-    if (!entry.isFile() || entry.name.endsWith(".map")) continue;
+    if (!entry.isFile()) continue;
     const contents = await Bun.file(entryPath).text();
     for (const forbiddenValue of forbiddenValues) {
       if (contents.includes(forbiddenValue)) {
         throw new Error(
-          `Forbidden production authority ${forbiddenValue} found in ${entryPath}`,
+          `Forbidden production authority reference found at production artifact ${entryPath}`,
         );
       }
     }
@@ -94,5 +98,5 @@ await Promise.all([
   ]),
 ]);
 console.info(
-  "Production outputs contain no test Layers, fakes, or fault injectors.",
+  "Production outputs and source maps contain no prohibited plaintext, test Layers, fakes, or fault injectors.",
 );

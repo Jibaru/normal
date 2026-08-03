@@ -84,9 +84,11 @@ bun run manifests:validate
 bun run infra:validate
 ```
 
-`bun run build` performs Wrangler dry-run production bundles for both Workers,
-builds the Next.js application, and rejects any production server or browser
-output containing a test Layer, controlled credential, or fault injector.
+`bun run build` performs Wrangler dry-run production bundles for every Worker,
+builds the Next.js application, and rejects any production output or source map
+containing a test Layer, controlled credential, fixture secret, or fault
+injector. Findings identify only the artifact path and never print matched
+plaintext.
 `bun run test` includes the production-built Playwright browser-to-API journey,
 the Cloudflare fetch, OAuth/MCP, protected-resource, binding, Queue, and
 scheduled-handler harnesses, and the production-migration restricted-role

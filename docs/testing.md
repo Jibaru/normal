@@ -123,9 +123,10 @@ Provider API Credential, or production data.
 
 ## Production exclusion
 
-`bun run build` inspects both Worker outputs plus Next.js server and browser
-chunks. The build fails if any test Layer, controlled identity credential, or
-fault-injection marker is present. Production configuration accepts only
+`bun run build` inspects every Worker output, source map, and Next.js server and
+browser chunk. The build fails if any test Layer, controlled identity
+credential, fixture secret, or fault-injection marker is present. A failure
+reports only the artifact path, never the matched plaintext. Production configuration accepts only
 `development`, `preview`, or `production`; no production build variable,
 runtime flag, component alias, header, or query parameter can select a test
 composition root.

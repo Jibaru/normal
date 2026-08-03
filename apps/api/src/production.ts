@@ -189,6 +189,7 @@ import {
   PersonalAccountDeletionPersistence,
   PersonalAccountDeletionPersistenceError,
 } from "./personal-account-deletion";
+import { serializeSafeTelemetry } from "./safe-telemetry";
 import {
   importSendFingerprintKey,
   makeAtomicSendTextMessageService,
@@ -2314,7 +2315,7 @@ const deletionLayer = (environment: ApiEnvironment) =>
 
 const safeTelemetry = {
   emit: (event: SafeTelemetryEvent) =>
-    Effect.sync(() => console.info(JSON.stringify(event))),
+    Effect.sync(() => console.info(serializeSafeTelemetry(event))),
 } satisfies SafeTelemetry;
 
 const telemetryLayer = Layer.succeed(SafeTelemetry, safeTelemetry);
