@@ -6,6 +6,7 @@ MCP_REQUESTS_PER_MINUTE=replace-with-approved-minute-request-limit
 SENDS_PER_MINUTE=replace-with-approved-send-minute-limit
 SENDS_PER_DAY=replace-with-approved-daily-send-limit
 MCP_REQUESTS_PER_HOUR=replace-with-approved-hour-request-limit
+READ_MESSAGE_RECORDS_PER_DAY=replace-with-approved-daily-returned-record-limit
 KMS_CONTENT_ROOT_KEY_ARN=arn:aws:kms:us-east-1:111122223333:key/replace-with-content-root-key-id
 KMS_DELETION_COORDINATOR_KEY_ARN=arn:aws:kms:us-east-1:111122223333:key/replace-with-deletion-coordinator-key-id
 

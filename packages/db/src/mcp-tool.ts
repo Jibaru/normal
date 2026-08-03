@@ -40,7 +40,44 @@ export type McpToolName =
   | "list_contacts"
   | "list_groups"
   | "send_text_message"
-  | "list_chats";
+  | "list_chats"
+  | "read_messages";
+
+export interface McpToolMessageRecord {
+  readonly publicId: string;
+  readonly messageIdentity: string;
+  readonly sentAt: string;
+  readonly direction: "inbound" | "outbound";
+  readonly conversationKind: "direct" | "group";
+  readonly contentType:
+    | "audio"
+    | "document"
+    | "image"
+    | "sticker"
+    | "text"
+    | "unknown"
+    | "video";
+  readonly content: McpToolDirectoryCiphertext;
+}
+export interface McpToolMessagePage {
+  readonly accountKey: AccountKeyEnvelope;
+  readonly connectionKey: ConnectionKeyEnvelope;
+  readonly messages: ReadonlyArray<McpToolMessageRecord>;
+  readonly hasOlder: boolean;
+  readonly sizeLimited: boolean;
+  readonly historyStartsAt: string;
+  readonly historyStartReason: "connection_started" | "retention_policy";
+  readonly gaps: ReadonlyArray<{
+    readonly startsAt: string;
+    readonly endsAt: string | null;
+    readonly cause:
+      | "connection_unavailable"
+      | "webhook_configuration"
+      | "ingress_failure"
+      | "processing_failure"
+      | "restore_loss";
+  }>;
+}
 
 export interface McpToolChatRecord {
   readonly conversationId: string;
@@ -215,6 +252,22 @@ export interface McpToolRepository {
       readonly observedAt: Date;
     },
   ) => Promise<McpToolChatPage | null>;
+  readonly readMessages: (
+    input: McpAccessAuthorization & {
+      readonly auditLogId: string;
+      readonly connectionPublicId: string;
+      readonly conversationPublicId: string;
+      readonly cursorSentAt: string | null;
+      readonly cursorPublicId: string | null;
+      readonly dailyRecordLimit: number;
+      readonly limit: number;
+      readonly observedAt: Date;
+    },
+  ) => Promise<
+    | { readonly outcome: "success"; readonly page: McpToolMessagePage }
+    | { readonly outcome: "record_quota_exhausted"; readonly resetsAt: Date }
+    | null
+  >;
   readonly loadGroupSearchMaterial: (
     input: McpAccessAuthorization & {
       readonly connectionPublicId: string;
@@ -690,7 +743,9 @@ const requiredScope = (toolName: McpToolName): McpAuthorizationScope =>
       ? "messages:send"
       : toolName === "list_chats"
         ? "messages:read"
-        : "directory:read";
+        : toolName === "read_messages"
+          ? "messages:read"
+          : "directory:read";
 
 export const makeMcpToolRepository = (
   provider: McpToolConnectionProvider,
@@ -1025,6 +1080,257 @@ export const makeMcpToolRepository = (
               lastActivityDirection: row.last_activity_direction,
             };
           }),
+        };
+      }),
+    ),
+  readMessages: (input) =>
+    provider.withConnection((connection) =>
+      withTransaction(connection, async () => {
+        if (
+          !/^con_[A-Za-z0-9_-]{21}$/u.test(input.connectionPublicId) ||
+          !/^cvs_[A-Za-z0-9_-]{21}$/u.test(input.conversationPublicId) ||
+          !Number.isSafeInteger(input.limit) ||
+          input.limit < 1 ||
+          input.limit > 51 ||
+          !Number.isSafeInteger(input.dailyRecordLimit) ||
+          input.dailyRecordLimit < 1 ||
+          (input.cursorSentAt === null) !== (input.cursorPublicId === null) ||
+          (input.cursorPublicId !== null &&
+            !/^msg_[A-Za-z0-9_-]{21}$/u.test(input.cursorPublicId))
+        )
+          throw new Error("invalid MCP message query");
+        const accountId = await enterAuthorizationContext(connection, input);
+        if (accountId === null) return null;
+        const scopes = await loadAuthorizationScopes(connection, input);
+        if (scopes === null || !scopes.includes("messages:read")) return null;
+        await connection.query(
+          "SELECT id FROM app.personal_accounts WHERE id=$1 FOR UPDATE",
+          [accountId],
+        );
+        const materialResult = await connection.query<Record<string, unknown>>(
+          `SELECT * FROM app_private.load_mcp_message_read_material($1, $2, $3, $4, $5, $6)`,
+          [
+            input.authorizationId,
+            input.oauthSubject,
+            input.clientId ?? null,
+            input.observedAt,
+            input.connectionPublicId,
+            input.conversationPublicId,
+          ],
+        );
+        const row = materialResult.rows[0];
+        const connectionId =
+          typeof row?.connection_id === "string" ? row.connection_id : null;
+        const materialRow = row;
+        const accountCiphertext = bytes(materialRow?.account_key_ciphertext);
+        const accountKeyVersion = positiveInteger(
+          materialRow?.account_key_version,
+        );
+        const connectionAccountKeyVersion = positiveInteger(
+          materialRow?.connection_key_account_version,
+        );
+        const connectionCiphertext = bytes(
+          materialRow?.connection_key_ciphertext,
+        );
+        const connectionKeyVersion = positiveInteger(
+          materialRow?.connection_key_version,
+        );
+        const connectionNonce = bytes(materialRow?.connection_key_nonce);
+        const material =
+          connectionId === null ||
+          typeof materialRow?.account_kms_key_id !== "string" ||
+          accountCiphertext === null ||
+          accountKeyVersion === null ||
+          connectionAccountKeyVersion === null ||
+          connectionCiphertext === null ||
+          connectionKeyVersion === null ||
+          connectionNonce?.byteLength !== 12
+            ? null
+            : {
+                accountKey: {
+                  ciphertext: base64(accountCiphertext),
+                  keyVersion: accountKeyVersion,
+                  kmsKeyId: materialRow.account_kms_key_id,
+                  personalAccountId: accountId,
+                  version: 1 as const,
+                },
+                connectionKey: {
+                  accountKeyVersion: connectionAccountKeyVersion,
+                  ciphertext: base64(connectionCiphertext),
+                  connectionId,
+                  keyVersion: connectionKeyVersion,
+                  nonce: base64(connectionNonce),
+                  personalAccountId: accountId,
+                  version: 1 as const,
+                },
+              };
+        const connectionStarted = timestamp(row?.connection_created_at);
+        const retentionDays = positiveInteger(row?.message_retention_days);
+        if (
+          material === null ||
+          connectionStarted === null ||
+          retentionDays === null
+        )
+          return null;
+        const retentionStart = new Date(
+          input.observedAt.valueOf() - retentionDays * 86_400_000,
+        );
+        const historyStart =
+          retentionStart > connectionStarted
+            ? retentionStart
+            : connectionStarted;
+        const rows = await connection.query<Record<string, unknown>>(
+          `SELECT messages.public_id, messages.message_identity, messages.sent_at, messages.direction,
+             messages.content_type, messages.content_ciphertext_version, messages.content_key_version,
+             messages.content_nonce, messages.content_ciphertext, conversations.kind
+           FROM app.stored_messages messages
+           JOIN app.whatsapp_conversations conversations ON conversations.personal_account_id=messages.personal_account_id AND conversations.whatsapp_connection_id=messages.whatsapp_connection_id AND conversations.id=messages.conversation_id
+           WHERE messages.personal_account_id=$1 AND messages.whatsapp_connection_id=$2
+             AND conversations.public_id=$3 AND messages.sent_at >= $4
+             AND ($5::timestamptz IS NULL OR messages.sent_at < $5 OR (messages.sent_at=$5 AND messages.public_id < $6))
+           ORDER BY messages.sent_at DESC, messages.public_id DESC LIMIT $7`,
+          [
+            accountId,
+            material.connectionKey.connectionId,
+            input.conversationPublicId,
+            historyStart,
+            input.cursorSentAt,
+            input.cursorPublicId,
+            input.limit + 1,
+          ],
+        );
+        const used = await connection.query<{ count: unknown }>(
+          `SELECT coalesce(sum(result_count),0)::int AS count FROM app.tool_call_logs
+           WHERE personal_account_id=$1 AND tool_name='read_messages' AND outcome='success'
+             AND started_at >= (date_trunc('day',$2::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')
+             AND started_at < (date_trunc('day',$2::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') + interval '1 day'`,
+          [accountId, input.observedAt],
+        );
+        const usedCount = Number(used.rows[0]?.count);
+        if (!Number.isSafeInteger(usedCount))
+          throw new Error("invalid returned-record quota");
+        const candidateRows = rows.rows.slice(0, input.limit);
+        const returnedRows: Array<Record<string, unknown>> = [];
+        let encryptedBytes = 0;
+        for (const candidate of candidateRows) {
+          const ciphertext = bytes(candidate.content_ciphertext);
+          if (ciphertext === null)
+            throw new Error("invalid Stored Message ciphertext");
+          if (
+            returnedRows.length > 0 &&
+            encryptedBytes + ciphertext.byteLength > 24_000
+          )
+            break;
+          returnedRows.push(candidate);
+          encryptedBytes += ciphertext.byteLength;
+        }
+        if (usedCount + returnedRows.length > input.dailyRecordLimit) {
+          return {
+            outcome: "record_quota_exhausted" as const,
+            resetsAt: new Date(
+              Date.UTC(
+                input.observedAt.getUTCFullYear(),
+                input.observedAt.getUTCMonth(),
+                input.observedAt.getUTCDate() + 1,
+              ),
+            ),
+          };
+        }
+        const messages = returnedRows.map((message): McpToolMessageRecord => {
+          const sentAt = timestampString(message.sent_at);
+          const ciphertext = bytes(message.content_ciphertext);
+          const nonce = bytes(message.content_nonce);
+          const keyVersion = positiveInteger(message.content_key_version);
+          if (
+            typeof message.public_id !== "string" ||
+            typeof message.message_identity !== "string" ||
+            sentAt === null ||
+            (message.direction !== "inbound" &&
+              message.direction !== "outbound") ||
+            (message.kind !== "direct" && message.kind !== "group") ||
+            typeof message.content_type !== "string" ||
+            ![
+              "audio",
+              "document",
+              "image",
+              "sticker",
+              "text",
+              "unknown",
+              "video",
+            ].includes(message.content_type) ||
+            message.content_ciphertext_version !== 1 ||
+            ciphertext === null ||
+            nonce === null ||
+            keyVersion === null
+          )
+            throw new Error("invalid Stored Message");
+          return {
+            publicId: message.public_id,
+            messageIdentity: message.message_identity,
+            sentAt,
+            direction: message.direction,
+            conversationKind: message.kind,
+            contentType:
+              message.content_type as McpToolMessageRecord["contentType"],
+            content: {
+              ciphertext: base64(ciphertext),
+              keyVersion,
+              nonce: base64(nonce),
+              version: 1,
+            },
+          };
+        });
+        const newest = messages[0]?.sentAt ?? input.observedAt.toISOString();
+        const gapsResult = await connection.query<Record<string, unknown>>(
+          `SELECT starts_at, ends_at, cause FROM app.ingestion_gaps WHERE personal_account_id=$1 AND whatsapp_connection_id=$2
+             AND starts_at <= $3 AND (ends_at IS NULL OR ends_at >= $4) ORDER BY starts_at, id`,
+          [
+            accountId,
+            material.connectionKey.connectionId,
+            newest,
+            historyStart,
+          ],
+        );
+        const gaps = gapsResult.rows.map((gap) => {
+          const startsAt = timestampString(gap.starts_at);
+          const endsAt =
+            gap.ends_at === null ? null : timestampString(gap.ends_at);
+          if (
+            startsAt === null ||
+            (gap.ends_at !== null && endsAt === null) ||
+            typeof gap.cause !== "string"
+          )
+            throw new Error("invalid Ingestion Gap");
+          return {
+            startsAt,
+            endsAt,
+            cause: gap.cause as McpToolMessagePage["gaps"][number]["cause"],
+          };
+        });
+        const updated = await connection.query(
+          `UPDATE app.tool_call_logs SET completed_at=$2,outcome='success',error_code=NULL,result_count=$3,
+             latency_ms=GREATEST(0,floor(extract(epoch FROM ($2::timestamptz-started_at))*1000))::integer
+           WHERE id=$1 AND outcome='started' RETURNING id`,
+          [input.auditLogId, input.observedAt, messages.length],
+        );
+        if (updated.rows.length !== 1)
+          throw new Error("Tool Call Log completion unavailable");
+        return {
+          outcome: "success" as const,
+          page: {
+            ...material,
+            messages,
+            hasOlder: rows.rows.length > returnedRows.length,
+            sizeLimited:
+              returnedRows.length < candidateRows.length ||
+              encryptedBytes > 24_000,
+            historyStartsAt: historyStart.toISOString(),
+            historyStartReason:
+              historyStart === retentionStart
+                ? ("retention_policy" as const)
+                : ("connection_started" as const),
+            gaps,
+          },
         };
       }),
     ),
@@ -1438,7 +1744,7 @@ export const makeMcpToolRepository = (
                floor(extract(epoch FROM ($2::timestamptz - started_at)) * 1000)
              )::integer
            WHERE id = $1
-             AND outcome = 'started'
+             AND (outcome = 'started' OR (tool_name = 'read_messages' AND outcome = 'success' AND $3 = 'execution_error'))
            RETURNING id`,
           [
             input.auditLogId,

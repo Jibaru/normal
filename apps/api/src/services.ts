@@ -251,7 +251,8 @@ export interface McpToolCallCompletedEvent {
     | "list_contacts"
     | "list_groups"
     | "send_text_message"
-    | "list_chats";
+    | "list_chats"
+    | "read_messages";
 }
 
 export interface GroupDirectoryReconciliationCompletedEvent {

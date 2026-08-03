@@ -179,6 +179,7 @@ describe("API production root", () => {
     "OAUTH_RESOURCE",
     "MCP_REQUESTS_PER_HOUR",
     "MCP_REQUESTS_PER_MINUTE",
+    "READ_MESSAGE_RECORDS_PER_DAY",
     "MCP_CURSOR_HMAC_SECRET",
     "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
   ] as const)("fails closed when %s is absent", async (configuration) => {
@@ -235,6 +236,7 @@ describe("API production root", () => {
     ["MCP_REQUESTS_PER_MINUTE", "1.5"],
     ["MCP_REQUESTS_PER_HOUR", "0"],
     ["MCP_REQUESTS_PER_HOUR", "59"],
+    ["READ_MESSAGE_RECORDS_PER_DAY", "0"],
   ] as const)("fails closed when %s is %s", async (name, value) => {
     const response = await createProductionHandler({
       ...validEnvironment(),

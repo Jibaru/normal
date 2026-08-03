@@ -25,6 +25,7 @@
     "PROVIDER_APPROVED_SESSION_CAPACITY": "replace-with-approved-session-capacity",
     "MCP_REQUESTS_PER_MINUTE": "replace-with-approved-minute-request-limit",
     "MCP_REQUESTS_PER_HOUR": "replace-with-approved-hour-request-limit",
+    "READ_MESSAGE_RECORDS_PER_DAY": "replace-with-approved-daily-returned-record-limit",
     "SENDS_PER_MINUTE": "replace-with-approved-send-minute-limit",
     "SENDS_PER_DAY": "replace-with-approved-daily-send-limit"
   },
@@ -131,7 +132,8 @@
         "DEPLOYMENT_ENVIRONMENT": "development",
         "PROVIDER_APPROVED_SESSION_CAPACITY": "replace-with-approved-session-capacity",
         "MCP_REQUESTS_PER_MINUTE": "replace-with-approved-minute-request-limit",
-        "MCP_REQUESTS_PER_HOUR": "replace-with-approved-hour-request-limit"
+        "MCP_REQUESTS_PER_HOUR": "replace-with-approved-hour-request-limit",
+        "READ_MESSAGE_RECORDS_PER_DAY": "replace-with-approved-daily-returned-record-limit"
       },
       "secrets": {
         "required": [
@@ -236,7 +238,8 @@
         "DEPLOYMENT_ENVIRONMENT": "preview",
         "PROVIDER_APPROVED_SESSION_CAPACITY": "replace-with-approved-session-capacity",
         "MCP_REQUESTS_PER_MINUTE": "replace-with-approved-minute-request-limit",
-        "MCP_REQUESTS_PER_HOUR": "replace-with-approved-hour-request-limit"
+        "MCP_REQUESTS_PER_HOUR": "replace-with-approved-hour-request-limit",
+        "READ_MESSAGE_RECORDS_PER_DAY": "replace-with-approved-daily-returned-record-limit"
       },
       "secrets": {
         "required": [
@@ -341,7 +344,8 @@
         "DEPLOYMENT_ENVIRONMENT": "production",
         "PROVIDER_APPROVED_SESSION_CAPACITY": "replace-with-approved-session-capacity",
         "MCP_REQUESTS_PER_MINUTE": "replace-with-approved-minute-request-limit",
-        "MCP_REQUESTS_PER_HOUR": "replace-with-approved-hour-request-limit"
+        "MCP_REQUESTS_PER_HOUR": "replace-with-approved-hour-request-limit",
+        "READ_MESSAGE_RECORDS_PER_DAY": "replace-with-approved-daily-returned-record-limit"
       },
       "secrets": {
         "required": [
