@@ -82,11 +82,9 @@ export const restrictedRestoreRuntimeConnectionString = (
   throw new Error("database URL is not the restricted TLS restore runtime");
 };
 
-const isDirectNeonMigrationUrl = (
-  value: Redacted.Redacted<string>,
-): boolean => {
+const isDirectNeonMigrationUrl = (value: string): boolean => {
   try {
-    const url = new URL(Redacted.value(value));
+    const url = new URL(value);
     const endpoint = url.hostname.split(".", 1)[0];
     const sslModes = url.searchParams.getAll("sslmode");
     const hasAuthorityOverride = ["host", "password", "port", "user"].some(
@@ -107,12 +105,17 @@ const isDirectNeonMigrationUrl = (
   }
 };
 
+export const directNeonMigrationConnectionString = (value: string): string => {
+  if (isDirectNeonMigrationUrl(value)) return value;
+  throw new Error("database URL is not a direct TLS Neon migration connection");
+};
+
 export const migrationConfig = Config.all({
   migrationDatabaseUrl: Config.redacted("MIGRATION_DATABASE_URL").pipe(
     Config.validate({
       message:
         "MIGRATION_DATABASE_URL must be a direct TLS Neon PostgreSQL URL",
-      validation: isDirectNeonMigrationUrl,
+      validation: (value) => isDirectNeonMigrationUrl(Redacted.value(value)),
     }),
   ),
 });

@@ -41,13 +41,15 @@ describe("MCP Authorization repository", () => {
     );
     await database.query(
       `INSERT INTO app.whatsapp_connections (
-         id, personal_account_id, webhook_ingress_id,
-         display_name_ciphertext, public_id
-       ) VALUES
-         ('20000000-0000-4000-8000-000000000027', $1,
-          '30000000-0000-4000-8000-000000000027', decode('01', 'hex'), $2),
-         ('20000000-0000-4000-8000-000000000028', $1,
-          '30000000-0000-4000-8000-000000000028', decode('02', 'hex'), $3)`,
+          id, personal_account_id, webhook_ingress_id,
+          display_name_ciphertext, public_id, number_suffix
+        ) VALUES
+          ('20000000-0000-4000-8000-000000000027', $1,
+           '30000000-0000-4000-8000-000000000027', decode('01', 'hex'), $2,
+           '3456'),
+          ('20000000-0000-4000-8000-000000000028', $1,
+           '30000000-0000-4000-8000-000000000028', decode('02', 'hex'), $3,
+           '7890')`,
       [accountId, connectionA, connectionB],
     );
     repository = makeMcpAuthorizationRepository({
@@ -260,8 +262,8 @@ describe("MCP Authorization repository", () => {
 
   test("uses the restricted role and fails closed for cross-account selections or expiry", async () => {
     expect(await repository.listConnections("user_authorization27")).toEqual([
-      { connectionId: connectionA },
-      { connectionId: connectionB },
+      { connectionId: connectionA, numberSuffix: "3456" },
+      { connectionId: connectionB, numberSuffix: "7890" },
     ]);
     expect(
       await repository.create({

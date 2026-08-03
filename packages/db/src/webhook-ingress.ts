@@ -1,14 +1,12 @@
+import { sql } from "drizzle-orm";
 import type { Client as PgClient } from "pg";
-import { makeQueryConnection } from "./database";
+import {
+  makeDatabase,
+  makeQueryConnection,
+  type QueryConnection,
+} from "./database";
 
-export interface WebhookIngressConnection {
-  readonly query: <
-    Row extends Record<string, unknown> = Record<string, unknown>,
-  >(
-    text: string,
-    values?: Array<unknown>,
-  ) => Promise<{ readonly rows: Array<Row> }>;
-}
+export interface WebhookIngressConnection extends QueryConnection {}
 
 export interface WebhookIngressConnectionProvider {
   readonly withConnection: <Value>(
@@ -165,12 +163,13 @@ export const makeWebhookIngressRepository = (
 ): WebhookIngressRepository => ({
   resolve: (webhookIngressId) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<IngressRow>(
-        `SELECT *
-         FROM app_private.bootstrap_whatsapp_connection_for_ingress($1)`,
-        [webhookIngressId],
-      );
-      return material(result.rows[0]);
+      const db = makeDatabase(connection);
+      const result = await db.execute<IngressRow>(sql`
+        SELECT * FROM app_private.bootstrap_whatsapp_connection_for_ingress(
+          ${webhookIngressId}
+        )
+      `);
+      return material(result[0]);
     }),
 });
 

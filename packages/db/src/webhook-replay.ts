@@ -1,5 +1,10 @@
+import { sql } from "drizzle-orm";
 import type { Client as PgClient } from "pg";
-import { makeQueryConnection } from "./database";
+import {
+  makeDatabase,
+  makeQueryConnection,
+  type QueryConnection,
+} from "./database";
 
 export type WebhookReplayReasonCode =
   | "dependency_recovered"
@@ -50,14 +55,7 @@ export interface WebhookReplayRepository {
   ) => Promise<PrepareWebhookReplayResult>;
 }
 
-export interface WebhookReplayConnection {
-  readonly query: <
-    Row extends Record<string, unknown> = Record<string, unknown>,
-  >(
-    text: string,
-    values?: Array<unknown>,
-  ) => Promise<{ readonly rows: Array<Row> }>;
-}
+export interface WebhookReplayConnection extends QueryConnection {}
 
 export interface WebhookReplayConnectionProvider {
   readonly withConnection: <Value>(
@@ -146,36 +144,41 @@ export const makeWebhookReplayRepository = (
 ): WebhookReplayRepository => ({
   complete: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{ completed: unknown }>(
-        `SELECT app_private.complete_webhook_replay($1, $2) AS completed`,
-        [input.requestId, input.dispatchedAt],
-      );
-      if (result.rows[0]?.completed !== true) {
+      const db = makeDatabase(connection);
+      const result = await db.execute<{ completed: unknown }>(sql`
+        SELECT app_private.complete_webhook_replay(
+          ${input.requestId}, ${input.dispatchedAt}
+        ) AS completed
+      `);
+      if (result[0]?.completed !== true) {
         throw new Error("Webhook Event replay attempt unavailable");
       }
     }),
 
   finalizeExpiredSource: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{ finalized: unknown }>(
-        `SELECT app_private.finalize_expired_webhook_source($1, $2)
-           AS finalized`,
-        [input.eventId, input.observedAt],
-      );
-      if (typeof result.rows[0]?.finalized !== "boolean") {
+      const db = makeDatabase(connection);
+      const result = await db.execute<{ finalized: unknown }>(sql`
+        SELECT app_private.finalize_expired_webhook_source(
+          ${input.eventId}, ${input.observedAt}
+        ) AS finalized
+      `);
+      if (typeof result[0]?.finalized !== "boolean") {
         throw new Error("invalid Webhook Event retention result");
       }
-      return result.rows[0].finalized;
+      return result[0].finalized;
     }),
 
   listExpiredSources: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{ event_id: unknown }>(
-        `SELECT event_id
-         FROM app_private.list_expired_webhook_sources($1, $2)`,
-        [input.observedAt, input.limit],
-      );
-      return result.rows.map((row) => {
+      const db = makeDatabase(connection);
+      const result = await db.execute<{ event_id: unknown }>(sql`
+        SELECT event_id
+        FROM app_private.list_expired_webhook_sources(
+          ${input.observedAt}, ${input.limit}
+        )
+      `);
+      return result.map((row) => {
         if (!uuid(row.event_id)) {
           throw new Error("invalid expired Webhook Event source");
         }
@@ -185,19 +188,28 @@ export const makeWebhookReplayRepository = (
 
   prepare: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<PrepareRow>(
-        `SELECT *
-         FROM app_private.prepare_webhook_replay($1, $2, $3, $4, $5, $6)`,
-        [
-          input.requestId,
-          input.incidentReference,
-          input.operatorReference,
-          input.reasonCode,
-          input.requestedAt,
-          input.observedAt,
-        ],
-      );
-      return preparedResult(result.rows[0]);
+      const db = makeDatabase(connection);
+      let result: Array<PrepareRow>;
+      try {
+        result = await db.execute<PrepareRow>(sql`
+          SELECT * FROM app_private.prepare_webhook_replay(
+            ${input.requestId}, ${input.incidentReference},
+            ${input.operatorReference}, ${input.reasonCode},
+            ${input.requestedAt}, ${input.observedAt}
+          )
+        `);
+      } catch (error) {
+        if (
+          typeof error === "object" &&
+          error !== null &&
+          "cause" in error &&
+          error.cause instanceof Error
+        ) {
+          throw error.cause;
+        }
+        throw error;
+      }
+      return preparedResult(result[0]);
     }),
 });
 

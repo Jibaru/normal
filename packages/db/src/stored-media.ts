@@ -1,4 +1,10 @@
-import { makeQueryConnection } from "./database";
+import { and, eq, sql } from "drizzle-orm";
+import { makeDatabase, makeQueryConnection } from "./database";
+import {
+  personalAccountsInApp,
+  storedMediaInApp,
+  storedMediaObjectDeletionsInApp,
+} from "./schema";
 
 export interface StoredMediaConnection {
   readonly query: <
@@ -182,21 +188,21 @@ const transaction = async <Value>(
   connection: StoredMediaConnection,
   use: () => Promise<Value>,
 ): Promise<Value> => {
-  await connection.query("BEGIN");
+  const db = makeDatabase(connection);
+  await db.execute(sql`BEGIN`);
   try {
     const value = await use();
-    await connection.query("COMMIT");
+    await db.execute(sql`COMMIT`);
     return value;
   } catch (error) {
-    await connection.query("ROLLBACK");
+    await db.execute(sql`ROLLBACK`);
     throw error;
   }
 };
 
 const enterAccount = (connection: StoredMediaConnection, accountId: string) =>
-  connection.query(
-    "SELECT pg_catalog.set_config('app.personal_account_id',$1,true)",
-    [accountId],
+  makeDatabase(connection).execute(
+    sql`SELECT pg_catalog.set_config('app.personal_account_id', ${accountId}, true)`,
   );
 
 export const makeStoredMediaRepository = (
@@ -206,20 +212,23 @@ export const makeStoredMediaRepository = (
     provider.withConnection((connection) =>
       transaction(connection, async () => {
         await enterAccount(connection, input.personalAccountId);
-        await connection.query(
-          `INSERT INTO app.stored_media_object_deletions(personal_account_id,object_key)
-           VALUES ($1,$2) ON CONFLICT DO NOTHING`,
-          [input.personalAccountId, input.objectKey],
-        );
+        await makeDatabase(connection)
+          .insert(storedMediaObjectDeletionsInApp)
+          .values({
+            personalAccountId: input.personalAccountId,
+            objectKey: input.objectKey,
+          })
+          .onConflictDoNothing();
       }),
     ),
   finishObjectDeletion: (input: StoredMediaObjectDeletion): Promise<void> =>
     provider.withConnection((connection) =>
       transaction(connection, async () => {
         await enterAccount(connection, input.personalAccountId);
-        await connection.query(
-          `SELECT app_private.finish_stored_media_object_deletion($1,$2)`,
-          [input.personalAccountId, input.objectKey],
+        await makeDatabase(connection).execute(
+          sql`SELECT app_private.finish_stored_media_object_deletion(
+            ${input.personalAccountId}, ${input.objectKey}
+          )`,
         );
       }),
     ),
@@ -229,11 +238,10 @@ export const makeStoredMediaRepository = (
     provider.withConnection(async (connection) => {
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
         throw new Error("invalid Stored Media deletion limit");
-      const result = await connection.query(
-        "SELECT * FROM app_private.list_stored_media_object_deletions($1)",
-        [limit],
-      );
-      return result.rows.map((row) => {
+      const result = await makeDatabase(connection).execute(sql`
+        SELECT * FROM app_private.list_stored_media_object_deletions(${limit})
+      `);
+      return result.map((row) => {
         if (
           typeof row.personal_account_id !== "string" ||
           typeof row.object_key !== "string"
@@ -251,37 +259,45 @@ export const makeStoredMediaRepository = (
     provider.withConnection(async (connection) => {
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
         throw new Error("invalid pending Stored Media limit");
-      const result = await connection.query(
-        "SELECT * FROM app_private.list_pending_stored_media($1)",
-        [limit],
-      );
-      return result.rows.map(pendingCandidate);
+      const result = await makeDatabase(connection).execute(sql`
+        SELECT * FROM app_private.list_pending_stored_media(${limit})
+      `);
+      return result.map(pendingCandidate);
     }),
   createPending: (input: CreatePendingStoredMediaInput): Promise<boolean> =>
     provider.withConnection((connection) =>
       transaction(connection, async () => {
         await enterAccount(connection, input.personalAccountId);
-        const result = await connection.query(
-          `INSERT INTO app.stored_media (id,personal_account_id,whatsapp_connection_id,
-             stored_message_id,public_id,state,media_type,source_ciphertext_version,
-             source_key_version,source_nonce,source_ciphertext)
-           VALUES ($1,$2,$3,$4,$5,'pending',$6,$7,$8,$9,$10)
-           ON CONFLICT (personal_account_id,whatsapp_connection_id,stored_message_id)
-           DO NOTHING RETURNING id`,
-          [
-            input.id,
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.storedMessageId,
-            input.publicId,
-            input.mediaType,
-            input.source.version,
-            input.source.keyVersion,
-            decode(input.source.nonce, "Stored Media source nonce"),
-            decode(input.source.ciphertext, "Stored Media source ciphertext"),
-          ],
-        );
-        return result.rows.length === 1;
+        const result = await makeDatabase(connection)
+          .insert(storedMediaInApp)
+          .values({
+            id: input.id,
+            personalAccountId: input.personalAccountId,
+            whatsappConnectionId: input.whatsappConnectionId,
+            storedMessageId: input.storedMessageId,
+            publicId: input.publicId,
+            state: "pending",
+            mediaType: input.mediaType,
+            sourceCiphertextVersion: input.source.version,
+            sourceKeyVersion: input.source.keyVersion,
+            sourceNonce: decode(
+              input.source.nonce,
+              "Stored Media source nonce",
+            ),
+            sourceCiphertext: decode(
+              input.source.ciphertext,
+              "Stored Media source ciphertext",
+            ),
+          })
+          .onConflictDoNothing({
+            target: [
+              storedMediaInApp.personalAccountId,
+              storedMediaInApp.whatsappConnectionId,
+              storedMediaInApp.storedMessageId,
+            ],
+          })
+          .returning({ id: storedMediaInApp.id });
+        return result.length === 1;
       }),
     ),
 
@@ -296,56 +312,83 @@ export const makeStoredMediaRepository = (
         )
           throw new Error("invalid Stored Media byte size");
         await enterAccount(connection, input.personalAccountId);
-        const account = await connection.query<{ available: unknown }>(
-          `SELECT stored_media_limit_bytes-stored_media_used_bytes AS available
-             FROM app.personal_accounts WHERE id=$1 FOR UPDATE`,
-          [input.personalAccountId],
-        );
-        const media = await connection.query<{ state: unknown }>(
-          `SELECT state FROM app.stored_media WHERE personal_account_id=$1 AND id=$2 FOR UPDATE`,
-          [input.personalAccountId, input.id],
-        );
-        if (media.rows[0]?.state !== "pending") return "already_terminal";
-        const available = Number(account.rows[0]?.available);
+        const db = makeDatabase(connection);
+        const account = await db
+          .select({
+            available: sql<number>`${personalAccountsInApp.storedMediaLimitBytes} - ${personalAccountsInApp.storedMediaUsedBytes}`,
+          })
+          .from(personalAccountsInApp)
+          .where(eq(personalAccountsInApp.id, input.personalAccountId))
+          .for("update");
+        const media = await db
+          .select({ state: storedMediaInApp.state })
+          .from(storedMediaInApp)
+          .where(
+            and(
+              eq(storedMediaInApp.personalAccountId, input.personalAccountId),
+              eq(storedMediaInApp.id, input.id),
+            ),
+          )
+          .for("update");
+        if (media[0]?.state !== "pending") return "already_terminal";
+        const available = Number(account[0]?.available);
         if (!Number.isSafeInteger(available))
           throw new Error("invalid Stored Media quota");
         if (available < input.plaintextSizeBytes) {
-          await connection.query(
-            `UPDATE app.stored_media SET state='failed',failure_code='quota_exceeded',
-               source_ciphertext_version=NULL,source_key_version=NULL,source_nonce=NULL,
-               source_ciphertext=NULL,updated_at=transaction_timestamp()
-             WHERE personal_account_id=$1 AND id=$2`,
-            [input.personalAccountId, input.id],
-          );
+          await makeDatabase(connection)
+            .update(storedMediaInApp)
+            .set({
+              state: "failed",
+              failureCode: "quota_exceeded",
+              sourceCiphertextVersion: null,
+              sourceKeyVersion: null,
+              sourceNonce: null,
+              sourceCiphertext: null,
+              updatedAt: sql`transaction_timestamp()`,
+            })
+            .where(
+              and(
+                eq(storedMediaInApp.personalAccountId, input.personalAccountId),
+                eq(storedMediaInApp.id, input.id),
+              ),
+            );
           return "quota_exceeded";
         }
-        await connection.query(
-          `UPDATE app.personal_accounts SET stored_media_used_bytes=stored_media_used_bytes+$2
-             WHERE id=$1`,
-          [input.personalAccountId, input.plaintextSizeBytes],
-        );
-        await connection.query(
-          `UPDATE app.stored_media SET state='ready',object_key=$3,plaintext_size_bytes=$4,
-             sha256=$5,metadata_ciphertext_version=$6,metadata_key_version=$7,
-             metadata_nonce=$8,metadata_ciphertext=$9,source_ciphertext_version=NULL,
-             source_key_version=NULL,source_nonce=NULL,source_ciphertext=NULL,
-             updated_at=transaction_timestamp()
-           WHERE personal_account_id=$1 AND id=$2`,
-          [
-            input.personalAccountId,
-            input.id,
-            input.objectKey,
-            input.plaintextSizeBytes,
-            input.sha256,
-            input.metadata.version,
-            input.metadata.keyVersion,
-            decode(input.metadata.nonce, "Stored Media metadata nonce"),
-            decode(
+        await db
+          .update(personalAccountsInApp)
+          .set({
+            storedMediaUsedBytes: sql`${personalAccountsInApp.storedMediaUsedBytes} + ${input.plaintextSizeBytes}`,
+          })
+          .where(eq(personalAccountsInApp.id, input.personalAccountId));
+        await db
+          .update(storedMediaInApp)
+          .set({
+            state: "ready",
+            objectKey: input.objectKey,
+            plaintextSizeBytes: input.plaintextSizeBytes,
+            sha256: input.sha256,
+            metadataCiphertextVersion: input.metadata.version,
+            metadataKeyVersion: input.metadata.keyVersion,
+            metadataNonce: decode(
+              input.metadata.nonce,
+              "Stored Media metadata nonce",
+            ),
+            metadataCiphertext: decode(
               input.metadata.ciphertext,
               "Stored Media metadata ciphertext",
             ),
-          ],
-        );
+            sourceCiphertextVersion: null,
+            sourceKeyVersion: null,
+            sourceNonce: null,
+            sourceCiphertext: null,
+            updatedAt: sql`transaction_timestamp()`,
+          })
+          .where(
+            and(
+              eq(storedMediaInApp.personalAccountId, input.personalAccountId),
+              eq(storedMediaInApp.id, input.id),
+            ),
+          );
         return "ready";
       }),
     ),
@@ -358,17 +401,33 @@ export const makeStoredMediaRepository = (
     provider.withConnection((connection) =>
       transaction(connection, async () => {
         await enterAccount(connection, input.personalAccountId);
-        const result = await connection.query(
-          `UPDATE app.stored_media SET state=CASE WHEN $3='policy_rejected' THEN 'rejected' ELSE 'failed' END,
-             failure_code=$3,source_ciphertext_version=NULL,
-             source_key_version=NULL,source_nonce=NULL,source_ciphertext=NULL,object_key=NULL,
-             plaintext_size_bytes=NULL,sha256=NULL,metadata_ciphertext_version=NULL,
-             metadata_key_version=NULL,metadata_nonce=NULL,metadata_ciphertext=NULL,
-             updated_at=transaction_timestamp()
-           WHERE personal_account_id=$1 AND id=$2 AND state='pending' RETURNING id`,
-          [input.personalAccountId, input.id, input.code],
-        );
-        return result.rows.length === 1;
+        const result = await makeDatabase(connection)
+          .update(storedMediaInApp)
+          .set({
+            state: input.code === "policy_rejected" ? "rejected" : "failed",
+            failureCode: input.code,
+            sourceCiphertextVersion: null,
+            sourceKeyVersion: null,
+            sourceNonce: null,
+            sourceCiphertext: null,
+            objectKey: null,
+            plaintextSizeBytes: null,
+            sha256: null,
+            metadataCiphertextVersion: null,
+            metadataKeyVersion: null,
+            metadataNonce: null,
+            metadataCiphertext: null,
+            updatedAt: sql`transaction_timestamp()`,
+          })
+          .where(
+            and(
+              eq(storedMediaInApp.personalAccountId, input.personalAccountId),
+              eq(storedMediaInApp.id, input.id),
+              eq(storedMediaInApp.state, "pending"),
+            ),
+          )
+          .returning({ id: storedMediaInApp.id });
+        return result.length === 1;
       }),
     ),
 
@@ -379,22 +438,49 @@ export const makeStoredMediaRepository = (
     provider.withConnection((connection) =>
       transaction(connection, async () => {
         await enterAccount(connection, input.personalAccountId);
-        await connection.query(
-          `UPDATE app.personal_accounts accounts SET stored_media_used_bytes=
-             stored_media_used_bytes-media.plaintext_size_bytes
-           FROM app.stored_media media WHERE accounts.id=$1 AND media.personal_account_id=$1
-             AND media.id=$2 AND media.state='ready'`,
-          [input.personalAccountId, input.id],
-        );
-        const result = await connection.query(
-          `UPDATE app.stored_media SET state='failed',failure_code='object_missing',
-             object_key=NULL,plaintext_size_bytes=NULL,sha256=NULL,
-             metadata_ciphertext_version=NULL,metadata_key_version=NULL,
-             metadata_nonce=NULL,metadata_ciphertext=NULL,updated_at=transaction_timestamp()
-           WHERE personal_account_id=$1 AND id=$2 AND state='ready' RETURNING id`,
-          [input.personalAccountId, input.id],
-        );
-        return result.rows.length === 1;
+        const db = makeDatabase(connection);
+        const media = await db
+          .select({ plaintextSizeBytes: storedMediaInApp.plaintextSizeBytes })
+          .from(storedMediaInApp)
+          .where(
+            and(
+              eq(storedMediaInApp.personalAccountId, input.personalAccountId),
+              eq(storedMediaInApp.id, input.id),
+              eq(storedMediaInApp.state, "ready"),
+            ),
+          )
+          .for("update");
+        const plaintextSizeBytes = media[0]?.plaintextSizeBytes;
+        if (plaintextSizeBytes == null) return false;
+        await db
+          .update(personalAccountsInApp)
+          .set({
+            storedMediaUsedBytes: sql`${personalAccountsInApp.storedMediaUsedBytes} - ${plaintextSizeBytes}`,
+          })
+          .where(eq(personalAccountsInApp.id, input.personalAccountId));
+        const result = await db
+          .update(storedMediaInApp)
+          .set({
+            state: "failed",
+            failureCode: "object_missing",
+            objectKey: null,
+            plaintextSizeBytes: null,
+            sha256: null,
+            metadataCiphertextVersion: null,
+            metadataKeyVersion: null,
+            metadataNonce: null,
+            metadataCiphertext: null,
+            updatedAt: sql`transaction_timestamp()`,
+          })
+          .where(
+            and(
+              eq(storedMediaInApp.personalAccountId, input.personalAccountId),
+              eq(storedMediaInApp.id, input.id),
+              eq(storedMediaInApp.state, "ready"),
+            ),
+          )
+          .returning({ id: storedMediaInApp.id });
+        return result.length === 1;
       }),
     ),
 });

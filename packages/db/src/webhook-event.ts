@@ -1,7 +1,25 @@
 import type { WhatsAppConnectionState } from "@whatsapp-mcp/domain/whatsapp-connection";
+import { and, eq, gt, inArray, ne, sql } from "drizzle-orm";
 import type { Client as PgClient } from "pg";
-import { makeQueryConnection } from "./database";
+import { type Database, makeDatabase, makeQueryConnection } from "./database";
 import type { ProtectedGroupFields } from "./group";
+import {
+  directoryContactProjectionsInApp,
+  directoryContactsInApp,
+  pendingSendContentsInApp,
+  personalAccountsInApp,
+  sendOperationsInApp,
+  storedMediaInApp,
+  storedMessagesInApp,
+  webhookDeadLetterIncidentsInApp,
+  webhookEventsInApp,
+  webhookItemQuarantinesInApp,
+  webhookItemsInApp,
+  whatsappConnectionsInApp,
+  whatsappConversationsInApp,
+  whatsappGroupDirectoryStatesInApp,
+  whatsappGroupsInApp,
+} from "./schema";
 
 export interface WebhookEventConnection {
   readonly query: <
@@ -285,26 +303,26 @@ export interface WebhookEventRepository {
 
 const withTransaction = async <Value>(
   connection: WebhookEventConnection,
-  use: () => Promise<Value>,
+  use: (db: Database) => Promise<Value>,
 ): Promise<Value> => {
-  await connection.query("BEGIN");
+  const db = makeDatabase(connection);
+  await db.execute(sql`begin`);
   try {
-    const value = await use();
-    await connection.query("COMMIT");
+    const value = await use(db);
+    await db.execute(sql`commit`);
     return value;
   } catch (error) {
-    await connection.query("ROLLBACK");
+    await db.execute(sql`rollback`);
     throw error;
   }
 };
 
 const enterPersonalAccountContext = async (
-  connection: WebhookEventConnection,
+  db: Database,
   personalAccountId: string,
 ): Promise<void> => {
-  await connection.query(
-    "SELECT set_config('app.personal_account_id', $1, true)",
-    [personalAccountId],
+  await db.execute(
+    sql`select set_config('app.personal_account_id', ${personalAccountId}, true)`,
   );
 };
 
@@ -433,10 +451,6 @@ interface EventRow extends Record<string, unknown> {
   readonly ciphertext_sha256: unknown;
   readonly payload_bytes: unknown;
   readonly received_at: unknown;
-}
-
-interface EventProcessingRow extends EventRow {
-  readonly processing_completed_at: unknown;
 }
 
 interface RecoveryCandidateRow extends Record<string, unknown> {
@@ -648,41 +662,96 @@ const protectedGroupValues = (value: ProtectedGroupFields) => {
   ] as const;
 };
 
+const claimWebhookItem = async (
+  db: Database,
+  input: WebhookItemBase & {
+    readonly itemIdentity: string;
+    readonly evidence?: {
+      readonly occurredAt: string | null;
+      readonly version: string | null;
+    };
+  },
+  itemKind: string,
+  outcome = "superseded",
+): Promise<boolean> => {
+  const claimed = await db
+    .insert(webhookItemsInApp)
+    .values({
+      personalAccountId: input.personalAccountId,
+      whatsappConnectionId: input.whatsappConnectionId,
+      deduplicationIdentity: input.itemIdentity,
+      firstWebhookEventId: input.eventId,
+      itemIndex: input.itemIndex,
+      itemKind,
+      outcome,
+      providerOccurredAt: input.evidence?.occurredAt,
+      providerVersion: input.evidence?.version,
+      receivedAt: input.receivedAt,
+    })
+    .onConflictDoNothing({
+      target: [
+        webhookItemsInApp.personalAccountId,
+        webhookItemsInApp.whatsappConnectionId,
+        webhookItemsInApp.deduplicationIdentity,
+      ],
+    })
+    .returning({
+      deduplicationIdentity: webhookItemsInApp.deduplicationIdentity,
+    });
+  return claimed.length === 1;
+};
+
+const markWebhookItemApplied = (
+  db: Database,
+  input: Pick<
+    EvidenceOrderedProjectionInput,
+    "personalAccountId" | "whatsappConnectionId" | "itemIdentity"
+  >,
+) =>
+  db
+    .update(webhookItemsInApp)
+    .set({ outcome: "applied" })
+    .where(
+      and(
+        eq(webhookItemsInApp.personalAccountId, input.personalAccountId),
+        eq(webhookItemsInApp.whatsappConnectionId, input.whatsappConnectionId),
+        eq(webhookItemsInApp.deduplicationIdentity, input.itemIdentity),
+      ),
+    );
+
 export const makeWebhookEventRepository = (
   provider: WebhookEventConnectionProvider,
 ): WebhookEventRepository => ({
   complete: (input) =>
     provider.withConnection((connection) =>
-      withTransaction(connection, async () => {
-        await enterPersonalAccountContext(connection, input.personalAccountId);
-        const result = await connection.query(
-          `UPDATE app.webhook_events
-           SET
-             processing_completed_at = coalesce(
-               processing_completed_at,
-               $4::timestamptz
-             ),
-             updated_at = greatest(updated_at, $4::timestamptz)
-           WHERE personal_account_id = $1
-             AND whatsapp_connection_id = $2
-             AND id = $3
-           RETURNING id`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.eventId,
-            input.completedAt,
-          ],
-        );
-        if (result.rows.length !== 1) {
+      withTransaction(connection, async (db) => {
+        await enterPersonalAccountContext(db, input.personalAccountId);
+        const result = await db
+          .update(webhookEventsInApp)
+          .set({
+            processingCompletedAt: sql`coalesce(${webhookEventsInApp.processingCompletedAt}, ${input.completedAt}::timestamptz)`,
+            updatedAt: sql`greatest(${webhookEventsInApp.updatedAt}, ${input.completedAt}::timestamptz)`,
+          })
+          .where(
+            and(
+              eq(webhookEventsInApp.personalAccountId, input.personalAccountId),
+              eq(
+                webhookEventsInApp.whatsappConnectionId,
+                input.whatsappConnectionId,
+              ),
+              eq(webhookEventsInApp.id, input.eventId),
+            ),
+          )
+          .returning({ id: webhookEventsInApp.id });
+        if (result.length !== 1) {
           throw new Error("Webhook Event completion target unavailable");
         }
-        const resolved = await connection.query<{ resolved: unknown }>(
-          `SELECT app_private.resolve_webhook_processing_gap($1, $2, $3)
-             AS resolved`,
-          [input.personalAccountId, input.whatsappConnectionId, input.eventId],
+        const resolved = await db.execute<{ resolved: unknown }>(
+          sql`select app_private.resolve_webhook_processing_gap(
+            ${input.personalAccountId}, ${input.whatsappConnectionId}, ${input.eventId}
+          ) as resolved`,
         );
-        if (resolved.rows[0]?.resolved !== true) {
+        if (resolved[0]?.resolved !== true) {
           throw new Error("failed to resolve Webhook Event processing gap");
         }
       }),
@@ -690,62 +759,75 @@ export const makeWebhookEventRepository = (
 
   deadLetter: (input) =>
     provider.withConnection((connection) =>
-      withTransaction(connection, async () => {
-        await enterPersonalAccountContext(connection, input.personalAccountId);
-        const active = await connection.query(
-          `SELECT connections.id
-           FROM app.whatsapp_connections AS connections
-           JOIN app.personal_accounts AS accounts
-             ON accounts.id = connections.personal_account_id
-           WHERE connections.personal_account_id = $1
-             AND connections.id = $2
-             AND connections.state <> 'deleting'
-             AND accounts.state = 'active'`,
-          [input.personalAccountId, input.whatsappConnectionId],
-        );
-        if (active.rows.length === 0) {
+      withTransaction(connection, async (db) => {
+        await enterPersonalAccountContext(db, input.personalAccountId);
+        const active = await db
+          .select({ id: whatsappConnectionsInApp.id })
+          .from(whatsappConnectionsInApp)
+          .innerJoin(
+            personalAccountsInApp,
+            eq(
+              personalAccountsInApp.id,
+              whatsappConnectionsInApp.personalAccountId,
+            ),
+          )
+          .where(
+            and(
+              eq(
+                whatsappConnectionsInApp.personalAccountId,
+                input.personalAccountId,
+              ),
+              eq(whatsappConnectionsInApp.id, input.whatsappConnectionId),
+              ne(whatsappConnectionsInApp.state, "deleting"),
+              eq(personalAccountsInApp.state, "active"),
+            ),
+          );
+        if (active.length === 0) {
           return {
             incidentReference: null,
             outcome: "source_unavailable" as const,
           };
         }
 
-        await connection.query(
-          `INSERT INTO app.webhook_events (
-             personal_account_id,
-             whatsapp_connection_id,
-             id,
-             ciphertext_sha256,
-             payload_bytes,
-             received_at,
-             source_expires_at
-           )
-           VALUES ($1, $2, $3, $4, $5, $6, $6::timestamptz + interval '7 days')
-           ON CONFLICT (personal_account_id, whatsapp_connection_id, id)
-           DO NOTHING`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.eventId,
-            input.ciphertextSha256,
-            input.payloadBytes,
-            input.receivedAt,
-          ],
-        );
-        const persisted = await connection.query<EventProcessingRow>(
-          `SELECT
-             ciphertext_sha256,
-             payload_bytes,
-             processing_completed_at,
-             received_at
-           FROM app.webhook_events
-           WHERE personal_account_id = $1
-             AND whatsapp_connection_id = $2
-             AND id = $3
-           FOR UPDATE`,
-          [input.personalAccountId, input.whatsappConnectionId, input.eventId],
-        );
-        const event = persisted.rows[0];
+        await db
+          .insert(webhookEventsInApp)
+          .values({
+            personalAccountId: input.personalAccountId,
+            whatsappConnectionId: input.whatsappConnectionId,
+            id: input.eventId,
+            ciphertextSha256: input.ciphertextSha256,
+            payloadBytes: input.payloadBytes,
+            receivedAt: input.receivedAt,
+            sourceExpiresAt: sql`${input.receivedAt}::timestamptz + interval '7 days'`,
+          })
+          .onConflictDoNothing({
+            target: [
+              webhookEventsInApp.personalAccountId,
+              webhookEventsInApp.whatsappConnectionId,
+              webhookEventsInApp.id,
+            ],
+          });
+        const persisted = await db
+          .select({
+            ciphertext_sha256: webhookEventsInApp.ciphertextSha256,
+            payload_bytes: webhookEventsInApp.payloadBytes,
+            processing_completed_at: webhookEventsInApp.processingCompletedAt,
+            received_at: webhookEventsInApp.receivedAt,
+            source_expires_at: webhookEventsInApp.sourceExpiresAt,
+          })
+          .from(webhookEventsInApp)
+          .where(
+            and(
+              eq(webhookEventsInApp.personalAccountId, input.personalAccountId),
+              eq(
+                webhookEventsInApp.whatsappConnectionId,
+                input.whatsappConnectionId,
+              ),
+              eq(webhookEventsInApp.id, input.eventId),
+            ),
+          )
+          .for("update");
+        const event = persisted[0];
         if (!sameEvent(input, event)) {
           throw new Error("conflicting dead-letter Webhook Event");
         }
@@ -756,80 +838,75 @@ export const makeWebhookEventRepository = (
           };
         }
 
-        await connection.query(
-          `UPDATE app.webhook_events
-           SET
-             dead_lettered_at = coalesce(dead_lettered_at, $4::timestamptz),
-             updated_at = greatest(updated_at, $4::timestamptz)
-           WHERE personal_account_id = $1
-             AND whatsapp_connection_id = $2
-             AND id = $3`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.eventId,
-            input.deadLetteredAt,
-          ],
+        await db
+          .update(webhookEventsInApp)
+          .set({
+            deadLetteredAt: sql`coalesce(${webhookEventsInApp.deadLetteredAt}, ${input.deadLetteredAt}::timestamptz)`,
+            updatedAt: sql`greatest(${webhookEventsInApp.updatedAt}, ${input.deadLetteredAt}::timestamptz)`,
+          })
+          .where(
+            and(
+              eq(webhookEventsInApp.personalAccountId, input.personalAccountId),
+              eq(
+                webhookEventsInApp.whatsappConnectionId,
+                input.whatsappConnectionId,
+              ),
+              eq(webhookEventsInApp.id, input.eventId),
+            ),
+          );
+        const recorded = await db.execute<{ recorded: unknown }>(
+          sql`select app_private.record_webhook_dead_letter_gap(
+            ${input.personalAccountId}, ${input.whatsappConnectionId},
+            ${input.eventId}, ${input.deadLetteredAt}
+          ) as recorded`,
         );
-        const recorded = await connection.query<{ recorded: unknown }>(
-          `SELECT app_private.record_webhook_dead_letter_gap(
-             $1, $2, $3, $4
-           ) AS recorded`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.eventId,
-            input.deadLetteredAt,
-          ],
-        );
-        if (recorded.rows[0]?.recorded !== true) {
+        if (recorded[0]?.recorded !== true) {
           throw new Error("failed to record dead-letter Ingestion Gap");
         }
-        const incident = await connection.query<{
-          incident_reference: unknown;
-        }>(
-          `INSERT INTO app.webhook_dead_letter_incidents (
-             personal_account_id,
-             whatsapp_connection_id,
-             webhook_event_id,
-             detected_at,
-             source_expires_at
-           )
-           SELECT
-             events.personal_account_id,
-             events.whatsapp_connection_id,
-             events.id,
-             $4::timestamptz,
-             events.source_expires_at
-           FROM app.webhook_events AS events
-           WHERE events.personal_account_id = $1
-             AND events.whatsapp_connection_id = $2
-             AND events.id = $3
-           ON CONFLICT (webhook_event_id) DO NOTHING
-           RETURNING id AS incident_reference`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.eventId,
-            input.deadLetteredAt,
-          ],
-        );
+        const source = persisted[0];
+        const incident =
+          source === undefined
+            ? []
+            : await db
+                .insert(webhookDeadLetterIncidentsInApp)
+                .values({
+                  personalAccountId: input.personalAccountId,
+                  whatsappConnectionId: input.whatsappConnectionId,
+                  webhookEventId: input.eventId,
+                  detectedAt: input.deadLetteredAt,
+                  sourceExpiresAt: source.source_expires_at,
+                })
+                .onConflictDoNothing({
+                  target: webhookDeadLetterIncidentsInApp.webhookEventId,
+                })
+                .returning({
+                  incident_reference: webhookDeadLetterIncidentsInApp.id,
+                });
         const existingIncident =
-          incident.rows[0] ??
+          incident[0] ??
           (
-            await connection.query<{ incident_reference: unknown }>(
-              `SELECT id AS incident_reference
-               FROM app.webhook_dead_letter_incidents
-               WHERE personal_account_id = $1
-                 AND whatsapp_connection_id = $2
-                 AND webhook_event_id = $3`,
-              [
-                input.personalAccountId,
-                input.whatsappConnectionId,
-                input.eventId,
-              ],
-            )
-          ).rows[0];
+            await db
+              .select({
+                incident_reference: webhookDeadLetterIncidentsInApp.id,
+              })
+              .from(webhookDeadLetterIncidentsInApp)
+              .where(
+                and(
+                  eq(
+                    webhookDeadLetterIncidentsInApp.personalAccountId,
+                    input.personalAccountId,
+                  ),
+                  eq(
+                    webhookDeadLetterIncidentsInApp.whatsappConnectionId,
+                    input.whatsappConnectionId,
+                  ),
+                  eq(
+                    webhookDeadLetterIncidentsInApp.webhookEventId,
+                    input.eventId,
+                  ),
+                ),
+              )
+          )[0];
         const incidentReference = existingIncident?.incident_reference;
         if (typeof incidentReference !== "string") {
           throw new Error("failed to create Webhook Event incident reference");
@@ -843,77 +920,72 @@ export const makeWebhookEventRepository = (
 
   projectSendEvidence: (input, materialize) =>
     provider.withConnection((connection) =>
-      withTransaction(connection, async () => {
-        await enterPersonalAccountContext(connection, input.personalAccountId);
-        const claimed = await connection.query(
-          `INSERT INTO app.webhook_items (personal_account_id, whatsapp_connection_id,
-             deduplication_identity, first_webhook_event_id, item_index, item_kind,
-             outcome, received_at)
-           VALUES ($1,$2,$3,$4,$5,'send_evidence','superseded',$6)
-           ON CONFLICT (personal_account_id, whatsapp_connection_id, deduplication_identity)
-           DO NOTHING RETURNING deduplication_identity`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.itemIdentity,
-            input.eventId,
-            input.itemIndex,
-            input.receivedAt,
-          ],
-        );
-        if (claimed.rows.length === 0) return "duplicate" as const;
+      withTransaction(connection, async (db) => {
+        await enterPersonalAccountContext(db, input.personalAccountId);
+        const claimed = await db
+          .insert(webhookItemsInApp)
+          .values({
+            personalAccountId: input.personalAccountId,
+            whatsappConnectionId: input.whatsappConnectionId,
+            deduplicationIdentity: input.itemIdentity,
+            firstWebhookEventId: input.eventId,
+            itemIndex: input.itemIndex,
+            itemKind: "send_evidence",
+            outcome: "superseded",
+            receivedAt: input.receivedAt,
+          })
+          .onConflictDoNothing({
+            target: [
+              webhookItemsInApp.personalAccountId,
+              webhookItemsInApp.whatsappConnectionId,
+              webhookItemsInApp.deduplicationIdentity,
+            ],
+          })
+          .returning({
+            deduplicationIdentity: webhookItemsInApp.deduplicationIdentity,
+          });
+        if (claimed.length === 0) return "duplicate" as const;
         const changedAt = input.evidence.occurredAt ?? input.receivedAt;
-        const correlated = await connection.query<Record<string, unknown>>(
-          `SELECT operations.id,operations.recipient_type,operations.recipient_public_id,
+        const correlated = await db.execute<Record<string, unknown>>(
+          sql`select operations.id,operations.recipient_type,operations.recipient_public_id,
              pending.key_version,pending.nonce,pending.ciphertext,
-             CASE operations.recipient_type WHEN 'contact' THEN contacts.provider_identity_index
-               ELSE groups.provider_locator END AS recipient_locator
-           FROM app.send_operations operations
-           LEFT JOIN app.pending_send_contents pending ON pending.send_operation_id=operations.id
-             AND pending.expires_at>$4
-           LEFT JOIN app.directory_contacts contacts ON operations.recipient_type='contact'
+             case operations.recipient_type when 'contact' then contacts.provider_identity_index
+               else groups.provider_locator end as recipient_locator
+           from app.send_operations operations
+           left join app.pending_send_contents pending on pending.send_operation_id=operations.id
+             and pending.expires_at>${input.receivedAt}
+           left join app.directory_contacts contacts on operations.recipient_type='contact'
              AND contacts.personal_account_id=operations.personal_account_id
              AND contacts.whatsapp_connection_id=operations.whatsapp_connection_id
              AND contacts.public_id=operations.recipient_public_id
-           LEFT JOIN app.whatsapp_groups groups ON operations.recipient_type='group'
+           left join app.whatsapp_groups groups on operations.recipient_type='group'
              AND groups.personal_account_id=operations.personal_account_id
              AND groups.whatsapp_connection_id=operations.whatsapp_connection_id
              AND groups.public_id=operations.recipient_public_id
-           WHERE operations.personal_account_id=$1 AND operations.whatsapp_connection_id=$2
-             AND operations.message_identity=$3 AND operations.expires_at>$4 FOR UPDATE OF operations`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.messageIdentity,
-            input.receivedAt,
-          ],
+           where operations.personal_account_id=${input.personalAccountId}
+             and operations.whatsapp_connection_id=${input.whatsappConnectionId}
+             and operations.message_identity=${input.messageIdentity}
+             and operations.expires_at>${input.receivedAt} for update of operations`,
         );
-        const updated = await connection.query(
-          `UPDATE app.send_operations SET status=$4,status_changed_at=$5
-           WHERE personal_account_id=$1 AND whatsapp_connection_id=$2
-             AND message_identity=$3 AND expires_at>$6
-             AND (
+        const updated = await db.execute<{ id: unknown }>(
+          sql`update app.send_operations set status=${input.status},status_changed_at=${changedAt}
+           where personal_account_id=${input.personalAccountId}
+             and whatsapp_connection_id=${input.whatsappConnectionId}
+             and message_identity=${input.messageIdentity} and expires_at>${input.receivedAt}
+             and (
                status='unknown'
-               OR ($4='failed' AND status IN ('processing','accepted','sent'))
-               OR ($4<>'failed' AND (
+               or (${input.status}='failed' and status in ('processing','accepted','sent'))
+               or (${input.status}<>'failed' and (
                  status='failed'
-                 OR CASE $4 WHEN 'accepted' THEN 1 WHEN 'sent' THEN 2
+                 or case ${input.status} when 'accepted' then 1 when 'sent' then 2
                     WHEN 'delivered' THEN 3 WHEN 'read' THEN 4 END >
                     CASE status WHEN 'processing' THEN 0 WHEN 'accepted' THEN 1
                     WHEN 'sent' THEN 2 WHEN 'delivered' THEN 3 WHEN 'read' THEN 4
                     ELSE 0 END
                ))
-             ) RETURNING id`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.messageIdentity,
-            input.status,
-            changedAt,
-            input.receivedAt,
-          ],
+             ) returning id`,
         );
-        const operation = correlated.rows[0];
+        const operation = correlated[0];
         if (
           operation !== undefined &&
           materialize !== undefined &&
@@ -929,84 +1001,118 @@ export const makeWebhookEventRepository = (
           const recipientLocator = scalar(operation, "recipient_locator");
           const recipientType = scalar(operation, "recipient_type");
           const recipientPublicId = scalar(operation, "recipient_public_id");
-          await connection.query(
-            `INSERT INTO app.whatsapp_conversations (id,personal_account_id,whatsapp_connection_id,
-               public_id,kind,recipient_locator,recipient_public_id,last_activity_at,last_activity_direction)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'outbound')
-             ON CONFLICT (personal_account_id,whatsapp_connection_id,recipient_locator) DO NOTHING`,
-            [
-              projected.conversationId,
-              input.personalAccountId,
-              input.whatsappConnectionId,
-              projected.conversationPublicId,
-              recipientType === "contact" ? "direct" : "group",
+          await db
+            .insert(whatsappConversationsInApp)
+            .values({
+              id: projected.conversationId,
+              personalAccountId: input.personalAccountId,
+              whatsappConnectionId: input.whatsappConnectionId,
+              publicId: projected.conversationPublicId,
+              kind: recipientType === "contact" ? "direct" : "group",
               recipientLocator,
               recipientPublicId,
-              changedAt,
-            ],
-          );
-          await connection.query(
-            `INSERT INTO app.stored_messages (id,personal_account_id,whatsapp_connection_id,conversation_id,
-               public_id,message_identity,direction,sent_at,content_type,content_ciphertext_version,
-               content_key_version,content_nonce,content_ciphertext,received_at,webhook_item_identity)
-             SELECT $1,$2,$3,id,$4,$5,'outbound',$6,'text',$7,$8,$9,$10,$11,NULL
-             FROM app.whatsapp_conversations WHERE personal_account_id=$2 AND whatsapp_connection_id=$3
-               AND recipient_locator=$12
-             ON CONFLICT (personal_account_id,whatsapp_connection_id,message_identity) DO NOTHING`,
-            [
-              projected.messageId,
-              input.personalAccountId,
-              input.whatsappConnectionId,
-              projected.messagePublicId,
-              input.messageIdentity,
-              changedAt,
-              projected.content.version,
-              projected.content.keyVersion,
-              decodeNonce(projected.content),
-              decodeCiphertext(projected.content),
-              input.receivedAt,
-              recipientLocator,
-            ],
-          );
-          await connection.query(
-            `WITH latest AS (
+              lastActivityAt: changedAt,
+              lastActivityDirection: "outbound",
+            })
+            .onConflictDoNothing({
+              target: [
+                whatsappConversationsInApp.personalAccountId,
+                whatsappConversationsInApp.whatsappConnectionId,
+                whatsappConversationsInApp.recipientLocator,
+              ],
+            });
+          const conversation = await db
+            .select({ id: whatsappConversationsInApp.id })
+            .from(whatsappConversationsInApp)
+            .where(
+              and(
+                eq(
+                  whatsappConversationsInApp.personalAccountId,
+                  input.personalAccountId,
+                ),
+                eq(
+                  whatsappConversationsInApp.whatsappConnectionId,
+                  input.whatsappConnectionId,
+                ),
+                eq(
+                  whatsappConversationsInApp.recipientLocator,
+                  recipientLocator,
+                ),
+              ),
+            );
+          const conversationId = conversation[0]?.id;
+          if (conversationId === undefined)
+            throw new Error("invalid WhatsApp Conversation");
+          await db
+            .insert(storedMessagesInApp)
+            .values({
+              id: projected.messageId,
+              personalAccountId: input.personalAccountId,
+              whatsappConnectionId: input.whatsappConnectionId,
+              conversationId,
+              publicId: projected.messagePublicId,
+              messageIdentity: input.messageIdentity,
+              direction: "outbound",
+              sentAt: changedAt,
+              contentType: "text",
+              contentCiphertextVersion: projected.content.version,
+              contentKeyVersion: projected.content.keyVersion,
+              contentNonce: decodeNonce(projected.content),
+              contentCiphertext: decodeCiphertext(projected.content),
+              receivedAt: input.receivedAt,
+              webhookItemIdentity: null,
+            })
+            .onConflictDoNothing({
+              target: [
+                storedMessagesInApp.personalAccountId,
+                storedMessagesInApp.whatsappConnectionId,
+                storedMessagesInApp.messageIdentity,
+              ],
+            });
+          await db.execute(sql`with latest as (
                SELECT messages.conversation_id,messages.sent_at,messages.direction
                FROM app.stored_messages messages
                JOIN app.whatsapp_conversations conversations
                  ON conversations.id=messages.conversation_id
-               WHERE messages.personal_account_id=$1
-                 AND messages.whatsapp_connection_id=$2
-                 AND conversations.recipient_locator=$3
+               WHERE messages.personal_account_id=${input.personalAccountId}
+                 AND messages.whatsapp_connection_id=${input.whatsappConnectionId}
+                 AND conversations.recipient_locator=${recipientLocator}
                  AND messages.content_expired_at IS NULL
                ORDER BY messages.sent_at DESC,messages.public_id DESC LIMIT 1
              )
              UPDATE app.whatsapp_conversations conversations SET
                last_activity_at=latest.sent_at,last_activity_direction=latest.direction,
                updated_at=transaction_timestamp()
-             FROM latest WHERE conversations.id=latest.conversation_id`,
-            [
-              input.personalAccountId,
-              input.whatsappConnectionId,
-              recipientLocator,
-            ],
-          );
-          await connection.query(
-            `DELETE FROM app.pending_send_contents WHERE personal_account_id=$1 AND send_operation_id=$2`,
-            [input.personalAccountId, scalar(operation, "id")],
-          );
+             FROM latest WHERE conversations.id=latest.conversation_id`);
+          await db
+            .delete(pendingSendContentsInApp)
+            .where(
+              and(
+                eq(
+                  pendingSendContentsInApp.personalAccountId,
+                  input.personalAccountId,
+                ),
+                eq(
+                  pendingSendContentsInApp.sendOperationId,
+                  scalar(operation, "id"),
+                ),
+              ),
+            );
         }
-        const outcome = updated.rows.length === 1 ? "applied" : "superseded";
-        await connection.query(
-          `UPDATE app.webhook_items SET outcome=$4
-           WHERE personal_account_id=$1 AND whatsapp_connection_id=$2
-             AND deduplication_identity=$3`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.itemIdentity,
-            outcome,
-          ],
-        );
+        const outcome = updated.length === 1 ? "applied" : "superseded";
+        await db
+          .update(webhookItemsInApp)
+          .set({ outcome })
+          .where(
+            and(
+              eq(webhookItemsInApp.personalAccountId, input.personalAccountId),
+              eq(
+                webhookItemsInApp.whatsappConnectionId,
+                input.whatsappConnectionId,
+              ),
+              eq(webhookItemsInApp.deduplicationIdentity, input.itemIdentity),
+            ),
+          );
         return outcome;
       }),
     ),
@@ -1025,16 +1131,19 @@ export const makeWebhookEventRepository = (
         received_at: input.receivedAt,
         whatsapp_connection_id: input.whatsappConnectionId,
       }));
-      const classified = await connection.query<RecoveryCandidateRow>(
-        `SELECT candidate_index, status
-         FROM app_private.classify_webhook_recovery_candidates($1::jsonb)`,
-        [JSON.stringify(candidates)],
+      const classified = await makeDatabase(
+        connection,
+      ).execute<RecoveryCandidateRow>(
+        sql`select candidate_index, status
+          from app_private.classify_webhook_recovery_candidates(
+            ${JSON.stringify(candidates)}::jsonb
+          )`,
       );
-      if (classified.rows.length !== inputs.length) {
+      if (classified.length !== inputs.length) {
         throw new Error("incomplete Webhook Event recovery classification");
       }
       const unclaimed: Input[] = [];
-      for (const row of classified.rows) {
+      for (const row of classified) {
         const candidateIndex = positiveInteger(row.candidate_index);
         const input =
           candidateIndex === null ? undefined : inputs[candidateIndex - 1];
@@ -1057,47 +1166,52 @@ export const makeWebhookEventRepository = (
 
   prepare: (input) =>
     provider.withConnection((connection) =>
-      withTransaction(connection, async () => {
-        const loaded = await connection.query<MaterialRow>(
-          `SELECT *
-           FROM app_private.load_webhook_event_processing_material($1, $2)`,
-          [input.personalAccountId, input.whatsappConnectionId],
+      withTransaction(connection, async (db) => {
+        const loaded = await db.execute<MaterialRow>(
+          sql`select * from app_private.load_webhook_event_processing_material(
+            ${input.personalAccountId}, ${input.whatsappConnectionId}
+          )`,
         );
-        const material = processingMaterial(input, loaded.rows[0]);
+        const material = processingMaterial(input, loaded[0]);
         if (material === null) return null;
 
-        await enterPersonalAccountContext(connection, input.personalAccountId);
-        await connection.query(
-          `INSERT INTO app.webhook_events (
-             personal_account_id,
-             whatsapp_connection_id,
-             id,
-             ciphertext_sha256,
-             payload_bytes,
-             received_at,
-             source_expires_at
-           )
-           VALUES ($1, $2, $3, $4, $5, $6, $6::timestamptz + interval '7 days')
-           ON CONFLICT (personal_account_id, whatsapp_connection_id, id)
-           DO NOTHING`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.eventId,
-            input.ciphertextSha256,
-            input.payloadBytes,
-            input.receivedAt,
-          ],
-        );
-        const persisted = await connection.query<EventRow>(
-          `SELECT ciphertext_sha256, payload_bytes, received_at
-           FROM app.webhook_events
-           WHERE personal_account_id = $1
-             AND whatsapp_connection_id = $2
-             AND id = $3`,
-          [input.personalAccountId, input.whatsappConnectionId, input.eventId],
-        );
-        if (!sameEvent(input, persisted.rows[0])) {
+        await enterPersonalAccountContext(db, input.personalAccountId);
+        await db
+          .insert(webhookEventsInApp)
+          .values({
+            personalAccountId: input.personalAccountId,
+            whatsappConnectionId: input.whatsappConnectionId,
+            id: input.eventId,
+            ciphertextSha256: input.ciphertextSha256,
+            payloadBytes: input.payloadBytes,
+            receivedAt: input.receivedAt,
+            sourceExpiresAt: sql`${input.receivedAt}::timestamptz + interval '7 days'`,
+          })
+          .onConflictDoNothing({
+            target: [
+              webhookEventsInApp.personalAccountId,
+              webhookEventsInApp.whatsappConnectionId,
+              webhookEventsInApp.id,
+            ],
+          });
+        const persisted = await db
+          .select({
+            ciphertext_sha256: webhookEventsInApp.ciphertextSha256,
+            payload_bytes: webhookEventsInApp.payloadBytes,
+            received_at: webhookEventsInApp.receivedAt,
+          })
+          .from(webhookEventsInApp)
+          .where(
+            and(
+              eq(webhookEventsInApp.personalAccountId, input.personalAccountId),
+              eq(
+                webhookEventsInApp.whatsappConnectionId,
+                input.whatsappConnectionId,
+              ),
+              eq(webhookEventsInApp.id, input.eventId),
+            ),
+          );
+        if (!sameEvent(input, persisted[0])) {
           throw new Error("conflicting Webhook Event replay");
         }
         return material;
@@ -1106,108 +1220,70 @@ export const makeWebhookEventRepository = (
 
   projectConnectionState: (input, compareVersions) => {
     return provider.withConnection((connection) =>
-      withTransaction(connection, async () => {
-        await enterPersonalAccountContext(connection, input.personalAccountId);
-        const currentResult = await connection.query<StateRow>(
-          `SELECT
-             state_provider_occurred_at,
-             state_provider_version,
-             state_received_at,
-             state_snapshot_observed_at,
-             state_webhook_event_id
-           FROM app.whatsapp_connections
-           WHERE personal_account_id = $1
-             AND id = $2
-             AND state <> 'deleting'
-             AND EXISTS (
-               SELECT 1
-               FROM app.webhook_events AS events
-               WHERE events.personal_account_id = $1
-                 AND events.whatsapp_connection_id = $2
-                 AND events.id = $3
-             )
-           FOR UPDATE`,
-          [input.personalAccountId, input.whatsappConnectionId, input.eventId],
-        );
-        const current = currentResult.rows[0];
+      withTransaction(connection, async (db) => {
+        await enterPersonalAccountContext(db, input.personalAccountId);
+        const currentResult = await db
+          .select({
+            state_provider_occurred_at:
+              whatsappConnectionsInApp.stateProviderOccurredAt,
+            state_provider_version:
+              whatsappConnectionsInApp.stateProviderVersion,
+            state_received_at: whatsappConnectionsInApp.stateReceivedAt,
+            state_snapshot_observed_at:
+              whatsappConnectionsInApp.stateSnapshotObservedAt,
+            state_webhook_event_id:
+              whatsappConnectionsInApp.stateWebhookEventId,
+          })
+          .from(whatsappConnectionsInApp)
+          .where(
+            and(
+              eq(
+                whatsappConnectionsInApp.personalAccountId,
+                input.personalAccountId,
+              ),
+              eq(whatsappConnectionsInApp.id, input.whatsappConnectionId),
+              ne(whatsappConnectionsInApp.state, "deleting"),
+              sql`exists (select 1 from ${webhookEventsInApp} events where
+            events.personal_account_id = ${input.personalAccountId}
+            and events.whatsapp_connection_id = ${input.whatsappConnectionId}
+            and events.id = ${input.eventId})`,
+            ),
+          )
+          .for("update");
+        const current = currentResult[0];
         if (current === undefined) {
           throw new Error("connection-state projection target unavailable");
         }
-        const claimed = await connection.query(
-          `INSERT INTO app.webhook_items (
-             personal_account_id,
-             whatsapp_connection_id,
-             deduplication_identity,
-             first_webhook_event_id,
-             item_index,
-             item_kind,
-             outcome,
-             provider_occurred_at,
-             provider_version,
-             received_at
-           )
-           VALUES ($1, $2, $3, $4, $5, 'connection_state', 'superseded', $6, $7, $8)
-           ON CONFLICT (
-             personal_account_id,
-             whatsapp_connection_id,
-             deduplication_identity
-           ) DO NOTHING
-           RETURNING deduplication_identity`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.itemIdentity,
-            input.eventId,
-            input.itemIndex,
-            input.evidence.occurredAt,
-            input.evidence.version,
-            input.receivedAt,
-          ],
-        );
-        if (claimed.rows.length === 0) return "duplicate" as const;
+        if (!(await claimWebhookItem(db, input, "connection_state")))
+          return "duplicate" as const;
 
         const apply = await shouldApply(input, current, compareVersions);
         if (!apply) return "superseded" as const;
 
-        await connection.query(
-          `UPDATE app.whatsapp_connections
-           SET
-             state = $3,
-             state_changed_at = CASE
-               WHEN state = $3 THEN state_changed_at
-               ELSE coalesce($4::timestamptz, $5::timestamptz)
-             END,
-             state_provider_occurred_at = $4,
-             state_provider_version = $6,
-             state_received_at = $5,
-             state_webhook_event_id = $7,
-             state_webhook_item_identity = $8,
-             updated_at = greatest(updated_at, $5::timestamptz)
-           WHERE personal_account_id = $1
-             AND id = $2`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.state,
-            input.evidence.occurredAt,
-            input.receivedAt,
-            input.evidence.version,
-            input.eventId,
-            input.itemIdentity,
-          ],
-        );
-        await connection.query(
-          `UPDATE app.webhook_items
-           SET outcome = 'applied'
-           WHERE personal_account_id = $1
-             AND whatsapp_connection_id = $2
-             AND deduplication_identity = $3`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.itemIdentity,
-          ],
-        );
+        await db
+          .update(whatsappConnectionsInApp)
+          .set({
+            state: input.state,
+            stateChangedAt: sql`case when ${whatsappConnectionsInApp.state} = ${input.state}
+            then ${whatsappConnectionsInApp.stateChangedAt}
+            else coalesce(${input.evidence.occurredAt}::timestamptz, ${input.receivedAt}::timestamptz) end`,
+            stateProviderOccurredAt: input.evidence.occurredAt,
+            stateProviderVersion: input.evidence.version,
+            stateReceivedAt: input.receivedAt,
+            stateWebhookEventId: input.eventId,
+            stateWebhookItemIdentity: input.itemIdentity,
+            updatedAt: sql`greatest(${whatsappConnectionsInApp.updatedAt}, ${input.receivedAt}::timestamptz)`,
+          })
+          .where(
+            and(
+              eq(
+                whatsappConnectionsInApp.personalAccountId,
+                input.personalAccountId,
+              ),
+              eq(whatsappConnectionsInApp.id, input.whatsappConnectionId),
+            ),
+          );
+        await markWebhookItemApplied(db, input);
         return "applied" as const;
       }),
     );
@@ -1215,7 +1291,7 @@ export const makeWebhookEventRepository = (
 
   projectGroup: (input, protect, compareVersions) =>
     provider.withConnection((connection) =>
-      withTransaction(connection, async () => {
+      withTransaction(connection, async (db) => {
         if (
           input.namePrefixIndexes.length > 62 ||
           input.namePrefixIndexes.some(
@@ -1227,160 +1303,149 @@ export const makeWebhookEventRepository = (
         ) {
           throw new Error("invalid group name prefix indexes");
         }
-        await enterPersonalAccountContext(connection, input.personalAccountId);
-        const target = await connection.query(
-          `SELECT connections.id
-           FROM app.whatsapp_connections AS connections
-           WHERE connections.personal_account_id = $1
-             AND connections.id = $2
-             AND connections.state <> 'deleting'
-             AND EXISTS (
-               SELECT 1 FROM app.webhook_events AS events
-               WHERE events.personal_account_id = $1
-                 AND events.whatsapp_connection_id = $2
-                 AND events.id = $3
-             )
-           FOR UPDATE`,
-          [input.personalAccountId, input.whatsappConnectionId, input.eventId],
-        );
-        if (target.rows.length !== 1) {
+        await enterPersonalAccountContext(db, input.personalAccountId);
+        const target = await db
+          .select({ id: whatsappConnectionsInApp.id })
+          .from(whatsappConnectionsInApp)
+          .where(
+            and(
+              eq(
+                whatsappConnectionsInApp.personalAccountId,
+                input.personalAccountId,
+              ),
+              eq(whatsappConnectionsInApp.id, input.whatsappConnectionId),
+              ne(whatsappConnectionsInApp.state, "deleting"),
+              sql`exists (select 1 from ${webhookEventsInApp} events where
+              events.personal_account_id=${input.personalAccountId}
+              and events.whatsapp_connection_id=${input.whatsappConnectionId}
+              and events.id=${input.eventId})`,
+            ),
+          )
+          .for("update");
+        if (target.length !== 1) {
           throw new Error("group projection target unavailable");
         }
-        const claimed = await connection.query(
-          `INSERT INTO app.webhook_items (
-             personal_account_id, whatsapp_connection_id,
-             deduplication_identity, first_webhook_event_id, item_index,
-             item_kind, outcome, provider_occurred_at, provider_version,
-             received_at
-           ) VALUES ($1, $2, $3, $4, $5, 'directory_group',
-             'superseded', $6, $7, $8)
-           ON CONFLICT (
-             personal_account_id, whatsapp_connection_id,
-             deduplication_identity
-           ) DO NOTHING
-           RETURNING deduplication_identity`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.itemIdentity,
-            input.eventId,
-            input.itemIndex,
-            input.evidence.occurredAt,
-            input.evidence.version,
-            input.receivedAt,
-          ],
-        );
-        if (claimed.rows.length === 0) return "duplicate" as const;
+        if (!(await claimWebhookItem(db, input, "directory_group")))
+          return "duplicate" as const;
 
-        const current = await connection.query<GroupEvidenceRow>(
-          `SELECT id, last_observed_at, provider_occurred_at,
-             provider_version, received_at
-           FROM app.whatsapp_groups
-           WHERE personal_account_id = $1
-             AND whatsapp_connection_id = $2
-             AND provider_locator = $3
-           FOR UPDATE`,
-          [input.personalAccountId, input.whatsappConnectionId, input.locator],
-        );
-        if (
-          !(await shouldApplyGroup(input, current.rows[0], compareVersions))
-        ) {
+        const current = await db
+          .select({
+            id: whatsappGroupsInApp.id,
+            last_observed_at: whatsappGroupsInApp.lastObservedAt,
+            provider_occurred_at: whatsappGroupsInApp.providerOccurredAt,
+            provider_version: whatsappGroupsInApp.providerVersion,
+            received_at: whatsappGroupsInApp.receivedAt,
+          })
+          .from(whatsappGroupsInApp)
+          .where(
+            and(
+              eq(
+                whatsappGroupsInApp.personalAccountId,
+                input.personalAccountId,
+              ),
+              eq(
+                whatsappGroupsInApp.whatsappConnectionId,
+                input.whatsappConnectionId,
+              ),
+              eq(whatsappGroupsInApp.providerLocator, input.locator),
+            ),
+          )
+          .for("update");
+        if (!(await shouldApplyGroup(input, current[0], compareVersions))) {
           return "superseded" as const;
         }
-        const currentId = current.rows[0]?.id;
+        const currentId = current[0]?.id;
         const recordId =
           typeof currentId === "string" ? currentId : input.groupId;
         const fields = protectedGroupValues(await protect(recordId));
         const effectiveObservedAt =
           input.evidence.occurredAt ?? input.receivedAt;
-        await connection.query(
-          `INSERT INTO app.whatsapp_groups (
-               id, personal_account_id, whatsapp_connection_id, public_id,
-               provider_locator, name_prefix_indexes,
-               display_name_ciphertext_version,
-             display_name_key_version, display_name_nonce,
-             display_name_ciphertext, provider_identity_ciphertext_version,
-             provider_identity_key_version, provider_identity_nonce,
-             provider_identity_ciphertext, joined, last_observed_at,
-             provider_occurred_at, provider_version, received_at,
-             webhook_event_id, webhook_item_identity, created_at, updated_at
-             ) VALUES (
-             $1, $2, $3, $4, $5,
-             $6::text[]::app.group_name_blind_index[],
-             $7, $8, $9, $10, $11, $12,
-             $13, $14, $15, $16, $17, $18, $19, $20, $21, $19, $19
-           )
-           ON CONFLICT (personal_account_id, whatsapp_connection_id, provider_locator)
-           DO UPDATE SET
-             name_prefix_indexes = EXCLUDED.name_prefix_indexes,
-             display_name_ciphertext_version = EXCLUDED.display_name_ciphertext_version,
-             display_name_key_version = EXCLUDED.display_name_key_version,
-             display_name_nonce = EXCLUDED.display_name_nonce,
-             display_name_ciphertext = EXCLUDED.display_name_ciphertext,
-             provider_identity_ciphertext_version = EXCLUDED.provider_identity_ciphertext_version,
-             provider_identity_key_version = EXCLUDED.provider_identity_key_version,
-             provider_identity_nonce = EXCLUDED.provider_identity_nonce,
-             provider_identity_ciphertext = EXCLUDED.provider_identity_ciphertext,
-             joined = EXCLUDED.joined,
-             last_observed_at = EXCLUDED.last_observed_at,
-             provider_occurred_at = EXCLUDED.provider_occurred_at,
-             provider_version = EXCLUDED.provider_version,
-             received_at = EXCLUDED.received_at,
-             webhook_event_id = EXCLUDED.webhook_event_id,
-             webhook_item_identity = EXCLUDED.webhook_item_identity,
-             updated_at = EXCLUDED.updated_at`,
-          [
-            recordId,
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.publicId,
-            input.locator,
-            input.namePrefixIndexes,
-            ...fields,
-            input.joined,
-            effectiveObservedAt,
-            input.evidence.occurredAt,
-            input.evidence.version,
-            input.receivedAt,
-            input.eventId,
-            input.itemIdentity,
-          ],
-        );
-        await connection.query(
-          `INSERT INTO app.whatsapp_group_directory_states (
-             personal_account_id, whatsapp_connection_id, as_of,
-             stale, partial, updated_at
-           ) VALUES ($1, $2, $3, false, true, $3)
-           ON CONFLICT (personal_account_id, whatsapp_connection_id)
-           DO UPDATE SET
-             as_of = greatest(app.whatsapp_group_directory_states.as_of, EXCLUDED.as_of),
-             stale = app.whatsapp_group_directory_states.stale,
-             partial = app.whatsapp_group_directory_states.partial,
-             updated_at = greatest(app.whatsapp_group_directory_states.updated_at, EXCLUDED.updated_at)`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.receivedAt,
-          ],
-        );
-        await connection.query(
-          `UPDATE app.webhook_items SET outcome = 'applied'
-           WHERE personal_account_id = $1
-             AND whatsapp_connection_id = $2
-             AND deduplication_identity = $3`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.itemIdentity,
-          ],
-        );
+        const groupValues = {
+          id: recordId,
+          personalAccountId: input.personalAccountId,
+          whatsappConnectionId: input.whatsappConnectionId,
+          publicId: input.publicId,
+          providerLocator: input.locator,
+          namePrefixIndexes: [...input.namePrefixIndexes],
+          displayNameCiphertextVersion: fields[0],
+          displayNameKeyVersion: fields[1],
+          displayNameNonce: fields[2],
+          displayNameCiphertext: fields[3],
+          providerIdentityCiphertextVersion: fields[4],
+          providerIdentityKeyVersion: fields[5],
+          providerIdentityNonce: fields[6],
+          providerIdentityCiphertext: fields[7],
+          joined: input.joined,
+          lastObservedAt: effectiveObservedAt,
+          providerOccurredAt: input.evidence.occurredAt,
+          providerVersion: input.evidence.version,
+          receivedAt: input.receivedAt,
+          webhookEventId: input.eventId,
+          webhookItemIdentity: input.itemIdentity,
+          createdAt: input.receivedAt,
+          updatedAt: input.receivedAt,
+        };
+        await db
+          .insert(whatsappGroupsInApp)
+          .values(groupValues)
+          .onConflictDoUpdate({
+            target: [
+              whatsappGroupsInApp.personalAccountId,
+              whatsappGroupsInApp.whatsappConnectionId,
+              whatsappGroupsInApp.providerLocator,
+            ],
+            set: {
+              namePrefixIndexes: groupValues.namePrefixIndexes,
+              displayNameCiphertextVersion:
+                groupValues.displayNameCiphertextVersion,
+              displayNameKeyVersion: groupValues.displayNameKeyVersion,
+              displayNameNonce: groupValues.displayNameNonce,
+              displayNameCiphertext: groupValues.displayNameCiphertext,
+              providerIdentityCiphertextVersion:
+                groupValues.providerIdentityCiphertextVersion,
+              providerIdentityKeyVersion:
+                groupValues.providerIdentityKeyVersion,
+              providerIdentityNonce: groupValues.providerIdentityNonce,
+              providerIdentityCiphertext:
+                groupValues.providerIdentityCiphertext,
+              joined: groupValues.joined,
+              lastObservedAt: groupValues.lastObservedAt,
+              providerOccurredAt: groupValues.providerOccurredAt,
+              providerVersion: groupValues.providerVersion,
+              receivedAt: groupValues.receivedAt,
+              webhookEventId: groupValues.webhookEventId,
+              webhookItemIdentity: groupValues.webhookItemIdentity,
+              updatedAt: groupValues.updatedAt,
+            },
+          });
+        await db
+          .insert(whatsappGroupDirectoryStatesInApp)
+          .values({
+            personalAccountId: input.personalAccountId,
+            whatsappConnectionId: input.whatsappConnectionId,
+            asOf: input.receivedAt,
+            stale: false,
+            partial: true,
+            updatedAt: input.receivedAt,
+          })
+          .onConflictDoUpdate({
+            target: [
+              whatsappGroupDirectoryStatesInApp.personalAccountId,
+              whatsappGroupDirectoryStatesInApp.whatsappConnectionId,
+            ],
+            set: {
+              asOf: sql`greatest(${whatsappGroupDirectoryStatesInApp.asOf}, excluded.as_of)`,
+              updatedAt: sql`greatest(${whatsappGroupDirectoryStatesInApp.updatedAt}, excluded.updated_at)`,
+            },
+          });
+        await markWebhookItemApplied(db, input);
         return "applied" as const;
       }),
     ),
 
   projectDirectoryContact: (input, compareVersions) =>
     provider.withConnection((connection) =>
-      withTransaction(connection, async () => {
+      withTransaction(connection, async (db) => {
         if (
           !/^ctc_[A-Za-z0-9_-]{21}$/u.test(input.publicId) ||
           !/^di1_[A-Za-z0-9_-]{43}$/u.test(input.providerIdentityIndex) ||
@@ -1420,89 +1485,72 @@ export const makeWebhookEventRepository = (
             ? null
             : decodeNonce(input.phoneCiphertext);
 
-        await enterPersonalAccountContext(connection, input.personalAccountId);
-        const lockedConnection = await connection.query(
-          `SELECT id
-           FROM app.whatsapp_connections
-           WHERE personal_account_id = $1
-             AND id = $2
-           FOR UPDATE`,
-          [input.personalAccountId, input.whatsappConnectionId],
-        );
-        if (lockedConnection.rows.length !== 1) {
+        await enterPersonalAccountContext(db, input.personalAccountId);
+        const lockedConnection = await db
+          .select({ id: whatsappConnectionsInApp.id })
+          .from(whatsappConnectionsInApp)
+          .where(
+            and(
+              eq(
+                whatsappConnectionsInApp.personalAccountId,
+                input.personalAccountId,
+              ),
+              eq(whatsappConnectionsInApp.id, input.whatsappConnectionId),
+            ),
+          )
+          .for("update");
+        if (lockedConnection.length !== 1) {
           throw new Error("Directory contact projection target unavailable");
         }
-        const currentResult = await connection.query<ContactOrderRow>(
-          `SELECT
-             contacts.provider_occurred_at,
-             contacts.provider_version,
-             contacts.snapshot_observed_at,
-             contacts.received_at,
-             contacts.webhook_event_id
-           FROM app.directory_contacts AS contacts
-           WHERE contacts.personal_account_id = $1
-             AND contacts.whatsapp_connection_id = $2
-             AND contacts.provider_identity_index = $3
-             AND EXISTS (
-               SELECT 1
-               FROM app.webhook_events AS events
-               WHERE events.personal_account_id = $1
-                 AND events.whatsapp_connection_id = $2
-                 AND events.id = $4
-             )
-           FOR UPDATE`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.providerIdentityIndex,
-            input.eventId,
-          ],
-        );
-        const eventExists = await connection.query(
-          `SELECT id
-           FROM app.webhook_events
-           WHERE personal_account_id = $1
-             AND whatsapp_connection_id = $2
-             AND id = $3`,
-          [input.personalAccountId, input.whatsappConnectionId, input.eventId],
-        );
-        if (eventExists.rows.length !== 1) {
+        const currentResult = await db
+          .select({
+            provider_occurred_at: directoryContactsInApp.providerOccurredAt,
+            provider_version: directoryContactsInApp.providerVersion,
+            snapshot_observed_at: directoryContactsInApp.snapshotObservedAt,
+            received_at: directoryContactsInApp.receivedAt,
+            webhook_event_id: directoryContactsInApp.webhookEventId,
+          })
+          .from(directoryContactsInApp)
+          .where(
+            and(
+              eq(
+                directoryContactsInApp.personalAccountId,
+                input.personalAccountId,
+              ),
+              eq(
+                directoryContactsInApp.whatsappConnectionId,
+                input.whatsappConnectionId,
+              ),
+              eq(
+                directoryContactsInApp.providerIdentityIndex,
+                input.providerIdentityIndex,
+              ),
+              sql`exists (select 1 from ${webhookEventsInApp} events where
+                events.personal_account_id = ${input.personalAccountId}
+                and events.whatsapp_connection_id = ${input.whatsappConnectionId}
+                and events.id = ${input.eventId})`,
+            ),
+          )
+          .for("update");
+        const eventExists = await db
+          .select({ id: webhookEventsInApp.id })
+          .from(webhookEventsInApp)
+          .where(
+            and(
+              eq(webhookEventsInApp.personalAccountId, input.personalAccountId),
+              eq(
+                webhookEventsInApp.whatsappConnectionId,
+                input.whatsappConnectionId,
+              ),
+              eq(webhookEventsInApp.id, input.eventId),
+            ),
+          );
+        if (eventExists.length !== 1) {
           throw new Error("Directory contact projection target unavailable");
         }
-        const claimed = await connection.query(
-          `INSERT INTO app.webhook_items (
-             personal_account_id,
-             whatsapp_connection_id,
-             deduplication_identity,
-             first_webhook_event_id,
-             item_index,
-             item_kind,
-             outcome,
-             provider_occurred_at,
-             provider_version,
-             received_at
-           ) VALUES (
-             $1, $2, $3, $4, $5, 'directory_contact', 'superseded', $6, $7, $8
-           )
-           ON CONFLICT (
-             personal_account_id,
-             whatsapp_connection_id,
-             deduplication_identity
-           ) DO NOTHING
-           RETURNING deduplication_identity`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.itemIdentity,
-            input.eventId,
-            input.itemIndex,
-            input.evidence.occurredAt,
-            input.evidence.version,
-            input.receivedAt,
-          ],
-        );
-        if (claimed.rows.length === 0) return "duplicate" as const;
-        const current = currentResult.rows[0];
+        if (!(await claimWebhookItem(db, input, "directory_contact")))
+          return "duplicate" as const;
+        const current = currentResult[0];
         if (
           current !== undefined &&
           !(await shouldApplyContact(input, current, compareVersions))
@@ -1510,144 +1558,104 @@ export const makeWebhookEventRepository = (
           return "superseded" as const;
         }
 
-        await connection.query(
-          `INSERT INTO app.directory_contact_projections (
-             personal_account_id,
-             whatsapp_connection_id,
-             as_of,
-             stale,
-             partial,
-             updated_at
-           ) VALUES ($1, $2, $3, false, true, $3)
-           ON CONFLICT (personal_account_id, whatsapp_connection_id)
-           DO UPDATE SET
-             as_of = greatest(
-               app.directory_contact_projections.as_of,
-               excluded.as_of
-             ),
-             updated_at = greatest(
-               app.directory_contact_projections.updated_at,
-               excluded.updated_at
-             )`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.receivedAt,
-          ],
-        );
-        await connection.query(
-          `INSERT INTO app.directory_contacts (
-             personal_account_id,
-             whatsapp_connection_id,
-             public_id,
-             provider_identity_index,
-             provider_identity_ciphertext_version,
-             provider_identity_key_version,
-             provider_identity_nonce,
-             provider_identity_ciphertext,
-             display_name_ciphertext_version,
-             display_name_key_version,
-             display_name_nonce,
-             display_name_ciphertext,
-             display_name_sort,
-             phone_ciphertext_version,
-             phone_key_version,
-             phone_nonce,
-             phone_ciphertext,
-             name_prefix_indexes,
-             phone_index,
-             active,
-             provider_occurred_at,
-             provider_version,
-             received_at,
-             webhook_event_id,
-             webhook_item_identity,
-             updated_at
-           ) VALUES (
-             $1, $2, $3, $4, $5, $6, $7, $8,
-             $9, $10, $11, $12, $13, $14, $15, $16, $17,
-             ARRAY(
-               SELECT value::app.directory_blind_index
-               FROM jsonb_array_elements_text($18::jsonb) AS value
-             ),
-             $19, $20, $21, $22, $23,
-             $24, $25, $23
-           )
-           ON CONFLICT (
-             personal_account_id,
-             whatsapp_connection_id,
-             provider_identity_index
-           ) DO UPDATE SET
-             provider_identity_ciphertext_version =
-               excluded.provider_identity_ciphertext_version,
-             provider_identity_key_version = excluded.provider_identity_key_version,
-             provider_identity_nonce = excluded.provider_identity_nonce,
-             provider_identity_ciphertext = excluded.provider_identity_ciphertext,
-             display_name_ciphertext_version = excluded.display_name_ciphertext_version,
-             display_name_key_version = excluded.display_name_key_version,
-             display_name_nonce = excluded.display_name_nonce,
-             display_name_ciphertext = excluded.display_name_ciphertext,
-             display_name_sort = excluded.display_name_sort,
-             phone_ciphertext_version = excluded.phone_ciphertext_version,
-             phone_key_version = excluded.phone_key_version,
-             phone_nonce = excluded.phone_nonce,
-             phone_ciphertext = excluded.phone_ciphertext,
-             name_prefix_indexes = excluded.name_prefix_indexes,
-             phone_index = excluded.phone_index,
-             active = excluded.active,
-             provider_occurred_at = excluded.provider_occurred_at,
-             provider_version = excluded.provider_version,
-             received_at = excluded.received_at,
-             webhook_event_id = excluded.webhook_event_id,
-             webhook_item_identity = excluded.webhook_item_identity,
-             updated_at = excluded.updated_at`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.publicId,
-            input.providerIdentityIndex,
+        await db
+          .insert(directoryContactProjectionsInApp)
+          .values({
+            personalAccountId: input.personalAccountId,
+            whatsappConnectionId: input.whatsappConnectionId,
+            asOf: input.receivedAt,
+            stale: false,
+            partial: true,
+            updatedAt: input.receivedAt,
+          })
+          .onConflictDoUpdate({
+            target: [
+              directoryContactProjectionsInApp.personalAccountId,
+              directoryContactProjectionsInApp.whatsappConnectionId,
+            ],
+            set: {
+              asOf: sql`greatest(${directoryContactProjectionsInApp.asOf}, excluded.as_of)`,
+              updatedAt: sql`greatest(${directoryContactProjectionsInApp.updatedAt}, excluded.updated_at)`,
+            },
+          });
+        const contactValues = {
+          personalAccountId: input.personalAccountId,
+          whatsappConnectionId: input.whatsappConnectionId,
+          publicId: input.publicId,
+          providerIdentityIndex: input.providerIdentityIndex,
+          providerIdentityCiphertextVersion:
             input.providerIdentityCiphertext.version,
+          providerIdentityKeyVersion:
             input.providerIdentityCiphertext.keyVersion,
-            providerNonce,
-            providerCiphertext,
+          providerIdentityNonce: providerNonce,
+          providerIdentityCiphertext: providerCiphertext,
+          displayNameCiphertextVersion:
             input.displayNameCiphertext?.version ?? null,
+          displayNameKeyVersion:
             input.displayNameCiphertext?.keyVersion ?? null,
-            displayNameNonce,
-            displayNameCiphertext,
-            input.displayNameSort,
-            input.phoneCiphertext?.version ?? null,
-            input.phoneCiphertext?.keyVersion ?? null,
-            phoneNonce,
-            phoneCiphertext,
-            JSON.stringify(input.namePrefixIndexes),
-            input.phoneIndex,
-            input.active,
-            input.evidence.occurredAt,
-            input.evidence.version,
-            input.receivedAt,
-            input.eventId,
-            input.itemIdentity,
-          ],
-        );
-        await connection.query(
-          `UPDATE app.webhook_items
-           SET outcome = 'applied'
-           WHERE personal_account_id = $1
-             AND whatsapp_connection_id = $2
-             AND deduplication_identity = $3`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.itemIdentity,
-          ],
-        );
+          displayNameNonce,
+          displayNameCiphertext,
+          displayNameSort: input.displayNameSort,
+          phoneCiphertextVersion: input.phoneCiphertext?.version ?? null,
+          phoneKeyVersion: input.phoneCiphertext?.keyVersion ?? null,
+          phoneNonce,
+          phoneCiphertext,
+          namePrefixIndexes: [...input.namePrefixIndexes],
+          phoneIndex: input.phoneIndex,
+          active: input.active,
+          providerOccurredAt: input.evidence.occurredAt,
+          providerVersion: input.evidence.version,
+          receivedAt: input.receivedAt,
+          webhookEventId: input.eventId,
+          webhookItemIdentity: input.itemIdentity,
+          updatedAt: input.receivedAt,
+        };
+        await db
+          .insert(directoryContactsInApp)
+          .values(contactValues)
+          .onConflictDoUpdate({
+            target: [
+              directoryContactsInApp.personalAccountId,
+              directoryContactsInApp.whatsappConnectionId,
+              directoryContactsInApp.providerIdentityIndex,
+            ],
+            set: {
+              providerIdentityCiphertextVersion:
+                contactValues.providerIdentityCiphertextVersion,
+              providerIdentityKeyVersion:
+                contactValues.providerIdentityKeyVersion,
+              providerIdentityNonce: contactValues.providerIdentityNonce,
+              providerIdentityCiphertext:
+                contactValues.providerIdentityCiphertext,
+              displayNameCiphertextVersion:
+                contactValues.displayNameCiphertextVersion,
+              displayNameKeyVersion: contactValues.displayNameKeyVersion,
+              displayNameNonce: contactValues.displayNameNonce,
+              displayNameCiphertext: contactValues.displayNameCiphertext,
+              displayNameSort: contactValues.displayNameSort,
+              phoneCiphertextVersion: contactValues.phoneCiphertextVersion,
+              phoneKeyVersion: contactValues.phoneKeyVersion,
+              phoneNonce: contactValues.phoneNonce,
+              phoneCiphertext: contactValues.phoneCiphertext,
+              namePrefixIndexes: contactValues.namePrefixIndexes,
+              phoneIndex: contactValues.phoneIndex,
+              active: contactValues.active,
+              providerOccurredAt: contactValues.providerOccurredAt,
+              providerVersion: contactValues.providerVersion,
+              receivedAt: contactValues.receivedAt,
+              webhookEventId: contactValues.webhookEventId,
+              webhookItemIdentity: contactValues.webhookItemIdentity,
+              updatedAt: contactValues.updatedAt,
+            },
+          });
+        await markWebhookItemApplied(db, input);
         return "applied" as const;
       }),
     ),
 
   projectStoredMessage: (input, compareVersions) =>
     provider.withConnection((connection) =>
-      withTransaction(connection, async () => {
+      withTransaction(connection, async (db) => {
         if (
           !/^cvs_[A-Za-z0-9_-]{21}$/u.test(input.conversationPublicId) ||
           !/^msg_[A-Za-z0-9_-]{21}$/u.test(input.messagePublicId) ||
@@ -1660,76 +1668,99 @@ export const makeWebhookEventRepository = (
         }
         const ciphertext = decodeCiphertext(input.content);
         const nonce = decodeNonce(input.content);
-        await enterPersonalAccountContext(connection, input.personalAccountId);
-        const lockedConnection = await connection.query(
-          `SELECT id FROM app.whatsapp_connections
-           WHERE personal_account_id=$1 AND id=$2 FOR UPDATE`,
-          [input.personalAccountId, input.whatsappConnectionId],
-        );
-        if (lockedConnection.rows.length !== 1) {
+        await enterPersonalAccountContext(db, input.personalAccountId);
+        const lockedConnection = await db
+          .select({ id: whatsappConnectionsInApp.id })
+          .from(whatsappConnectionsInApp)
+          .where(
+            and(
+              eq(
+                whatsappConnectionsInApp.personalAccountId,
+                input.personalAccountId,
+              ),
+              eq(whatsappConnectionsInApp.id, input.whatsappConnectionId),
+            ),
+          )
+          .for("update");
+        if (lockedConnection.length !== 1) {
           throw new Error("Stored Message projection target unavailable");
         }
         const recipient =
           input.recipientKind === "group"
-            ? await connection.query<{ id: unknown; public_id: unknown }>(
-                `SELECT id, public_id FROM app.whatsapp_groups
-               WHERE personal_account_id=$1 AND whatsapp_connection_id=$2
-                 AND provider_locator=$3`,
-                [
-                  input.personalAccountId,
-                  input.whatsappConnectionId,
-                  input.recipientLocator,
-                ],
-              )
-            : await connection.query<{ id: unknown; public_id: unknown }>(
-                `SELECT id, public_id FROM app.directory_contacts
-               WHERE personal_account_id=$1 AND whatsapp_connection_id=$2
-                 AND provider_identity_index=$3`,
-                [
-                  input.personalAccountId,
-                  input.whatsappConnectionId,
-                  input.recipientLocator,
-                ],
-              );
+            ? await db
+                .select({
+                  id: whatsappGroupsInApp.id,
+                  public_id: whatsappGroupsInApp.publicId,
+                })
+                .from(whatsappGroupsInApp)
+                .where(
+                  and(
+                    eq(
+                      whatsappGroupsInApp.personalAccountId,
+                      input.personalAccountId,
+                    ),
+                    eq(
+                      whatsappGroupsInApp.whatsappConnectionId,
+                      input.whatsappConnectionId,
+                    ),
+                    eq(
+                      whatsappGroupsInApp.providerLocator,
+                      input.recipientLocator,
+                    ),
+                  ),
+                )
+            : await db
+                .select({
+                  id: directoryContactsInApp.id,
+                  public_id: directoryContactsInApp.publicId,
+                })
+                .from(directoryContactsInApp)
+                .where(
+                  and(
+                    eq(
+                      directoryContactsInApp.personalAccountId,
+                      input.personalAccountId,
+                    ),
+                    eq(
+                      directoryContactsInApp.whatsappConnectionId,
+                      input.whatsappConnectionId,
+                    ),
+                    eq(
+                      directoryContactsInApp.providerIdentityIndex,
+                      input.recipientLocator,
+                    ),
+                  ),
+                );
         const recipientPublicId =
-          typeof recipient.rows[0]?.public_id === "string"
-            ? recipient.rows[0].public_id
+          typeof recipient[0]?.public_id === "string"
+            ? recipient[0].public_id
             : input.recipientPublicId;
-        const claimed = await connection.query(
-          `INSERT INTO app.webhook_items (personal_account_id, whatsapp_connection_id,
-             deduplication_identity, first_webhook_event_id, item_index, item_kind,
-             outcome, provider_occurred_at, provider_version, received_at)
-           VALUES ($1,$2,$3,$4,$5,'message_upsert','superseded',$6,$7,$8)
-           ON CONFLICT (personal_account_id, whatsapp_connection_id, deduplication_identity)
-           DO NOTHING RETURNING deduplication_identity`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.itemIdentity,
-            input.eventId,
-            input.itemIndex,
-            input.evidence.occurredAt,
-            input.evidence.version,
-            input.receivedAt,
-          ],
-        );
-        if (claimed.rows.length === 0) return "duplicate" as const;
-        const current = await connection.query<{
-          deleted_at: unknown;
-          edited_at: unknown;
-          provider_occurred_at: unknown;
-          provider_version: unknown;
-          received_at: unknown;
-        }>(
-          `SELECT deleted_at, edited_at, provider_occurred_at, provider_version, received_at FROM app.stored_messages
-           WHERE personal_account_id=$1 AND whatsapp_connection_id=$2 AND message_identity=$3 FOR UPDATE`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.messageIdentity,
-          ],
-        );
-        const row = current.rows[0];
+        if (!(await claimWebhookItem(db, input, "message_upsert")))
+          return "duplicate" as const;
+        const current = await db
+          .select({
+            deleted_at: storedMessagesInApp.deletedAt,
+            edited_at: storedMessagesInApp.editedAt,
+            provider_occurred_at: storedMessagesInApp.providerOccurredAt,
+            provider_version: storedMessagesInApp.providerVersion,
+            received_at: storedMessagesInApp.receivedAt,
+          })
+          .from(storedMessagesInApp)
+          .where(
+            and(
+              eq(
+                storedMessagesInApp.personalAccountId,
+                input.personalAccountId,
+              ),
+              eq(
+                storedMessagesInApp.whatsappConnectionId,
+                input.whatsappConnectionId,
+              ),
+              eq(storedMessagesInApp.messageIdentity, input.messageIdentity),
+            ),
+          )
+          .for("update");
+        const row = current[0];
         if (row !== undefined) {
           if (timestamp(row.deleted_at) !== null) return "superseded" as const;
           const oldOccurred = timestamp(row.provider_occurred_at);
@@ -1757,204 +1788,247 @@ export const makeWebhookEventRepository = (
           )
             return "superseded" as const;
         }
-        await connection.query(
-          `INSERT INTO app.whatsapp_conversations (id,personal_account_id,whatsapp_connection_id,
-             public_id,kind,recipient_locator,recipient_public_id,last_activity_at,last_activity_direction)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-           ON CONFLICT (personal_account_id,whatsapp_connection_id,recipient_locator) DO NOTHING`,
-          [
-            input.conversationId,
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.conversationPublicId,
-            input.recipientKind,
-            input.recipientLocator,
+        await db
+          .insert(whatsappConversationsInApp)
+          .values({
+            id: input.conversationId,
+            personalAccountId: input.personalAccountId,
+            whatsappConnectionId: input.whatsappConnectionId,
+            publicId: input.conversationPublicId,
+            kind: input.recipientKind,
+            recipientLocator: input.recipientLocator,
             recipientPublicId,
-            input.sentAt,
-            input.direction,
-          ],
-        );
-        const conversation = await connection.query<{ id: unknown }>(
-          `SELECT id FROM app.whatsapp_conversations WHERE personal_account_id=$1 AND whatsapp_connection_id=$2 AND recipient_locator=$3`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.recipientLocator,
-          ],
-        );
-        const conversationId = conversation.rows[0]?.id;
+            lastActivityAt: input.sentAt,
+            lastActivityDirection: input.direction,
+          })
+          .onConflictDoNothing({
+            target: [
+              whatsappConversationsInApp.personalAccountId,
+              whatsappConversationsInApp.whatsappConnectionId,
+              whatsappConversationsInApp.recipientLocator,
+            ],
+          });
+        const conversation = await db
+          .select({ id: whatsappConversationsInApp.id })
+          .from(whatsappConversationsInApp)
+          .where(
+            and(
+              eq(
+                whatsappConversationsInApp.personalAccountId,
+                input.personalAccountId,
+              ),
+              eq(
+                whatsappConversationsInApp.whatsappConnectionId,
+                input.whatsappConnectionId,
+              ),
+              eq(
+                whatsappConversationsInApp.recipientLocator,
+                input.recipientLocator,
+              ),
+            ),
+          );
+        const conversationId = conversation[0]?.id;
         if (typeof conversationId !== "string")
           throw new Error("invalid WhatsApp Conversation");
-        await connection.query(
-          `WITH removed AS (
+        await db.execute(sql`with removed as (
              DELETE FROM app.stored_media media USING app.stored_messages messages
-             WHERE messages.personal_account_id=$1 AND messages.whatsapp_connection_id=$2
-               AND messages.message_identity=$3 AND media.personal_account_id=messages.personal_account_id
+             WHERE messages.personal_account_id=${input.personalAccountId}
+               AND messages.whatsapp_connection_id=${input.whatsappConnectionId}
+               AND messages.message_identity=${input.messageIdentity}
+               AND media.personal_account_id=messages.personal_account_id
                AND media.whatsapp_connection_id=messages.whatsapp_connection_id AND media.stored_message_id=messages.id
              RETURNING media.object_key,media.plaintext_size_bytes,media.state
            ), queued AS (
              INSERT INTO app.stored_media_object_deletions(personal_account_id,object_key)
-             SELECT $1,object_key FROM removed WHERE object_key IS NOT NULL ON CONFLICT DO NOTHING
+             SELECT ${input.personalAccountId},object_key FROM removed WHERE object_key IS NOT NULL ON CONFLICT DO NOTHING
            )
            UPDATE app.personal_accounts SET stored_media_used_bytes=stored_media_used_bytes-
              coalesce((SELECT sum(plaintext_size_bytes) FROM removed WHERE state='ready'),0)
-           WHERE id=$1`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.messageIdentity,
-          ],
-        );
-        await connection.query(
-          `INSERT INTO app.stored_messages (id,personal_account_id,whatsapp_connection_id,conversation_id,
-             public_id,message_identity,direction,sent_at,content_type,content_ciphertext_version,
-             content_key_version,content_nonce,content_ciphertext,provider_occurred_at,provider_version,
-             received_at,webhook_event_id,webhook_item_identity)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
-           ON CONFLICT (personal_account_id,whatsapp_connection_id,message_identity) DO UPDATE SET
-             direction=excluded.direction,sent_at=excluded.sent_at,content_type=excluded.content_type,
-             content_ciphertext_version=excluded.content_ciphertext_version,content_key_version=excluded.content_key_version,
-             content_nonce=excluded.content_nonce,content_ciphertext=excluded.content_ciphertext,
-             provider_occurred_at=excluded.provider_occurred_at,provider_version=excluded.provider_version,
-             received_at=excluded.received_at,webhook_event_id=excluded.webhook_event_id,
-             webhook_item_identity=excluded.webhook_item_identity,updated_at=transaction_timestamp()`,
-          [
-            input.messageId,
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            conversationId,
-            input.messagePublicId,
-            input.messageIdentity,
-            input.direction,
-            input.sentAt,
-            input.contentType,
-            input.content.version,
-            input.content.keyVersion,
-            nonce,
-            ciphertext,
-            input.evidence.occurredAt,
-            input.evidence.version,
-            input.receivedAt,
-            input.eventId,
-            input.itemIdentity,
-          ],
-        );
-        if (input.media != null) {
-          const storedMessage = await connection.query<{ id: unknown }>(
-            `SELECT id FROM app.stored_messages WHERE personal_account_id=$1
-               AND whatsapp_connection_id=$2 AND message_identity=$3`,
-            [
-              input.personalAccountId,
-              input.whatsappConnectionId,
-              input.messageIdentity,
+           WHERE id=${input.personalAccountId}`);
+        const messageValues = {
+          id: input.messageId,
+          personalAccountId: input.personalAccountId,
+          whatsappConnectionId: input.whatsappConnectionId,
+          conversationId,
+          publicId: input.messagePublicId,
+          messageIdentity: input.messageIdentity,
+          direction: input.direction,
+          sentAt: input.sentAt,
+          contentType: input.contentType,
+          contentCiphertextVersion: input.content.version,
+          contentKeyVersion: input.content.keyVersion,
+          contentNonce: nonce,
+          contentCiphertext: ciphertext,
+          providerOccurredAt: input.evidence.occurredAt,
+          providerVersion: input.evidence.version,
+          receivedAt: input.receivedAt,
+          webhookEventId: input.eventId,
+          webhookItemIdentity: input.itemIdentity,
+        };
+        await db
+          .insert(storedMessagesInApp)
+          .values(messageValues)
+          .onConflictDoUpdate({
+            target: [
+              storedMessagesInApp.personalAccountId,
+              storedMessagesInApp.whatsappConnectionId,
+              storedMessagesInApp.messageIdentity,
             ],
-          );
-          const storedMessageId = storedMessage.rows[0]?.id;
+            set: {
+              direction: messageValues.direction,
+              sentAt: messageValues.sentAt,
+              contentType: messageValues.contentType,
+              contentCiphertextVersion: messageValues.contentCiphertextVersion,
+              contentKeyVersion: messageValues.contentKeyVersion,
+              contentNonce: messageValues.contentNonce,
+              contentCiphertext: messageValues.contentCiphertext,
+              providerOccurredAt: messageValues.providerOccurredAt,
+              providerVersion: messageValues.providerVersion,
+              receivedAt: messageValues.receivedAt,
+              webhookEventId: messageValues.webhookEventId,
+              webhookItemIdentity: messageValues.webhookItemIdentity,
+              updatedAt: sql`transaction_timestamp()`,
+            },
+          });
+        if (input.media != null) {
+          const storedMessage = await db
+            .select({ id: storedMessagesInApp.id })
+            .from(storedMessagesInApp)
+            .where(
+              and(
+                eq(
+                  storedMessagesInApp.personalAccountId,
+                  input.personalAccountId,
+                ),
+                eq(
+                  storedMessagesInApp.whatsappConnectionId,
+                  input.whatsappConnectionId,
+                ),
+                eq(storedMessagesInApp.messageIdentity, input.messageIdentity),
+              ),
+            );
+          const storedMessageId = storedMessage[0]?.id;
           if (typeof storedMessageId !== "string")
             throw new Error("invalid Stored Message for media");
-          await connection.query(
-            `INSERT INTO app.stored_media (id,personal_account_id,whatsapp_connection_id,
-               stored_message_id,public_id,state,media_type,source_ciphertext_version,
-               source_key_version,source_nonce,source_ciphertext)
-             VALUES ($1,$2,$3,$4,$5,'pending',$6,$7,$8,$9,$10)
-             ON CONFLICT (personal_account_id,whatsapp_connection_id,stored_message_id) DO NOTHING`,
-            [
-              input.media.id,
-              input.personalAccountId,
-              input.whatsappConnectionId,
+          await db
+            .insert(storedMediaInApp)
+            .values({
+              id: input.media.id,
+              personalAccountId: input.personalAccountId,
+              whatsappConnectionId: input.whatsappConnectionId,
               storedMessageId,
-              input.media.publicId,
-              input.contentType,
-              input.media.source.version,
-              input.media.source.keyVersion,
-              decodeNonce(input.media.source),
-              decodeCiphertext(input.media.source),
-            ],
-          );
+              publicId: input.media.publicId,
+              state: "pending",
+              mediaType: input.contentType,
+              sourceCiphertextVersion: input.media.source.version,
+              sourceKeyVersion: input.media.source.keyVersion,
+              sourceNonce: decodeNonce(input.media.source),
+              sourceCiphertext: decodeCiphertext(input.media.source),
+            })
+            .onConflictDoNothing({
+              target: [
+                storedMediaInApp.personalAccountId,
+                storedMediaInApp.whatsappConnectionId,
+                storedMediaInApp.storedMessageId,
+              ],
+            });
         }
-        await connection.query(
-          `UPDATE app.whatsapp_conversations AS conversations SET
+        await db.execute(sql`update app.whatsapp_conversations as conversations set
              last_activity_at=latest.sent_at,last_activity_direction=latest.direction,updated_at=transaction_timestamp()
-           FROM (SELECT sent_at,direction FROM app.stored_messages WHERE personal_account_id=$1
-             AND whatsapp_connection_id=$2 AND conversation_id=$3 AND content_expired_at IS NULL
+           FROM (SELECT sent_at,direction FROM app.stored_messages
+             WHERE personal_account_id=${input.personalAccountId}
+             AND whatsapp_connection_id=${input.whatsappConnectionId}
+             AND conversation_id=${conversationId} AND content_expired_at IS NULL
              ORDER BY sent_at DESC, public_id DESC LIMIT 1) latest
-           WHERE conversations.personal_account_id=$1 AND conversations.whatsapp_connection_id=$2 AND conversations.id=$3`,
-          [input.personalAccountId, input.whatsappConnectionId, conversationId],
-        );
+           WHERE conversations.personal_account_id=${input.personalAccountId}
+             AND conversations.whatsapp_connection_id=${input.whatsappConnectionId}
+             AND conversations.id=${conversationId}`);
         if (input.direction === "outbound") {
-          const correlated = await connection.query<{ id: unknown }>(
-            `SELECT id FROM app.send_operations
-             WHERE personal_account_id=$1 AND whatsapp_connection_id=$2
-               AND message_identity=$3 AND expires_at>$4 FOR UPDATE`,
-            [
-              input.personalAccountId,
-              input.whatsappConnectionId,
-              input.messageIdentity,
-              input.receivedAt,
-            ],
-          );
-          const sendId = correlated.rows[0]?.id;
+          const correlated = await db
+            .select({ id: sendOperationsInApp.id })
+            .from(sendOperationsInApp)
+            .where(
+              and(
+                eq(
+                  sendOperationsInApp.personalAccountId,
+                  input.personalAccountId,
+                ),
+                eq(
+                  sendOperationsInApp.whatsappConnectionId,
+                  input.whatsappConnectionId,
+                ),
+                eq(sendOperationsInApp.messageIdentity, input.messageIdentity),
+                gt(sendOperationsInApp.expiresAt, input.receivedAt),
+              ),
+            )
+            .for("update");
+          const sendId = correlated[0]?.id;
           if (typeof sendId === "string") {
-            await connection.query(
-              `UPDATE app.send_operations SET status='sent',status_changed_at=$2
-               WHERE id=$1 AND status IN ('processing','accepted','failed','unknown')`,
-              [sendId, input.sentAt],
-            );
-            await connection.query(
-              `DELETE FROM app.pending_send_contents
-               WHERE personal_account_id=$1 AND send_operation_id=$2`,
-              [input.personalAccountId, sendId],
-            );
+            await db
+              .update(sendOperationsInApp)
+              .set({ status: "sent", statusChangedAt: input.sentAt })
+              .where(
+                and(
+                  eq(sendOperationsInApp.id, sendId),
+                  inArray(sendOperationsInApp.status, [
+                    "processing",
+                    "accepted",
+                    "failed",
+                    "unknown",
+                  ]),
+                ),
+              );
+            await db
+              .delete(pendingSendContentsInApp)
+              .where(
+                and(
+                  eq(
+                    pendingSendContentsInApp.personalAccountId,
+                    input.personalAccountId,
+                  ),
+                  eq(pendingSendContentsInApp.sendOperationId, sendId),
+                ),
+              );
           }
         }
-        await connection.query(
-          `UPDATE app.webhook_items SET outcome='applied' WHERE personal_account_id=$1 AND whatsapp_connection_id=$2 AND deduplication_identity=$3`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.itemIdentity,
-          ],
-        );
+        await markWebhookItemApplied(db, input);
         return "applied" as const;
       }),
     ),
 
   projectStoredMessageEdit: (input, compareVersions) =>
     provider.withConnection((connection) =>
-      withTransaction(connection, async () => {
+      withTransaction(connection, async (db) => {
         const ciphertext = decodeCiphertext(input.content);
         const nonce = decodeNonce(input.content);
-        await enterPersonalAccountContext(connection, input.personalAccountId);
-        const claimed = await connection.query(
-          `INSERT INTO app.webhook_items (personal_account_id, whatsapp_connection_id,
-             deduplication_identity, first_webhook_event_id, item_index, item_kind,
-             outcome, provider_occurred_at, provider_version, received_at)
-           VALUES ($1,$2,$3,$4,$5,'message_edit','superseded',$6,$7,$8)
-           ON CONFLICT (personal_account_id, whatsapp_connection_id, deduplication_identity)
-           DO NOTHING RETURNING deduplication_identity`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.itemIdentity,
-            input.eventId,
-            input.itemIndex,
-            input.evidence.occurredAt,
-            input.evidence.version,
-            input.receivedAt,
-          ],
-        );
-        if (claimed.rows.length === 0) return "duplicate" as const;
-        const current = await connection.query<Record<string, unknown>>(
-          `SELECT deleted_at, edited_at, provider_occurred_at, provider_version,
-             received_at, webhook_event_id FROM app.stored_messages
-           WHERE personal_account_id=$1 AND whatsapp_connection_id=$2 AND message_identity=$3 FOR UPDATE`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.messageIdentity,
-          ],
-        );
-        const row = current.rows[0];
+        await enterPersonalAccountContext(db, input.personalAccountId);
+        if (!(await claimWebhookItem(db, input, "message_edit")))
+          return "duplicate" as const;
+        const current = await db
+          .select({
+            deleted_at: storedMessagesInApp.deletedAt,
+            edited_at: storedMessagesInApp.editedAt,
+            provider_occurred_at: storedMessagesInApp.providerOccurredAt,
+            provider_version: storedMessagesInApp.providerVersion,
+            received_at: storedMessagesInApp.receivedAt,
+            webhook_event_id: storedMessagesInApp.webhookEventId,
+          })
+          .from(storedMessagesInApp)
+          .where(
+            and(
+              eq(
+                storedMessagesInApp.personalAccountId,
+                input.personalAccountId,
+              ),
+              eq(
+                storedMessagesInApp.whatsappConnectionId,
+                input.whatsappConnectionId,
+              ),
+              eq(storedMessagesInApp.messageIdentity, input.messageIdentity),
+            ),
+          )
+          .for("update");
+        const row = current[0];
         if (row === undefined || timestamp(row.deleted_at) !== null)
           return "superseded" as const;
         if (
@@ -1976,198 +2050,167 @@ export const makeWebhookEventRepository = (
         if (newEditedAt === null) throw new Error("invalid edit timestamp");
         if (oldEditedAt !== null && newEditedAt < oldEditedAt)
           return "superseded" as const;
-        await connection.query(
-          `UPDATE app.stored_messages SET content_type=$4,content_ciphertext_version=$5,
-             content_key_version=$6,content_nonce=$7,content_ciphertext=$8,edited_at=$9,
-             provider_occurred_at=$10,provider_version=$11,received_at=$12,
-             webhook_event_id=$13,webhook_item_identity=$14,updated_at=transaction_timestamp()
-           WHERE personal_account_id=$1 AND whatsapp_connection_id=$2 AND message_identity=$3`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.messageIdentity,
-            input.contentType,
-            input.content.version,
-            input.content.keyVersion,
-            nonce,
-            ciphertext,
-            input.editedAt,
-            input.evidence.occurredAt,
-            input.evidence.version,
-            input.receivedAt,
-            input.eventId,
-            input.itemIdentity,
-          ],
-        );
-        await connection.query(
-          `UPDATE app.webhook_items SET outcome='applied' WHERE personal_account_id=$1 AND whatsapp_connection_id=$2 AND deduplication_identity=$3`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.itemIdentity,
-          ],
-        );
+        await db
+          .update(storedMessagesInApp)
+          .set({
+            contentType: input.contentType,
+            contentCiphertextVersion: input.content.version,
+            contentKeyVersion: input.content.keyVersion,
+            contentNonce: nonce,
+            contentCiphertext: ciphertext,
+            editedAt: input.editedAt,
+            providerOccurredAt: input.evidence.occurredAt,
+            providerVersion: input.evidence.version,
+            receivedAt: input.receivedAt,
+            webhookEventId: input.eventId,
+            webhookItemIdentity: input.itemIdentity,
+            updatedAt: sql`transaction_timestamp()`,
+          })
+          .where(
+            and(
+              eq(
+                storedMessagesInApp.personalAccountId,
+                input.personalAccountId,
+              ),
+              eq(
+                storedMessagesInApp.whatsappConnectionId,
+                input.whatsappConnectionId,
+              ),
+              eq(storedMessagesInApp.messageIdentity, input.messageIdentity),
+            ),
+          );
+        await markWebhookItemApplied(db, input);
         return "applied" as const;
       }),
     ),
 
   projectStoredMessageDeletion: (input) =>
     provider.withConnection((connection) =>
-      withTransaction(connection, async () => {
-        await enterPersonalAccountContext(connection, input.personalAccountId);
-        const claimed = await connection.query(
-          `INSERT INTO app.webhook_items (personal_account_id, whatsapp_connection_id,
-             deduplication_identity, first_webhook_event_id, item_index, item_kind,
-             outcome, provider_occurred_at, provider_version, received_at)
-           VALUES ($1,$2,$3,$4,$5,'message_delete','superseded',$6,$7,$8)
-           ON CONFLICT (personal_account_id, whatsapp_connection_id, deduplication_identity)
-           DO NOTHING RETURNING deduplication_identity`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.itemIdentity,
-            input.eventId,
-            input.itemIndex,
-            input.evidence.occurredAt,
-            input.evidence.version,
-            input.receivedAt,
-          ],
-        );
-        if (claimed.rows.length === 0) return "duplicate" as const;
-        await connection.query(
-          `INSERT INTO app.whatsapp_conversations (id,personal_account_id,whatsapp_connection_id,
-             public_id,kind,recipient_locator,recipient_public_id,last_activity_at,last_activity_direction)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-           ON CONFLICT (personal_account_id,whatsapp_connection_id,recipient_locator) DO NOTHING`,
-          [
-            input.conversationId,
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.conversationPublicId,
-            input.recipientKind,
-            input.recipientLocator,
-            input.recipientPublicId,
-            input.sentAt,
-            input.direction,
-          ],
-        );
-        const conversation = await connection.query<{ id: unknown }>(
-          `SELECT id FROM app.whatsapp_conversations WHERE personal_account_id=$1 AND whatsapp_connection_id=$2 AND recipient_locator=$3`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.recipientLocator,
-          ],
-        );
-        const conversationId = conversation.rows[0]?.id;
+      withTransaction(connection, async (db) => {
+        await enterPersonalAccountContext(db, input.personalAccountId);
+        if (!(await claimWebhookItem(db, input, "message_delete")))
+          return "duplicate" as const;
+        await db
+          .insert(whatsappConversationsInApp)
+          .values({
+            id: input.conversationId,
+            personalAccountId: input.personalAccountId,
+            whatsappConnectionId: input.whatsappConnectionId,
+            publicId: input.conversationPublicId,
+            kind: input.recipientKind,
+            recipientLocator: input.recipientLocator,
+            recipientPublicId: input.recipientPublicId,
+            lastActivityAt: input.sentAt,
+            lastActivityDirection: input.direction,
+          })
+          .onConflictDoNothing({
+            target: [
+              whatsappConversationsInApp.personalAccountId,
+              whatsappConversationsInApp.whatsappConnectionId,
+              whatsappConversationsInApp.recipientLocator,
+            ],
+          });
+        const conversation = await db
+          .select({ id: whatsappConversationsInApp.id })
+          .from(whatsappConversationsInApp)
+          .where(
+            and(
+              eq(
+                whatsappConversationsInApp.personalAccountId,
+                input.personalAccountId,
+              ),
+              eq(
+                whatsappConversationsInApp.whatsappConnectionId,
+                input.whatsappConnectionId,
+              ),
+              eq(
+                whatsappConversationsInApp.recipientLocator,
+                input.recipientLocator,
+              ),
+            ),
+          );
+        const conversationId = conversation[0]?.id;
         if (typeof conversationId !== "string")
           throw new Error("invalid WhatsApp Conversation");
-        await connection.query(
-          `INSERT INTO app.stored_messages (id,personal_account_id,whatsapp_connection_id,
-             conversation_id,public_id,message_identity,direction,sent_at,deleted_at,
-             provider_occurred_at,provider_version,received_at,webhook_event_id,webhook_item_identity)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-           ON CONFLICT (personal_account_id,whatsapp_connection_id,message_identity) DO UPDATE SET
-             content_type=NULL,content_ciphertext_version=NULL,content_key_version=NULL,
-             content_nonce=NULL,content_ciphertext=NULL,deleted_at=excluded.deleted_at,
-             provider_occurred_at=excluded.provider_occurred_at,provider_version=excluded.provider_version,
-             received_at=excluded.received_at,webhook_event_id=excluded.webhook_event_id,
-             webhook_item_identity=excluded.webhook_item_identity,updated_at=transaction_timestamp()`,
-          [
-            input.messageId,
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            conversationId,
-            input.messagePublicId,
-            input.messageIdentity,
-            input.direction,
-            input.sentAt,
-            input.deletedAt,
-            input.evidence.occurredAt,
-            input.evidence.version,
-            input.receivedAt,
-            input.eventId,
-            input.itemIdentity,
-          ],
-        );
-        await connection.query(
-          `UPDATE app.webhook_items SET outcome='applied' WHERE personal_account_id=$1 AND whatsapp_connection_id=$2 AND deduplication_identity=$3`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.itemIdentity,
-          ],
-        );
+        const deletionValues = {
+          id: input.messageId,
+          personalAccountId: input.personalAccountId,
+          whatsappConnectionId: input.whatsappConnectionId,
+          conversationId,
+          publicId: input.messagePublicId,
+          messageIdentity: input.messageIdentity,
+          direction: input.direction,
+          sentAt: input.sentAt,
+          deletedAt: input.deletedAt,
+          providerOccurredAt: input.evidence.occurredAt,
+          providerVersion: input.evidence.version,
+          receivedAt: input.receivedAt,
+          webhookEventId: input.eventId,
+          webhookItemIdentity: input.itemIdentity,
+        };
+        await db
+          .insert(storedMessagesInApp)
+          .values(deletionValues)
+          .onConflictDoUpdate({
+            target: [
+              storedMessagesInApp.personalAccountId,
+              storedMessagesInApp.whatsappConnectionId,
+              storedMessagesInApp.messageIdentity,
+            ],
+            set: {
+              contentType: null,
+              contentCiphertextVersion: null,
+              contentKeyVersion: null,
+              contentNonce: null,
+              contentCiphertext: null,
+              deletedAt: input.deletedAt,
+              providerOccurredAt: input.evidence.occurredAt,
+              providerVersion: input.evidence.version,
+              receivedAt: input.receivedAt,
+              webhookEventId: input.eventId,
+              webhookItemIdentity: input.itemIdentity,
+              updatedAt: sql`transaction_timestamp()`,
+            },
+          });
+        await markWebhookItemApplied(db, input);
         return "applied" as const;
       }),
     ),
 
   quarantine: (input) =>
     provider.withConnection((connection) =>
-      withTransaction(connection, async () => {
-        await enterPersonalAccountContext(connection, input.personalAccountId);
+      withTransaction(connection, async (db) => {
+        await enterPersonalAccountContext(db, input.personalAccountId);
         let claimed = true;
         if (input.itemIdentity !== null) {
-          const claim = await connection.query(
-            `INSERT INTO app.webhook_items (
-               personal_account_id,
-               whatsapp_connection_id,
-               deduplication_identity,
-               first_webhook_event_id,
-               item_index,
-               item_kind,
-               outcome,
-               received_at
-             )
-             VALUES ($1, $2, $3, $4, $5, $6, 'quarantined', $7)
-             ON CONFLICT (
-               personal_account_id,
-               whatsapp_connection_id,
-               deduplication_identity
-             ) DO NOTHING
-             RETURNING deduplication_identity`,
-            [
-              input.personalAccountId,
-              input.whatsappConnectionId,
-              input.itemIdentity,
-              input.eventId,
-              input.itemIndex,
-              input.itemKind,
-              input.receivedAt,
-            ],
+          claimed = await claimWebhookItem(
+            db,
+            { ...input, itemIdentity: input.itemIdentity },
+            input.itemKind,
+            "quarantined",
           );
-          claimed = claim.rows.length === 1;
         }
         if (!claimed) return;
-        await connection.query(
-          `INSERT INTO app.webhook_item_quarantines (
-             personal_account_id,
-             whatsapp_connection_id,
-             webhook_event_id,
-             item_index,
-             item_identity,
-             item_kind,
-             classification,
-             received_at
-           )
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-           ON CONFLICT (
-             personal_account_id,
-             whatsapp_connection_id,
-             webhook_event_id,
-             item_index
-           ) DO NOTHING`,
-          [
-            input.personalAccountId,
-            input.whatsappConnectionId,
-            input.eventId,
-            input.itemIndex,
-            input.itemIdentity,
-            input.itemKind,
-            input.classification,
-            input.receivedAt,
-          ],
-        );
+        await db
+          .insert(webhookItemQuarantinesInApp)
+          .values({
+            personalAccountId: input.personalAccountId,
+            whatsappConnectionId: input.whatsappConnectionId,
+            webhookEventId: input.eventId,
+            itemIndex: input.itemIndex,
+            itemIdentity: input.itemIdentity,
+            itemKind: input.itemKind,
+            classification: input.classification,
+            receivedAt: input.receivedAt,
+          })
+          .onConflictDoNothing({
+            target: [
+              webhookItemQuarantinesInApp.personalAccountId,
+              webhookItemQuarantinesInApp.whatsappConnectionId,
+              webhookItemQuarantinesInApp.webhookEventId,
+              webhookItemQuarantinesInApp.itemIndex,
+            ],
+          });
       }),
     ),
 });

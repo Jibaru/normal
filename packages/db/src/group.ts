@@ -1,5 +1,10 @@
+import { and, eq, lt, notInArray, sql } from "drizzle-orm";
 import type { Client as PgClient } from "pg";
-import { makeQueryConnection } from "./database";
+import { makeDatabase, makeQueryConnection } from "./database";
+import {
+  whatsappGroupDirectoryStatesInApp,
+  whatsappGroupsInApp,
+} from "./schema";
 
 export interface GroupCiphertextEnvelope {
   readonly ciphertext: string;
@@ -206,13 +211,14 @@ const withTransaction = async <Value>(
   connection: GroupConnection,
   use: () => Promise<Value>,
 ): Promise<Value> => {
-  await connection.query("BEGIN");
+  const db = makeDatabase(connection);
+  await db.execute(sql`BEGIN`);
   try {
     const value = await use();
-    await connection.query("COMMIT");
+    await db.execute(sql`COMMIT`);
     return value;
   } catch (error) {
-    await connection.query("ROLLBACK");
+    await db.execute(sql`ROLLBACK`);
     throw error;
   }
 };
@@ -272,17 +278,19 @@ const enterContext = async (
   connection: GroupConnection,
   input: Pick<ReconcileGroupsInput, "connectionId" | "personalAccountId">,
 ): Promise<void> => {
-  const result = await connection.query<{ personal_account_id: unknown }>(
-    `SELECT app_private.bootstrap_whatsapp_group_projection($1, $2)
-       AS personal_account_id`,
-    [input.personalAccountId, input.connectionId],
-  );
-  if (result.rows[0]?.personal_account_id !== input.personalAccountId) {
+  const db = makeDatabase(connection);
+  const result = await db.execute<{ personal_account_id: unknown }>(sql`
+    SELECT app_private.bootstrap_whatsapp_group_projection(
+      ${input.personalAccountId}, ${input.connectionId}
+    ) AS personal_account_id
+  `);
+  if (result[0]?.personal_account_id !== input.personalAccountId) {
     throw new Error("WhatsApp group projection target unavailable");
   }
-  await connection.query(
-    "SELECT set_config('app.personal_account_id', $1, true)",
-    [input.personalAccountId],
+  await db.execute(
+    sql`SELECT set_config(
+      'app.personal_account_id', ${input.personalAccountId}, true
+    )`,
   );
 };
 
@@ -318,38 +326,47 @@ export const makeGroupRepository = (
       ) {
         throw new Error("invalid group reconciliation claim");
       }
-      const result = await connection.query(
-        "SELECT * FROM app_private.claim_whatsapp_group_reconciliation($1, $2)",
-        [input.claimedAt, input.limit],
-      );
-      return result.rows.map(reconciliationCandidate);
+      const result = await makeDatabase(connection).execute(sql`
+        SELECT * FROM app_private.claim_whatsapp_group_reconciliation(
+          ${input.claimedAt}, ${input.limit}
+        )
+      `);
+      return result.map(reconciliationCandidate);
     }),
   fail: (input) =>
     provider.withConnection((connection) =>
       withTransaction(connection, async () => {
         await enterContext(connection, input);
-        const result = await connection.query<{
-          whatsapp_connection_id: unknown;
-        }>(
-          `UPDATE app.whatsapp_group_directory_states
-           SET
-             stale = true,
-             partial = true,
-             reconciliation_claim_id = NULL,
-             reconciliation_lease_expires_at = NULL,
-             updated_at = $4
-           WHERE personal_account_id = $1
-             AND whatsapp_connection_id = $2
-             AND reconciliation_claim_id = $3
-           RETURNING whatsapp_connection_id`,
-          [
-            input.personalAccountId,
-            input.connectionId,
-            input.claimId,
-            input.failedAt,
-          ],
-        );
-        return result.rows.length === 1;
+        const result = await makeDatabase(connection)
+          .update(whatsappGroupDirectoryStatesInApp)
+          .set({
+            stale: true,
+            partial: true,
+            reconciliationClaimId: null,
+            reconciliationLeaseExpiresAt: null,
+            updatedAt: input.failedAt,
+          })
+          .where(
+            and(
+              eq(
+                whatsappGroupDirectoryStatesInApp.personalAccountId,
+                input.personalAccountId,
+              ),
+              eq(
+                whatsappGroupDirectoryStatesInApp.whatsappConnectionId,
+                input.connectionId,
+              ),
+              eq(
+                whatsappGroupDirectoryStatesInApp.reconciliationClaimId,
+                input.claimId,
+              ),
+            ),
+          )
+          .returning({
+            whatsappConnectionId:
+              whatsappGroupDirectoryStatesInApp.whatsappConnectionId,
+          });
+        return result.length === 1;
       }),
     ),
   reconcile: (input) => {
@@ -357,181 +374,225 @@ export const makeGroupRepository = (
     return provider.withConnection((connection) =>
       withTransaction(connection, async () => {
         await enterContext(connection, input);
+        const db = makeDatabase(connection);
         if (input.claimId !== undefined) {
-          const claim = await connection.query<{ claim: unknown }>(
-            `SELECT reconciliation_claim_id AS claim
-             FROM app.whatsapp_group_directory_states
-             WHERE personal_account_id = $1
-               AND whatsapp_connection_id = $2
-             FOR UPDATE`,
-            [input.personalAccountId, input.connectionId],
-          );
-          if (claim.rows[0]?.claim !== input.claimId) {
+          const claim = await db
+            .select({
+              claim: whatsappGroupDirectoryStatesInApp.reconciliationClaimId,
+            })
+            .from(whatsappGroupDirectoryStatesInApp)
+            .where(
+              and(
+                eq(
+                  whatsappGroupDirectoryStatesInApp.personalAccountId,
+                  input.personalAccountId,
+                ),
+                eq(
+                  whatsappGroupDirectoryStatesInApp.whatsappConnectionId,
+                  input.connectionId,
+                ),
+              ),
+            )
+            .for("update");
+          if (claim[0]?.claim !== input.claimId) {
             return { applied: 0, unjoined: 0 };
           }
         }
-        const current = await connection.query<{ as_of: unknown }>(
-          `SELECT as_of
-           FROM app.whatsapp_group_directory_states
-           WHERE personal_account_id = $1
-             AND whatsapp_connection_id = $2
-           FOR UPDATE`,
-          [input.personalAccountId, input.connectionId],
-        );
-        const currentAsOf = current.rows[0]?.as_of;
+        const current = await db
+          .select({ asOf: whatsappGroupDirectoryStatesInApp.asOf })
+          .from(whatsappGroupDirectoryStatesInApp)
+          .where(
+            and(
+              eq(
+                whatsappGroupDirectoryStatesInApp.personalAccountId,
+                input.personalAccountId,
+              ),
+              eq(
+                whatsappGroupDirectoryStatesInApp.whatsappConnectionId,
+                input.connectionId,
+              ),
+            ),
+          )
+          .for("update");
+        const currentAsOf = current[0]?.asOf;
         if (
-          currentAsOf instanceof Date
-            ? currentAsOf.valueOf() >= new Date(input.observedAt).valueOf()
-            : typeof currentAsOf === "string" &&
-              new Date(currentAsOf).valueOf() >=
-                new Date(input.observedAt).valueOf()
+          typeof currentAsOf === "string" &&
+          new Date(currentAsOf).valueOf() >=
+            new Date(input.observedAt).valueOf()
         ) {
           if (input.claimId !== undefined) {
-            await connection.query(
-              `UPDATE app.whatsapp_group_directory_states
-               SET
-                 reconciliation_claim_id = NULL,
-                 reconciliation_lease_expires_at = NULL,
-                 updated_at = $4
-               WHERE personal_account_id = $1
-                 AND whatsapp_connection_id = $2
-                 AND reconciliation_claim_id = $3`,
-              [
-                input.personalAccountId,
-                input.connectionId,
-                input.claimId,
-                input.observedAt,
-              ],
-            );
+            await db
+              .update(whatsappGroupDirectoryStatesInApp)
+              .set({
+                reconciliationClaimId: null,
+                reconciliationLeaseExpiresAt: null,
+                updatedAt: input.observedAt,
+              })
+              .where(
+                and(
+                  eq(
+                    whatsappGroupDirectoryStatesInApp.personalAccountId,
+                    input.personalAccountId,
+                  ),
+                  eq(
+                    whatsappGroupDirectoryStatesInApp.whatsappConnectionId,
+                    input.connectionId,
+                  ),
+                  eq(
+                    whatsappGroupDirectoryStatesInApp.reconciliationClaimId,
+                    input.claimId,
+                  ),
+                ),
+              );
           }
           return { applied: 0, unjoined: 0 };
         }
 
         let applied = 0;
         for (const entry of input.entries) {
-          const existing = await connection.query<{
-            id: unknown;
-            last_observed_at: unknown;
-          }>(
-            `SELECT id, last_observed_at
-             FROM app.whatsapp_groups
-             WHERE personal_account_id = $1
-               AND whatsapp_connection_id = $2
-               AND provider_locator = $3
-             FOR UPDATE`,
-            [input.personalAccountId, input.connectionId, entry.locator],
-          );
-          const existingId = existing.rows[0]?.id;
+          const existing = await db
+            .select({ id: whatsappGroupsInApp.id })
+            .from(whatsappGroupsInApp)
+            .where(
+              and(
+                eq(
+                  whatsappGroupsInApp.personalAccountId,
+                  input.personalAccountId,
+                ),
+                eq(
+                  whatsappGroupsInApp.whatsappConnectionId,
+                  input.connectionId,
+                ),
+                eq(whatsappGroupsInApp.providerLocator, entry.locator),
+              ),
+            )
+            .for("update");
+          const existingId = existing[0]?.id;
           const recordId =
             typeof existingId === "string" && uuidPattern.test(existingId)
               ? existingId
               : entry.groupId;
           const encrypted = await input.protect(entry, recordId);
           const fields = protectedValues(encrypted);
-          const changed = await connection.query<{ id: unknown }>(
-            `INSERT INTO app.whatsapp_groups (
-               id, personal_account_id, whatsapp_connection_id, public_id,
-               provider_locator, name_prefix_indexes,
-               display_name_ciphertext_version,
-               display_name_key_version, display_name_nonce,
-               display_name_ciphertext, provider_identity_ciphertext_version,
-               provider_identity_key_version, provider_identity_nonce,
-               provider_identity_ciphertext, joined, last_observed_at,
-               created_at, updated_at
-             ) VALUES (
-               $1, $2, $3, $4, $5,
-               $6::text[]::app.group_name_blind_index[],
-               $7, $8, $9, $10, $11, $12,
-               $13, $14, $15, $16, $16, $16
-             )
-             ON CONFLICT (personal_account_id, whatsapp_connection_id, provider_locator)
-             DO UPDATE SET
-               name_prefix_indexes = EXCLUDED.name_prefix_indexes,
-               display_name_ciphertext_version = EXCLUDED.display_name_ciphertext_version,
-               display_name_key_version = EXCLUDED.display_name_key_version,
-               display_name_nonce = EXCLUDED.display_name_nonce,
-               display_name_ciphertext = EXCLUDED.display_name_ciphertext,
-               provider_identity_ciphertext_version = EXCLUDED.provider_identity_ciphertext_version,
-               provider_identity_key_version = EXCLUDED.provider_identity_key_version,
-               provider_identity_nonce = EXCLUDED.provider_identity_nonce,
-               provider_identity_ciphertext = EXCLUDED.provider_identity_ciphertext,
-               joined = EXCLUDED.joined,
-               last_observed_at = EXCLUDED.last_observed_at,
-               provider_occurred_at = NULL,
-               provider_version = NULL,
-               received_at = NULL,
-               webhook_event_id = NULL,
-               webhook_item_identity = NULL,
-               updated_at = EXCLUDED.updated_at
-             WHERE app.whatsapp_groups.last_observed_at < EXCLUDED.last_observed_at
-             RETURNING id`,
-            [
-              recordId,
-              input.personalAccountId,
-              input.connectionId,
-              entry.publicId,
-              entry.locator,
-              entry.namePrefixIndexes,
-              ...fields,
-              entry.joined,
-              input.observedAt,
-            ],
-          );
-          applied += changed.rows.length;
+          const changed = await db
+            .insert(whatsappGroupsInApp)
+            .values({
+              createdAt: input.observedAt,
+              displayNameCiphertext: fields[3],
+              displayNameCiphertextVersion: fields[0],
+              displayNameKeyVersion: fields[1],
+              displayNameNonce: fields[2],
+              id: recordId,
+              joined: entry.joined,
+              lastObservedAt: input.observedAt,
+              namePrefixIndexes: [...entry.namePrefixIndexes],
+              personalAccountId: input.personalAccountId,
+              providerIdentityCiphertext: fields[7],
+              providerIdentityCiphertextVersion: fields[4],
+              providerIdentityKeyVersion: fields[5],
+              providerIdentityNonce: fields[6],
+              providerLocator: entry.locator,
+              publicId: entry.publicId,
+              updatedAt: input.observedAt,
+              whatsappConnectionId: input.connectionId,
+            })
+            .onConflictDoUpdate({
+              target: [
+                whatsappGroupsInApp.personalAccountId,
+                whatsappGroupsInApp.whatsappConnectionId,
+                whatsappGroupsInApp.providerLocator,
+              ],
+              set: {
+                displayNameCiphertext: fields[3],
+                displayNameCiphertextVersion: fields[0],
+                displayNameKeyVersion: fields[1],
+                displayNameNonce: fields[2],
+                joined: entry.joined,
+                lastObservedAt: input.observedAt,
+                namePrefixIndexes: [...entry.namePrefixIndexes],
+                providerIdentityCiphertext: fields[7],
+                providerIdentityCiphertextVersion: fields[4],
+                providerIdentityKeyVersion: fields[5],
+                providerIdentityNonce: fields[6],
+                providerOccurredAt: null,
+                providerVersion: null,
+                receivedAt: null,
+                updatedAt: input.observedAt,
+                webhookEventId: null,
+                webhookItemIdentity: null,
+              },
+              setWhere: lt(
+                whatsappGroupsInApp.lastObservedAt,
+                input.observedAt,
+              ),
+            })
+            .returning({ id: whatsappGroupsInApp.id });
+          applied += changed.length;
         }
 
         let unjoined = 0;
         if (input.completeness === "complete") {
-          const omitted = await connection.query<{ id: unknown }>(
-            `UPDATE app.whatsapp_groups
-             SET joined = false,
-                 name_prefix_indexes = ARRAY[]::app.group_name_blind_index[],
-                 last_observed_at = $3,
-                 provider_occurred_at = NULL,
-                 provider_version = NULL,
-                 received_at = NULL,
-                 webhook_event_id = NULL,
-                 webhook_item_identity = NULL,
-                 updated_at = $3
-             WHERE personal_account_id = $1
-               AND whatsapp_connection_id = $2
-               AND joined
-               AND last_observed_at < $3
-               AND NOT (provider_locator = ANY($4::text[]))
-             RETURNING id`,
-            [
-              input.personalAccountId,
-              input.connectionId,
-              input.observedAt,
-              input.entries.map((entry) => entry.locator),
-            ],
-          );
-          unjoined = omitted.rows.length;
+          const locators = input.entries.map((entry) => entry.locator);
+          const omitted = await db
+            .update(whatsappGroupsInApp)
+            .set({
+              joined: false,
+              lastObservedAt: input.observedAt,
+              namePrefixIndexes: [],
+              providerOccurredAt: null,
+              providerVersion: null,
+              receivedAt: null,
+              updatedAt: input.observedAt,
+              webhookEventId: null,
+              webhookItemIdentity: null,
+            })
+            .where(
+              and(
+                eq(
+                  whatsappGroupsInApp.personalAccountId,
+                  input.personalAccountId,
+                ),
+                eq(
+                  whatsappGroupsInApp.whatsappConnectionId,
+                  input.connectionId,
+                ),
+                eq(whatsappGroupsInApp.joined, true),
+                lt(whatsappGroupsInApp.lastObservedAt, input.observedAt),
+                locators.length === 0
+                  ? undefined
+                  : notInArray(whatsappGroupsInApp.providerLocator, locators),
+              ),
+            )
+            .returning({ id: whatsappGroupsInApp.id });
+          unjoined = omitted.length;
         }
 
-        await connection.query(
-          `INSERT INTO app.whatsapp_group_directory_states (
-             personal_account_id, whatsapp_connection_id, as_of,
-             snapshot_observed_at,
-             stale, partial, updated_at
-           ) VALUES ($1, $2, $3, $3, $4, $5, $3)
-           ON CONFLICT (personal_account_id, whatsapp_connection_id)
-           DO UPDATE SET
-             as_of = EXCLUDED.as_of,
-             snapshot_observed_at = EXCLUDED.as_of,
-             stale = EXCLUDED.stale,
-             partial = EXCLUDED.partial,
-             reconciliation_claim_id = NULL,
-             reconciliation_lease_expires_at = NULL,
-             updated_at = EXCLUDED.updated_at`,
-          [
-            input.personalAccountId,
-            input.connectionId,
-            input.observedAt,
-            input.stale,
-            input.completeness === "partial",
-          ],
-        );
+        await db
+          .insert(whatsappGroupDirectoryStatesInApp)
+          .values({
+            personalAccountId: input.personalAccountId,
+            whatsappConnectionId: input.connectionId,
+            asOf: input.observedAt,
+            snapshotObservedAt: input.observedAt,
+            stale: input.stale,
+            partial: input.completeness === "partial",
+            updatedAt: input.observedAt,
+          })
+          .onConflictDoUpdate({
+            target: [
+              whatsappGroupDirectoryStatesInApp.personalAccountId,
+              whatsappGroupDirectoryStatesInApp.whatsappConnectionId,
+            ],
+            set: {
+              asOf: input.observedAt,
+              snapshotObservedAt: input.observedAt,
+              stale: input.stale,
+              partial: input.completeness === "partial",
+              reconciliationClaimId: null,
+              reconciliationLeaseExpiresAt: null,
+              updatedAt: input.observedAt,
+            },
+          });
         return { applied, unjoined };
       }),
     );

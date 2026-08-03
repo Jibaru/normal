@@ -1,15 +1,13 @@
 import type { WhatsAppConnectionState } from "@whatsapp-mcp/domain/whatsapp-connection";
+import { sql } from "drizzle-orm";
 import type { Client as PgClient } from "pg";
-import { makeQueryConnection } from "./database";
+import {
+  makeDatabase,
+  makeQueryConnection,
+  type QueryConnection,
+} from "./database";
 
-export interface ConnectionHealthConnection {
-  readonly query: <
-    Row extends Record<string, unknown> = Record<string, unknown>,
-  >(
-    text: string,
-    values?: Array<unknown>,
-  ) => Promise<{ readonly rows: Array<Row> }>;
-}
+export interface ConnectionHealthConnection extends QueryConnection {}
 
 export interface ConnectionHealthConnectionProvider {
   readonly withConnection: <Value>(
@@ -106,40 +104,36 @@ export const makeConnectionHealthRepository = (
 ): ConnectionHealthRepository => ({
   claim: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<CandidateRow>(
-        `SELECT *
-         FROM app_private.claim_whatsapp_connection_health($1, $2)`,
-        [input.claimedAt, input.limit],
-      );
-      return result.rows.map(candidate);
+      const db = makeDatabase(connection);
+      const result = await db.execute<CandidateRow>(sql`
+        SELECT * FROM app_private.claim_whatsapp_connection_health(
+          ${input.claimedAt}, ${input.limit}
+        )
+      `);
+      return result.map(candidate);
     }),
   finish: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{ finished: unknown }>(
-        `SELECT app_private.finish_whatsapp_connection_health(
-           $1, $2, $3, $4, $5, $6, $7
-         ) AS finished`,
-        [
-          input.connectionId,
-          input.claimId,
-          input.state,
-          input.gapEvidence,
-          input.webhookConfigurationHealthy,
-          input.startedAt,
-          input.checkedAt,
-        ],
-      );
-      return booleanResult(result.rows[0]?.finished);
+      const db = makeDatabase(connection);
+      const result = await db.execute<{ finished: unknown }>(sql`
+        SELECT app_private.finish_whatsapp_connection_health(
+          ${input.connectionId}, ${input.claimId}, ${input.state},
+          ${input.gapEvidence}, ${input.webhookConfigurationHealthy},
+          ${input.startedAt}, ${input.checkedAt}
+        ) AS finished
+      `);
+      return booleanResult(result[0]?.finished);
     }),
   recordEvidence: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{ recorded: unknown }>(
-        `SELECT app_private.record_ingestion_gap_evidence(
-           $1, $2, $3, $4
-         ) AS recorded`,
-        [input.connectionId, input.cause, input.active, input.observedAt],
-      );
-      return booleanResult(result.rows[0]?.recorded);
+      const db = makeDatabase(connection);
+      const result = await db.execute<{ recorded: unknown }>(sql`
+        SELECT app_private.record_ingestion_gap_evidence(
+          ${input.connectionId}, ${input.cause}, ${input.active},
+          ${input.observedAt}
+        ) AS recorded
+      `);
+      return booleanResult(result[0]?.recorded);
     }),
 });
 

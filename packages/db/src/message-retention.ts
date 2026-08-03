@@ -1,18 +1,16 @@
-import { makeQueryConnection } from "./database";
+import { sql } from "drizzle-orm";
+import {
+  makeDatabase,
+  makeQueryConnection,
+  type QueryConnection,
+} from "./database";
 
 export interface MessageRetentionPolicy {
   readonly days: number | null;
   readonly updatedAt: string;
 }
 
-export interface MessageRetentionConnection {
-  readonly query: <
-    Row extends Record<string, unknown> = Record<string, unknown>,
-  >(
-    text: string,
-    values?: Array<unknown>,
-  ) => Promise<{ readonly rows: Array<Row> }>;
-}
+export interface MessageRetentionConnection extends QueryConnection {}
 
 export interface MessageRetentionConnectionProvider {
   readonly withConnection: <Value>(
@@ -48,11 +46,13 @@ export const makeMessageRetentionRepository = (
     readonly connectionPublicId: string;
   }) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query(
-        "SELECT * FROM app_private.get_message_retention_policy($1,$2)",
-        [input.clerkUserId, input.connectionPublicId],
-      );
-      return decode(result.rows[0]);
+      const db = makeDatabase(connection);
+      const result = await db.execute(sql`
+        SELECT * FROM app_private.get_message_retention_policy(
+          ${input.clerkUserId}, ${input.connectionPublicId}
+        )
+      `);
+      return decode(result[0]);
     }),
   updateForUser: (input: {
     readonly clerkUserId: string;
@@ -62,25 +62,24 @@ export const makeMessageRetentionRepository = (
     readonly updatedAt: string;
   }) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query(
-        "SELECT * FROM app_private.update_message_retention_policy($1,$2,$3,$4,$5)",
-        [
-          input.clerkUserId,
-          input.connectionPublicId,
-          input.expectedDays,
-          input.days,
-          input.updatedAt,
-        ],
-      );
-      return decode(result.rows[0]);
+      const db = makeDatabase(connection);
+      const result = await db.execute(sql`
+        SELECT * FROM app_private.update_message_retention_policy(
+          ${input.clerkUserId}, ${input.connectionPublicId},
+          ${input.expectedDays}, ${input.days}, ${input.updatedAt}
+        )
+      `);
+      return decode(result[0]);
     }),
   purgeExpired: (observedAt: string, limit: number) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{ purged_count: unknown }>(
-        "SELECT app_private.purge_expired_message_content($1,$2) AS purged_count",
-        [observedAt, limit],
-      );
-      const count = Number(result.rows[0]?.purged_count);
+      const db = makeDatabase(connection);
+      const result = await db.execute<{ purged_count: unknown }>(sql`
+        SELECT app_private.purge_expired_message_content(
+          ${observedAt}, ${limit}
+        ) AS purged_count
+      `);
+      const count = Number(result[0]?.purged_count);
       if (!Number.isSafeInteger(count) || count < 0)
         throw new Error("invalid retention purge result");
       return count;

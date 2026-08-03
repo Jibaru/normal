@@ -67,7 +67,7 @@ GRANT USAGE ON SCHEMA app_private TO whatsapp_api_runtime;
 GRANT USAGE ON SCHEMA app_private TO whatsapp_webhook_runtime;
 --> statement-breakpoint
 GRANT SELECT
-  ON app_private.schema_migrations
+  ON app_private.drizzle_migrations
   TO whatsapp_api_runtime, whatsapp_webhook_runtime;
 --> statement-breakpoint
 
@@ -9256,7 +9256,7 @@ $role$;
 
 GRANT USAGE ON SCHEMA app_private TO whatsapp_deletion_runtime;
 --> statement-breakpoint
-GRANT SELECT ON app_private.schema_migrations TO whatsapp_deletion_runtime;
+GRANT SELECT ON app_private.drizzle_migrations TO whatsapp_deletion_runtime;
 --> statement-breakpoint
 
 CREATE TABLE app_private.deleted_whatsapp_connection_handles (
@@ -10410,7 +10410,7 @@ $role$;
 
 GRANT USAGE ON SCHEMA app_private TO whatsapp_restore_runtime;
 --> statement-breakpoint
-GRANT SELECT ON app_private.schema_migrations TO whatsapp_restore_runtime;
+GRANT SELECT ON app_private.drizzle_migrations TO whatsapp_restore_runtime;
 --> statement-breakpoint
 
 CREATE TABLE app_private.restore_readiness (

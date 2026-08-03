@@ -8,7 +8,7 @@ export { EXPECTED_SCHEMA_VERSION } from "./schema-version";
 const migrationConfig = {
   migrationsFolder: fileURLToPath(new URL("../drizzle", import.meta.url)),
   migrationsSchema: "app_private",
-  migrationsTable: "schema_migrations",
+  migrationsTable: "drizzle_migrations",
 } as const;
 
 export const runMigrations = async (client: PGlite): Promise<void> => {

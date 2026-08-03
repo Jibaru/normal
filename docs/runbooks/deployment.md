@@ -321,6 +321,49 @@ control-plane roles initially inherit `neon_superuser`; migration 0001 revokes
 that membership and enforces `NOSUPERUSER`, `NOBYPASSRLS`, and the remaining
 restricted attributes before the schema can report ready.
 
+Databases that already applied all 40 pre-Drizzle migrations need this one-time
+ledger transition before the first `db:migrate` run from this release. Verify
+that the legacy ledger contains exactly versions 1 through 40, then run the
+following as the migration owner. Do not run it on a new or partially migrated
+database.
+
+```sql
+BEGIN;
+
+DO $transition$
+BEGIN
+  IF (
+    SELECT count(*) <> 40 OR min(version) <> 1 OR max(version) <> 40
+    FROM app_private.schema_migrations
+  ) THEN
+    RAISE EXCEPTION 'legacy migration ledger is not complete';
+  END IF;
+END
+$transition$;
+
+CREATE TABLE app_private.drizzle_migrations (
+  id serial PRIMARY KEY,
+  hash text NOT NULL,
+  created_at bigint
+);
+
+INSERT INTO app_private.drizzle_migrations (hash, created_at)
+VALUES (
+  '20063ae83cd8d6a8e5849c7f5e7956644aba347643d0608e16dd1711fc132e75',
+  1785787776687
+);
+
+GRANT SELECT ON app_private.drizzle_migrations
+  TO whatsapp_api_runtime, whatsapp_webhook_runtime,
+     whatsapp_deletion_runtime, whatsapp_restore_runtime;
+
+COMMIT;
+```
+
+Retain the legacy `app_private.schema_migrations` table as immutable deployment
+evidence. Subsequent releases use only the Drizzle ledger and require no
+transition step.
+
 Run migrations directly as the database owner, never through Hyperdrive:
 
 ```sh
@@ -332,16 +375,13 @@ bun run db:check
 unset MIGRATION_DATABASE_URL
 ```
 
-Migration execution takes a session-level advisory lock, applies each version
-in its own transaction, records a SHA-256 checksum, and refuses a changed or
-newer-than-expected schema. An interrupted migration rolls back its version;
-rerun `bun run db:migrate` after correcting the cause. Never edit an applied
-migration—add a new forward migration. Migration 0007 contains the
-RLS-protected refresh-credential hash ledger and its least-privilege API-role
-functions. Migration 0009 adds product-safe MCP Authorization management
-metadata using the API role's existing RLS-protected `SELECT` and `UPDATE`
-authority plus execute access to one narrow fixed-search-path compatibility
-bootstrap; it adds no secret, Cloudflare binding, or infrastructure authority.
+Migration execution uses `drizzle-kit migrate` with `packages/db/drizzle.config.ts`.
+Drizzle applies pending migrations in a transaction and records their hashes in
+`app_private.drizzle_migrations`. An interrupted migration rolls back; rerun
+`bun run db:migrate` after correcting the cause. Never edit an applied
+migration - add a new forward migration. The baseline includes the
+RLS-protected refresh-credential ledger and least-privilege API-role functions;
+future schema changes must be generated as forward Drizzle migrations.
 Apply all pending migrations immediately before the matching API Worker
 version. The previous Worker and the new Worker intentionally fail readiness
 on the other's exact schema version, so complete this step as one controlled

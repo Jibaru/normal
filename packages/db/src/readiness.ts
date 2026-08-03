@@ -1,15 +1,10 @@
 export { EXPECTED_SCHEMA_VERSION } from "./schema-version";
 
+import { sql } from "drizzle-orm";
+import { makeDatabase, type QueryConnection } from "./database";
 import { EXPECTED_SCHEMA_VERSION } from "./schema-version";
 
-export interface SchemaVersionConnection {
-  readonly query: (
-    text: string,
-    values?: Array<unknown>,
-  ) => Promise<{
-    readonly rows: Array<{ ready?: boolean; version?: number | string }>;
-  }>;
-}
+export interface SchemaVersionConnection extends QueryConnection {}
 
 export class SchemaVersionMismatch extends Error {
   readonly actual: number;
@@ -30,25 +25,27 @@ export class RestoreReplayRequired extends Error {
   }
 }
 
+const isMissingRelation = (error: unknown): boolean => {
+  if (typeof error !== "object" || error === null) return false;
+  if ("code" in error && error.code === "42P01") return true;
+  return "cause" in error && isMissingRelation(error.cause);
+};
+
 export const assertExpectedSchemaVersion = async (
   connection: SchemaVersionConnection,
   branchId?: string,
 ): Promise<void> => {
+  const db = makeDatabase(connection);
   let actual = 0;
 
   try {
-    const result = await connection.query(
-      `SELECT COALESCE(max(created_at), 0)::bigint AS version
-       FROM app_private.schema_migrations`,
-    );
-    actual = Number(result.rows[0]?.version ?? 0);
+    const result = await db.execute<{ version: number | string }>(sql`
+      SELECT COALESCE(max(created_at), 0)::bigint AS version
+      FROM app_private.drizzle_migrations
+    `);
+    actual = Number(result[0]?.version ?? 0);
   } catch (error) {
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "42P01"
-    ) {
+    if (isMissingRelation(error)) {
       throw new SchemaVersionMismatch(0, EXPECTED_SCHEMA_VERSION);
     }
     throw error;
@@ -59,10 +56,9 @@ export const assertExpectedSchemaVersion = async (
   }
 
   if (branchId !== undefined) {
-    const readiness = await connection.query(
-      "SELECT app_private.is_restore_ready($1) AS ready",
-      [branchId],
-    );
-    if (readiness.rows[0]?.ready !== true) throw new RestoreReplayRequired();
+    const readiness = await db.execute<{ ready: boolean }>(sql`
+      SELECT app_private.is_restore_ready(${branchId}) AS ready
+    `);
+    if (readiness[0]?.ready !== true) throw new RestoreReplayRequired();
   }
 };

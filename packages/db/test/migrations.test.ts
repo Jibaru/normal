@@ -37,12 +37,38 @@ describe("production migrations", () => {
       created_at: string;
       hash: string;
     }>(
-      "SELECT created_at, hash FROM app_private.schema_migrations ORDER BY id",
+      "SELECT created_at, hash FROM app_private.drizzle_migrations ORDER BY id",
     );
 
     expect(result.rows).toHaveLength(1);
     expect(Number(result.rows[0]?.created_at)).toBe(EXPECTED_SCHEMA_VERSION);
-    expect(result.rows[0]?.hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(result.rows[0]?.hash).toBe(
+      "20063ae83cd8d6a8e5849c7f5e7956644aba347643d0608e16dd1711fc132e75",
+    );
+  });
+
+  test("coexists with the complete legacy migration ledger", async () => {
+    await runMigrations(database);
+    await database.exec(`
+      CREATE TABLE app_private.schema_migrations (
+        version integer PRIMARY KEY,
+        name text NOT NULL,
+        checksum text NOT NULL,
+        applied_at timestamptz NOT NULL DEFAULT transaction_timestamp()
+      );
+      INSERT INTO app_private.schema_migrations (version, name, checksum)
+      SELECT version, 'legacy migration ' || version, repeat('a', 64)
+      FROM generate_series(1, 40) AS version;
+    `);
+
+    await runMigrations(database);
+
+    const ledgers = await database.query<{ legacy: number; standard: number }>(`
+      SELECT
+        (SELECT count(*)::int FROM app_private.schema_migrations) AS legacy,
+        (SELECT count(*)::int FROM app_private.drizzle_migrations) AS standard
+    `);
+    expect(ledgers.rows).toEqual([{ legacy: 40, standard: 1 }]);
   });
 
   test("clears only retention limitations superseded by a complete Directory snapshot", async () => {
@@ -114,7 +140,7 @@ describe("production migrations", () => {
       ).resolves.toBeUndefined();
       await expect(
         database.query(
-          "DELETE FROM app_private.schema_migrations WHERE id = 1",
+          "DELETE FROM app_private.drizzle_migrations WHERE id = 1",
         ),
       ).rejects.toThrow();
     } finally {

@@ -1,6 +1,8 @@
 import type { WhatsAppConnectionState } from "@whatsapp-mcp/domain/whatsapp-connection";
+import { and, asc, isNotNull, ne, sql } from "drizzle-orm";
 import type { Client as PgClient } from "pg";
-import { makeQueryConnection } from "./database";
+import { type Database, makeDatabase, makeQueryConnection } from "./database";
+import { whatsappConnectionsInApp } from "./schema";
 
 export interface WhatsAppConnectionConnection {
   readonly query: <
@@ -213,27 +215,26 @@ export interface WhatsAppConnectionRepository {
 }
 
 const withTransaction = async <Value>(
-  connection: WhatsAppConnectionConnection,
+  db: Database,
   use: () => Promise<Value>,
 ): Promise<Value> => {
-  await connection.query("BEGIN");
+  await db.execute(sql`BEGIN`);
   try {
     const value = await use();
-    await connection.query("COMMIT");
+    await db.execute(sql`COMMIT`);
     return value;
   } catch (error) {
-    await connection.query("ROLLBACK");
+    await db.execute(sql`ROLLBACK`);
     throw error;
   }
 };
 
 const enterPersonalAccountContext = async (
-  connection: WhatsAppConnectionConnection,
+  db: Database,
   personalAccountId: string,
 ): Promise<void> => {
-  await connection.query(
-    "SELECT set_config('app.personal_account_id', $1, true)",
-    [personalAccountId],
+  await db.execute(
+    sql`SELECT set_config('app.personal_account_id', ${personalAccountId}, true)`,
   );
 };
 
@@ -622,128 +623,98 @@ export const makeWhatsAppConnectionRepository = (
   provider: WhatsAppConnectionConnectionProvider,
 ): WhatsAppConnectionRepository => ({
   activate: (input) =>
-    provider.withConnection((connection) =>
-      withTransaction(connection, async () => {
-        await enterPersonalAccountContext(connection, input.personalAccountId);
-        const result = await connection.query<ConnectionRow>(
-          `SELECT *
-           FROM app_private.activate_connection_setup(
-             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-             $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
-           )`,
-          [
-            input.personalAccountId,
-            input.setupId,
-            input.connectionId,
-            input.publicId,
-            input.webhookIngressId,
-            input.numberSuffix,
-            input.connectedAt,
-            input.accountKeyVersion,
-            input.connectionKeyVersion,
-            input.connectionKeyNonce,
-            input.connectionKeyCiphertext,
-            input.locatorCiphertextVersion,
-            input.locatorKeyVersion,
-            input.locatorNonce,
-            input.locatorCiphertext,
-            input.authorityCiphertextVersion,
-            input.authorityKeyVersion,
-            input.authorityNonce,
-            input.authorityCiphertext,
-            input.webhookSecretCiphertextVersion,
-            input.webhookSecretKeyVersion,
-            input.webhookSecretNonce,
-            input.webhookSecretCiphertext,
-          ],
+    provider.withConnection((connection) => {
+      const db = makeDatabase(connection);
+      return withTransaction(db, async () => {
+        await enterPersonalAccountContext(db, input.personalAccountId);
+        const rows = await db.execute<ConnectionRow>(
+          sql`SELECT * FROM app_private.activate_connection_setup(
+            ${input.personalAccountId}, ${input.setupId}, ${input.connectionId},
+            ${input.publicId}, ${input.webhookIngressId}, ${input.numberSuffix},
+            ${input.connectedAt}, ${input.accountKeyVersion},
+            ${input.connectionKeyVersion}, ${input.connectionKeyNonce},
+            ${input.connectionKeyCiphertext}, ${input.locatorCiphertextVersion},
+            ${input.locatorKeyVersion}, ${input.locatorNonce},
+            ${input.locatorCiphertext}, ${input.authorityCiphertextVersion},
+            ${input.authorityKeyVersion}, ${input.authorityNonce},
+            ${input.authorityCiphertext}, ${input.webhookSecretCiphertextVersion},
+            ${input.webhookSecretKeyVersion}, ${input.webhookSecretNonce},
+            ${input.webhookSecretCiphertext}
+          )`,
         );
-        const record = connectionRecord(result.rows[0]);
+        const record = connectionRecord(rows[0]);
         if (record === null) {
           throw new Error("WhatsApp Connection activation unavailable");
         }
         return record;
-      }),
-    ),
+      });
+    }),
   claimLifecycle: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<LifecycleClaimRow>(
-        `SELECT *
-         FROM app_private.claim_whatsapp_connection_lifecycle(
-           $1, $2, $3, $4, $5
-         )`,
-        [
-          input.clerkUserId,
-          input.publicId,
-          input.action,
-          input.claimId,
-          input.requestedAt,
-        ],
+      const rows = await makeDatabase(connection).execute<LifecycleClaimRow>(
+        sql`SELECT * FROM app_private.claim_whatsapp_connection_lifecycle(
+          ${input.clerkUserId}, ${input.publicId}, ${input.action},
+          ${input.claimId}, ${input.requestedAt}
+        )`,
       );
-      return lifecycleClaim(result.rows[0]);
+      return lifecycleClaim(rows[0]);
     }),
   finishLifecycle: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<ConnectionRow>(
-        `SELECT *
-         FROM app_private.finish_whatsapp_connection_lifecycle(
-           $1, $2, $3, $4, $5
-         )`,
-        [
-          input.clerkUserId,
-          input.publicId,
-          input.claimId,
-          input.state,
-          input.observedAt,
-        ],
+      const rows = await makeDatabase(connection).execute<ConnectionRow>(
+        sql`SELECT * FROM app_private.finish_whatsapp_connection_lifecycle(
+          ${input.clerkUserId}, ${input.publicId}, ${input.claimId},
+          ${input.state}, ${input.observedAt}
+        )`,
       );
-      return result.rows[0] === undefined
-        ? null
-        : connectionRecord(result.rows[0]);
+      return rows[0] === undefined ? null : connectionRecord(rows[0]);
     }),
   prepareDeletion: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<DeletionRow>(
-        "SELECT * FROM app_private.prepare_whatsapp_connection_deletion($1,$2)",
-        [input.clerkUserId, input.publicId],
+      const rows = await makeDatabase(connection).execute<DeletionRow>(
+        sql`SELECT * FROM app_private.prepare_whatsapp_connection_deletion(
+          ${input.clerkUserId}, ${input.publicId}
+        )`,
       );
-      return deletionPreparation(result.rows[0]);
+      return deletionPreparation(rows[0]);
     }),
   finishDeletion: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<DeletionRow>(
-        "SELECT * FROM app_private.finish_whatsapp_connection_deletion($1,$2,$3,$4)",
-        [
-          input.clerkUserId,
-          input.publicId,
-          input.deletionMarkerId,
-          input.requestedAt,
-        ],
+      const rows = await makeDatabase(connection).execute<DeletionRow>(
+        sql`SELECT * FROM app_private.finish_whatsapp_connection_deletion(
+          ${input.clerkUserId}, ${input.publicId}, ${input.deletionMarkerId},
+          ${input.requestedAt}
+        )`,
       );
-      return deletionReceipt(result.rows[0]);
+      return deletionReceipt(rows[0]);
     }),
   finishDeletionCleanup: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{ complete: unknown }>(
-        `SELECT app_private.finish_whatsapp_connection_cleanup($1,$2)
-           AS complete`,
-        [input.deletionMarkerId, input.providerAbsenceConfirmedAt],
+      const rows = await makeDatabase(connection).execute<{
+        complete: unknown;
+      }>(
+        sql`SELECT app_private.finish_whatsapp_connection_cleanup(
+          ${input.deletionMarkerId}, ${input.providerAbsenceConfirmedAt}
+        ) AS complete`,
       );
-      if (typeof result.rows[0]?.complete !== "boolean") {
+      if (typeof rows[0]?.complete !== "boolean") {
         throw new Error("invalid Connection Deletion cleanup result");
       }
-      return result.rows[0].complete;
+      return rows[0].complete;
     }),
   confirmProviderAbsence: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{ confirmed: unknown }>(
-        `SELECT app_private.confirm_whatsapp_connection_provider_absence($1,$2)
-           AS confirmed`,
-        [input.deletionMarkerId, input.confirmedAt],
+      const rows = await makeDatabase(connection).execute<{
+        confirmed: unknown;
+      }>(
+        sql`SELECT app_private.confirm_whatsapp_connection_provider_absence(
+          ${input.deletionMarkerId}, ${input.confirmedAt}
+        ) AS confirmed`,
       );
-      if (typeof result.rows[0]?.confirmed !== "boolean") {
+      if (typeof rows[0]?.confirmed !== "boolean") {
         throw new Error("invalid provider absence confirmation");
       }
-      return result.rows[0].confirmed;
+      return rows[0].confirmed;
     }),
   listDeletionCandidates: (input) =>
     provider.withConnection(async (connection) => {
@@ -754,11 +725,12 @@ export const makeWhatsAppConnectionRepository = (
       ) {
         throw new Error("invalid Connection Deletion candidate limit");
       }
-      const result = await connection.query<DeletionCandidateRow>(
-        "SELECT * FROM app_private.list_whatsapp_connection_deletion_candidates($1,$2)",
-        [input.observedAt, input.limit],
+      const rows = await makeDatabase(connection).execute<DeletionCandidateRow>(
+        sql`SELECT * FROM app_private.list_whatsapp_connection_deletion_candidates(
+          ${input.observedAt}, ${input.limit}
+        )`,
       );
-      return result.rows.map(deletionCandidate);
+      return rows.map(deletionCandidate);
     }),
   listDeletionPurgeCandidates: (input) =>
     provider.withConnection(async (connection) => {
@@ -769,11 +741,12 @@ export const makeWhatsAppConnectionRepository = (
       ) {
         throw new Error("invalid Connection Deletion purge limit");
       }
-      const result = await connection.query<DeletionCandidateRow>(
-        "SELECT * FROM app_private.list_whatsapp_connection_active_purge_candidates($1,$2)",
-        [input.observedAt, input.limit],
+      const rows = await makeDatabase(connection).execute<DeletionCandidateRow>(
+        sql`SELECT * FROM app_private.list_whatsapp_connection_active_purge_candidates(
+          ${input.observedAt}, ${input.limit}
+        )`,
       );
-      return result.rows.map(deletionCandidate);
+      return rows.map(deletionCandidate);
     }),
   prepareDeletionCleanup: (input) =>
     provider.withConnection(async (connection) => {
@@ -784,11 +757,12 @@ export const makeWhatsAppConnectionRepository = (
       ) {
         throw new Error("invalid Connection Deletion object limit");
       }
-      const result = await connection.query<DeletionObjectsRow>(
-        "SELECT * FROM app_private.prepare_whatsapp_connection_cleanup($1,$2,$3)",
-        [input.deletionMarkerId, input.requestedAt, input.limit],
+      const rows = await makeDatabase(connection).execute<DeletionObjectsRow>(
+        sql`SELECT * FROM app_private.prepare_whatsapp_connection_cleanup(
+          ${input.deletionMarkerId}, ${input.requestedAt}, ${input.limit}
+        )`,
       );
-      const row = result.rows[0];
+      const row = rows[0];
       if (row === undefined) return null;
       const storedMediaObjectKeys = stringArray(row.stored_media_object_keys);
       const webhookSourceObjectKeys = stringArray(
@@ -809,66 +783,75 @@ export const makeWhatsAppConnectionRepository = (
     }),
   finishWebhookSourceDeletion: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{ complete: unknown }>(
-        `SELECT app_private.finish_whatsapp_connection_webhook_source_deletion($1,$2)
-           AS complete`,
-        [input.deletionMarkerId, input.objectKey],
+      const rows = await makeDatabase(connection).execute<{
+        complete: unknown;
+      }>(
+        sql`SELECT app_private.finish_whatsapp_connection_webhook_source_deletion(
+          ${input.deletionMarkerId}, ${input.objectKey}
+        ) AS complete`,
       );
-      if (typeof result.rows[0]?.complete !== "boolean") {
+      if (typeof rows[0]?.complete !== "boolean") {
         throw new Error("invalid Webhook Event source deletion result");
       }
-      return result.rows[0].complete;
+      return rows[0].complete;
     }),
   listForUser: (clerkUserId) =>
-    provider.withConnection((connection) =>
-      withTransaction(connection, async () => {
-        const loaded = await connection.query<{ personal_account_id: unknown }>(
-          `SELECT app_private.load_whatsapp_connection_account($1)
-             AS personal_account_id`,
-          [clerkUserId],
+    provider.withConnection((connection) => {
+      const db = makeDatabase(connection);
+      return withTransaction(db, async () => {
+        const loaded = await db.execute<{ personal_account_id: unknown }>(
+          sql`SELECT app_private.load_whatsapp_connection_account(${clerkUserId})
+              AS personal_account_id`,
         );
-        const personalAccountId = loaded.rows[0]?.personal_account_id;
+        const personalAccountId = loaded[0]?.personal_account_id;
         if (typeof personalAccountId !== "string") return [];
-        await enterPersonalAccountContext(connection, personalAccountId);
-        const result = await connection.query<ConnectionRow>(
-          `SELECT
-             public_id,
-             NULL::text AS display_name,
-             number_suffix,
-             state,
-             state_changed_at
-           FROM app.whatsapp_connections
-           WHERE number_suffix IS NOT NULL AND state <> 'deleting'
-           ORDER BY created_at, public_id`,
-        );
-        return result.rows.map((row) => {
+        await enterPersonalAccountContext(db, personalAccountId);
+        const result = await db
+          .select({
+            display_name: sql<null>`NULL::text`,
+            number_suffix: whatsappConnectionsInApp.numberSuffix,
+            public_id: whatsappConnectionsInApp.publicId,
+            state: whatsappConnectionsInApp.state,
+            state_changed_at: whatsappConnectionsInApp.stateChangedAt,
+          })
+          .from(whatsappConnectionsInApp)
+          .where(
+            and(
+              isNotNull(whatsappConnectionsInApp.numberSuffix),
+              ne(whatsappConnectionsInApp.state, "deleting"),
+            ),
+          )
+          .orderBy(
+            asc(whatsappConnectionsInApp.createdAt),
+            asc(whatsappConnectionsInApp.publicId),
+          );
+        return result.map((row) => {
           const record = connectionRecord(row);
           if (record === null) {
             throw new Error("invalid persisted WhatsApp Connection");
           }
           return record;
         });
-      }),
-    ),
+      });
+    }),
   loadSetupForActivation: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<ActivationRow>(
-        `SELECT *
-         FROM app_private.load_connection_setup_for_activation($1, $2, $3)`,
-        [input.clerkUserId, input.setupId, input.observedAt],
+      const db = makeDatabase(connection);
+      const rows = await db.execute<ActivationRow>(
+        sql`SELECT * FROM app_private.load_connection_setup_for_activation(
+          ${input.clerkUserId}, ${input.setupId}, ${input.observedAt}
+        )`,
       );
-      let row = result.rows[0];
+      let row = rows[0];
       if (row?.outcome === "provisioned") {
-        const ingress = await connection.query<{ webhook_ingress_id: unknown }>(
-          `SELECT
-             app_private.load_connection_setup_webhook_ingress_for_user(
-               $1, $2
-             ) AS webhook_ingress_id`,
-          [input.clerkUserId, input.setupId],
+        const ingress = await db.execute<{ webhook_ingress_id: unknown }>(
+          sql`SELECT app_private.load_connection_setup_webhook_ingress_for_user(
+            ${input.clerkUserId}, ${input.setupId}
+          ) AS webhook_ingress_id`,
         );
         row = {
           ...row,
-          webhook_ingress_id: ingress.rows[0]?.webhook_ingress_id,
+          webhook_ingress_id: ingress[0]?.webhook_ingress_id,
         };
       }
       return activation(input.setupId, row);

@@ -1,5 +1,11 @@
+import { and, eq, sql } from "drizzle-orm";
 import type { Client as PgClient } from "pg";
-import { makeQueryConnection } from "./database";
+import { type Database, makeDatabase, makeQueryConnection } from "./database";
+import {
+  connectionSetupsInApp,
+  personalAccountsInApp,
+  whatsappNumberReservationsInApp,
+} from "./schema";
 
 export interface ConnectionSetupConnection {
   readonly query: <
@@ -252,36 +258,37 @@ export interface ConnectionSetupRepository {
 }
 
 const withTransaction = async <Value>(
-  connection: ConnectionSetupConnection,
+  db: Database,
   use: () => Promise<Value>,
 ): Promise<Value> => {
-  await connection.query("BEGIN");
+  await db.execute(sql`BEGIN`);
   try {
     const value = await use();
-    await connection.query("COMMIT");
+    await db.execute(sql`COMMIT`);
     return value;
   } catch (error) {
-    await connection.query("ROLLBACK");
+    await db.execute(sql`ROLLBACK`);
     throw error;
   }
 };
 
 const enterPersonalAccountContext = async (
-  connection: ConnectionSetupConnection,
+  db: Database,
   personalAccountId: string,
 ): Promise<boolean> => {
-  await connection.query(
-    "SELECT set_config('app.personal_account_id', $1, true)",
-    [personalAccountId],
+  await db.execute(
+    sql`SELECT set_config('app.personal_account_id', ${personalAccountId}, true)`,
   );
-  const visible = await connection.query<{ id: string }>(
-    `SELECT id
-     FROM app.personal_accounts
-     WHERE id = $1
-       AND state = 'active'`,
-    [personalAccountId],
-  );
-  return visible.rows.length === 1;
+  const visible = await db
+    .select({ id: personalAccountsInApp.id })
+    .from(personalAccountsInApp)
+    .where(
+      and(
+        eq(personalAccountsInApp.id, personalAccountId),
+        eq(personalAccountsInApp.state, "active"),
+      ),
+    );
+  return visible.length === 1;
 };
 
 const positiveInteger = (value: unknown): number | null => {
@@ -538,22 +545,23 @@ export const makeConnectionSetupRepository = (
 ): ConnectionSetupRepository => ({
   cancel: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<CancelConnectionSetupRow>(
-        `SELECT *
-         FROM app_private.cancel_connection_setup($1, $2, $3)`,
-        [input.clerkUserId, input.setupId, input.cancelledAt],
+      const rows = await makeDatabase(
+        connection,
+      ).execute<CancelConnectionSetupRow>(
+        sql`SELECT * FROM app_private.cancel_connection_setup(
+          ${input.clerkUserId}, ${input.setupId}, ${input.cancelledAt}
+        )`,
       );
-      return cancelledConnectionSetup(result.rows[0]);
+      return cancelledConnectionSetup(rows[0]);
     }),
   claimCleanup: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{ outcome: unknown }>(
-        `SELECT app_private.claim_connection_setup_cleanup(
-           $1, $2, $3
-         ) AS outcome`,
-        [input.setupId, input.workerId, input.claimedAt],
+      const rows = await makeDatabase(connection).execute<{ outcome: unknown }>(
+        sql`SELECT app_private.claim_connection_setup_cleanup(
+          ${input.setupId}, ${input.workerId}, ${input.claimedAt}
+        ) AS outcome`,
       );
-      const outcome = result.rows[0]?.outcome;
+      const outcome = rows[0]?.outcome;
       if (
         typeof outcome !== "string" ||
         !cleanupClaimOutcomes.has(
@@ -566,115 +574,111 @@ export const makeConnectionSetupRepository = (
     }),
   claimProvisioning: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<ProvisioningClaimRow>(
-        `SELECT *
-         FROM app_private.claim_connection_setup_provisioning($1, $2, $3)`,
-        [input.setupId, input.workerId, input.claimedAt],
+      const db = makeDatabase(connection);
+      const rows = await db.execute<ProvisioningClaimRow>(
+        sql`SELECT * FROM app_private.claim_connection_setup_provisioning(
+          ${input.setupId}, ${input.workerId}, ${input.claimedAt}
+        )`,
       );
-      let row = result.rows[0];
+      let row = rows[0];
       if (row?.outcome === "claimed") {
-        const ingress = await connection.query<{ webhook_ingress_id: unknown }>(
-          `SELECT
-             app_private.load_connection_setup_webhook_ingress_for_worker(
-               $1, $2
-             ) AS webhook_ingress_id`,
-          [input.setupId, input.workerId],
+        const ingress = await db.execute<{ webhook_ingress_id: unknown }>(
+          sql`SELECT app_private.load_connection_setup_webhook_ingress_for_worker(
+            ${input.setupId}, ${input.workerId}
+          ) AS webhook_ingress_id`,
         );
         row = {
           ...row,
-          webhook_ingress_id: ingress.rows[0]?.webhook_ingress_id,
+          webhook_ingress_id: ingress[0]?.webhook_ingress_id,
         };
       }
       return provisioningClaim(input.setupId, row);
     }),
   expire: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{ setup_id: unknown }>(
-        `SELECT setup_id
-         FROM app_private.expire_connection_setups($1, $2)`,
-        [input.observedAt, input.limit],
+      const rows = await makeDatabase(connection).execute<{
+        setup_id: unknown;
+      }>(
+        sql`SELECT setup_id FROM app_private.expire_connection_setups(
+          ${input.observedAt}, ${input.limit}
+        )`,
       );
-      return setupIds(result.rows, "invalid expired Connection Setup");
+      return setupIds(rows, "invalid expired Connection Setup");
     }),
   finishCleanup: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{ finished: unknown }>(
-        `SELECT app_private.finish_connection_setup_cleanup(
-           $1, $2, $3
-         ) AS finished`,
-        [input.setupId, input.workerId, input.observedAt],
+      const rows = await makeDatabase(connection).execute<{
+        finished: unknown;
+      }>(
+        sql`SELECT app_private.finish_connection_setup_cleanup(
+          ${input.setupId}, ${input.workerId}, ${input.observedAt}
+        ) AS finished`,
       );
-      if (typeof result.rows[0]?.finished !== "boolean") {
+      if (typeof rows[0]?.finished !== "boolean") {
         throw new Error("invalid Connection Setup cleanup result");
       }
-      return result.rows[0].finished;
+      return rows[0].finished;
     }),
   finishProvisioning: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{ finished: unknown }>(
-        `SELECT app_private.finish_connection_setup_provisioning(
-           $1, $2, $3, $4, $5::jsonb
-         ) AS finished`,
-        [
-          input.setupId,
-          input.workerId,
-          input.observedAt,
-          input.outcome,
-          serializedProviderSessions(input.sessions),
-        ],
+      const rows = await makeDatabase(connection).execute<{
+        finished: unknown;
+      }>(
+        sql`SELECT app_private.finish_connection_setup_provisioning(
+          ${input.setupId}, ${input.workerId}, ${input.observedAt},
+          ${input.outcome}, ${serializedProviderSessions(input.sessions)}::jsonb
+        ) AS finished`,
       );
-      if (typeof result.rows[0]?.finished !== "boolean") {
+      if (typeof rows[0]?.finished !== "boolean") {
         throw new Error("invalid Connection Setup provisioning result");
       }
-      return result.rows[0].finished;
+      return rows[0].finished;
     }),
   failProvisioning: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{ failed: unknown }>(
-        `SELECT app_private.fail_connection_setup_provisioning(
-           $1, $2, $3, $4
-         ) AS failed`,
-        [input.setupId, input.workerId, input.observedAt, input.failureCode],
+      const rows = await makeDatabase(connection).execute<{ failed: unknown }>(
+        sql`SELECT app_private.fail_connection_setup_provisioning(
+          ${input.setupId}, ${input.workerId}, ${input.observedAt},
+          ${input.failureCode}
+        ) AS failed`,
       );
-      if (typeof result.rows[0]?.failed !== "boolean") {
+      if (typeof rows[0]?.failed !== "boolean") {
         throw new Error("invalid Connection Setup provisioning failure");
       }
-      return result.rows[0].failed;
+      return rows[0].failed;
     }),
   listProvisioningCandidates: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{ setup_id: unknown }>(
-        `SELECT setup_id
-         FROM app_private.list_connection_setup_provisioning_candidates(
-           $1, $2
-         )`,
-        [input.observedAt, input.limit],
+      const rows = await makeDatabase(connection).execute<{
+        setup_id: unknown;
+      }>(
+        sql`SELECT setup_id
+            FROM app_private.list_connection_setup_provisioning_candidates(
+              ${input.observedAt}, ${input.limit}
+            )`,
       );
-      return setupIds(
-        result.rows,
-        "invalid Connection Setup provisioning candidate",
-      );
+      return setupIds(rows, "invalid Connection Setup provisioning candidate");
     }),
   listCleanupCandidates: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{ setup_id: unknown }>(
-        `SELECT setup_id
-         FROM app_private.list_connection_setup_cleanup_candidates($1, $2)`,
-        [input.observedAt, input.limit],
+      const rows = await makeDatabase(connection).execute<{
+        setup_id: unknown;
+      }>(
+        sql`SELECT setup_id
+            FROM app_private.list_connection_setup_cleanup_candidates(
+              ${input.observedAt}, ${input.limit}
+            )`,
       );
-      return setupIds(
-        result.rows,
-        "invalid Connection Setup cleanup candidate",
-      );
+      return setupIds(rows, "invalid Connection Setup cleanup candidate");
     }),
   prepare: (input) =>
-    provider.withConnection((connection) =>
-      withTransaction(connection, async () => {
-        const loaded = await connection.query<AccountRow>(
-          "SELECT * FROM app_private.load_connection_setup_account($1)",
-          [input.clerkUserId],
+    provider.withConnection((connection) => {
+      const db = makeDatabase(connection);
+      return withTransaction(db, async () => {
+        const loaded = await db.execute<AccountRow>(
+          sql`SELECT * FROM app_private.load_connection_setup_account(${input.clerkUserId})`,
         );
-        const row = loaded.rows[0];
+        const row = loaded[0];
         const accountKeyCiphertext = bytes(row?.account_key_ciphertext);
         const accountKeyVersion = positiveInteger(row?.account_key_version);
         const whatsappConnectionLimit = positiveInteger(
@@ -686,25 +690,43 @@ export const makeConnectionSetupRepository = (
           accountKeyCiphertext === null ||
           accountKeyVersion === null ||
           whatsappConnectionLimit === null ||
-          !(await enterPersonalAccountContext(
-            connection,
-            row.personal_account_id,
-          ))
+          !(await enterPersonalAccountContext(db, row.personal_account_id))
         ) {
           return null;
         }
 
-        const binding = await connection.query<SetupRow>(
-          `SELECT setups.*, reservations.number_token
-           FROM app.connection_setups AS setups
-           JOIN app.whatsapp_number_reservations AS reservations
-             ON reservations.personal_account_id = setups.personal_account_id
-            AND reservations.connection_setup_id = setups.id
-           WHERE setups.personal_account_id = $1
-             AND setups.idempotency_key = $2`,
-          [row.personal_account_id, input.idempotencyKey],
-        );
-        const existing = binding.rows[0];
+        const binding = await db
+          .select({
+            created_at: connectionSetupsInApp.createdAt,
+            expires_at: connectionSetupsInApp.expiresAt,
+            id: connectionSetupsInApp.id,
+            number_token: whatsappNumberReservationsInApp.numberToken,
+            state: connectionSetupsInApp.state,
+          })
+          .from(connectionSetupsInApp)
+          .innerJoin(
+            whatsappNumberReservationsInApp,
+            and(
+              eq(
+                whatsappNumberReservationsInApp.personalAccountId,
+                connectionSetupsInApp.personalAccountId,
+              ),
+              eq(
+                whatsappNumberReservationsInApp.connectionSetupId,
+                connectionSetupsInApp.id,
+              ),
+            ),
+          )
+          .where(
+            and(
+              eq(
+                connectionSetupsInApp.personalAccountId,
+                row.personal_account_id,
+              ),
+              eq(connectionSetupsInApp.idempotencyKey, input.idempotencyKey),
+            ),
+          );
+        const existing = binding[0];
         if (existing !== undefined) {
           const existingToken = bytes(existing.number_token);
           const setup = setupRecord(existing);
@@ -727,94 +749,80 @@ export const makeConnectionSetupRepository = (
           outcome: "unbound" as const,
           whatsappConnectionLimit,
         };
-      }),
-    ),
+      });
+    }),
   releaseProvisioningLease: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{ released: unknown }>(
-        `SELECT app_private.release_connection_setup_provisioning_lease(
-           $1, $2, $3, $4
-         ) AS released`,
-        [input.setupId, input.workerId, input.observedAt, input.failureCode],
+      const rows = await makeDatabase(connection).execute<{
+        released: unknown;
+      }>(
+        sql`SELECT app_private.release_connection_setup_provisioning_lease(
+          ${input.setupId}, ${input.workerId}, ${input.observedAt},
+          ${input.failureCode}
+        ) AS released`,
       );
-      if (typeof result.rows[0]?.released !== "boolean") {
+      if (typeof rows[0]?.released !== "boolean") {
         throw new Error("invalid Connection Setup provisioning release");
       }
-      return result.rows[0].released;
+      return rows[0].released;
     }),
   releaseCleanupLease: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{ released: unknown }>(
-        `SELECT app_private.release_connection_setup_cleanup_lease(
-           $1, $2, $3, $4
-         ) AS released`,
-        [input.setupId, input.workerId, input.observedAt, input.failureCode],
+      const rows = await makeDatabase(connection).execute<{
+        released: unknown;
+      }>(
+        sql`SELECT app_private.release_connection_setup_cleanup_lease(
+          ${input.setupId}, ${input.workerId}, ${input.observedAt},
+          ${input.failureCode}
+        ) AS released`,
       );
-      if (typeof result.rows[0]?.released !== "boolean") {
+      if (typeof rows[0]?.released !== "boolean") {
         throw new Error("invalid Connection Setup cleanup release");
       }
-      return result.rows[0].released;
+      return rows[0].released;
     }),
   renewProvisioningLease: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{ renewed: unknown }>(
-        `SELECT app_private.renew_connection_setup_provisioning_lease(
-           $1, $2, $3
-         ) AS renewed`,
-        [input.setupId, input.workerId, input.observedAt],
+      const rows = await makeDatabase(connection).execute<{ renewed: unknown }>(
+        sql`SELECT app_private.renew_connection_setup_provisioning_lease(
+          ${input.setupId}, ${input.workerId}, ${input.observedAt}
+        ) AS renewed`,
       );
-      if (typeof result.rows[0]?.renewed !== "boolean") {
+      if (typeof rows[0]?.renewed !== "boolean") {
         throw new Error("invalid Connection Setup provisioning renewal");
       }
-      return result.rows[0].renewed;
+      return rows[0].renewed;
     }),
   renewCleanupLease: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{ renewed: unknown }>(
-        `SELECT app_private.renew_connection_setup_cleanup_lease(
-           $1, $2, $3
-         ) AS renewed`,
-        [input.setupId, input.workerId, input.observedAt],
+      const rows = await makeDatabase(connection).execute<{ renewed: unknown }>(
+        sql`SELECT app_private.renew_connection_setup_cleanup_lease(
+          ${input.setupId}, ${input.workerId}, ${input.observedAt}
+        ) AS renewed`,
       );
-      if (typeof result.rows[0]?.renewed !== "boolean") {
+      if (typeof rows[0]?.renewed !== "boolean") {
         throw new Error("invalid Connection Setup cleanup renewal");
       }
-      return result.rows[0].renewed;
+      return rows[0].renewed;
     }),
   start: (input) =>
-    provider.withConnection((connection) =>
-      withTransaction(connection, async () => {
-        if (
-          !(await enterPersonalAccountContext(
-            connection,
-            input.personalAccountId,
-          ))
-        ) {
+    provider.withConnection((connection) => {
+      const db = makeDatabase(connection);
+      return withTransaction(db, async () => {
+        if (!(await enterPersonalAccountContext(db, input.personalAccountId))) {
           throw new Error("Personal Account unavailable");
         }
-        const result = await connection.query<StartRow>(
-          `SELECT *
-           FROM app_private.start_connection_setup(
-             $1, $2, $3, $4, $5, $6, $7,
-             $8, $9, $10, $11, $12, $13
-           )`,
-          [
-            input.personalAccountId,
-            input.setupId,
-            input.idempotencyKey,
-            input.numberToken,
-            input.numberCiphertextVersion,
-            input.numberKeyVersion,
-            input.numberCiphertextNonce,
-            input.numberCiphertext,
-            input.accountKeyVersion,
-            input.connectionKeyVersion,
-            input.connectionKeyNonce,
-            input.connectionKeyCiphertext,
-            input.createdAt,
-          ],
+        const rows = await db.execute<StartRow>(
+          sql`SELECT * FROM app_private.start_connection_setup(
+            ${input.personalAccountId}, ${input.setupId}, ${input.idempotencyKey},
+            ${input.numberToken}, ${input.numberCiphertextVersion},
+            ${input.numberKeyVersion}, ${input.numberCiphertextNonce},
+            ${input.numberCiphertext}, ${input.accountKeyVersion},
+            ${input.connectionKeyVersion}, ${input.connectionKeyNonce},
+            ${input.connectionKeyCiphertext}, ${input.createdAt}
+          )`,
         );
-        const row = result.rows[0];
+        const row = rows[0];
         if (
           row?.outcome === "connection_limit_reached" ||
           row?.outcome === "idempotency_conflict" ||
@@ -829,8 +837,8 @@ export const makeConnectionSetupRepository = (
           }
         }
         throw new Error("invalid Connection Setup result");
-      }),
-    ),
+      });
+    }),
 });
 
 const makePgConnectionProvider = (

@@ -1,9 +1,17 @@
+import { and, asc, desc, eq, gt, inArray, notExists, sql } from "drizzle-orm";
 import type { Client as PgClient } from "pg";
-import { makeQueryConnection } from "./database";
+import { makeDatabase, makeQueryConnection } from "./database";
 import type {
   PersonalAccountConnection,
   PersonalAccountConnectionProvider,
 } from "./personal-account";
+import {
+  mcpAuthorizationConnectionsInApp,
+  mcpAuthorizationsInApp,
+  mcpRefreshCredentialsInApp,
+  personalAccountsInApp,
+  whatsappConnectionsInApp,
+} from "./schema";
 
 export const MCP_AUTHORIZATION_SCOPES = [
   "connections:read",
@@ -16,6 +24,7 @@ export type McpAuthorizationScope = (typeof MCP_AUTHORIZATION_SCOPES)[number];
 
 export interface SelectableWhatsAppConnection {
   readonly connectionId: string;
+  readonly numberSuffix: string | null;
 }
 
 export interface CreateMcpAuthorizationInput {
@@ -93,13 +102,14 @@ const withTransaction = async <Value>(
   connection: PersonalAccountConnection,
   use: () => Promise<Value>,
 ): Promise<Value> => {
-  await connection.query("BEGIN");
+  const db = makeDatabase(connection);
+  await db.execute(sql`BEGIN`);
   try {
     const value = await use();
-    await connection.query("COMMIT");
+    await db.execute(sql`COMMIT`);
     return value;
   } catch (error) {
-    await connection.query("ROLLBACK");
+    await db.execute(sql`ROLLBACK`);
     throw error;
   }
 };
@@ -108,23 +118,26 @@ const enterClerkContext = async (
   connection: PersonalAccountConnection,
   clerkUserId: string,
 ): Promise<string | null> => {
-  const result = await connection.query<{ personal_account_id: string | null }>(
-    `SELECT app_private.bootstrap_personal_account_for_clerk($1)
-       AS personal_account_id`,
-    [clerkUserId],
-  );
-  const personalAccountId = result.rows[0]?.personal_account_id;
+  const db = makeDatabase(connection);
+  const result = await db.execute<{ personal_account_id: string | null }>(sql`
+    SELECT app_private.bootstrap_personal_account_for_clerk(${clerkUserId})
+      AS personal_account_id
+  `);
+  const personalAccountId = result[0]?.personal_account_id;
   if (typeof personalAccountId !== "string") return null;
-  await connection.query(
-    "SELECT set_config('app.personal_account_id', $1, true)",
-    [personalAccountId],
+  await db.execute(
+    sql`SELECT set_config('app.personal_account_id', ${personalAccountId}, true)`,
   );
-  const account = await connection.query(
-    `SELECT id FROM app.personal_accounts
-     WHERE id = $1 AND state = 'active'`,
-    [personalAccountId],
-  );
-  return account.rows.length === 1 ? personalAccountId : null;
+  const account = await db
+    .select({ id: personalAccountsInApp.id })
+    .from(personalAccountsInApp)
+    .where(
+      and(
+        eq(personalAccountsInApp.id, personalAccountId),
+        eq(personalAccountsInApp.state, "active"),
+      ),
+    );
+  return account.length === 1 ? personalAccountId : null;
 };
 
 export const makeMcpAuthorizationRepository = (
@@ -133,6 +146,7 @@ export const makeMcpAuthorizationRepository = (
   create: (input) =>
     provider.withConnection((connection) =>
       withTransaction(connection, async () => {
+        const db = makeDatabase(connection);
         const personalAccountId = await enterClerkContext(
           connection,
           input.clerkUserId,
@@ -146,177 +160,184 @@ export const makeMcpAuthorizationRepository = (
         ) {
           return false;
         }
-        const selected = await connection.query<{
-          id: string;
-          public_id: string;
-        }>(
-          `SELECT id, public_id
-           FROM app.whatsapp_connections
-           WHERE public_id = ANY($1::text[])
-           ORDER BY public_id`,
-          [[...input.connectionIds]],
-        );
-        if (selected.rows.length !== input.connectionIds.length) return false;
+        const selected = await db
+          .select({ id: whatsappConnectionsInApp.id })
+          .from(whatsappConnectionsInApp)
+          .where(
+            inArray(whatsappConnectionsInApp.publicId, input.connectionIds),
+          )
+          .orderBy(asc(whatsappConnectionsInApp.publicId));
+        if (selected.length !== input.connectionIds.length) return false;
 
-        await connection.query(
-          `INSERT INTO app.mcp_authorizations (
-             id, personal_account_id, oauth_subject, client_id, client_class,
-             client_name, scopes, reverified_at, authorized_at,
-             absolute_expires_at
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7::text[], $8, $9, $10)`,
-          [
-            input.authorizationId,
+        await db.insert(mcpAuthorizationsInApp).values({
+          absoluteExpiresAt: input.expiresAt.toISOString(),
+          authorizedAt: input.authorizedAt.toISOString(),
+          clientClass: input.clientClass,
+          clientId: input.clientId,
+          clientName: input.clientName,
+          id: input.authorizationId,
+          oauthSubject: input.oauthSubject,
+          personalAccountId,
+          reverifiedAt: input.reverifiedAt.toISOString(),
+          scopes: [...input.scopes],
+        });
+        await db.insert(mcpAuthorizationConnectionsInApp).values(
+          selected.map((row) => ({
+            mcpAuthorizationId: input.authorizationId,
             personalAccountId,
-            input.oauthSubject,
-            input.clientId,
-            input.clientClass,
-            input.clientName,
-            [...input.scopes],
-            input.reverifiedAt,
-            input.authorizedAt,
-            input.expiresAt,
-          ],
+            whatsappConnectionId: row.id,
+          })),
         );
-        for (const row of selected.rows) {
-          await connection.query(
-            `INSERT INTO app.mcp_authorization_connections (
-               personal_account_id, mcp_authorization_id,
-               whatsapp_connection_id
-             ) VALUES ($1, $2, $3)`,
-            [personalAccountId, input.authorizationId, row.id],
-          );
-        }
         return true;
       }),
     ),
   isActive: (input) =>
     provider.withConnection((connection) =>
       withTransaction(connection, async () => {
-        const context = await connection.query<{
+        const db = makeDatabase(connection);
+        const context = await db.execute<{
           personal_account_id: string | null;
         }>(
           input.clientId === undefined
-            ? `SELECT app_private.bootstrap_mcp_access_authorization(
-                 $1, $2, $3
-               ) AS personal_account_id`
-            : `SELECT app_private.bootstrap_mcp_authorization($1, $2, $3, $4)
-                 AS personal_account_id`,
-          input.clientId === undefined
-            ? [input.authorizationId, input.oauthSubject, input.observedAt]
-            : [
-                input.authorizationId,
-                input.oauthSubject,
-                input.clientId,
-                input.observedAt,
-              ],
+            ? sql`SELECT app_private.bootstrap_mcp_access_authorization(
+                ${input.authorizationId}, ${input.oauthSubject}, ${input.observedAt}
+              ) AS personal_account_id`
+            : sql`SELECT app_private.bootstrap_mcp_authorization(
+                ${input.authorizationId}, ${input.oauthSubject},
+                ${input.clientId}, ${input.observedAt}
+              ) AS personal_account_id`,
         );
-        const personalAccountId = context.rows[0]?.personal_account_id;
+        const personalAccountId = context[0]?.personal_account_id;
         if (typeof personalAccountId !== "string") return false;
-        await connection.query(
-          "SELECT set_config('app.personal_account_id', $1, true)",
-          [personalAccountId],
+        await db.execute(
+          sql`SELECT set_config('app.personal_account_id', ${personalAccountId}, true)`,
         );
-        const authorization = await connection.query(
-          `SELECT id
-           FROM app.mcp_authorizations
-           WHERE id = $1
-             AND oauth_subject = $2
-             AND ($3::text IS NULL OR client_id = $3)
-             AND state = 'active'
-             AND absolute_expires_at > $4`,
-          [
-            input.authorizationId,
-            input.oauthSubject,
-            input.clientId ?? null,
-            input.observedAt,
-          ],
-        );
-        return authorization.rows.length === 1;
+        const authorization = await db
+          .select({ id: mcpAuthorizationsInApp.id })
+          .from(mcpAuthorizationsInApp)
+          .where(
+            and(
+              eq(mcpAuthorizationsInApp.id, input.authorizationId),
+              eq(mcpAuthorizationsInApp.oauthSubject, input.oauthSubject),
+              input.clientId === undefined
+                ? undefined
+                : eq(mcpAuthorizationsInApp.clientId, input.clientId),
+              eq(mcpAuthorizationsInApp.state, "active"),
+              gt(
+                mcpAuthorizationsInApp.absoluteExpiresAt,
+                input.observedAt.toISOString(),
+              ),
+            ),
+          );
+        return authorization.length === 1;
       }),
     ),
   listConnections: (clerkUserId) =>
     provider.withConnection((connection) =>
       withTransaction(connection, async () => {
+        const db = makeDatabase(connection);
         if ((await enterClerkContext(connection, clerkUserId)) === null) {
           return null;
         }
-        const result = await connection.query<{ public_id: string }>(
-          `SELECT public_id
-           FROM app.whatsapp_connections
-           ORDER BY created_at, public_id`,
-        );
-        return result.rows.map((row) => ({ connectionId: row.public_id }));
+        const result = await db
+          .select({
+            numberSuffix: whatsappConnectionsInApp.numberSuffix,
+            publicId: whatsappConnectionsInApp.publicId,
+          })
+          .from(whatsappConnectionsInApp)
+          .orderBy(
+            asc(whatsappConnectionsInApp.createdAt),
+            asc(whatsappConnectionsInApp.publicId),
+          );
+        return result.map((row) => ({
+          connectionId: row.publicId,
+          numberSuffix: row.numberSuffix,
+        }));
       }),
     ),
   list: (clerkUserId, observedAt) =>
     provider.withConnection((connection) =>
       withTransaction(connection, async () => {
+        const db = makeDatabase(connection);
         if ((await enterClerkContext(connection, clerkUserId)) === null) {
           return null;
         }
-        const result = await connection.query<{
-          absolute_expires_at: Date;
-          authorized_at: Date;
-          client_class: string;
-          client_id: string;
-          client_name: string | null;
-          connection_public_id: string | null;
-          public_id: string;
-          revoked_at: Date | null;
-          scopes: Array<McpAuthorizationScope>;
-          state: "active" | "revoked";
-        }>(
-          `SELECT
-             authorizations.public_id,
-             authorizations.client_id,
-             authorizations.client_class,
-             authorizations.client_name,
-             authorizations.scopes,
-             authorizations.authorized_at,
-             authorizations.absolute_expires_at,
-             authorizations.state,
-             authorizations.revoked_at,
-             connections.public_id AS connection_public_id
-           FROM app.mcp_authorizations AS authorizations
-           LEFT JOIN app.mcp_authorization_connections AS selected
-             ON selected.personal_account_id =
-               authorizations.personal_account_id
-             AND selected.mcp_authorization_id = authorizations.id
-           LEFT JOIN app.whatsapp_connections AS connections
-             ON connections.personal_account_id = selected.personal_account_id
-             AND connections.id = selected.whatsapp_connection_id
-           ORDER BY
-             authorizations.authorized_at DESC,
-             authorizations.public_id,
-             connections.created_at,
-             connections.public_id`,
-        );
+        const result = await db
+          .select({
+            absoluteExpiresAt: mcpAuthorizationsInApp.absoluteExpiresAt,
+            authorizedAt: mcpAuthorizationsInApp.authorizedAt,
+            clientClass: mcpAuthorizationsInApp.clientClass,
+            clientId: mcpAuthorizationsInApp.clientId,
+            clientName: mcpAuthorizationsInApp.clientName,
+            connectionPublicId: sql<
+              string | null
+            >`${whatsappConnectionsInApp.publicId}`.as("connection_public_id"),
+            publicId: sql<string>`${mcpAuthorizationsInApp.publicId}`.as(
+              "authorization_public_id",
+            ),
+            revokedAt: mcpAuthorizationsInApp.revokedAt,
+            scopes: mcpAuthorizationsInApp.scopes,
+            state: mcpAuthorizationsInApp.state,
+          })
+          .from(mcpAuthorizationsInApp)
+          .leftJoin(
+            mcpAuthorizationConnectionsInApp,
+            and(
+              eq(
+                mcpAuthorizationConnectionsInApp.personalAccountId,
+                mcpAuthorizationsInApp.personalAccountId,
+              ),
+              eq(
+                mcpAuthorizationConnectionsInApp.mcpAuthorizationId,
+                mcpAuthorizationsInApp.id,
+              ),
+            ),
+          )
+          .leftJoin(
+            whatsappConnectionsInApp,
+            and(
+              eq(
+                whatsappConnectionsInApp.personalAccountId,
+                mcpAuthorizationConnectionsInApp.personalAccountId,
+              ),
+              eq(
+                whatsappConnectionsInApp.id,
+                mcpAuthorizationConnectionsInApp.whatsappConnectionId,
+              ),
+            ),
+          )
+          .orderBy(
+            desc(mcpAuthorizationsInApp.authorizedAt),
+            asc(mcpAuthorizationsInApp.publicId),
+            asc(whatsappConnectionsInApp.createdAt),
+            asc(whatsappConnectionsInApp.publicId),
+          );
         const summaries = new Map<string, McpAuthorizationSummary>();
-        for (const row of result.rows) {
-          const existing = summaries.get(row.public_id);
+        for (const row of result) {
+          const existing = summaries.get(row.publicId);
           if (existing !== undefined) {
-            if (row.connection_public_id !== null) {
+            if (row.connectionPublicId !== null) {
               (existing.connectionIds as Array<string>).push(
-                row.connection_public_id,
+                row.connectionPublicId,
               );
             }
             continue;
           }
-          summaries.set(row.public_id, {
-            authorizationId: row.public_id,
-            authorizedAt: row.authorized_at,
-            clientClass: row.client_class,
-            clientId: row.client_id,
-            clientName: row.client_name ?? row.client_id,
+          const authorizedAt = new Date(row.authorizedAt);
+          const expiresAt = new Date(row.absoluteExpiresAt);
+          summaries.set(row.publicId, {
+            authorizationId: row.publicId,
+            authorizedAt,
+            clientClass: row.clientClass,
+            clientId: row.clientId,
+            clientName: row.clientName ?? row.clientId,
             connectionIds:
-              row.connection_public_id === null
-                ? []
-                : [row.connection_public_id],
-            expired: row.absolute_expires_at <= observedAt,
-            expiresAt: row.absolute_expires_at,
+              row.connectionPublicId === null ? [] : [row.connectionPublicId],
+            expired: expiresAt <= observedAt,
+            expiresAt,
             revoked: row.state === "revoked",
-            revokedAt: row.revoked_at,
-            scopes: row.scopes,
+            revokedAt: row.revokedAt === null ? null : new Date(row.revokedAt),
+            scopes: row.scopes as Array<McpAuthorizationScope>,
           });
         }
         return [...summaries.values()];
@@ -325,148 +346,192 @@ export const makeMcpAuthorizationRepository = (
   registerRefreshCredential: (input) =>
     provider.withConnection((connection) =>
       withTransaction(connection, async () => {
+        const db = makeDatabase(connection);
         if (input.credentialHash.byteLength !== 32) return false;
-        const context = await connection.query<{
+        const context = await db.execute<{
           mcp_authorization_id: string;
           personal_account_id: string;
-        }>(
-          `SELECT personal_account_id, mcp_authorization_id
-           FROM app_private.bootstrap_mcp_refresh_authorization($1, $2, $3)`,
-          [input.oauthSubject, input.clientId, input.observedAt],
-        );
-        const authorization = context.rows[0];
+        }>(sql`
+          SELECT personal_account_id, mcp_authorization_id
+          FROM app_private.bootstrap_mcp_refresh_authorization(
+            ${input.oauthSubject}, ${input.clientId}, ${input.observedAt}
+          )
+        `);
+        const authorization = context[0];
         if (authorization === undefined) return false;
-        await connection.query(
-          "SELECT set_config('app.personal_account_id', $1, true)",
-          [authorization.personal_account_id],
+        await db.execute(
+          sql`SELECT set_config(
+            'app.personal_account_id', ${authorization.personal_account_id}, true
+          )`,
         );
-        const inserted = await connection.query<{
-          credential_hash: Uint8Array;
-        }>(
-          `INSERT INTO app.mcp_refresh_credentials (
-             credential_hash, personal_account_id, mcp_authorization_id,
-             issued_at, inactive_expires_at
-           )
-           SELECT
-             $1, authorizations.personal_account_id, authorizations.id, $2,
-             LEAST($2::timestamptz + interval '30 days',
-                   authorizations.absolute_expires_at)
-           FROM app.mcp_authorizations AS authorizations
-           WHERE authorizations.id = $3
-             AND NOT EXISTS (
-               SELECT 1
-               FROM app.mcp_refresh_credentials AS credentials
-               WHERE credentials.mcp_authorization_id = authorizations.id
-             )
-           RETURNING credential_hash`,
-          [
-            input.credentialHash,
-            input.observedAt,
-            authorization.mcp_authorization_id,
-          ],
-        );
-        return inserted.rows.length === 1;
+        const inserted = await db
+          .insert(mcpRefreshCredentialsInApp)
+          .select(
+            db
+              .select({
+                credentialHash: sql<Uint8Array>`${input.credentialHash}`.as(
+                  "credential_hash",
+                ),
+                personalAccountId: mcpAuthorizationsInApp.personalAccountId,
+                mcpAuthorizationId: mcpAuthorizationsInApp.id,
+                issuedAt: sql<string>`${input.observedAt}::timestamptz`.as(
+                  "issued_at",
+                ),
+                inactiveExpiresAt: sql<string>`LEAST(
+                  ${input.observedAt}::timestamptz + interval '30 days',
+                  ${mcpAuthorizationsInApp.absoluteExpiresAt}
+                )`.as("inactive_expires_at"),
+                consumedAt: sql<string | null>`NULL::timestamptz`.as(
+                  "consumed_at",
+                ),
+              })
+              .from(mcpAuthorizationsInApp)
+              .where(
+                and(
+                  eq(
+                    mcpAuthorizationsInApp.id,
+                    authorization.mcp_authorization_id,
+                  ),
+                  notExists(
+                    db
+                      .select({
+                        credentialHash:
+                          mcpRefreshCredentialsInApp.credentialHash,
+                      })
+                      .from(mcpRefreshCredentialsInApp)
+                      .where(
+                        eq(
+                          mcpRefreshCredentialsInApp.mcpAuthorizationId,
+                          mcpAuthorizationsInApp.id,
+                        ),
+                      ),
+                  ),
+                ),
+              ),
+          )
+          .returning({
+            credentialHash: mcpRefreshCredentialsInApp.credentialHash,
+          });
+        return inserted.length === 1;
       }),
     ),
   revoke: (input) =>
     provider.withConnection((connection) =>
       withTransaction(connection, async () => {
+        const db = makeDatabase(connection);
         if (!/^mca_[A-Za-z0-9_-]{21}$/u.test(input.authorizationId)) {
           return null;
         }
         if ((await enterClerkContext(connection, input.clerkUserId)) === null) {
           return null;
         }
-        const revoked = await connection.query<{ revoked_at: Date }>(
-          `UPDATE app.mcp_authorizations
-           SET
-             state = 'revoked',
-             revoked_at = COALESCE(revoked_at, $2),
-             refresh_family_state = 'revoked',
-             refresh_family_revoked_at =
-               COALESCE(refresh_family_revoked_at, $2)
-           WHERE public_id = $1
-           RETURNING revoked_at`,
-          [input.authorizationId, input.revokedAt],
-        );
-        const revokedAt = revoked.rows[0]?.revoked_at;
-        return revokedAt === undefined ? null : { revokedAt };
+        const revoked = await db
+          .update(mcpAuthorizationsInApp)
+          .set({
+            refreshFamilyRevokedAt: sql`COALESCE(
+              ${mcpAuthorizationsInApp.refreshFamilyRevokedAt}, ${input.revokedAt}
+            )`,
+            refreshFamilyState: "revoked",
+            revokedAt: sql`COALESCE(
+              ${mcpAuthorizationsInApp.revokedAt}, ${input.revokedAt}
+            )`,
+            state: "revoked",
+          })
+          .where(eq(mcpAuthorizationsInApp.publicId, input.authorizationId))
+          .returning({ revokedAt: mcpAuthorizationsInApp.revokedAt });
+        const revokedAt = revoked[0]?.revokedAt;
+        return revokedAt == null ? null : { revokedAt: new Date(revokedAt) };
       }),
     ),
   rotateRefreshCredential: (input, issue) =>
     provider.withConnection((connection) =>
       withTransaction(connection, async () => {
+        const db = makeDatabase(connection);
         if (input.credentialHash.byteLength !== 32) {
           return { outcome: "invalid" as const };
         }
-        const context = await connection.query<{
+        const context = await db.execute<{
           mcp_authorization_id: string;
           personal_account_id: string;
-        }>(
-          `SELECT personal_account_id, mcp_authorization_id
-           FROM app_private.bootstrap_mcp_refresh_credential($1, $2, $3)`,
-          [input.credentialHash, input.oauthSubject, input.clientId],
-        );
-        const authorization = context.rows[0];
+        }>(sql`
+          SELECT personal_account_id, mcp_authorization_id
+          FROM app_private.bootstrap_mcp_refresh_credential(
+            ${input.credentialHash}, ${input.oauthSubject}, ${input.clientId}
+          )
+        `);
+        const authorization = context[0];
         if (authorization === undefined) {
           return { outcome: "invalid" as const };
         }
-        await connection.query(
-          "SELECT set_config('app.personal_account_id', $1, true)",
-          [authorization.personal_account_id],
+        await db.execute(
+          sql`SELECT set_config(
+            'app.personal_account_id', ${authorization.personal_account_id}, true
+          )`,
         );
-        const locked = await connection.query<{
-          consumed_at: Date | null;
-          inactive_expires_at: Date;
-          refresh_family_state: "active" | "revoked";
-        }>(
-          `SELECT
-             credentials.consumed_at,
-             credentials.inactive_expires_at,
-             authorizations.refresh_family_state
-           FROM app.mcp_refresh_credentials AS credentials
-           JOIN app.mcp_authorizations AS authorizations
-             ON authorizations.personal_account_id =
-               credentials.personal_account_id
-             AND authorizations.id = credentials.mcp_authorization_id
-           WHERE credentials.credential_hash = $1
-             AND credentials.mcp_authorization_id = $2
-           FOR UPDATE OF credentials, authorizations`,
-          [input.credentialHash, authorization.mcp_authorization_id],
-        );
-        const credential = locked.rows[0];
+        const locked = await db
+          .select({
+            consumedAt: mcpRefreshCredentialsInApp.consumedAt,
+            inactiveExpiresAt: mcpRefreshCredentialsInApp.inactiveExpiresAt,
+            refreshFamilyState: mcpAuthorizationsInApp.refreshFamilyState,
+          })
+          .from(mcpRefreshCredentialsInApp)
+          .innerJoin(
+            mcpAuthorizationsInApp,
+            and(
+              eq(
+                mcpAuthorizationsInApp.personalAccountId,
+                mcpRefreshCredentialsInApp.personalAccountId,
+              ),
+              eq(
+                mcpAuthorizationsInApp.id,
+                mcpRefreshCredentialsInApp.mcpAuthorizationId,
+              ),
+            ),
+          )
+          .where(
+            and(
+              eq(
+                mcpRefreshCredentialsInApp.credentialHash,
+                input.credentialHash,
+              ),
+              eq(
+                mcpRefreshCredentialsInApp.mcpAuthorizationId,
+                authorization.mcp_authorization_id,
+              ),
+            ),
+          )
+          .for("update");
+        const credential = locked[0];
         if (credential === undefined) {
           return { outcome: "invalid" as const };
         }
-        if (credential.consumed_at !== null) {
-          await connection.query(
-            `UPDATE app.mcp_authorizations
-             SET
-               refresh_family_state = 'revoked',
-               refresh_family_revoked_at =
-                 COALESCE(refresh_family_revoked_at, $2)
-             WHERE id = $1`,
-            [authorization.mcp_authorization_id, input.observedAt],
-          );
+        if (credential.consumedAt !== null) {
+          await db
+            .update(mcpAuthorizationsInApp)
+            .set({
+              refreshFamilyRevokedAt: sql`COALESCE(
+                ${mcpAuthorizationsInApp.refreshFamilyRevokedAt},
+                ${input.observedAt}
+              )`,
+              refreshFamilyState: "revoked",
+            })
+            .where(
+              eq(mcpAuthorizationsInApp.id, authorization.mcp_authorization_id),
+            );
           return { outcome: "reuse" as const };
         }
-        const current = await connection.query<{
+        const current = await db.execute<{
           personal_account_id: string | null;
-        }>(
-          `SELECT app_private.bootstrap_mcp_authorization($1, $2, $3, $4)
-             AS personal_account_id`,
-          [
-            authorization.mcp_authorization_id,
-            input.oauthSubject,
-            input.clientId,
-            input.observedAt,
-          ],
-        );
+        }>(sql`
+          SELECT app_private.bootstrap_mcp_authorization(
+            ${authorization.mcp_authorization_id}, ${input.oauthSubject},
+            ${input.clientId}, ${input.observedAt}
+          ) AS personal_account_id
+        `);
         if (
-          credential.refresh_family_state !== "active" ||
-          credential.inactive_expires_at <= input.observedAt ||
-          current.rows[0]?.personal_account_id !==
-            authorization.personal_account_id
+          credential.refreshFamilyState !== "active" ||
+          new Date(credential.inactiveExpiresAt) <= input.observedAt ||
+          current[0]?.personal_account_id !== authorization.personal_account_id
         ) {
           return { outcome: "invalid" as const };
         }
@@ -475,28 +540,35 @@ export const makeMcpAuthorizationRepository = (
         if (issued.credentialHash.byteLength !== 32) {
           throw new Error("invalid rotated refresh credential hash");
         }
-        await connection.query(
-          `UPDATE app.mcp_refresh_credentials
-           SET consumed_at = $2
-           WHERE credential_hash = $1`,
-          [input.credentialHash, input.observedAt],
-        );
-        await connection.query(
-          `INSERT INTO app.mcp_refresh_credentials (
-             credential_hash, personal_account_id, mcp_authorization_id,
-             issued_at, inactive_expires_at
-           )
-           SELECT
-             $1, authorizations.personal_account_id, authorizations.id, $2,
-             LEAST($2::timestamptz + interval '30 days',
-                   authorizations.absolute_expires_at)
-           FROM app.mcp_authorizations AS authorizations
-           WHERE authorizations.id = $3`,
-          [
-            issued.credentialHash,
-            input.observedAt,
-            authorization.mcp_authorization_id,
-          ],
+        await db
+          .update(mcpRefreshCredentialsInApp)
+          .set({ consumedAt: input.observedAt.toISOString() })
+          .where(
+            eq(mcpRefreshCredentialsInApp.credentialHash, input.credentialHash),
+          );
+        await db.insert(mcpRefreshCredentialsInApp).select(
+          db
+            .select({
+              credentialHash: sql<Uint8Array>`${issued.credentialHash}`.as(
+                "credential_hash",
+              ),
+              personalAccountId: mcpAuthorizationsInApp.personalAccountId,
+              mcpAuthorizationId: mcpAuthorizationsInApp.id,
+              issuedAt: sql<string>`${input.observedAt}::timestamptz`.as(
+                "issued_at",
+              ),
+              inactiveExpiresAt: sql<string>`LEAST(
+                ${input.observedAt}::timestamptz + interval '30 days',
+                ${mcpAuthorizationsInApp.absoluteExpiresAt}
+              )`.as("inactive_expires_at"),
+              consumedAt: sql<string | null>`NULL::timestamptz`.as(
+                "consumed_at",
+              ),
+            })
+            .from(mcpAuthorizationsInApp)
+            .where(
+              eq(mcpAuthorizationsInApp.id, authorization.mcp_authorization_id),
+            ),
         );
         return { outcome: "rotated" as const, value: issued.value };
       }),

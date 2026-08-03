@@ -1,9 +1,17 @@
+import { and, desc, eq, gt, lt, or, sql } from "drizzle-orm";
 import type { Client as PgClient } from "pg";
-import { makeQueryConnection } from "./database";
+import { makeDatabase, makeQueryConnection } from "./database";
 import type {
   PersonalAccountConnection,
   PersonalAccountConnectionProvider,
 } from "./personal-account";
+import {
+  mcpAuthorizationsInApp,
+  personalAccountsInApp,
+  sendOperationsInApp,
+  toolCallLogsInApp,
+  whatsappConnectionsInApp,
+} from "./schema";
 
 export interface ToolCallLogSummary {
   readonly authorizationId: string;
@@ -45,13 +53,14 @@ const withTransaction = async <Value>(
   connection: PersonalAccountConnection,
   use: () => Promise<Value>,
 ): Promise<Value> => {
-  await connection.query("BEGIN");
+  const db = makeDatabase(connection);
+  await db.execute(sql`BEGIN`);
   try {
     const value = await use();
-    await connection.query("COMMIT");
+    await db.execute(sql`COMMIT`);
     return value;
   } catch (error) {
-    await connection.query("ROLLBACK");
+    await db.execute(sql`ROLLBACK`);
     throw error;
   }
 };
@@ -62,121 +71,169 @@ export const makeToolCallLogRepository = (
   listForUser: (clerkUserId, observedAt, cursor, limit) =>
     provider.withConnection((connection) =>
       withTransaction(connection, async () => {
+        const db = makeDatabase(connection);
         if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
           throw new Error("invalid Tool Call Log page limit");
         }
-        const context = await connection.query<{
+        const context = await db.execute<{
           personal_account_id: string | null;
-        }>(
-          `SELECT app_private.bootstrap_personal_account_for_clerk($1)
-             AS personal_account_id`,
-          [clerkUserId],
-        );
-        const personalAccountId = context.rows[0]?.personal_account_id;
+        }>(sql`
+          SELECT app_private.bootstrap_personal_account_for_clerk(${clerkUserId})
+            AS personal_account_id
+        `);
+        const personalAccountId = context[0]?.personal_account_id;
         if (typeof personalAccountId !== "string") return null;
-        await connection.query(
-          "SELECT set_config('app.personal_account_id', $1, true)",
-          [personalAccountId],
+        await db.execute(
+          sql`SELECT set_config('app.personal_account_id', ${personalAccountId}, true)`,
         );
-        const account = await connection.query(
-          "SELECT id FROM app.personal_accounts WHERE id=$1 AND state='active'",
-          [personalAccountId],
-        );
-        if (account.rows.length !== 1) return null;
+        const account = await db
+          .select({ id: personalAccountsInApp.id })
+          .from(personalAccountsInApp)
+          .where(
+            and(
+              eq(personalAccountsInApp.id, personalAccountId),
+              eq(personalAccountsInApp.state, "active"),
+            ),
+          );
+        if (account.length !== 1) return null;
 
-        const result = await connection.query<{
-          authorization_public_id: string;
-          client_id: string;
-          client_name: string | null;
-          completed_at: Date | null;
-          connection_public_id: string | null;
-          error_code: string | null;
-          latency_ms: number | null;
-          media_bytes_reserved: number;
-          outcome: ToolCallLogSummary["outcome"];
-          public_id: string;
-          result_count: number | null;
-          send_public_id: string | null;
-          started_at: Date;
-          tool_name: string;
-        }>(
-          `WITH boundary AS (
-             SELECT logs.started_at, logs.public_id
-             FROM app.tool_call_logs AS logs
-             WHERE logs.personal_account_id = $4
-               AND logs.public_id = $2
-           )
-           SELECT
-             authorizations.public_id AS authorization_public_id,
-             authorizations.client_id,
-             authorizations.client_name,
-             logs.started_at,
-             logs.completed_at,
-             logs.tool_name,
-             logs.outcome,
-             logs.error_code,
-             logs.result_count,
-             logs.latency_ms,
-             logs.media_bytes_reserved,
-             COALESCE(logs.connection_public_id, connections.public_id)
-               AS connection_public_id,
-             COALESCE(logs.send_public_id, sends.public_id) AS send_public_id,
-             logs.public_id
-           FROM app.tool_call_logs AS logs
-           JOIN app.mcp_authorizations AS authorizations
-             ON authorizations.personal_account_id=logs.personal_account_id
-            AND authorizations.id=logs.mcp_authorization_id
-           LEFT JOIN app.send_operations AS sends
-             ON sends.personal_account_id=logs.personal_account_id
-            AND sends.tool_call_log_id=logs.id
-           LEFT JOIN app.whatsapp_connections AS connections
-             ON connections.personal_account_id=sends.personal_account_id
-            AND connections.id=sends.whatsapp_connection_id
-           WHERE logs.personal_account_id = $4
-             AND logs.expires_at > $1
-             AND (
-               $2::text IS NULL
-               OR (logs.started_at, logs.public_id) < (
-                 SELECT boundary.started_at, boundary.public_id
-                 FROM boundary
-               )
-             )
-           ORDER BY logs.started_at DESC, logs.public_id DESC
-           LIMIT $3`,
-          [observedAt, cursor, limit + 1, personalAccountId],
-        );
-        const pageRows = result.rows.slice(0, limit);
+        const boundary =
+          cursor === null
+            ? undefined
+            : (
+                await db
+                  .select({
+                    publicId: toolCallLogsInApp.publicId,
+                    startedAt: toolCallLogsInApp.startedAt,
+                  })
+                  .from(toolCallLogsInApp)
+                  .where(
+                    and(
+                      eq(
+                        toolCallLogsInApp.personalAccountId,
+                        personalAccountId,
+                      ),
+                      eq(toolCallLogsInApp.publicId, cursor),
+                    ),
+                  )
+              )[0];
+        const result =
+          cursor !== null && boundary === undefined
+            ? []
+            : await db
+                .select({
+                  authorizationPublicId:
+                    sql<string>`${mcpAuthorizationsInApp.publicId}`.as(
+                      "authorization_public_id",
+                    ),
+                  clientId: mcpAuthorizationsInApp.clientId,
+                  clientName: mcpAuthorizationsInApp.clientName,
+                  completedAt: toolCallLogsInApp.completedAt,
+                  connectionPublicId: sql<string | null>`COALESCE(
+                    ${toolCallLogsInApp.connectionPublicId},
+                    ${whatsappConnectionsInApp.publicId}
+                  )`.as("connection_public_id"),
+                  errorCode: toolCallLogsInApp.errorCode,
+                  latencyMs: toolCallLogsInApp.latencyMs,
+                  mediaBytesReserved: toolCallLogsInApp.mediaBytesReserved,
+                  outcome: toolCallLogsInApp.outcome,
+                  publicId: sql<string>`${toolCallLogsInApp.publicId}`.as(
+                    "log_public_id",
+                  ),
+                  resultCount: toolCallLogsInApp.resultCount,
+                  sendPublicId: sql<string | null>`COALESCE(
+                    ${toolCallLogsInApp.sendPublicId}, ${sendOperationsInApp.publicId}
+                  )`.as("send_public_id"),
+                  startedAt: toolCallLogsInApp.startedAt,
+                  toolName: toolCallLogsInApp.toolName,
+                })
+                .from(toolCallLogsInApp)
+                .innerJoin(
+                  mcpAuthorizationsInApp,
+                  and(
+                    eq(
+                      mcpAuthorizationsInApp.personalAccountId,
+                      toolCallLogsInApp.personalAccountId,
+                    ),
+                    eq(
+                      mcpAuthorizationsInApp.id,
+                      toolCallLogsInApp.mcpAuthorizationId,
+                    ),
+                  ),
+                )
+                .leftJoin(
+                  sendOperationsInApp,
+                  and(
+                    eq(
+                      sendOperationsInApp.personalAccountId,
+                      toolCallLogsInApp.personalAccountId,
+                    ),
+                    eq(sendOperationsInApp.toolCallLogId, toolCallLogsInApp.id),
+                  ),
+                )
+                .leftJoin(
+                  whatsappConnectionsInApp,
+                  and(
+                    eq(
+                      whatsappConnectionsInApp.personalAccountId,
+                      sendOperationsInApp.personalAccountId,
+                    ),
+                    eq(
+                      whatsappConnectionsInApp.id,
+                      sendOperationsInApp.whatsappConnectionId,
+                    ),
+                  ),
+                )
+                .where(
+                  and(
+                    eq(toolCallLogsInApp.personalAccountId, personalAccountId),
+                    gt(toolCallLogsInApp.expiresAt, observedAt.toISOString()),
+                    boundary === undefined
+                      ? undefined
+                      : or(
+                          lt(toolCallLogsInApp.startedAt, boundary.startedAt),
+                          and(
+                            eq(toolCallLogsInApp.startedAt, boundary.startedAt),
+                            lt(toolCallLogsInApp.publicId, boundary.publicId),
+                          ),
+                        ),
+                  ),
+                )
+                .orderBy(
+                  desc(toolCallLogsInApp.startedAt),
+                  desc(toolCallLogsInApp.publicId),
+                )
+                .limit(limit + 1);
+        const pageRows = result.slice(0, limit);
         const logs = pageRows.map((row) => ({
-          authorizationId: row.authorization_public_id,
-          clientId: row.client_id,
-          clientName: row.client_name ?? row.client_id,
-          completedAt: row.completed_at,
-          connectionId: row.connection_public_id,
-          errorCode: row.error_code,
-          latencyMs: row.latency_ms,
-          mediaBytes: Number(row.media_bytes_reserved),
-          outcome: row.outcome,
-          resultCount: row.result_count,
-          sendId: row.send_public_id,
-          startedAt: row.started_at,
-          toolName: row.tool_name,
+          authorizationId: row.authorizationPublicId,
+          clientId: row.clientId,
+          clientName: row.clientName ?? row.clientId,
+          completedAt:
+            row.completedAt === null ? null : new Date(row.completedAt),
+          connectionId: row.connectionPublicId,
+          errorCode: row.errorCode,
+          latencyMs: row.latencyMs,
+          mediaBytes: Number(row.mediaBytesReserved),
+          outcome: row.outcome as ToolCallLogSummary["outcome"],
+          resultCount: row.resultCount,
+          sendId: row.sendPublicId,
+          startedAt: new Date(row.startedAt),
+          toolName: row.toolName,
         }));
         return {
           logs,
           nextCursor:
-            result.rows.length > limit
-              ? (pageRows.at(-1)?.public_id ?? null)
-              : null,
+            result.length > limit ? (pageRows.at(-1)?.publicId ?? null) : null,
         };
       }),
     ),
   purgeExpired: (limit) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{ purged: number }>(
-        `SELECT app_private.purge_expired_tool_call_logs($1) AS purged`,
-        [limit],
+      const result = await makeDatabase(connection).execute<{ purged: number }>(
+        sql`SELECT app_private.purge_expired_tool_call_logs(${limit}) AS purged`,
       );
-      return Number(result.rows[0]?.purged ?? 0);
+      return Number(result[0]?.purged ?? 0);
     }),
 });
 

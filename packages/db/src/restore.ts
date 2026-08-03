@@ -1,4 +1,9 @@
-import { makeQueryConnection, type QueryConnection } from "./database";
+import { sql } from "drizzle-orm";
+import {
+  makeDatabase,
+  makeQueryConnection,
+  type QueryConnection,
+} from "./database";
 
 export interface RestoreCandidate {
   readonly deletionKind: "personal_account" | "whatsapp_connection";
@@ -60,70 +65,68 @@ export const makePgRestoreRepository = (
 ): RestoreRepository => ({
   begin: (branchId, observedAt) =>
     withClient(connectionString, async (client) => {
-      const result = await client.query<{
+      const db = makeDatabase(client);
+      const result = await db.execute<{
         deletion_kind: RestoreCandidate["deletionKind"];
         opaque_entity_id: string;
-      }>("SELECT * FROM app_private.begin_restore_replay($1,$2)", [
-        branchId,
-        observedAt,
-      ]);
-      return result.rows.map((row) => ({
+      }>(sql`
+        SELECT * FROM app_private.begin_restore_replay(${branchId}, ${observedAt})
+      `);
+      return result.map((row) => ({
         deletionKind: row.deletion_kind,
         opaqueEntityId: row.opaque_entity_id,
       }));
     }),
   replayDeletion: (input) =>
     withClient(connectionString, async (client) => {
-      const result = await client.query<{ replayed: boolean }>(
-        "SELECT app_private.replay_restore_deletion($1,$2,$3,$4) AS replayed",
-        [
-          input.deletionKind,
-          input.opaqueEntityId,
-          input.markerId,
-          input.observedAt,
-        ],
-      );
-      return result.rows[0]?.replayed === true;
+      const db = makeDatabase(client);
+      const result = await db.execute<{ replayed: boolean }>(sql`
+        SELECT app_private.replay_restore_deletion(
+          ${input.deletionKind}, ${input.opaqueEntityId}, ${input.markerId},
+          ${input.observedAt}
+        ) AS replayed
+      `);
+      return result[0]?.replayed === true;
     }),
   purgeExpired: (observedAt, limit) =>
     withClient(connectionString, async (client) => {
-      const result = await client.query<{ purged: number }>(
-        "SELECT app_private.purge_restore_expired($1,$2) AS purged",
-        [observedAt, limit],
-      );
-      return result.rows[0]?.purged ?? 0;
+      const db = makeDatabase(client);
+      const result = await db.execute<{ purged: number }>(sql`
+        SELECT app_private.purge_restore_expired(${observedAt}, ${limit}) AS purged
+      `);
+      return result[0]?.purged ?? 0;
     }),
   listObjectDeletions: (limit) =>
     withClient(connectionString, async (client) => {
-      const result = await client.query<{
+      const db = makeDatabase(client);
+      const result = await db.execute<{
         bucket: RestoreObjectDeletion["bucket"];
         object_key: string;
-      }>("SELECT * FROM app_private.list_restore_object_deletions($1)", [
-        limit,
-      ]);
-      return result.rows.map((row) => ({
+      }>(sql`
+        SELECT * FROM app_private.list_restore_object_deletions(${limit})
+      `);
+      return result.map((row) => ({
         bucket: row.bucket,
         objectKey: row.object_key,
       }));
     }),
   finishObjectDeletion: (deletion) =>
     withClient(connectionString, async (client) => {
-      await client.query(
-        "SELECT app_private.finish_restore_object_deletion($1,$2)",
-        [deletion.bucket, deletion.objectKey],
-      );
+      const db = makeDatabase(client);
+      await db.execute(sql`
+        SELECT app_private.finish_restore_object_deletion(
+          ${deletion.bucket}, ${deletion.objectKey}
+        )
+      `);
     }),
   complete: (input) =>
     withClient(connectionString, async (client) => {
-      await client.query(
-        "SELECT app_private.complete_restore_replay($1,$2,$3,$4,$5)",
-        [
-          input.branchId,
-          input.completedAt,
-          input.markerCount,
-          input.deletedEntityCount,
-          input.expiredRecordCount,
-        ],
-      );
+      const db = makeDatabase(client);
+      await db.execute(sql`
+        SELECT app_private.complete_restore_replay(
+          ${input.branchId}, ${input.completedAt}, ${input.markerCount},
+          ${input.deletedEntityCount}, ${input.expiredRecordCount}
+        )
+      `);
     }),
 });

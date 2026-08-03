@@ -1,5 +1,7 @@
+import { and, eq, sql } from "drizzle-orm";
 import type { Client as PgClient } from "pg";
-import { makeQueryConnection } from "./database";
+import { type Database, makeDatabase, makeQueryConnection } from "./database";
+import { personalAccountsInApp } from "./schema";
 
 export interface PersonalAccountConnection {
   readonly query: <
@@ -91,36 +93,37 @@ export interface PersonalAccountRepository {
 }
 
 const withTransaction = async <Value>(
-  connection: PersonalAccountConnection,
+  db: Database,
   use: () => Promise<Value>,
 ): Promise<Value> => {
-  await connection.query("BEGIN");
+  await db.execute(sql`BEGIN`);
   try {
     const value = await use();
-    await connection.query("COMMIT");
+    await db.execute(sql`COMMIT`);
     return value;
   } catch (error) {
-    await connection.query("ROLLBACK");
+    await db.execute(sql`ROLLBACK`);
     throw error;
   }
 };
 
 const enterPersonalAccountContext = async (
-  connection: PersonalAccountConnection,
+  db: Database,
   personalAccountId: string,
 ): Promise<boolean> => {
-  await connection.query(
-    "SELECT set_config('app.personal_account_id', $1, true)",
-    [personalAccountId],
+  await db.execute(
+    sql`SELECT set_config('app.personal_account_id', ${personalAccountId}, true)`,
   );
-  const visible = await connection.query<{ id: string }>(
-    `SELECT id
-     FROM app.personal_accounts
-     WHERE id = $1
-       AND state = 'active'`,
-    [personalAccountId],
-  );
-  return visible.rows.length === 1;
+  const visible = await db
+    .select({ id: personalAccountsInApp.id })
+    .from(personalAccountsInApp)
+    .where(
+      and(
+        eq(personalAccountsInApp.id, personalAccountId),
+        eq(personalAccountsInApp.state, "active"),
+      ),
+    );
+  return visible.length === 1;
 };
 
 const quotaValue = (value: unknown): number => {
@@ -163,16 +166,15 @@ export const makePersonalAccountRepository = (
 ): PersonalAccountRepository => ({
   listDeletionPurgeCandidates: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{
+      const rows = await makeDatabase(connection).execute<{
         deadline_at: unknown;
         deadline_risk: unknown;
         deletion_marker_id: unknown;
         requested_at: unknown;
-      }>(
-        "SELECT * FROM app_private.list_personal_account_purge_candidates($1,$2)",
-        [input.observedAt, input.limit],
-      );
-      return result.rows.map((row) => {
+      }>(sql`SELECT * FROM app_private.list_personal_account_purge_candidates(
+        ${input.observedAt}, ${input.limit}
+      )`);
+      return rows.map((row) => {
         if (
           typeof row.deletion_marker_id !== "string" ||
           !(row.requested_at instanceof Date) ||
@@ -190,43 +192,45 @@ export const makePersonalAccountRepository = (
     }),
   purgeDeletion: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{ purged: unknown }>(
-        "SELECT app_private.purge_personal_account($1,$2) AS purged",
-        [input.deletionMarkerId, input.completedAt],
+      const rows = await makeDatabase(connection).execute<{ purged: unknown }>(
+        sql`SELECT app_private.purge_personal_account(
+          ${input.deletionMarkerId}, ${input.completedAt}
+        ) AS purged`,
       );
-      return result.rows[0]?.purged === true;
+      return rows[0]?.purged === true;
     }),
   purgeExpiredDeletionRecords: (limit) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{ purged: unknown }>(
-        "SELECT app_private.purge_expired_deletion_records($1) AS purged",
-        [limit],
+      const rows = await makeDatabase(connection).execute<{ purged: unknown }>(
+        sql`SELECT app_private.purge_expired_deletion_records(${limit}) AS purged`,
       );
-      const purged = Number(result.rows[0]?.purged);
+      const purged = Number(rows[0]?.purged);
       if (!Number.isSafeInteger(purged) || purged < 0)
         throw new Error("invalid deletion record purge result");
       return purged;
     }),
   finishDeletion: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{ finished: unknown }>(
-        "SELECT app_private.finish_personal_account_deletion($1, $2, $3) AS finished",
-        [input.clerkUserId, input.deletionMarkerId, input.requestedAt],
+      const rows = await makeDatabase(connection).execute<{
+        finished: unknown;
+      }>(
+        sql`SELECT app_private.finish_personal_account_deletion(
+          ${input.clerkUserId}, ${input.deletionMarkerId}, ${input.requestedAt}
+        ) AS finished`,
       );
-      return result.rows[0]?.finished === true;
+      return rows[0]?.finished === true;
     }),
   prepareDeletion: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{
+      const rows = await makeDatabase(connection).execute<{
         account_state: unknown;
         connection_public_id: unknown;
         personal_account_id: unknown;
         requested_at: unknown;
-      }>(
-        "SELECT * FROM app_private.prepare_personal_account_deletion($1, $2)",
-        [input.clerkUserId, input.observedAt],
-      );
-      const first = result.rows[0];
+      }>(sql`SELECT * FROM app_private.prepare_personal_account_deletion(
+        ${input.clerkUserId}, ${input.observedAt}
+      )`);
+      const first = rows[0];
       if (
         first === undefined ||
         typeof first.personal_account_id !== "string" ||
@@ -235,7 +239,7 @@ export const makePersonalAccountRepository = (
       )
         return null;
       return {
-        connectionPublicIds: result.rows.flatMap((row) =>
+        connectionPublicIds: rows.flatMap((row) =>
           typeof row.connection_public_id === "string"
             ? [row.connection_public_id]
             : [],
@@ -246,23 +250,17 @@ export const makePersonalAccountRepository = (
       };
     }),
   create: (input) =>
-    provider.withConnection((connection) =>
-      withTransaction(connection, async () => {
-        const result = await connection.query<AdmissionRow>(
-          `SELECT *
-           FROM app_private.admit_personal_account_for_clerk(
-             $1, $2, $3, $4, $5, $6
-           )`,
-          [
-            input.clerkUserId,
-            input.personalAccountId,
-            input.keyVersion,
-            input.kmsKeyId,
-            input.keyCiphertext,
-            input.providerApprovedSessionCapacity,
-          ],
+    provider.withConnection((connection) => {
+      const db = makeDatabase(connection);
+      return withTransaction(db, async () => {
+        const rows = await db.execute<AdmissionRow>(
+          sql`SELECT * FROM app_private.admit_personal_account_for_clerk(
+            ${input.clerkUserId}, ${input.personalAccountId},
+            ${input.keyVersion}, ${input.kmsKeyId}, ${input.keyCiphertext},
+            ${input.providerApprovedSessionCapacity}
+          )`,
         );
-        const row = result.rows[0];
+        const row = rows[0];
         if (admissionState(row) === "waitlisted") {
           return { admissionState: "waitlisted" as const };
         }
@@ -270,10 +268,7 @@ export const makePersonalAccountRepository = (
           admissionState(row) !== "active" ||
           typeof row?.personal_account_id !== "string" ||
           typeof row.created !== "boolean" ||
-          !(await enterPersonalAccountContext(
-            connection,
-            row.personal_account_id,
-          ))
+          !(await enterPersonalAccountContext(db, row.personal_account_id))
         ) {
           return null;
         }
@@ -285,16 +280,16 @@ export const makePersonalAccountRepository = (
           storedMediaLimitBytes: quotaValue(row.stored_media_limit_bytes),
           whatsappConnectionLimit: quotaValue(row.whatsapp_connection_limit),
         };
-      }),
-    ),
+      });
+    }),
   resolve: (clerkUserId) =>
-    provider.withConnection((connection) =>
-      withTransaction(connection, async () => {
-        const result = await connection.query<AdmissionRow>(
-          "SELECT * FROM app_private.resolve_personal_account_for_clerk($1)",
-          [clerkUserId],
+    provider.withConnection((connection) => {
+      const db = makeDatabase(connection);
+      return withTransaction(db, async () => {
+        const rows = await db.execute<AdmissionRow>(
+          sql`SELECT * FROM app_private.resolve_personal_account_for_clerk(${clerkUserId})`,
         );
-        const row = result.rows[0];
+        const row = rows[0];
         if (admissionState(row) === "waitlisted") {
           return { admissionState: "waitlisted" as const };
         }
@@ -302,10 +297,7 @@ export const makePersonalAccountRepository = (
           admissionState(row) !== "active" ||
           typeof row?.personal_account_id !== "string" ||
           typeof row.key_available !== "boolean" ||
-          !(await enterPersonalAccountContext(
-            connection,
-            row.personal_account_id,
-          ))
+          !(await enterPersonalAccountContext(db, row.personal_account_id))
         ) {
           return null;
         }
@@ -317,8 +309,8 @@ export const makePersonalAccountRepository = (
           storedMediaLimitBytes: quotaValue(row.stored_media_limit_bytes),
           whatsappConnectionLimit: quotaValue(row.whatsapp_connection_limit),
         };
-      }),
-    ),
+      });
+    }),
 });
 
 const makePgConnectionProvider = (

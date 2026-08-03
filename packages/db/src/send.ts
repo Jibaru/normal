@@ -1,8 +1,24 @@
-import { makeQueryConnection } from "./database";
+import { and, desc, eq, gt, isNull, lte, sql } from "drizzle-orm";
+import { makeDatabase, makeQueryConnection } from "./database";
 import type {
   McpAccessAuthorization,
   McpToolConnectionProvider,
 } from "./mcp-tool";
+import {
+  directoryContactsInApp,
+  mcpAuthorizationConnectionsInApp,
+  mcpAuthorizationsInApp,
+  pendingSendContentsInApp,
+  personalAccountsInApp,
+  sendIdempotencyBindingsInApp,
+  sendOperationsInApp,
+  sendQuotaReservationsInApp,
+  storedMessagesInApp,
+  toolCallLogsInApp,
+  whatsappConnectionsInApp,
+  whatsappConversationsInApp,
+  whatsappGroupsInApp,
+} from "./schema";
 
 export interface SendCiphertext {
   readonly ciphertext: Uint8Array;
@@ -147,20 +163,19 @@ export const makePgAtomicSendRepository = (
 ): AtomicSendRepository => ({
   commit: (input, encrypt) =>
     provider.withConnection(async (connection) => {
-      await connection.query("BEGIN");
+      const db = makeDatabase(connection);
+      await db.execute(sql`BEGIN`);
       try {
-        const boot = await connection.query<{ personal_account_id: unknown }>(
-          "SELECT app_private.bootstrap_mcp_tool_call($1,$2,$3) AS personal_account_id",
-          [input.authorizationId, input.oauthSubject, input.clientId ?? null],
+        const boot = await db.execute<{ personal_account_id: unknown }>(
+          sql`SELECT app_private.bootstrap_mcp_tool_call(${input.authorizationId},${input.oauthSubject},${input.clientId ?? null}) AS personal_account_id`,
         );
-        const accountId = boot.rows[0]?.personal_account_id;
+        const accountId = boot[0]?.personal_account_id;
         if (typeof accountId !== "string") {
-          await connection.query("ROLLBACK");
+          await db.execute(sql`ROLLBACK`);
           return { outcome: "authorization_denied" as const };
         }
-        await connection.query(
-          "SELECT set_config('app.personal_account_id',$1,true)",
-          [accountId],
+        await db.execute(
+          sql`SELECT set_config('app.personal_account_id',${accountId},true)`,
         );
         const finishAudit = async (
           outcome:
@@ -171,118 +186,211 @@ export const makePgAtomicSendRepository = (
           errorCode: string | null,
           sendPublicId: string | null = null,
         ) => {
-          await connection.query(
-            `INSERT INTO app.tool_call_logs (id,personal_account_id,mcp_authorization_id,tool_name,started_at,completed_at,outcome,error_code,result_count,latency_ms,quota_reserved,expires_at,connection_public_id,send_public_id)
-             VALUES ($1,$2,$3,'send_text_message',$4,$4,$5,$6,CASE WHEN $5='success' THEN 1 ELSE NULL END,0,false,$4::timestamptz+interval '90 days',$7,$8)`,
-            [
-              input.auditLogId,
-              accountId,
-              input.authorizationId,
-              input.observedAt,
-              outcome,
-              errorCode,
-              input.connectionPublicId,
-              sendPublicId,
-            ],
-          );
-          await connection.query("COMMIT");
+          await db.insert(toolCallLogsInApp).values({
+            id: input.auditLogId,
+            personalAccountId: accountId,
+            mcpAuthorizationId: input.authorizationId,
+            toolName: "send_text_message",
+            startedAt: input.observedAt.toISOString(),
+            completedAt: input.observedAt.toISOString(),
+            outcome,
+            errorCode,
+            resultCount: outcome === "success" ? 1 : null,
+            latencyMs: 0,
+            quotaReserved: false,
+            expiresAt: sql`${input.observedAt}::timestamptz + interval '90 days'`,
+            connectionPublicId: input.connectionPublicId,
+            sendPublicId,
+          });
+          await db.execute(sql`COMMIT`);
         };
-        const lockedAccount = await connection.query<{
-          message_retention_days: unknown;
-        }>(
-          "SELECT message_retention_days FROM app.personal_accounts WHERE id=$1 FOR UPDATE",
-          [accountId],
+        const lockedAccount = await db
+          .select({
+            message_retention_days: personalAccountsInApp.messageRetentionDays,
+          })
+          .from(personalAccountsInApp)
+          .where(eq(personalAccountsInApp.id, accountId))
+          .for("update");
+        await db
+          .select({ id: mcpAuthorizationsInApp.id })
+          .from(mcpAuthorizationsInApp)
+          .where(eq(mcpAuthorizationsInApp.id, input.authorizationId))
+          .for("update");
+        const retentionDays = integer(lockedAccount[0]?.message_retention_days);
+        const active = await db.execute<{ personal_account_id: unknown }>(
+          sql`SELECT app_private.bootstrap_active_mcp_tool_call(${input.authorizationId},${input.oauthSubject},${input.clientId ?? null},${input.observedAt}) AS personal_account_id`,
         );
-        await connection.query(
-          "SELECT id FROM app.mcp_authorizations WHERE id=$1 FOR UPDATE",
-          [input.authorizationId],
-        );
-        const retentionDays = integer(
-          lockedAccount.rows[0]?.message_retention_days,
-        );
-        const active = await connection.query<{ personal_account_id: unknown }>(
-          "SELECT app_private.bootstrap_active_mcp_tool_call($1,$2,$3,$4) AS personal_account_id",
-          [
-            input.authorizationId,
-            input.oauthSubject,
-            input.clientId ?? null,
-            input.observedAt,
-          ],
-        );
-        if (typeof active.rows[0]?.personal_account_id !== "string") {
+        if (typeof active[0]?.personal_account_id !== "string") {
           await finishAudit("authorization_denied", "authorization_denied");
           return { outcome: "authorization_denied" as const };
         }
-        const authorized = await connection.query<Record<string, unknown>>(
-          `SELECT connections.id AS connection_id
-           FROM app.mcp_authorizations AS authorizations
-           JOIN app.mcp_authorization_connections AS grants
-             ON grants.personal_account_id=authorizations.personal_account_id AND grants.mcp_authorization_id=authorizations.id
-           JOIN app.whatsapp_connections AS connections
-             ON connections.personal_account_id=grants.personal_account_id AND connections.id=grants.whatsapp_connection_id
-           WHERE authorizations.id=$1 AND 'messages:send'=ANY(authorizations.scopes) AND connections.public_id=$2`,
-          [input.authorizationId, input.connectionPublicId],
-        );
-        if (authorized.rows.length === 0) {
+        const authorized = await db
+          .select({ connection_id: whatsappConnectionsInApp.id })
+          .from(mcpAuthorizationsInApp)
+          .innerJoin(
+            mcpAuthorizationConnectionsInApp,
+            and(
+              eq(
+                mcpAuthorizationConnectionsInApp.personalAccountId,
+                mcpAuthorizationsInApp.personalAccountId,
+              ),
+              eq(
+                mcpAuthorizationConnectionsInApp.mcpAuthorizationId,
+                mcpAuthorizationsInApp.id,
+              ),
+            ),
+          )
+          .innerJoin(
+            whatsappConnectionsInApp,
+            and(
+              eq(
+                whatsappConnectionsInApp.personalAccountId,
+                mcpAuthorizationConnectionsInApp.personalAccountId,
+              ),
+              eq(
+                whatsappConnectionsInApp.id,
+                mcpAuthorizationConnectionsInApp.whatsappConnectionId,
+              ),
+            ),
+          )
+          .where(
+            and(
+              eq(mcpAuthorizationsInApp.id, input.authorizationId),
+              sql`${"messages:send"} = ANY(${mcpAuthorizationsInApp.scopes})`,
+              eq(whatsappConnectionsInApp.publicId, input.connectionPublicId),
+            ),
+          );
+        if (authorized.length === 0) {
           await finishAudit("authorization_denied", "authorization_denied");
           return { outcome: "authorization_denied" as const };
         }
-        const connectionId = scalar(authorized.rows[0], "connection_id");
-        const bound = await connection.query<Record<string, unknown>>(
-          `SELECT operations.* , bindings.request_fingerprint
-           FROM app.send_idempotency_bindings AS bindings
-           JOIN app.send_operations AS operations ON operations.id=bindings.send_operation_id
-           WHERE bindings.mcp_authorization_id=$1 AND bindings.idempotency_key=$2 AND bindings.expires_at>$3
-           FOR UPDATE`,
-          [input.authorizationId, input.idempotencyKey, input.observedAt],
-        );
-        if (bound.rows[0] !== undefined) {
+        const connectionId = scalar(authorized[0], "connection_id");
+        const bound = await db
+          .select({
+            id: sendOperationsInApp.id,
+            public_id: sendOperationsInApp.publicId,
+            status: sendOperationsInApp.status,
+            created_at: sendOperationsInApp.createdAt,
+            status_changed_at: sendOperationsInApp.statusChangedAt,
+            lease_expires_at: sendOperationsInApp.leaseExpiresAt,
+            request_fingerprint:
+              sendIdempotencyBindingsInApp.requestFingerprint,
+          })
+          .from(sendIdempotencyBindingsInApp)
+          .innerJoin(
+            sendOperationsInApp,
+            eq(
+              sendOperationsInApp.id,
+              sendIdempotencyBindingsInApp.sendOperationId,
+            ),
+          )
+          .where(
+            and(
+              eq(
+                sendIdempotencyBindingsInApp.mcpAuthorizationId,
+                input.authorizationId,
+              ),
+              eq(
+                sendIdempotencyBindingsInApp.idempotencyKey,
+                input.idempotencyKey,
+              ),
+              gt(
+                sendIdempotencyBindingsInApp.expiresAt,
+                input.observedAt.toISOString(),
+              ),
+            ),
+          )
+          .for("update");
+        if (bound[0] !== undefined) {
           if (
-            bound.rows[0].status === "processing" &&
-            date(bound.rows[0].lease_expires_at) <= input.observedAt
+            bound[0].status === "processing" &&
+            date(bound[0].lease_expires_at) <= input.observedAt
           ) {
-            await connection.query(
-              "UPDATE app.send_operations SET status='unknown',status_changed_at=$2 WHERE id=$1",
-              [bound.rows[0].id, input.observedAt],
-            );
-            bound.rows[0].status = "unknown";
-            bound.rows[0].status_changed_at = input.observedAt;
+            await db
+              .update(sendOperationsInApp)
+              .set({
+                status: "unknown",
+                statusChangedAt: input.observedAt.toISOString(),
+              })
+              .where(eq(sendOperationsInApp.id, bound[0].id));
+            bound[0].status = "unknown";
+            bound[0].status_changed_at = input.observedAt.toISOString();
           }
           const result =
-            scalar(bound.rows[0], "request_fingerprint") === input.fingerprint
-              ? { outcome: "replay" as const, receipt: receipt(bound.rows[0]) }
+            scalar(bound[0], "request_fingerprint") === input.fingerprint
+              ? { outcome: "replay" as const, receipt: receipt(bound[0]) }
               : { outcome: "idempotency_conflict" as const };
           await finishAudit(
             result.outcome === "replay" ? "success" : "execution_error",
             result.outcome === "replay" ? null : "idempotency_conflict",
-            scalar(bound.rows[0], "public_id"),
+            scalar(bound[0], "public_id"),
           );
           return result;
         }
-        const connectionState = await connection.query<{ state: unknown }>(
-          "SELECT state FROM app.whatsapp_connections WHERE id=$1 FOR UPDATE",
-          [connectionId],
-        );
-        if (connectionState.rows[0]?.state !== "connected") {
+        const connectionState = await db
+          .select({ state: whatsappConnectionsInApp.state })
+          .from(whatsappConnectionsInApp)
+          .where(eq(whatsappConnectionsInApp.id, connectionId))
+          .for("update");
+        if (connectionState[0]?.state !== "connected") {
           await finishAudit("execution_error", "connection_unavailable");
           return { outcome: "connection_unavailable" as const };
         }
         const recipientType = input.recipientPublicId.startsWith("ctc_")
           ? "contact"
           : "group";
-        const recipient = await connection.query<Record<string, unknown>>(
+        const recipient =
           recipientType === "contact"
-            ? `SELECT provider_identity_index AS recipient_record_id, provider_identity_ciphertext_version, provider_identity_key_version,
-                      provider_identity_nonce, provider_identity_ciphertext
-               FROM app.directory_contacts WHERE personal_account_id=$1 AND whatsapp_connection_id=$2
-                 AND public_id=$3 AND active`
-            : `SELECT id::text AS recipient_record_id, provider_identity_ciphertext_version, provider_identity_key_version,
-                      provider_identity_nonce, provider_identity_ciphertext
-               FROM app.whatsapp_groups WHERE personal_account_id=$1 AND whatsapp_connection_id=$2
-                 AND public_id=$3 AND joined`,
-          [accountId, connectionId, input.recipientPublicId],
-        );
-        if (recipient.rows[0] === undefined) {
+            ? await db
+                .select({
+                  recipient_record_id:
+                    directoryContactsInApp.providerIdentityIndex,
+                  provider_identity_ciphertext_version:
+                    directoryContactsInApp.providerIdentityCiphertextVersion,
+                  provider_identity_key_version:
+                    directoryContactsInApp.providerIdentityKeyVersion,
+                  provider_identity_nonce:
+                    directoryContactsInApp.providerIdentityNonce,
+                  provider_identity_ciphertext:
+                    directoryContactsInApp.providerIdentityCiphertext,
+                })
+                .from(directoryContactsInApp)
+                .where(
+                  and(
+                    eq(directoryContactsInApp.personalAccountId, accountId),
+                    eq(
+                      directoryContactsInApp.whatsappConnectionId,
+                      connectionId,
+                    ),
+                    eq(
+                      directoryContactsInApp.publicId,
+                      input.recipientPublicId,
+                    ),
+                    eq(directoryContactsInApp.active, true),
+                  ),
+                )
+            : await db
+                .select({
+                  recipient_record_id: whatsappGroupsInApp.id,
+                  provider_identity_ciphertext_version:
+                    whatsappGroupsInApp.providerIdentityCiphertextVersion,
+                  provider_identity_key_version:
+                    whatsappGroupsInApp.providerIdentityKeyVersion,
+                  provider_identity_nonce:
+                    whatsappGroupsInApp.providerIdentityNonce,
+                  provider_identity_ciphertext:
+                    whatsappGroupsInApp.providerIdentityCiphertext,
+                })
+                .from(whatsappGroupsInApp)
+                .where(
+                  and(
+                    eq(whatsappGroupsInApp.personalAccountId, accountId),
+                    eq(whatsappGroupsInApp.whatsappConnectionId, connectionId),
+                    eq(whatsappGroupsInApp.publicId, input.recipientPublicId),
+                    eq(whatsappGroupsInApp.joined, true),
+                  ),
+                );
+        if (recipient[0] === undefined) {
           await finishAudit("execution_error", "recipient_not_found");
           return { outcome: "recipient_not_found" as const };
         }
@@ -301,28 +409,18 @@ export const makePgAtomicSendRepository = (
             input.observedAt.getUTCDate(),
           ),
         );
-        const quotas = await connection.query<Record<string, unknown>>(
-          `SELECT
-             (SELECT count(*)::int FROM app.tool_call_logs WHERE personal_account_id=$1 AND quota_reserved AND started_at>$2 AND started_at<=$5) AS request_minute,
-             (SELECT (array_agg(started_at ORDER BY started_at DESC))[($6::int)] FROM app.tool_call_logs WHERE personal_account_id=$1 AND quota_reserved AND started_at>$2 AND started_at<=$5) AS request_minute_reset,
-             (SELECT count(*)::int FROM app.tool_call_logs WHERE personal_account_id=$1 AND quota_reserved AND started_at>$3 AND started_at<=$5) AS request_hour,
-             (SELECT (array_agg(started_at ORDER BY started_at DESC))[($7::int)] FROM app.tool_call_logs WHERE personal_account_id=$1 AND quota_reserved AND started_at>$3 AND started_at<=$5) AS request_hour_reset,
-             (SELECT count(*)::int FROM app.send_quota_reservations WHERE mcp_authorization_id=$4 AND reserved_at>$2 AND reserved_at<=$5) AS send_minute,
-             (SELECT (array_agg(reserved_at ORDER BY reserved_at DESC))[($8::int)] FROM app.send_quota_reservations WHERE mcp_authorization_id=$4 AND reserved_at>$2 AND reserved_at<=$5) AS send_minute_reset,
-             (SELECT count(*)::int FROM app.send_quota_reservations WHERE personal_account_id=$1 AND reserved_at>=$9 AND reserved_at<=$5) AS send_day`,
-          [
-            accountId,
-            minuteStart,
-            new Date(input.observedAt.valueOf() - 3_600_000),
-            input.authorizationId,
-            input.observedAt,
-            input.minuteRequestLimit,
-            input.hourRequestLimit,
-            input.sendPerMinuteLimit,
-            dayStart,
-          ],
+        const hourStart = new Date(input.observedAt.valueOf() - 3_600_000);
+        const quotas = await db.execute<Record<string, unknown>>(
+          sql`SELECT
+             (SELECT count(*)::int FROM app.tool_call_logs WHERE personal_account_id=${accountId} AND quota_reserved AND started_at>${minuteStart} AND started_at<=${input.observedAt}) AS request_minute,
+             (SELECT (array_agg(started_at ORDER BY started_at DESC))[(${input.minuteRequestLimit}::int)] FROM app.tool_call_logs WHERE personal_account_id=${accountId} AND quota_reserved AND started_at>${minuteStart} AND started_at<=${input.observedAt}) AS request_minute_reset,
+             (SELECT count(*)::int FROM app.tool_call_logs WHERE personal_account_id=${accountId} AND quota_reserved AND started_at>${hourStart} AND started_at<=${input.observedAt}) AS request_hour,
+             (SELECT (array_agg(started_at ORDER BY started_at DESC))[(${input.hourRequestLimit}::int)] FROM app.tool_call_logs WHERE personal_account_id=${accountId} AND quota_reserved AND started_at>${hourStart} AND started_at<=${input.observedAt}) AS request_hour_reset,
+             (SELECT count(*)::int FROM app.send_quota_reservations WHERE mcp_authorization_id=${input.authorizationId} AND reserved_at>${minuteStart} AND reserved_at<=${input.observedAt}) AS send_minute,
+             (SELECT (array_agg(reserved_at ORDER BY reserved_at DESC))[(${input.sendPerMinuteLimit}::int)] FROM app.send_quota_reservations WHERE mcp_authorization_id=${input.authorizationId} AND reserved_at>${minuteStart} AND reserved_at<=${input.observedAt}) AS send_minute_reset,
+             (SELECT count(*)::int FROM app.send_quota_reservations WHERE personal_account_id=${accountId} AND reserved_at>=${dayStart} AND reserved_at<=${input.observedAt}) AS send_day`,
         );
-        const q = quotas.rows[0] ?? {};
+        const q = quotas[0] ?? {};
         const limited =
           Number(q.request_minute) >= input.minuteRequestLimit ||
           Number(q.request_hour) >= input.hourRequestLimit ||
@@ -359,23 +457,26 @@ export const makePgAtomicSendRepository = (
             ),
           };
         }
-        await connection.query(
-          `INSERT INTO app.tool_call_logs (id,personal_account_id,mcp_authorization_id,tool_name,started_at,completed_at,outcome,error_code,result_count,latency_ms,quota_reserved,expires_at,connection_public_id,send_public_id)
-           VALUES ($1,$2,$3,'send_text_message',$4::timestamptz,NULL,'started',NULL,NULL,NULL,true,$4::timestamptz+interval '90 days',$5,$6)`,
-          [
-            input.auditLogId,
-            accountId,
-            input.authorizationId,
-            input.observedAt,
-            input.connectionPublicId,
-            input.sendPublicId,
-          ],
+        await db.insert(toolCallLogsInApp).values({
+          id: input.auditLogId,
+          personalAccountId: accountId,
+          mcpAuthorizationId: input.authorizationId,
+          toolName: "send_text_message",
+          startedAt: input.observedAt.toISOString(),
+          completedAt: null,
+          outcome: "started",
+          errorCode: null,
+          resultCount: null,
+          latencyMs: null,
+          quotaReserved: true,
+          expiresAt: sql`${input.observedAt}::timestamptz + interval '90 days'`,
+          connectionPublicId: input.connectionPublicId,
+          sendPublicId: input.sendPublicId,
+        });
+        const materialRows = await db.execute<Record<string, unknown>>(
+          sql`SELECT * FROM app_private.load_send_key_material(${accountId},${connectionId})`,
         );
-        const materialRows = await connection.query<Record<string, unknown>>(
-          "SELECT * FROM app_private.load_send_key_material($1,$2)",
-          [accountId, connectionId],
-        );
-        const row = materialRows.rows[0];
+        const row = materialRows[0];
         if (row === undefined) throw new Error("send key material unavailable");
         const encryptionMaterial: SendEncryptionMaterial = {
           accountKey: {
@@ -394,50 +495,50 @@ export const makePgAtomicSendRepository = (
           },
         };
         const pending = await encrypt(encryptionMaterial);
-        await connection.query(
-          `INSERT INTO app.send_operations (id,public_id,personal_account_id,mcp_authorization_id,tool_call_log_id,whatsapp_connection_id,recipient_type,recipient_public_id,status,created_at,status_changed_at,attempt_claimed_at,lease_expires_at,expires_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'processing',$9::timestamptz,$9::timestamptz,$9::timestamptz,$9::timestamptz+interval '30 seconds',$9::timestamptz+interval '90 days')`,
-          [
-            input.sendId,
-            input.sendPublicId,
-            accountId,
-            input.authorizationId,
-            input.auditLogId,
-            connectionId,
-            recipientType,
-            input.recipientPublicId,
-            input.observedAt,
-          ],
-        );
-        await connection.query(
-          `INSERT INTO app.send_idempotency_bindings VALUES ($1,$2,$3,$4,$5,$6::timestamptz,$6::timestamptz+interval '90 days')`,
-          [
-            accountId,
-            input.authorizationId,
-            input.idempotencyKey,
-            input.sendId,
-            input.fingerprint,
-            input.observedAt,
-          ],
-        );
-        await connection.query(
-          `INSERT INTO app.pending_send_contents VALUES ($1,$2,$3,1,$4,$5,$6,$7)`,
-          [
-            input.sendId,
-            accountId,
-            connectionId,
-            pending.keyVersion,
-            pending.nonce,
-            pending.ciphertext,
-            pendingExpiresAt,
-          ],
-        );
-        await connection.query(
-          "INSERT INTO app.send_quota_reservations VALUES ($1,$2,$3,$4)",
-          [input.sendId, accountId, input.authorizationId, input.observedAt],
-        );
-        await connection.query("COMMIT");
-        const recipientRow = recipient.rows[0];
+        const observedAt = input.observedAt.toISOString();
+        await db.insert(sendOperationsInApp).values({
+          id: input.sendId,
+          publicId: input.sendPublicId,
+          personalAccountId: accountId,
+          mcpAuthorizationId: input.authorizationId,
+          toolCallLogId: input.auditLogId,
+          whatsappConnectionId: connectionId,
+          recipientType,
+          recipientPublicId: input.recipientPublicId,
+          status: "processing",
+          createdAt: observedAt,
+          statusChangedAt: observedAt,
+          attemptClaimedAt: observedAt,
+          leaseExpiresAt: sql`${input.observedAt}::timestamptz + interval '30 seconds'`,
+          expiresAt: sql`${input.observedAt}::timestamptz + interval '90 days'`,
+        });
+        await db.insert(sendIdempotencyBindingsInApp).values({
+          personalAccountId: accountId,
+          mcpAuthorizationId: input.authorizationId,
+          idempotencyKey: input.idempotencyKey,
+          sendOperationId: input.sendId,
+          requestFingerprint: input.fingerprint,
+          createdAt: observedAt,
+          expiresAt: sql`${input.observedAt}::timestamptz + interval '90 days'`,
+        });
+        await db.insert(pendingSendContentsInApp).values({
+          sendOperationId: input.sendId,
+          personalAccountId: accountId,
+          whatsappConnectionId: connectionId,
+          ciphertextVersion: 1,
+          keyVersion: pending.keyVersion,
+          nonce: pending.nonce,
+          ciphertext: pending.ciphertext,
+          expiresAt: pendingExpiresAt.toISOString(),
+        });
+        await db.insert(sendQuotaReservationsInApp).values({
+          sendOperationId: input.sendId,
+          personalAccountId: accountId,
+          mcpAuthorizationId: input.authorizationId,
+          reservedAt: observedAt,
+        });
+        await db.execute(sql`COMMIT`);
+        const recipientRow = recipient[0];
         return {
           outcome: "created" as const,
           receipt: {
@@ -468,7 +569,7 @@ export const makePgAtomicSendRepository = (
           },
         };
       } catch (error) {
-        await connection.query("ROLLBACK");
+        await db.execute(sql`ROLLBACK`);
         throw error;
       }
     }),
@@ -485,170 +586,260 @@ export const makePgAtomicSendRepository = (
     }),
   recordProviderOutcome: (input) =>
     provider.withConnection(async (connection) => {
-      await connection.query("BEGIN");
-      const context = await connection.query<{ personal_account_id: unknown }>(
-        "SELECT app_private.bootstrap_send_operation($1) AS personal_account_id",
-        [input.sendId],
+      const db = makeDatabase(connection);
+      await db.execute(sql`BEGIN`);
+      const context = await db.execute<{ personal_account_id: unknown }>(
+        sql`SELECT app_private.bootstrap_send_operation(${input.sendId}) AS personal_account_id`,
       );
-      const accountId = context.rows[0]?.personal_account_id;
+      const accountId = context[0]?.personal_account_id;
       if (typeof accountId !== "string") {
-        await connection.query("ROLLBACK");
+        await db.execute(sql`ROLLBACK`);
         throw new Error("send operation unavailable");
       }
-      await connection.query(
-        "SELECT set_config('app.personal_account_id',$1,true)",
-        [accountId],
+      await db.execute(
+        sql`SELECT set_config('app.personal_account_id',${accountId},true)`,
       );
-      const result = await connection.query<Record<string, unknown>>(
-        `UPDATE app.send_operations SET status=$2,status_changed_at=$3,message_identity=$4
-         WHERE id=$1 AND status='processing' AND $3::timestamptz < lease_expires_at
-         RETURNING *`,
-        [
-          input.sendId,
-          input.status,
-          input.changedAt,
-          input.messageIdentity ?? null,
-        ],
-      );
+      const operationSelection = {
+        id: sendOperationsInApp.id,
+        public_id: sendOperationsInApp.publicId,
+        personal_account_id: sendOperationsInApp.personalAccountId,
+        whatsapp_connection_id: sendOperationsInApp.whatsappConnectionId,
+        recipient_type: sendOperationsInApp.recipientType,
+        recipient_public_id: sendOperationsInApp.recipientPublicId,
+        status: sendOperationsInApp.status,
+        created_at: sendOperationsInApp.createdAt,
+        status_changed_at: sendOperationsInApp.statusChangedAt,
+        lease_expires_at: sendOperationsInApp.leaseExpiresAt,
+      };
+      const result = await db
+        .update(sendOperationsInApp)
+        .set({
+          status: input.status,
+          statusChangedAt: input.changedAt.toISOString(),
+          messageIdentity: input.messageIdentity ?? null,
+        })
+        .where(
+          and(
+            eq(sendOperationsInApp.id, input.sendId),
+            eq(sendOperationsInApp.status, "processing"),
+            gt(
+              sendOperationsInApp.leaseExpiresAt,
+              input.changedAt.toISOString(),
+            ),
+          ),
+        )
+        .returning(operationSelection);
       const operation =
-        result.rows[0] ??
+        result[0] ??
         (
-          await connection.query<Record<string, unknown>>(
-            `UPDATE app.send_operations
-             SET status='unknown',status_changed_at=lease_expires_at
-             WHERE id=$1 AND status='processing' AND lease_expires_at <= $2
-             RETURNING *`,
-            [input.sendId, input.changedAt],
-          )
-        ).rows[0] ??
+          await db
+            .update(sendOperationsInApp)
+            .set({
+              status: "unknown",
+              statusChangedAt: sendOperationsInApp.leaseExpiresAt,
+            })
+            .where(
+              and(
+                eq(sendOperationsInApp.id, input.sendId),
+                eq(sendOperationsInApp.status, "processing"),
+                lte(
+                  sendOperationsInApp.leaseExpiresAt,
+                  input.changedAt.toISOString(),
+                ),
+              ),
+            )
+            .returning(operationSelection)
+        )[0] ??
         (
-          await connection.query<Record<string, unknown>>(
-            "SELECT * FROM app.send_operations WHERE id=$1 FOR UPDATE",
-            [input.sendId],
-          )
-        ).rows[0];
+          await db
+            .select(operationSelection)
+            .from(sendOperationsInApp)
+            .where(eq(sendOperationsInApp.id, input.sendId))
+            .for("update")
+        )[0];
       if (operation === undefined) {
-        await connection.query("ROLLBACK");
+        await db.execute(sql`ROLLBACK`);
         throw new Error("send operation unavailable");
       }
       if (
-        result.rows[0] !== undefined &&
+        result[0] !== undefined &&
         input.messageIdentity !== undefined &&
         input.storedMessage !== undefined &&
         ["sent", "delivered", "read"].includes(input.status)
       ) {
-        const recipient = await connection.query<Record<string, unknown>>(
-          `SELECT operations.recipient_type,operations.recipient_public_id,
-             CASE operations.recipient_type
-               WHEN 'contact' THEN contacts.provider_identity_index
-               ELSE groups.provider_locator
-             END AS recipient_locator
-           FROM app.send_operations operations
-           LEFT JOIN app.directory_contacts contacts ON operations.recipient_type='contact'
-             AND contacts.personal_account_id=operations.personal_account_id
-             AND contacts.whatsapp_connection_id=operations.whatsapp_connection_id
-             AND contacts.public_id=operations.recipient_public_id
-           LEFT JOIN app.whatsapp_groups groups ON operations.recipient_type='group'
-             AND groups.personal_account_id=operations.personal_account_id
-             AND groups.whatsapp_connection_id=operations.whatsapp_connection_id
-             AND groups.public_id=operations.recipient_public_id
-           WHERE operations.id=$1`,
-          [input.sendId],
-        );
-        const recipientLocator = scalar(recipient.rows[0], "recipient_locator");
-        const recipientType = scalar(recipient.rows[0], "recipient_type");
-        const recipientPublicId = scalar(
-          recipient.rows[0],
-          "recipient_public_id",
-        );
-        await connection.query(
-          `INSERT INTO app.whatsapp_conversations (id,personal_account_id,whatsapp_connection_id,
-             public_id,kind,recipient_locator,recipient_public_id,last_activity_at,last_activity_direction)
-           SELECT $2,personal_account_id,whatsapp_connection_id,$3,$4,$5,$6,$7,'outbound'
-           FROM app.send_operations WHERE id=$1
-           ON CONFLICT (personal_account_id,whatsapp_connection_id,recipient_locator) DO NOTHING`,
-          [
-            input.sendId,
-            input.storedMessage.conversationId,
-            input.storedMessage.conversationPublicId,
-            recipientType === "contact" ? "direct" : "group",
+        const recipient = await db
+          .select({
+            recipient_type: sendOperationsInApp.recipientType,
+            recipient_public_id: sendOperationsInApp.recipientPublicId,
+            recipient_locator: sql<string>`CASE ${sendOperationsInApp.recipientType}
+              WHEN 'contact' THEN ${directoryContactsInApp.providerIdentityIndex}
+              ELSE ${whatsappGroupsInApp.providerLocator}
+            END`,
+          })
+          .from(sendOperationsInApp)
+          .leftJoin(
+            directoryContactsInApp,
+            and(
+              eq(sendOperationsInApp.recipientType, "contact"),
+              eq(
+                directoryContactsInApp.personalAccountId,
+                sendOperationsInApp.personalAccountId,
+              ),
+              eq(
+                directoryContactsInApp.whatsappConnectionId,
+                sendOperationsInApp.whatsappConnectionId,
+              ),
+              eq(
+                directoryContactsInApp.publicId,
+                sendOperationsInApp.recipientPublicId,
+              ),
+            ),
+          )
+          .leftJoin(
+            whatsappGroupsInApp,
+            and(
+              eq(sendOperationsInApp.recipientType, "group"),
+              eq(
+                whatsappGroupsInApp.personalAccountId,
+                sendOperationsInApp.personalAccountId,
+              ),
+              eq(
+                whatsappGroupsInApp.whatsappConnectionId,
+                sendOperationsInApp.whatsappConnectionId,
+              ),
+              eq(
+                whatsappGroupsInApp.publicId,
+                sendOperationsInApp.recipientPublicId,
+              ),
+            ),
+          )
+          .where(eq(sendOperationsInApp.id, input.sendId));
+        const recipientLocator = scalar(recipient[0], "recipient_locator");
+        const recipientType = scalar(recipient[0], "recipient_type");
+        const recipientPublicId = scalar(recipient[0], "recipient_public_id");
+        await db
+          .insert(whatsappConversationsInApp)
+          .values({
+            id: input.storedMessage.conversationId,
+            personalAccountId: scalar(operation, "personal_account_id"),
+            whatsappConnectionId: scalar(operation, "whatsapp_connection_id"),
+            publicId: input.storedMessage.conversationPublicId,
+            kind: recipientType === "contact" ? "direct" : "group",
             recipientLocator,
             recipientPublicId,
-            input.changedAt,
-          ],
-        );
-        await connection.query(
-          `INSERT INTO app.stored_messages (id,personal_account_id,whatsapp_connection_id,conversation_id,
-             public_id,message_identity,direction,sent_at,content_type,content_ciphertext_version,
-             content_key_version,content_nonce,content_ciphertext,received_at,webhook_item_identity)
-           SELECT $2,operations.personal_account_id,operations.whatsapp_connection_id,conversations.id,
-             $3,$4,'outbound',$5,$6,1,$7,$8,$9,$5,NULL
-           FROM app.send_operations operations
-           JOIN app.whatsapp_conversations conversations
-             ON conversations.personal_account_id=operations.personal_account_id
-             AND conversations.whatsapp_connection_id=operations.whatsapp_connection_id
-             AND conversations.recipient_locator=$10
-           WHERE operations.id=$1
-           ON CONFLICT (personal_account_id,whatsapp_connection_id,message_identity) DO NOTHING`,
-          [
-            input.sendId,
-            input.storedMessage.messageId,
-            input.storedMessage.messagePublicId,
-            input.messageIdentity,
-            input.changedAt,
-            input.storedMessage.contentType,
-            input.storedMessage.content.keyVersion,
-            input.storedMessage.content.nonce,
-            input.storedMessage.content.ciphertext,
-            recipientLocator,
-          ],
-        );
-        await connection.query(
-          `UPDATE app.whatsapp_conversations conversations SET
-             last_activity_at=latest.sent_at,last_activity_direction=latest.direction,
-             updated_at=transaction_timestamp()
-           FROM (SELECT messages.conversation_id,messages.sent_at,messages.direction
-             FROM app.stored_messages messages
-             JOIN app.send_operations operations
-               ON operations.personal_account_id=messages.personal_account_id
-               AND operations.whatsapp_connection_id=messages.whatsapp_connection_id
-             WHERE operations.id=$1 AND messages.content_expired_at IS NULL
-               AND messages.conversation_id=(
-               SELECT id FROM app.whatsapp_conversations
-               WHERE personal_account_id=operations.personal_account_id
-                 AND whatsapp_connection_id=operations.whatsapp_connection_id
-                 AND recipient_locator=$2)
-             ORDER BY messages.sent_at DESC,messages.public_id DESC LIMIT 1) latest
-           WHERE conversations.id=latest.conversation_id`,
-          [input.sendId, recipientLocator],
-        );
-        await connection.query(
-          "DELETE FROM app.pending_send_contents WHERE send_operation_id=$1",
-          [input.sendId],
-        );
+            lastActivityAt: input.changedAt.toISOString(),
+            lastActivityDirection: "outbound",
+          })
+          .onConflictDoNothing();
+        const conversation = await db
+          .select({ id: whatsappConversationsInApp.id })
+          .from(whatsappConversationsInApp)
+          .where(
+            and(
+              eq(
+                whatsappConversationsInApp.personalAccountId,
+                scalar(operation, "personal_account_id"),
+              ),
+              eq(
+                whatsappConversationsInApp.whatsappConnectionId,
+                scalar(operation, "whatsapp_connection_id"),
+              ),
+              eq(whatsappConversationsInApp.recipientLocator, recipientLocator),
+            ),
+          );
+        const conversationId = scalar(conversation[0], "id");
+        await db
+          .insert(storedMessagesInApp)
+          .values({
+            id: input.storedMessage.messageId,
+            personalAccountId: scalar(operation, "personal_account_id"),
+            whatsappConnectionId: scalar(operation, "whatsapp_connection_id"),
+            conversationId,
+            publicId: input.storedMessage.messagePublicId,
+            messageIdentity: input.messageIdentity,
+            direction: "outbound",
+            sentAt: input.changedAt.toISOString(),
+            contentType: input.storedMessage.contentType,
+            contentCiphertextVersion: 1,
+            contentKeyVersion: input.storedMessage.content.keyVersion,
+            contentNonce: input.storedMessage.content.nonce,
+            contentCiphertext: input.storedMessage.content.ciphertext,
+            receivedAt: input.changedAt.toISOString(),
+            webhookItemIdentity: null,
+          })
+          .onConflictDoNothing();
+        const latest = await db
+          .select({
+            direction: storedMessagesInApp.direction,
+            sentAt: storedMessagesInApp.sentAt,
+          })
+          .from(storedMessagesInApp)
+          .innerJoin(
+            sendOperationsInApp,
+            and(
+              eq(
+                sendOperationsInApp.personalAccountId,
+                storedMessagesInApp.personalAccountId,
+              ),
+              eq(
+                sendOperationsInApp.whatsappConnectionId,
+                storedMessagesInApp.whatsappConnectionId,
+              ),
+            ),
+          )
+          .where(
+            and(
+              eq(sendOperationsInApp.id, input.sendId),
+              eq(storedMessagesInApp.conversationId, conversationId),
+              isNull(storedMessagesInApp.contentExpiredAt),
+            ),
+          )
+          .orderBy(
+            desc(storedMessagesInApp.sentAt),
+            desc(storedMessagesInApp.publicId),
+          )
+          .limit(1);
+        if (latest[0] !== undefined) {
+          await db
+            .update(whatsappConversationsInApp)
+            .set({
+              lastActivityAt: latest[0].sentAt,
+              lastActivityDirection: latest[0].direction,
+              updatedAt: sql`transaction_timestamp()`,
+            })
+            .where(eq(whatsappConversationsInApp.id, conversationId));
+        }
+        await db
+          .delete(pendingSendContentsInApp)
+          .where(eq(pendingSendContentsInApp.sendOperationId, input.sendId));
       }
-      if (result.rows[0] !== undefined && input.status === "failed") {
-        await connection.query(
-          "DELETE FROM app.pending_send_contents WHERE send_operation_id=$1",
-          [input.sendId],
-        );
+      if (result[0] !== undefined && input.status === "failed") {
+        await db
+          .delete(pendingSendContentsInApp)
+          .where(eq(pendingSendContentsInApp.sendOperationId, input.sendId));
       }
-      await connection.query("COMMIT");
+      await db.execute(sql`COMMIT`);
       try {
-        await connection.query("BEGIN");
-        await connection.query(
-          "SELECT set_config('app.personal_account_id',$1,true)",
-          [accountId],
+        await db.execute(sql`BEGIN`);
+        await db.execute(
+          sql`SELECT set_config('app.personal_account_id',${accountId},true)`,
         );
-        await connection.query(
-          `UPDATE app.tool_call_logs SET completed_at=$2,outcome='success',result_count=1,
-             latency_ms=greatest(0,floor(extract(epoch FROM ($2-started_at))*1000)::int)
-           WHERE id=(SELECT tool_call_log_id FROM app.send_operations WHERE id=$1)`,
-          [input.sendId, input.changedAt],
-        );
-        await connection.query("COMMIT");
+        const send = await db
+          .select({ toolCallLogId: sendOperationsInApp.toolCallLogId })
+          .from(sendOperationsInApp)
+          .where(eq(sendOperationsInApp.id, input.sendId));
+        await db
+          .update(toolCallLogsInApp)
+          .set({
+            completedAt: input.changedAt.toISOString(),
+            outcome: "success",
+            resultCount: 1,
+            latencyMs: sql`greatest(0,floor(extract(epoch FROM (${input.changedAt}::timestamptz-${toolCallLogsInApp.startedAt}))*1000)::int)`,
+          })
+          .where(eq(toolCallLogsInApp.id, scalar(send[0], "toolCallLogId")));
+        await db.execute(sql`COMMIT`);
       } catch {
-        await connection.query("ROLLBACK");
+        await db.execute(sql`ROLLBACK`);
       }
       return receipt(operation);
     }),

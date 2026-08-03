@@ -1,14 +1,12 @@
+import { sql } from "drizzle-orm";
 import type { Client as PgClient } from "pg";
-import { makeQueryConnection } from "./database";
+import {
+  makeDatabase,
+  makeQueryConnection,
+  type QueryConnection,
+} from "./database";
 
-export interface DirectoryConnection {
-  readonly query: <
-    Row extends Record<string, unknown> = Record<string, unknown>,
-  >(
-    text: string,
-    values?: Array<unknown>,
-  ) => Promise<{ readonly rows: Array<Row> }>;
-}
+export interface DirectoryConnection extends QueryConnection {}
 
 export interface DirectoryConnectionProvider {
   readonly withConnection: <Value>(
@@ -230,36 +228,35 @@ export const makeDirectoryRepository = (
 ): DirectoryRepository => ({
   claimContactReconciliations: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<CandidateRow>(
-        "SELECT * FROM app_private.claim_contact_reconciliations($1, $2)",
-        [input.claimedAt, input.limit],
-      );
-      return result.rows.map(candidate);
+      const db = makeDatabase(connection);
+      const result = await db.execute<CandidateRow>(sql`
+        SELECT * FROM app_private.claim_contact_reconciliations(
+          ${input.claimedAt}, ${input.limit}
+        )
+      `);
+      return result.map(candidate);
     }),
   failContactReconciliation: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{ failed: unknown }>(
-        `SELECT app_private.fail_contact_reconciliation($1, $2, $3) AS failed`,
-        [input.whatsappConnectionId, input.claimId, input.failedAt],
-      );
-      return result.rows[0]?.failed === true;
+      const db = makeDatabase(connection);
+      const result = await db.execute<{ failed: unknown }>(sql`
+        SELECT app_private.fail_contact_reconciliation(
+          ${input.whatsappConnectionId}, ${input.claimId}, ${input.failedAt}
+        ) AS failed
+      `);
+      return result[0]?.failed === true;
     }),
   finishContactReconciliation: (input) =>
     provider.withConnection(async (connection) => {
-      const result = await connection.query<{ finished: unknown }>(
-        `SELECT app_private.finish_contact_reconciliation(
-           $1, $2, $3, $4, $5, $6::jsonb
-         ) AS finished`,
-        [
-          input.whatsappConnectionId,
-          input.claimId,
-          input.observedAt,
-          input.stale,
-          input.partial,
-          JSON.stringify(input.contacts.map(encodedContact)),
-        ],
-      );
-      return result.rows[0]?.finished === true;
+      const db = makeDatabase(connection);
+      const contacts = JSON.stringify(input.contacts.map(encodedContact));
+      const result = await db.execute<{ finished: unknown }>(sql`
+        SELECT app_private.finish_contact_reconciliation(
+          ${input.whatsappConnectionId}, ${input.claimId}, ${input.observedAt},
+          ${input.stale}, ${input.partial}, ${contacts}::jsonb
+        ) AS finished
+      `);
+      return result[0]?.finished === true;
     }),
 });
 
