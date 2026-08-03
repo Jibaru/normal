@@ -467,7 +467,7 @@ describe("MCP tool repository", () => {
       sends.expireLeases(new Date(observedAt.valueOf() + 60_000)),
     ).resolves.toBe(0);
     await expect(
-      sends.expireLeases(new Date(Date.now() + 120_000)),
+      sends.expireLeases(new Date(Date.now() + 30_000)),
     ).rejects.toThrow("send dispatch lease sweep cutoff is in the future");
   });
 

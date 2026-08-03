@@ -6,7 +6,7 @@ AS $function$
 DECLARE
   expired_count integer;
 BEGIN
-  IF requested_observed_at > transaction_timestamp() + interval '1 minute' THEN
+  IF requested_observed_at > transaction_timestamp() THEN
     RAISE EXCEPTION 'send dispatch lease sweep cutoff is in the future';
   END IF;
 
