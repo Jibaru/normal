@@ -87,4 +87,31 @@ describe("safe telemetry serialization", () => {
       service: "api",
     });
   });
+
+  test("rejects non-scalar values in allowlisted fields without serializing them", () => {
+    let serialized = false;
+    const maliciousOutcome = {
+      toJSON: () => {
+        serialized = true;
+        return sensitive;
+      },
+    };
+
+    let caught: unknown;
+    try {
+      serializeSafeTelemetry({
+        event: "mcp.tool_call.completed",
+        outcome: maliciousOutcome,
+        service: "api",
+        tool: "read_messages",
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(SafeTelemetryViolation);
+    expect(String(caught)).toBe("SafeTelemetryViolation: telemetry.outcome");
+    expect(String(caught)).not.toContain(sensitive.credential);
+    expect(serialized).toBe(false);
+  });
 });

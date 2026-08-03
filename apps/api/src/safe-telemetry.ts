@@ -1,4 +1,7 @@
+import type { SafeTelemetryEvent } from "./services";
+
 type TelemetryRecord = Readonly<Record<string, unknown>>;
+type TelemetryScalar = boolean | null | number | string;
 
 const common = ["event", "service"] as const;
 
@@ -124,7 +127,7 @@ const fieldsByEvent = {
     "outcome",
   ],
   "whatsapp_connection.list.completed": [...common, "connectionCount"],
-} as const satisfies Record<string, ReadonlyArray<string>>;
+} as const satisfies Record<SafeTelemetryEvent["event"], ReadonlyArray<string>>;
 
 export class SafeTelemetryViolation extends Error {
   constructor(location: string) {
@@ -136,6 +139,12 @@ export class SafeTelemetryViolation extends Error {
 const isRecord = (value: unknown): value is TelemetryRecord =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const isTelemetryScalar = (value: unknown): value is TelemetryScalar =>
+  value === null ||
+  typeof value === "string" ||
+  typeof value === "boolean" ||
+  (typeof value === "number" && Number.isFinite(value));
+
 export const serializeSafeTelemetry = (value: unknown): string => {
   if (!isRecord(value) || typeof value.event !== "string") {
     throw new SafeTelemetryViolation("telemetry.event");
@@ -144,11 +153,16 @@ export const serializeSafeTelemetry = (value: unknown): string => {
   if (allowed === undefined) {
     throw new SafeTelemetryViolation("telemetry.event");
   }
+  const allowedFields = new Set<string>(allowed);
   const safe: Record<string, unknown> = {};
-  for (const field of allowed) {
-    if (Object.hasOwn(value, field) && value[field] !== undefined) {
-      safe[field] = value[field];
+  for (const field of Object.keys(value)) {
+    if (!allowedFields.has(field) || value[field] === undefined) {
+      continue;
     }
+    if (!isTelemetryScalar(value[field])) {
+      throw new SafeTelemetryViolation(`telemetry.${field}`);
+    }
+    safe[field] = value[field];
   }
   return JSON.stringify(safe);
 };
