@@ -18,6 +18,7 @@ import type {
   McpAccessAuthorization,
   McpToolConnectionRecord,
   McpToolGroupPage,
+  McpToolGroupSearchMaterial,
   McpToolName,
 } from "@whatsapp-mcp/db/mcp-tool";
 import { createMcpHandler } from "agents/mcp/server";
@@ -27,6 +28,11 @@ import {
   type EnvelopeEncryption,
   EnvelopeEncryptionService,
 } from "./encryption/envelope";
+import {
+  groupSearchIndex,
+  importGroupDirectoryIndexKey,
+  normalizeGroupDisplayName,
+} from "./group-privacy";
 import {
   SafeTelemetry,
   type SafeTelemetry as SafeTelemetryService,
@@ -76,8 +82,18 @@ export interface McpToolPersistenceService {
     input: McpAccessAuthorization & {
       readonly connectionPublicId: string;
       readonly observedAt: Date;
+      readonly searchIndex: string | null;
     },
   ) => Effect.Effect<McpToolGroupPage | null, McpToolPersistenceError>;
+  readonly loadGroupSearchMaterial: (
+    input: McpAccessAuthorization & {
+      readonly connectionPublicId: string;
+      readonly observedAt: Date;
+    },
+  ) => Effect.Effect<
+    McpToolGroupSearchMaterial | null,
+    McpToolPersistenceError
+  >;
 }
 
 export const McpToolPersistence = Context.GenericTag<McpToolPersistenceService>(
@@ -151,7 +167,7 @@ const ListGroupsInput = z
     search: z
       .string()
       .refine((value) => {
-        const length = codePointLength(value);
+        const length = codePointLength(normalizeGroupDisplayName(value));
         return length >= 3 && length <= 64;
       }, "search must contain 3 to 64 characters")
       .optional(),
@@ -363,9 +379,6 @@ const listConnections = (
     return completed._tag === "Left" ? auditUnavailable() : result;
   }).pipe(Effect.catchAll(() => Effect.succeed(auditUnavailable())));
 
-const normalizeDisplayName = (value: string | null): string =>
-  (value ?? "").normalize("NFKC").toLocaleLowerCase("und");
-
 const compareText = (left: string, right: string): number =>
   left < right ? -1 : left > right ? 1 : 0;
 
@@ -384,7 +397,9 @@ const listGroups = (
     const startedAt = yield* clock.now;
 
     const normalizedSearch =
-      input.search === undefined ? null : normalizeDisplayName(input.search);
+      input.search === undefined
+        ? null
+        : normalizeGroupDisplayName(input.search);
     const cursorContext: CursorContext = {
       authorizationId: authorization.authorizationId,
       connectionId: input.connection_id as CursorContext["connectionId"],
@@ -441,37 +456,101 @@ const listGroups = (
       );
     }
 
+    const failAfterAudit = (
+      errorCode: "authorization_denied" | "service_unavailable",
+    ) =>
+      Effect.gen(function* () {
+        const denied = errorCode === "authorization_denied";
+        const completed = yield* persistence
+          .completeToolCall({
+            auditLogId,
+            completedAt: yield* clock.now,
+            errorCode,
+            outcome: denied ? "authorization_denied" : "execution_error",
+            resultCount: null,
+          })
+          .pipe(Effect.either);
+        const outcome =
+          completed._tag === "Left"
+            ? "audit_unavailable"
+            : denied
+              ? "authorization_denied"
+              : "service_unavailable";
+        yield* emitToolCompletion("list_groups", outcome);
+        return completed._tag === "Left"
+          ? auditUnavailable()
+          : denied
+            ? authorizationDenied()
+            : serviceUnavailable();
+      });
+
+    let searchIndex: string | null = null;
+    if (normalizedSearch !== null) {
+      const material = yield* persistence
+        .loadGroupSearchMaterial({
+          ...authorization,
+          connectionPublicId: input.connection_id,
+          observedAt: yield* clock.now,
+        })
+        .pipe(Effect.either);
+      if (material._tag === "Left") {
+        return yield* failAfterAudit("service_unavailable");
+      }
+      if (material.right === null) {
+        return yield* failAfterAudit("authorization_denied");
+      }
+      const identityKey = yield* encryption
+        .decrypt({
+          accountKey: material.right.accountKey,
+          ciphertext: material.right.identityKey,
+          connectionKey: material.right.connectionKey,
+          context: {
+            accountId: material.right.accountKey.personalAccountId,
+            connectionId: material.right.connectionKey.connectionId,
+            entity: "whatsapp-connection",
+            fieldOrObjectPurpose: "webhook-identity-key",
+            recordId: material.right.connectionKey.connectionId,
+          },
+        })
+        .pipe(Effect.either);
+      if (identityKey._tag === "Left") {
+        return yield* failAfterAudit("service_unavailable");
+      }
+      const indexed = yield* Effect.acquireUseRelease(
+        Effect.succeed(identityKey.right),
+        (bytes) =>
+          importGroupDirectoryIndexKey(bytes).pipe(
+            Effect.flatMap((key) =>
+              groupSearchIndex(
+                key,
+                material.right.connectionKey.connectionId,
+                normalizedSearch,
+              ),
+            ),
+          ),
+        (bytes) => Effect.sync(() => bytes.fill(0)),
+      ).pipe(Effect.either);
+      if (indexed._tag === "Left") {
+        return yield* failAfterAudit("service_unavailable");
+      }
+      searchIndex = indexed.right;
+    }
+
     const readAt = yield* clock.now;
     const loaded = yield* persistence
       .listGroups({
         ...authorization,
         connectionPublicId: input.connection_id,
         observedAt: readAt,
+        searchIndex,
       })
       .pipe(Effect.either);
     if (loaded._tag === "Left" || loaded.right === null) {
-      const denied = loaded._tag === "Right";
-      const completed = yield* persistence
-        .completeToolCall({
-          auditLogId,
-          completedAt: yield* clock.now,
-          errorCode: denied ? "authorization_denied" : "service_unavailable",
-          outcome: denied ? "authorization_denied" : "execution_error",
-          resultCount: null,
-        })
-        .pipe(Effect.either);
-      const outcome =
-        completed._tag === "Left"
-          ? "audit_unavailable"
-          : denied
-            ? "authorization_denied"
-            : "service_unavailable";
-      yield* emitToolCompletion("list_groups", outcome);
-      return completed._tag === "Left"
-        ? auditUnavailable()
-        : denied
-          ? authorizationDenied()
-          : serviceUnavailable();
+      return yield* failAfterAudit(
+        loaded._tag === "Right"
+          ? "authorization_denied"
+          : "service_unavailable",
+      );
     }
 
     const page = loaded.right;
@@ -513,7 +592,7 @@ const listGroups = (
               ),
               Effect.map((displayName) => ({
                 displayName,
-                normalizedName: normalizeDisplayName(displayName),
+                normalizedName: normalizeGroupDisplayName(displayName),
                 publicId: group.publicId,
               })),
             ),

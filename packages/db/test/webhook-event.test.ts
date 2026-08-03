@@ -588,6 +588,7 @@ describe("Webhook Event repository", () => {
       itemIndex: 0,
       joined: true,
       locator,
+      namePrefixIndexes: [`gi1_${"A".repeat(43)}`],
       personalAccountId: accountId,
       providerIdentity: "sealed-provider-group",
       publicId: "grp_123456789012345678939",
@@ -613,6 +614,7 @@ describe("Webhook Event repository", () => {
           itemIdentity: itemIdentity("group-unjoin"),
           itemIndex: 1,
           joined: false,
+          namePrefixIndexes: [],
           receivedAt: "2026-07-31T12:11:00.000Z",
         },
         protect,
@@ -622,18 +624,20 @@ describe("Webhook Event repository", () => {
 
     const groups = await database.query<{
       count: number;
+      index_count: number;
       joined: boolean;
       plaintext_matches: boolean;
     }>(
       `SELECT
          count(*)::integer AS count,
+         max(cardinality(name_prefix_indexes))::integer AS index_count,
          bool_and(NOT convert_from(display_name_ciphertext, 'UTF8') LIKE '%Family%')
            AS plaintext_matches,
          bool_and(joined) AS joined
        FROM app.whatsapp_groups`,
     );
     expect(groups.rows).toEqual([
-      { count: 1, joined: false, plaintext_matches: true },
+      { count: 1, index_count: 0, joined: false, plaintext_matches: true },
     ]);
     const items = await database.query<{ count: number }>(
       `SELECT count(*)::integer AS count

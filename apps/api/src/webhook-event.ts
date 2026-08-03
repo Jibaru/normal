@@ -21,6 +21,10 @@ import {
   EnvelopeEncryptionService,
 } from "./encryption/envelope";
 import {
+  groupNamePrefixIndexes,
+  importGroupDirectoryIndexKey,
+} from "./group-privacy";
+import {
   SafeTelemetry,
   type SafeTelemetry as SafeTelemetryService,
 } from "./services";
@@ -355,6 +359,7 @@ const processItems = (
   material: WebhookEventProcessingMaterial,
   normalizer: WebhookNormalization,
   items: ReadonlyArray<NormalizedWebhookItem>,
+  indexKey: CryptoKey,
 ) =>
   Effect.gen(function* () {
     const persistence = yield* WebhookEventPersistence;
@@ -367,6 +372,13 @@ const processItems = (
         continue;
       }
       if (item.kind === "directory_group") {
+        const namePrefixIndexes = item.group.joined
+          ? yield* groupNamePrefixIndexes(
+              indexKey,
+              message.whatsapp_connection_id,
+              item.group.displayName,
+            )
+          : [];
         const outcome = yield* persistence.projectGroup(
           {
             displayName: item.group.displayName,
@@ -380,6 +392,7 @@ const processItems = (
             itemIndex: item.itemIndex,
             joined: item.group.joined,
             locator: item.group.identity,
+            namePrefixIndexes,
             personalAccountId: message.personal_account_id,
             providerIdentity: item.group.recipient,
             publicId: makeGroupId(),
@@ -544,6 +557,8 @@ const processMessage = (message: WebhookEventQueueMessage) =>
           Effect.gen(function* () {
             const normalization = yield* WebhookEventNormalization;
             const normalizer = yield* normalization.make(identityKeyBytes);
+            const indexKey =
+              yield* importGroupDirectoryIndexKey(identityKeyBytes);
             const delivery = yield* normalizer.normalize({
               payload: payloadBytes,
               receivedAt: message.received_at,
@@ -553,6 +568,7 @@ const processMessage = (message: WebhookEventQueueMessage) =>
               material,
               normalizer,
               delivery.items,
+              indexKey,
             );
             const clock = yield* WebhookEventClock;
             yield* persistence.complete({

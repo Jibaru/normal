@@ -84,6 +84,7 @@ describe("WhatsApp group projection repository", () => {
       groupId,
       joined: true,
       locator,
+      namePrefixIndexes: [`gi1_${"A".repeat(43)}`],
       providerIdentity: "sealed-provider-group",
       publicId: groupPublicId,
     } as const;
@@ -116,14 +117,19 @@ describe("WhatsApp group projection repository", () => {
       joined: boolean;
       provider_identity_ciphertext: Uint8Array;
       public_id: string;
+      name_prefix_indexes: string[];
     }>(
-      `SELECT public_id, joined, display_name_ciphertext,
+      `SELECT public_id, joined,
+         ARRAY(SELECT value::text FROM unnest(name_prefix_indexes) AS value)
+           AS name_prefix_indexes,
+         display_name_ciphertext,
          provider_identity_ciphertext
        FROM app.whatsapp_groups`,
     );
     expect(projected.rows).toHaveLength(1);
     expect(projected.rows[0]).toMatchObject({
       joined: true,
+      name_prefix_indexes: [`gi1_${"A".repeat(43)}`],
       public_id: groupPublicId,
     });
     expect(
@@ -185,10 +191,16 @@ describe("WhatsApp group projection repository", () => {
         protect: async () => protectedFields,
       }),
     ).resolves.toEqual({ applied: 0, unjoined: 1 });
-    const current = await database.query<{ joined: boolean }>(
-      "SELECT joined FROM app.whatsapp_groups",
+    const current = await database.query<{
+      joined: boolean;
+      name_prefix_indexes: string[];
+    }>(
+      `SELECT joined,
+         ARRAY(SELECT value::text FROM unnest(name_prefix_indexes) AS value)
+           AS name_prefix_indexes
+       FROM app.whatsapp_groups`,
     );
-    expect(current.rows).toEqual([{ joined: false }]);
+    expect(current.rows).toEqual([{ joined: false, name_prefix_indexes: [] }]);
   });
 
   test("does not treat missing groups in a partial snapshot as unjoined", async () => {
@@ -201,6 +213,7 @@ describe("WhatsApp group projection repository", () => {
           groupId,
           joined: true,
           locator,
+          namePrefixIndexes: [`gi1_${"A".repeat(43)}`],
           providerIdentity: "sealed-provider-group",
           publicId: groupPublicId,
         },

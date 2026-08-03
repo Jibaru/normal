@@ -160,6 +160,36 @@ const makeHarness = (
           : Effect.succeed({
               scopes: overrides.scopes ?? ["connections:read"],
             }),
+      loadGroupSearchMaterial: () => {
+        observations.push("load-group-search-material");
+        return Effect.succeed({
+          accountKey: {
+            ciphertext: "AQID",
+            keyVersion: 1,
+            kmsKeyId:
+              "arn:aws:kms:us-east-1:111122223333:key/test-content-root",
+            personalAccountId: "10000000-0000-4000-8000-000000000039",
+            version: 1 as const,
+          },
+          connectionKey: {
+            accountKeyVersion: 1,
+            ciphertext: "AQID",
+            connectionId: "20000000-0000-4000-8000-000000000039",
+            keyVersion: 1,
+            nonce: "AQIDBAUGBwgJCgsM",
+            personalAccountId: "10000000-0000-4000-8000-000000000039",
+            version: 1 as const,
+          },
+          identityKey: {
+            ciphertext: btoa(
+              String.fromCharCode(...new Uint8Array(32).fill(39)),
+            ),
+            keyVersion: 1,
+            nonce: "AQIDBAUGBwgJCgsM",
+            version: 1 as const,
+          },
+        });
+      },
       listConnections: () => {
         observations.push("list");
         return Effect.succeed([
@@ -172,8 +202,11 @@ const makeHarness = (
           },
         ]);
       },
-      listGroups: () => {
+      listGroups: (input) => {
         observations.push("list-groups");
+        if (input.searchIndex !== null) {
+          expect(input.searchIndex).toMatch(/^gi1_[A-Za-z0-9_-]{43}$/u);
+        }
         return Effect.succeed(
           overrides.groupPage === undefined
             ? {
@@ -634,7 +667,12 @@ describe("stateless MCP list_groups boundary", () => {
       };
     };
 
-    expect(harness.observations).toEqual(["begin", "list-groups", "complete"]);
+    expect(harness.observations).toEqual([
+      "begin",
+      "load-group-search-material",
+      "list-groups",
+      "complete",
+    ]);
     expect(body.result.structuredContent).toEqual({
       groups: [
         {

@@ -71,6 +71,17 @@ export interface McpToolGroupPage {
   readonly stale: boolean;
 }
 
+export interface McpToolGroupSearchMaterial {
+  readonly accountKey: McpToolGroupPage["accountKey"];
+  readonly connectionKey: McpToolGroupPage["connectionKey"];
+  readonly identityKey: {
+    readonly ciphertext: string;
+    readonly keyVersion: number;
+    readonly nonce: string;
+    readonly version: 1;
+  };
+}
+
 export type BeginToolCallResult =
   | {
       readonly auditLogId: string;
@@ -112,8 +123,15 @@ export interface McpToolRepository {
     input: McpAccessAuthorization & {
       readonly connectionPublicId: string;
       readonly observedAt: Date;
+      readonly searchIndex: string | null;
     },
   ) => Promise<McpToolGroupPage | null>;
+  readonly loadGroupSearchMaterial: (
+    input: McpAccessAuthorization & {
+      readonly connectionPublicId: string;
+      readonly observedAt: Date;
+    },
+  ) => Promise<McpToolGroupSearchMaterial | null>;
 }
 
 const withTransaction = async <Value>(
@@ -159,6 +177,159 @@ const positiveInteger = (value: unknown): number | null =>
   typeof value === "number" && Number.isSafeInteger(value) && value > 0
     ? value
     : null;
+
+interface ParsedGroupKeyMaterial {
+  readonly accountKey: McpToolGroupPage["accountKey"];
+  readonly connectionKey: McpToolGroupPage["connectionKey"];
+}
+
+interface ParsedGroupMaterial extends ParsedGroupKeyMaterial {
+  readonly asOf: string;
+  readonly partial: boolean;
+  readonly stale: boolean;
+}
+
+const parseGroupKeyMaterial = (
+  row: Record<string, unknown> | undefined,
+): ParsedGroupKeyMaterial | null => {
+  if (row === undefined) return null;
+  const personalAccountId = row.personal_account_id;
+  const connectionId = row.connection_id;
+  const accountVersion = positiveInteger(row.account_key_version);
+  const accountCiphertext = bytes(row.account_key_ciphertext);
+  const connectionAccountVersion = positiveInteger(
+    row.connection_key_account_version,
+  );
+  const connectionVersion = positiveInteger(row.connection_key_version);
+  const connectionNonce = bytes(row.connection_key_nonce);
+  const connectionCiphertext = bytes(row.connection_key_ciphertext);
+  if (
+    typeof personalAccountId !== "string" ||
+    typeof connectionId !== "string" ||
+    typeof row.account_kms_key_id !== "string" ||
+    accountVersion === null ||
+    accountCiphertext === null ||
+    connectionAccountVersion === null ||
+    connectionVersion === null ||
+    connectionNonce === null ||
+    connectionCiphertext === null
+  ) {
+    throw new Error("invalid MCP group key material");
+  }
+  return {
+    accountKey: {
+      ciphertext: base64(accountCiphertext),
+      keyVersion: accountVersion,
+      kmsKeyId: row.account_kms_key_id,
+      personalAccountId,
+      version: 1,
+    },
+    connectionKey: {
+      accountKeyVersion: connectionAccountVersion,
+      ciphertext: base64(connectionCiphertext),
+      connectionId,
+      keyVersion: connectionVersion,
+      nonce: base64(connectionNonce),
+      personalAccountId,
+      version: 1,
+    },
+  };
+};
+
+const parseGroupMaterial = (
+  row: Record<string, unknown> | undefined,
+): ParsedGroupMaterial | null => {
+  const keyMaterial = parseGroupKeyMaterial(row);
+  if (keyMaterial === null || row === undefined) return null;
+  const asOf = timestampString(row.as_of ?? row.connection_created_at);
+  if (
+    asOf === null ||
+    typeof row.stale !== "boolean" ||
+    typeof row.partial !== "boolean"
+  ) {
+    throw new Error("invalid MCP group projection material");
+  }
+  return {
+    ...keyMaterial,
+    asOf,
+    partial: row.partial,
+    stale: row.stale,
+  };
+};
+
+const parseGroupSearchMaterial = (
+  row: Record<string, unknown> | undefined,
+): McpToolGroupSearchMaterial | null => {
+  const keyMaterial = parseGroupKeyMaterial(row);
+  if (keyMaterial === null || row === undefined) return null;
+  const identityVersion = positiveInteger(row.identity_ciphertext_version);
+  const identityKeyVersion = positiveInteger(row.identity_key_version);
+  const identityNonce = bytes(row.identity_nonce);
+  const identityCiphertext = bytes(row.identity_ciphertext);
+  if (
+    identityVersion !== 1 ||
+    identityKeyVersion === null ||
+    identityNonce === null ||
+    identityCiphertext === null
+  ) {
+    throw new Error("invalid MCP group search material");
+  }
+  return {
+    ...keyMaterial,
+    identityKey: {
+      ciphertext: base64(identityCiphertext),
+      keyVersion: identityKeyVersion,
+      nonce: base64(identityNonce),
+      version: 1,
+    },
+  };
+};
+
+const loadGroupProjectionMaterial = async (
+  connection: McpToolConnection,
+  input: McpAccessAuthorization & {
+    readonly connectionPublicId: string;
+    readonly observedAt: Date;
+  },
+): Promise<ParsedGroupMaterial | null> => {
+  const material = await connection.query<Record<string, unknown>>(
+    `SELECT *
+     FROM app_private.load_mcp_group_projection_material(
+       $1, $2, $3, $4, $5
+     )`,
+    [
+      input.authorizationId,
+      input.oauthSubject,
+      input.clientId ?? null,
+      input.observedAt,
+      input.connectionPublicId,
+    ],
+  );
+  return parseGroupMaterial(material.rows[0]);
+};
+
+const loadGroupIndexMaterial = async (
+  connection: McpToolConnection,
+  input: McpAccessAuthorization & {
+    readonly connectionPublicId: string;
+    readonly observedAt: Date;
+  },
+): Promise<McpToolGroupSearchMaterial | null> => {
+  const material = await connection.query<Record<string, unknown>>(
+    `SELECT *
+     FROM app_private.load_mcp_group_search_material(
+       $1, $2, $3, $4, $5
+     )`,
+    [
+      input.authorizationId,
+      input.oauthSubject,
+      input.clientId ?? null,
+      input.observedAt,
+      input.connectionPublicId,
+    ],
+  );
+  return parseGroupSearchMaterial(material.rows[0]);
+};
 
 const enterAuthorizationContext = async (
   connection: McpToolConnection,
@@ -477,6 +648,12 @@ export const makeMcpToolRepository = (
   listGroups: (input) =>
     provider.withConnection((connection) =>
       withTransaction(connection, async () => {
+        if (
+          input.searchIndex !== null &&
+          !/^gi1_[A-Za-z0-9_-]{43}$/u.test(input.searchIndex)
+        ) {
+          throw new Error("invalid MCP group search index");
+        }
         if ((await enterAuthorizationContext(connection, input)) === null) {
           return null;
         }
@@ -484,59 +661,36 @@ export const makeMcpToolRepository = (
         if (scopes === null || !scopes.includes("directory:read")) {
           return null;
         }
-        const material = await connection.query<Record<string, unknown>>(
-          `SELECT *
-           FROM app_private.load_mcp_group_projection_material(
-             $1, $2, $3, $4, $5
-           )`,
-          [
-            input.authorizationId,
-            input.oauthSubject,
-            input.clientId ?? null,
-            input.observedAt,
-            input.connectionPublicId,
-          ],
-        );
-        const row = material.rows[0];
-        if (row === undefined) return null;
-        const personalAccountId = row.personal_account_id;
-        const connectionId = row.connection_id;
-        const accountVersion = positiveInteger(row.account_key_version);
-        const accountCiphertext = bytes(row.account_key_ciphertext);
-        const connectionAccountVersion = positiveInteger(
-          row.connection_key_account_version,
-        );
-        const connectionVersion = positiveInteger(row.connection_key_version);
-        const connectionNonce = bytes(row.connection_key_nonce);
-        const connectionCiphertext = bytes(row.connection_key_ciphertext);
-        const asOf = timestampString(row.as_of ?? row.connection_created_at);
-        if (
-          typeof personalAccountId !== "string" ||
-          typeof connectionId !== "string" ||
-          typeof row.account_kms_key_id !== "string" ||
-          accountVersion === null ||
-          accountCiphertext === null ||
-          connectionAccountVersion === null ||
-          connectionVersion === null ||
-          connectionNonce === null ||
-          connectionCiphertext === null ||
-          asOf === null ||
-          typeof row.stale !== "boolean" ||
-          typeof row.partial !== "boolean"
-        ) {
-          throw new Error("invalid MCP group projection material");
-        }
-        const persistedGroups = await connection.query<Record<string, unknown>>(
-          `SELECT
-             id, public_id, display_name_ciphertext_version,
-             display_name_key_version, display_name_nonce,
-             display_name_ciphertext
-           FROM app.whatsapp_groups
-           WHERE personal_account_id = $1
-             AND whatsapp_connection_id = $2
-             AND joined`,
-          [personalAccountId, connectionId],
-        );
+        const material = await loadGroupProjectionMaterial(connection, input);
+        if (material === null) return null;
+        const personalAccountId = material.accountKey.personalAccountId;
+        const connectionId = material.connectionKey.connectionId;
+        const persistedGroups =
+          input.searchIndex === null
+            ? await connection.query<Record<string, unknown>>(
+                `SELECT
+                   id, public_id, display_name_ciphertext_version,
+                   display_name_key_version, display_name_nonce,
+                   display_name_ciphertext
+                 FROM app.whatsapp_groups
+                 WHERE personal_account_id = $1
+                   AND whatsapp_connection_id = $2
+                   AND joined`,
+                [personalAccountId, connectionId],
+              )
+            : await connection.query<Record<string, unknown>>(
+                `SELECT
+                   id, public_id, display_name_ciphertext_version,
+                   display_name_key_version, display_name_nonce,
+                   display_name_ciphertext
+                 FROM app.whatsapp_groups
+                 WHERE personal_account_id = $1
+                   AND whatsapp_connection_id = $2
+                   AND joined
+                   AND name_prefix_indexes
+                     @> ARRAY[$3::app.group_name_blind_index]`,
+                [personalAccountId, connectionId, input.searchIndex],
+              );
         const groups = persistedGroups.rows.map((group) => {
           const id = group.id;
           const publicId = group.public_id;
@@ -581,27 +735,26 @@ export const makeMcpToolRepository = (
           };
         });
         return {
-          accountKey: {
-            ciphertext: base64(accountCiphertext),
-            keyVersion: accountVersion,
-            kmsKeyId: row.account_kms_key_id,
-            personalAccountId,
-            version: 1,
-          },
-          asOf,
-          connectionKey: {
-            accountKeyVersion: connectionAccountVersion,
-            ciphertext: base64(connectionCiphertext),
-            connectionId,
-            keyVersion: connectionVersion,
-            nonce: base64(connectionNonce),
-            personalAccountId,
-            version: 1,
-          },
+          accountKey: material.accountKey,
+          asOf: material.asOf,
+          connectionKey: material.connectionKey,
           groups,
-          partial: row.partial,
-          stale: row.stale,
+          partial: material.partial,
+          stale: material.stale,
         };
+      }),
+    ),
+  loadGroupSearchMaterial: (input) =>
+    provider.withConnection((connection) =>
+      withTransaction(connection, async () => {
+        if ((await enterAuthorizationContext(connection, input)) === null) {
+          return null;
+        }
+        const scopes = await loadAuthorizationScopes(connection, input);
+        if (scopes === null || !scopes.includes("directory:read")) {
+          return null;
+        }
+        return loadGroupIndexMaterial(connection, input);
       }),
     ),
   completeToolCall: (input) =>

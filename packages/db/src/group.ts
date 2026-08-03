@@ -63,6 +63,7 @@ export interface GroupProjectionEntry {
   readonly groupId: string;
   readonly joined: boolean;
   readonly locator: string;
+  readonly namePrefixIndexes: ReadonlyArray<string>;
   readonly providerIdentity: string;
   readonly publicId: string;
 }
@@ -101,6 +102,7 @@ const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const publicIdPattern = /^grp_[A-Za-z0-9_-]{21}$/u;
 const locatorPattern = /^wi1_[A-Za-z0-9_-]{43}$/u;
+const namePrefixIndexPattern = /^gi1_[A-Za-z0-9_-]{43}$/u;
 const encodeBase64 = (value: Uint8Array): string =>
   Buffer.from(value).toString("base64");
 
@@ -246,6 +248,13 @@ const validateInput = (input: ReconcileGroupsInput): void => {
       entry.providerIdentity.length === 0 ||
       entry.providerIdentity.length > 4_096 ||
       (entry.displayName !== null && entry.displayName.length > 4_096) ||
+      entry.namePrefixIndexes.length > 62 ||
+      entry.namePrefixIndexes.some(
+        (index) => !namePrefixIndexPattern.test(index),
+      ) ||
+      new Set(entry.namePrefixIndexes).size !==
+        entry.namePrefixIndexes.length ||
+      (!entry.joined && entry.namePrefixIndexes.length > 0) ||
       locators.has(entry.locator) ||
       ids.has(entry.groupId) ||
       publicIds.has(entry.publicId)
@@ -421,18 +430,22 @@ export const makeGroupRepository = (
           const changed = await connection.query<{ id: unknown }>(
             `INSERT INTO app.whatsapp_groups (
                id, personal_account_id, whatsapp_connection_id, public_id,
-               provider_locator, display_name_ciphertext_version,
+               provider_locator, name_prefix_indexes,
+               display_name_ciphertext_version,
                display_name_key_version, display_name_nonce,
                display_name_ciphertext, provider_identity_ciphertext_version,
                provider_identity_key_version, provider_identity_nonce,
                provider_identity_ciphertext, joined, last_observed_at,
                created_at, updated_at
              ) VALUES (
-               $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-               $13, $14, $15, $15, $15
+               $1, $2, $3, $4, $5,
+               $6::text[]::app.group_name_blind_index[],
+               $7, $8, $9, $10, $11, $12,
+               $13, $14, $15, $16, $16, $16
              )
              ON CONFLICT (personal_account_id, whatsapp_connection_id, provider_locator)
              DO UPDATE SET
+               name_prefix_indexes = EXCLUDED.name_prefix_indexes,
                display_name_ciphertext_version = EXCLUDED.display_name_ciphertext_version,
                display_name_key_version = EXCLUDED.display_name_key_version,
                display_name_nonce = EXCLUDED.display_name_nonce,
@@ -457,6 +470,7 @@ export const makeGroupRepository = (
               input.connectionId,
               entry.publicId,
               entry.locator,
+              entry.namePrefixIndexes,
               ...fields,
               entry.joined,
               input.observedAt,
@@ -470,6 +484,7 @@ export const makeGroupRepository = (
           const omitted = await connection.query<{ id: unknown }>(
             `UPDATE app.whatsapp_groups
              SET joined = false,
+                 name_prefix_indexes = ARRAY[]::app.group_name_blind_index[],
                  last_observed_at = $3,
                  provider_occurred_at = NULL,
                  provider_version = NULL,

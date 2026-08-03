@@ -127,6 +127,15 @@ const makeHarness = (providerFails = false) => {
           });
           const firstEntry = input.entries[0];
           if (firstEntry === undefined) throw new Error("missing group entry");
+          expect(firstEntry.namePrefixIndexes).toHaveLength(4);
+          expect(firstEntry.namePrefixIndexes).toEqual(
+            expect.arrayContaining([
+              expect.stringMatching(/^gi1_[A-Za-z0-9_-]{43}$/u),
+            ]),
+          );
+          expect(JSON.stringify(firstEntry.namePrefixIndexes)).not.toContain(
+            "fam",
+          );
           const protectedFields = await input.protect(
             firstEntry,
             "60000000-0000-4000-8000-000000000039",
@@ -150,13 +159,12 @@ const makeHarness = (providerFails = false) => {
 describe("group Directory reconciliation", () => {
   test("uses per-connection authority and atomically protects a complete observation", async () => {
     const harness = makeHarness();
-    await expect(
-      Effect.runPromise(
-        reconcileGroupDirectory(candidate, "2026-07-31T12:01:00.000Z").pipe(
-          Effect.provide(harness.layer),
-        ),
+    const result = await Effect.runPromise(
+      reconcileGroupDirectory(candidate, "2026-07-31T12:01:00.000Z").pipe(
+        Effect.provide(harness.layer),
       ),
-    ).resolves.toEqual({ applied: 1, unjoined: 0 });
+    );
+    expect(result).toEqual({ applied: 1, unjoined: 0 });
     expect(harness.calls).toEqual([
       'provider:{"sessionCredential":"session-api-key"}',
       "reconcile",

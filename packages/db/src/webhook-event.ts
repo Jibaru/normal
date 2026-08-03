@@ -111,6 +111,7 @@ export interface ProjectGroupInput extends WebhookItemBase {
   readonly itemIdentity: string;
   readonly joined: boolean;
   readonly locator: string;
+  readonly namePrefixIndexes: ReadonlyArray<string>;
   readonly providerIdentity: string;
   readonly publicId: string;
 }
@@ -798,6 +799,17 @@ export const makeWebhookEventRepository = (
   projectGroup: (input, protect, compareVersions) =>
     provider.withConnection((connection) =>
       withTransaction(connection, async () => {
+        if (
+          input.namePrefixIndexes.length > 62 ||
+          input.namePrefixIndexes.some(
+            (index) => !/^gi1_[A-Za-z0-9_-]{43}$/u.test(index),
+          ) ||
+          new Set(input.namePrefixIndexes).size !==
+            input.namePrefixIndexes.length ||
+          (!input.joined && input.namePrefixIndexes.length > 0)
+        ) {
+          throw new Error("invalid group name prefix indexes");
+        }
         await enterPersonalAccountContext(connection, input.personalAccountId);
         const target = await connection.query(
           `SELECT connections.id
@@ -866,20 +878,24 @@ export const makeWebhookEventRepository = (
           input.evidence.occurredAt ?? input.receivedAt;
         await connection.query(
           `INSERT INTO app.whatsapp_groups (
-             id, personal_account_id, whatsapp_connection_id, public_id,
-             provider_locator, display_name_ciphertext_version,
+               id, personal_account_id, whatsapp_connection_id, public_id,
+               provider_locator, name_prefix_indexes,
+               display_name_ciphertext_version,
              display_name_key_version, display_name_nonce,
              display_name_ciphertext, provider_identity_ciphertext_version,
              provider_identity_key_version, provider_identity_nonce,
              provider_identity_ciphertext, joined, last_observed_at,
              provider_occurred_at, provider_version, received_at,
              webhook_event_id, webhook_item_identity, created_at, updated_at
-           ) VALUES (
-             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-             $13, $14, $15, $16, $17, $18, $19, $20, $18, $18
+             ) VALUES (
+             $1, $2, $3, $4, $5,
+             $6::text[]::app.group_name_blind_index[],
+             $7, $8, $9, $10, $11, $12,
+             $13, $14, $15, $16, $17, $18, $19, $20, $21, $19, $19
            )
            ON CONFLICT (personal_account_id, whatsapp_connection_id, provider_locator)
            DO UPDATE SET
+             name_prefix_indexes = EXCLUDED.name_prefix_indexes,
              display_name_ciphertext_version = EXCLUDED.display_name_ciphertext_version,
              display_name_key_version = EXCLUDED.display_name_key_version,
              display_name_nonce = EXCLUDED.display_name_nonce,
@@ -902,6 +918,7 @@ export const makeWebhookEventRepository = (
             input.whatsappConnectionId,
             input.publicId,
             input.locator,
+            input.namePrefixIndexes,
             ...fields,
             input.joined,
             effectiveObservedAt,

@@ -1,3 +1,6 @@
+CREATE DOMAIN app.group_name_blind_index AS text
+CHECK (VALUE ~ '^gi1_[A-Za-z0-9_-]{43}$');
+
 CREATE TABLE app.whatsapp_group_directory_states (
   personal_account_id uuid NOT NULL,
   whatsapp_connection_id uuid NOT NULL,
@@ -25,6 +28,8 @@ CREATE TABLE app.whatsapp_groups (
     CHECK (public_id ~ '^grp_[A-Za-z0-9_-]{21}$'),
   provider_locator text NOT NULL
     CHECK (provider_locator ~ '^wi1_[A-Za-z0-9_-]{43}$'),
+  name_prefix_indexes app.group_name_blind_index[] NOT NULL
+    DEFAULT ARRAY[]::app.group_name_blind_index[],
   display_name_ciphertext_version smallint
     CHECK (display_name_ciphertext_version IS NULL OR display_name_ciphertext_version > 0),
   display_name_key_version integer
@@ -71,8 +76,14 @@ CREATE TABLE app.whatsapp_groups (
       AND display_name_ciphertext IS NOT NULL
       AND octet_length(display_name_ciphertext) > 16
     )
-  )
+  ),
+  CHECK (array_position(name_prefix_indexes, NULL) IS NULL),
+  CHECK (joined OR cardinality(name_prefix_indexes) = 0)
 );
+
+CREATE INDEX whatsapp_groups_joined_name_prefixes
+ON app.whatsapp_groups USING gin (name_prefix_indexes)
+WHERE joined;
 
 ALTER TABLE app.whatsapp_group_directory_states ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app.whatsapp_group_directory_states FORCE ROW LEVEL SECURITY;
@@ -235,6 +246,72 @@ REVOKE ALL
   FROM PUBLIC;
 GRANT EXECUTE
   ON FUNCTION app_private.load_mcp_group_projection_material(
+    uuid, text, text, timestamptz, text
+  )
+  TO whatsapp_api_runtime;
+
+CREATE FUNCTION app_private.load_mcp_group_search_material(
+  requested_authorization_id uuid,
+  requested_oauth_subject text,
+  requested_client_id text,
+  requested_at timestamptz,
+  requested_connection_public_id text
+)
+RETURNS TABLE (
+  connection_id uuid,
+  personal_account_id uuid,
+  account_key_version integer,
+  account_kms_key_id text,
+  account_key_ciphertext bytea,
+  connection_key_account_version integer,
+  connection_key_version integer,
+  connection_key_nonce bytea,
+  connection_key_ciphertext bytea,
+  identity_ciphertext_version smallint,
+  identity_key_version integer,
+  identity_nonce bytea,
+  identity_ciphertext bytea
+)
+LANGUAGE sql
+VOLATILE
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $function$
+  SELECT
+    material.connection_id,
+    material.personal_account_id,
+    material.account_key_version,
+    material.account_kms_key_id,
+    material.account_key_ciphertext,
+    material.connection_key_account_version,
+    material.connection_key_version,
+    material.connection_key_nonce,
+    material.connection_key_ciphertext,
+    identity_keys.credential_ciphertext_version,
+    identity_keys.credential_key_version,
+    identity_keys.credential_nonce,
+    identity_keys.credential_ciphertext
+  FROM app_private.load_mcp_group_projection_material(
+    requested_authorization_id,
+    requested_oauth_subject,
+    requested_client_id,
+    requested_at,
+    requested_connection_public_id
+  ) AS material
+  JOIN app.whatsapp_connection_secrets AS identity_keys
+    ON identity_keys.personal_account_id = material.personal_account_id
+   AND identity_keys.whatsapp_connection_id = material.connection_id
+   AND identity_keys.credential_key_version = material.connection_key_version
+  FOR SHARE OF identity_keys
+$function$;
+
+REVOKE ALL
+  ON FUNCTION app_private.load_mcp_group_search_material(
+    uuid, text, text, timestamptz, text
+  )
+  FROM PUBLIC;
+GRANT EXECUTE
+  ON FUNCTION app_private.load_mcp_group_search_material(
     uuid, text, text, timestamptz, text
   )
   TO whatsapp_api_runtime;

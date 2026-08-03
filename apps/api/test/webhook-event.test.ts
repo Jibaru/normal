@@ -154,6 +154,8 @@ const makeHarness = (options: HarnessOptions = {}) => {
         }),
       projectGroup: (input, protect) =>
         Effect.promise(async () => {
+          expect(input.namePrefixIndexes).toHaveLength(4);
+          expect(JSON.stringify(input.namePrefixIndexes)).not.toContain("fam");
           const protectedFields = await protect(
             "60000000-0000-4000-8000-000000000039",
           );

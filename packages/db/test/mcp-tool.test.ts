@@ -363,6 +363,31 @@ describe("MCP tool repository", () => {
          false, false, $2)`,
       [accountId, observedAt],
     );
+    await expect(
+      repository.listGroups({
+        ...authorization,
+        connectionPublicId: connectionA,
+        observedAt,
+        searchIndex: null,
+      }),
+    ).resolves.toMatchObject({ groups: [] });
+    await expect(
+      repository.loadGroupSearchMaterial({
+        ...authorization,
+        connectionPublicId: connectionA,
+        observedAt,
+      }),
+    ).resolves.toBeNull();
+    await database.query(
+      `INSERT INTO app.whatsapp_connection_secrets (
+         personal_account_id, whatsapp_connection_id, credential_ciphertext,
+         credential_ciphertext_version, credential_key_version,
+         credential_nonce
+       ) VALUES ($1, '20000000-0000-4000-8000-000000000030',
+         decode(repeat('07', 32), 'hex'), 1, 1,
+         decode(repeat('08', 12), 'hex'))`,
+      [accountId],
+    );
     await database.query(
       `INSERT INTO app.whatsapp_groups (
          id, personal_account_id, whatsapp_connection_id, public_id,
@@ -370,7 +395,7 @@ describe("MCP tool repository", () => {
          display_name_key_version, display_name_nonce,
          display_name_ciphertext, provider_identity_ciphertext_version,
          provider_identity_key_version, provider_identity_nonce,
-         provider_identity_ciphertext, joined, last_observed_at,
+         provider_identity_ciphertext, name_prefix_indexes, joined, last_observed_at,
          created_at, updated_at
        ) VALUES (
          '30000000-0000-4000-8000-000000000039', $1,
@@ -378,9 +403,10 @@ describe("MCP tool repository", () => {
          'grp_123456789012345678939', $2, 1, 1,
          decode(repeat('03', 12), 'hex'), decode(repeat('04', 20), 'hex'),
          1, 1, decode(repeat('05', 12), 'hex'),
-         decode(repeat('06', 20), 'hex'), true, $3, $3, $3
+         decode(repeat('06', 20), 'hex'),
+         ARRAY[$4::app.group_name_blind_index], true, $3, $3, $3
        )`,
-      [accountId, `wi1_${"A".repeat(43)}`, observedAt],
+      [accountId, `wi1_${"A".repeat(43)}`, observedAt, `gi1_${"A".repeat(43)}`],
     );
 
     await expect(
@@ -393,10 +419,28 @@ describe("MCP tool repository", () => {
         toolName: "list_groups",
       }),
     ).resolves.toMatchObject({ outcome: "started" });
+    await expect(
+      repository.loadGroupSearchMaterial({
+        ...authorization,
+        connectionPublicId: connectionA,
+        observedAt,
+      }),
+    ).resolves.toMatchObject({
+      identityKey: { keyVersion: 1, version: 1 },
+    });
+    await expect(
+      repository.listGroups({
+        ...authorization,
+        connectionPublicId: connectionA,
+        observedAt,
+        searchIndex: `gi1_${"B".repeat(43)}`,
+      }),
+    ).resolves.toMatchObject({ groups: [] });
     const page = await repository.listGroups({
       ...authorization,
       connectionPublicId: connectionA,
       observedAt,
+      searchIndex: `gi1_${"A".repeat(43)}`,
     });
     expect(page).toMatchObject({
       asOf: "2026-07-31T12:00:00.000Z",
@@ -412,7 +456,9 @@ describe("MCP tool repository", () => {
     expect(page?.groups[0]?.displayName?.ciphertext).not.toContain("Family");
 
     await database.query(
-      `UPDATE app.whatsapp_groups SET joined = false
+      `UPDATE app.whatsapp_groups
+       SET joined = false,
+           name_prefix_indexes = ARRAY[]::app.group_name_blind_index[]
        WHERE public_id = 'grp_123456789012345678939'`,
     );
     await expect(
@@ -420,6 +466,7 @@ describe("MCP tool repository", () => {
         ...authorization,
         connectionPublicId: connectionA,
         observedAt,
+        searchIndex: `gi1_${"A".repeat(43)}`,
       }),
     ).resolves.toMatchObject({ groups: [] });
     await expect(
@@ -427,6 +474,7 @@ describe("MCP tool repository", () => {
         ...authorization,
         connectionPublicId: connectionLater,
         observedAt,
+        searchIndex: null,
       }),
     ).resolves.toBeNull();
 
@@ -445,6 +493,7 @@ describe("MCP tool repository", () => {
         ...authorization,
         connectionPublicId: connectionA,
         observedAt,
+        searchIndex: null,
       }),
     ).resolves.toBeNull();
     await database.exec("SET ROLE whatsapp_api_runtime; BEGIN");

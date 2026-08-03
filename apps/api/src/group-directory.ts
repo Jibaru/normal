@@ -15,6 +15,10 @@ import {
   EnvelopeEncryptionService,
 } from "./encryption/envelope";
 import {
+  groupNamePrefixIndexes,
+  importGroupDirectoryIndexKey,
+} from "./group-privacy";
+import {
   SafeTelemetry,
   type SafeTelemetry as SafeTelemetryService,
 } from "./services";
@@ -172,23 +176,25 @@ export const reconcileGroupDirectory = (
         .pipe(
           Effect.flatMap((identityKey) =>
             withZeroed(identityKey, (identityBytes) =>
-              Effect.try({
-                try: () =>
-                  Redacted.make(
-                    new TextDecoder("utf-8", {
-                      fatal: true,
-                      ignoreBOM: false,
-                    }).decode(authorityBytes),
-                  ),
-                catch: () => new Error("invalid provider authority"),
-              }).pipe(
-                Effect.flatMap((decodedAuthority) =>
-                  provider.read({
-                    authority: decodedAuthority,
-                    identityKey: Redacted.make(identityBytes),
-                  }),
-                ),
-              ),
+              Effect.gen(function* () {
+                const indexKey =
+                  yield* importGroupDirectoryIndexKey(identityBytes);
+                const decodedAuthority = yield* Effect.try({
+                  try: () =>
+                    Redacted.make(
+                      new TextDecoder("utf-8", {
+                        fatal: true,
+                        ignoreBOM: false,
+                      }).decode(authorityBytes),
+                    ),
+                  catch: () => new Error("invalid provider authority"),
+                });
+                const value = yield* provider.read({
+                  authority: decodedAuthority,
+                  identityKey: Redacted.make(identityBytes),
+                });
+                return { indexKey, value };
+              }),
             ),
           ),
         ),
@@ -210,23 +216,30 @@ export const reconcileGroupDirectory = (
     }
 
     const entries: GroupProjectionEntry[] = [];
-    for (const group of observation.right.entries) {
+    for (const group of observation.right.value.entries) {
       const next = yield* identifiers.nextGroup;
       entries.push({
         displayName: group.displayName,
         groupId: next.id,
         joined: group.joined,
         locator: group.identity,
+        namePrefixIndexes: group.joined
+          ? yield* groupNamePrefixIndexes(
+              observation.right.indexKey,
+              candidate.connectionId,
+              group.displayName,
+            )
+          : [],
         providerIdentity: group.recipient,
         publicId: next.publicId,
       });
     }
     const result = yield* persistence.reconcile({
       claimId: candidate.claimId,
-      completeness: observation.right.completeness,
+      completeness: observation.right.value.completeness,
       connectionId: candidate.connectionId,
       entries,
-      observedAt: observation.right.observedAt,
+      observedAt: observation.right.value.observedAt,
       personalAccountId: candidate.personalAccountId,
       protect: async (entry, recordId) => ({
         displayName:
@@ -247,7 +260,7 @@ export const reconcileGroupDirectory = (
           entry.providerIdentity,
         ),
       }),
-      stale: observation.right.stale,
+      stale: observation.right.value.stale,
     });
     yield* telemetry.emit({
       appliedCount: result.applied,
