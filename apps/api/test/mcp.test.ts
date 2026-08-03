@@ -200,19 +200,16 @@ const makeHarness = (
     Layer.succeed(SendTextMessage, {
       send: () =>
         Effect.succeed(
-          overrides.scopes !== undefined &&
-            !overrides.scopes.includes("messages:send")
-            ? ({ outcome: "authorization_denied" } as const)
-            : (overrides.sendResult ?? {
-                outcome: "receipt" as const,
-                receipt: {
-                  send_id: "snd_123456789012345678901" as never,
-                  status: "accepted" as const,
-                  created_at: "2026-08-03T12:00:00.000Z" as never,
-                  status_changed_at: "2026-08-03T12:00:01.000Z" as never,
-                  idempotent_replay: false,
-                },
-              }),
+          overrides.sendResult ?? {
+            outcome: "receipt" as const,
+            receipt: {
+              send_id: "snd_123456789012345678901" as never,
+              status: "accepted" as const,
+              created_at: "2026-08-03T12:00:00.000Z" as never,
+              status_changed_at: "2026-08-03T12:00:01.000Z" as never,
+              idempotent_replay: false,
+            },
+          },
         ),
     }),
     Layer.succeed(McpToolPersistence, {
@@ -694,7 +691,16 @@ describe("stateless MCP list_connections boundary", () => {
           scope: "messages:send",
         },
       ] as const;
-      const harness = makeHarness({ scopes });
+      const harness = makeHarness({
+        scopes,
+        ...(!scopes.includes("messages:send")
+          ? {
+              sendResult: {
+                outcome: "authorization_denied" as const,
+              },
+            }
+          : {}),
+      });
       const discovery = (await (
         await harness.handler(
           jsonRpcRequest("tools/list"),
