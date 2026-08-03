@@ -1285,9 +1285,9 @@ export const makeMcpToolRepository = (
             content: deleted
               ? null
               : {
-                  ciphertext: base64(ciphertext),
+                  ciphertext: base64(ciphertext as Uint8Array),
                   keyVersion: keyVersion as number,
-                  nonce: base64(nonce),
+                  nonce: base64(nonce as Uint8Array),
                   version: 1,
                 },
             editedAt,
