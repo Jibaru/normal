@@ -132,9 +132,15 @@ for (const deployable of deployables) {
     }
   } else {
     const requiredSecretNames = [
+      "AWS_ACCESS_KEY_ID",
+      "AWS_SECRET_ACCESS_KEY",
+      "AWS_SESSION_TOKEN",
       "CLERK_JWT_KEY",
       "CLERK_SECRET_KEY",
       "CLERK_WEBHOOK_SIGNING_SECRET",
+      "DELETION_MARKER_HMAC_SECRET",
+      "KMS_CONTENT_ROOT_KEY_ARN",
+      "KMS_DELETION_COORDINATOR_KEY_ARN",
       "MCP_CURSOR_HMAC_SECRET",
       "OAUTH_PROTOCOL_ENCRYPTION_KEY",
       "SEND_FINGERPRINT_HMAC_SECRET",
@@ -158,7 +164,7 @@ for (const deployable of deployables) {
         JSON.stringify(requiredSecretNames)
       ) {
         throw new Error(
-          `API ${configurationName} configuration must require identity, cursor, send fingerprint, OAuth protocol, and WhatsApp Number reservation secrets.`,
+          `API ${configurationName} configuration must require its exact identity, KMS, database, cursor, send fingerprint, OAuth protocol, and WhatsApp Number reservation secrets.`,
         );
       }
       const environmentSuffix =
@@ -383,6 +389,8 @@ for (const deployable of deployables) {
       }
       const requiredBindings = [
         `env.OAUTH_KV (${oauthKvValidationId})`,
+        "env.HYPERDRIVE (00000000000000000000000000000000)",
+        "env.WEBHOOK_HYPERDRIVE (11111111111111111111111111111111)",
         `env.CONNECTION_SETUP_PROVISIONING_QUEUE (whatsapp-mcp-connection-setup-provisioning${workerSuffix})`,
         `env.INGESTION_QUEUE (whatsapp-mcp-ingestion${workerSuffix})`,
         `env.WEBHOOK_INGRESS (whatsapp-mcp-webhook-ingress${workerSuffix})`,

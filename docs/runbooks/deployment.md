@@ -121,6 +121,12 @@ tofu -chdir=infra/compute init \
 bun run build
 ```
 
+Populate `api_hyperdrive_id` and `webhook_hyperdrive_id` in the protected
+compute `.tfvars` from the matching `infra/production` outputs. They must be
+distinct and from the same environment. The compute plan binds them as
+`HYPERDRIVE` and `WEBHOOK_HYPERDRIVE`; no post-deployment dashboard edit is
+permitted.
+
 For a new environment only, create both Worker shells before the full plan so
 Cloudflare has targets for their version-scoped secrets. Review and apply this
 bootstrap target; it contains no Worker version or secret value:
@@ -202,8 +208,10 @@ wrangler secret list \
 ```
 
 The API list must include `CLERK_JWT_KEY`, `OAUTH_PROTOCOL_ENCRYPTION_KEY`,
-`MCP_CURSOR_HMAC_SECRET`, and `SEND_FINGERPRINT_HMAC_SECRET`; values are never
-printed. Keeping
+`MCP_CURSOR_HMAC_SECRET`, `SEND_FINGERPRINT_HMAC_SECRET`,
+`CLERK_SECRET_KEY`, `CLERK_WEBHOOK_SIGNING_SECRET`, the three short-lived AWS
+session credential names, both KMS key ARN names, `DELETION_MARKER_HMAC_SECRET`,
+and `WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET`; values are never printed. Keeping
 the public verification key in the secret store prevents unreviewed copying
 into source, browser bundles, plans, or state. Apply this external Clerk
 dashboard gate independently in development, preview, and production. The

@@ -82,7 +82,7 @@ resource "aws_cloudformation_stack" "kms" {
     DeletionCoordinatorAssumerArn = var.deletion_coordinator_assumer_arn
     ProviderControlAssumerArn     = var.provider_control_assumer_arn
     OrdinaryOperatorAssumerArn    = var.ordinary_operator_assumer_arn
-    BreakGlassAssumerArn           = var.break_glass_assumer_arn
+    BreakGlassAssumerArn          = var.break_glass_assumer_arn
   }
 
   lifecycle {

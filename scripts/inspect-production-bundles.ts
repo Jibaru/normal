@@ -19,6 +19,16 @@ const roots = [
   "apps/web/.next/static",
 ];
 
+const forbiddenImplementationPatterns = [
+  /(?:^|[\\/])tests?[\\/](?:support|fixtures|layers?)(?:[\\/]|$)/iu,
+  /makeInMemory[A-Za-z0-9_]*/u,
+  /(?:Deterministic|Fake|Test)Clock/u,
+  /fault[_-]?injector/iu,
+  /(?:authorization|auth)[_-]?disabled/iu,
+  /replace-with-[a-z0-9-]+/iu,
+  /\b(?:sk|pk)_live_[A-Za-z0-9_-]{20,}\b/u,
+] as const;
+
 const inspect = async (path: string): Promise<void> => {
   for (const entry of await readdir(path, { withFileTypes: true })) {
     const entryPath = join(path, entry.name);
@@ -33,14 +43,25 @@ const inspect = async (path: string): Promise<void> => {
     for (const marker of forbiddenMarkers) {
       if (contents.includes(marker)) {
         throw new Error(
-          `Prohibited plaintext found at production artifact ${entryPath}`,
+          `Prohibited production implementation found at production artifact ${entryPath}`,
         );
       }
+    }
+    if (
+      forbiddenImplementationPatterns.some((pattern) => pattern.test(contents))
+    ) {
+      throw new Error(
+        `Prohibited production implementation found at production artifact ${entryPath}`,
+      );
     }
   }
 };
 
-await Promise.all(roots.map(inspect));
+export const inspectArtifactRoots = async (
+  artifactRoots: ReadonlyArray<string>,
+): Promise<void> => {
+  await Promise.all(artifactRoots.map(inspect));
+};
 
 const inspectForForbiddenAuthority = async (
   path: string,
@@ -64,39 +85,44 @@ const inspectForForbiddenAuthority = async (
   }
 };
 
-await Promise.all([
-  inspectForForbiddenAuthority("apps/api/dist", [
-    "WASENDER_API_CREDENTIAL",
-    "WASENDER_REFERENCE_SECRET",
-  ]),
-  inspectForForbiddenAuthority("apps/web/.next/server", [
-    "MCP_CURSOR_HMAC_SECRET",
-    "SEND_FINGERPRINT_HMAC_SECRET",
-    "WASENDER_API_CREDENTIAL",
-    "WASENDER_REFERENCE_SECRET",
-    "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
-  ]),
-  inspectForForbiddenAuthority("apps/provider-control/dist", [
-    "AWS_ACCESS_KEY_ID",
-    "AWS_SECRET_ACCESS_KEY",
-    "AWS_SESSION_TOKEN",
-    "DATABASE_URL",
-    "HYPERDRIVE",
-    "KMS_CONTENT_ROOT_KEY_ARN",
-    "MCP_CURSOR_HMAC_SECRET",
-    "STORED_MEDIA",
-    "WEBHOOK_INGRESS",
-    "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
-    "MCP_CURSOR_HMAC_SECRET",
-  ]),
-  inspectForForbiddenAuthority("apps/deletion-coordinator/dist", [
-    "KMS_CONTENT_ROOT_KEY_ARN",
-    "MCP_CURSOR_HMAC_SECRET",
-    "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
-    "STORED_MEDIA",
-    "WEBHOOK_INGRESS",
-  ]),
-]);
-console.info(
-  "Production outputs and source maps contain no prohibited plaintext, test Layers, fakes, or fault injectors.",
-);
+const inspectProductionBundles = async (): Promise<void> => {
+  await inspectArtifactRoots(roots);
+  await Promise.all([
+    inspectForForbiddenAuthority("apps/api/dist", [
+      "WASENDER_API_CREDENTIAL",
+      "WASENDER_REFERENCE_SECRET",
+    ]),
+    inspectForForbiddenAuthority("apps/web/.next/server", [
+      "MCP_CURSOR_HMAC_SECRET",
+      "SEND_FINGERPRINT_HMAC_SECRET",
+      "WASENDER_API_CREDENTIAL",
+      "WASENDER_REFERENCE_SECRET",
+      "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
+    ]),
+    inspectForForbiddenAuthority("apps/provider-control/dist", [
+      "AWS_ACCESS_KEY_ID",
+      "AWS_SECRET_ACCESS_KEY",
+      "AWS_SESSION_TOKEN",
+      "DATABASE_URL",
+      "HYPERDRIVE",
+      "KMS_CONTENT_ROOT_KEY_ARN",
+      "MCP_CURSOR_HMAC_SECRET",
+      "STORED_MEDIA",
+      "WEBHOOK_INGRESS",
+      "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
+      "MCP_CURSOR_HMAC_SECRET",
+    ]),
+    inspectForForbiddenAuthority("apps/deletion-coordinator/dist", [
+      "KMS_CONTENT_ROOT_KEY_ARN",
+      "MCP_CURSOR_HMAC_SECRET",
+      "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
+      "STORED_MEDIA",
+      "WEBHOOK_INGRESS",
+    ]),
+  ]);
+  console.info(
+    "Production outputs and source maps contain no prohibited plaintext, test Layers, fakes, or fault injectors.",
+  );
+};
+
+if (import.meta.main) await inspectProductionBundles();

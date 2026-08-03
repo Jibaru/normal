@@ -461,6 +461,38 @@ resource "cloudflare_worker_version" "api" {
       type = "inherit"
     },
     {
+      name = "CLERK_SECRET_KEY"
+      type = "inherit"
+    },
+    {
+      name = "CLERK_WEBHOOK_SIGNING_SECRET"
+      type = "inherit"
+    },
+    {
+      name = "AWS_ACCESS_KEY_ID"
+      type = "inherit"
+    },
+    {
+      name = "AWS_SECRET_ACCESS_KEY"
+      type = "inherit"
+    },
+    {
+      name = "AWS_SESSION_TOKEN"
+      type = "inherit"
+    },
+    {
+      name = "KMS_CONTENT_ROOT_KEY_ARN"
+      type = "inherit"
+    },
+    {
+      name = "KMS_DELETION_COORDINATOR_KEY_ARN"
+      type = "inherit"
+    },
+    {
+      name = "DELETION_MARKER_HMAC_SECRET"
+      type = "inherit"
+    },
+    {
       name = "MCP_CURSOR_HMAC_SECRET"
       type = "inherit"
     },
@@ -528,12 +560,18 @@ resource "cloudflare_worker_version" "api" {
       type = "plain_text"
     },
     {
-      name = "MCP_CURSOR_HMAC_SECRET"
+      name = "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET"
       type = "inherit"
     },
     {
-      name = "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET"
-      type = "inherit"
+      id   = var.api_hyperdrive_id
+      name = "HYPERDRIVE"
+      type = "hyperdrive"
+    },
+    {
+      id   = var.webhook_hyperdrive_id
+      name = "WEBHOOK_HYPERDRIVE"
+      type = "hyperdrive"
     },
     {
       name         = "OAUTH_KV"

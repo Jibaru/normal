@@ -28,6 +28,26 @@ variable "cloudflare_zone_id" {
   }
 }
 
+variable "api_hyperdrive_id" {
+  description = "Same-environment Hyperdrive configuration used by the API runtime role."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{32}$", var.api_hyperdrive_id))
+    error_message = "api_hyperdrive_id must be a 32-character lowercase hexadecimal ID."
+  }
+}
+
+variable "webhook_hyperdrive_id" {
+  description = "Same-environment Hyperdrive configuration used by the restricted webhook runtime role."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{32}$", var.webhook_hyperdrive_id)) && var.webhook_hyperdrive_id != var.api_hyperdrive_id
+    error_message = "webhook_hyperdrive_id must be a distinct 32-character lowercase hexadecimal ID."
+  }
+}
+
 variable "vercel_team_id" {
   description = "Vercel team dedicated to this environment's authority scope."
   type        = string

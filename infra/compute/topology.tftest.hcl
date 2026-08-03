@@ -12,6 +12,8 @@ run "development_topology" {
     deployment_environment             = "development"
     cloudflare_account_id              = "11111111111111111111111111111111"
     cloudflare_zone_id                 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    api_hyperdrive_id                  = "11111111111111111111111111111111"
+    webhook_hyperdrive_id              = "22222222222222222222222222222222"
     vercel_team_id                     = "team_developmentvalidation"
     api_hostname                       = "api.dev.example.com"
     web_hostname                       = "app.dev.example.com"
@@ -94,12 +96,22 @@ run "development_topology" {
       "${binding.type}:${binding.name}"
       ]) == toset([
       "inherit:CLERK_JWT_KEY",
+      "inherit:CLERK_SECRET_KEY",
+      "inherit:CLERK_WEBHOOK_SIGNING_SECRET",
+      "inherit:AWS_ACCESS_KEY_ID",
+      "inherit:AWS_SECRET_ACCESS_KEY",
+      "inherit:AWS_SESSION_TOKEN",
+      "inherit:DELETION_MARKER_HMAC_SECRET",
+      "inherit:KMS_CONTENT_ROOT_KEY_ARN",
+      "inherit:KMS_DELETION_COORDINATOR_KEY_ARN",
       "inherit:MCP_CURSOR_HMAC_SECRET",
       "inherit:NEON_BRANCH_ID",
       "inherit:SEND_FINGERPRINT_HMAC_SECRET",
       "inherit:OAUTH_PROTOCOL_ENCRYPTION_KEY",
       "inherit:WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
       "kv_namespace:OAUTH_KV",
+      "hyperdrive:HYPERDRIVE",
+      "hyperdrive:WEBHOOK_HYPERDRIVE",
       "plain_text:CLERK_API_AUDIENCE",
       "plain_text:CLERK_AUTHORIZED_PARTY",
       "plain_text:CLERK_ISSUER",
@@ -228,6 +240,8 @@ run "preview_topology" {
     deployment_environment             = "preview"
     cloudflare_account_id              = "22222222222222222222222222222222"
     cloudflare_zone_id                 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    api_hyperdrive_id                  = "33333333333333333333333333333333"
+    webhook_hyperdrive_id              = "44444444444444444444444444444444"
     vercel_team_id                     = "team_previewvalidation"
     api_hostname                       = "api.preview.example.com"
     web_hostname                       = "app.preview.example.com"
@@ -275,6 +289,8 @@ run "production_topology" {
     deployment_environment             = "production"
     cloudflare_account_id              = "33333333333333333333333333333333"
     cloudflare_zone_id                 = "cccccccccccccccccccccccccccccccc"
+    api_hyperdrive_id                  = "55555555555555555555555555555555"
+    webhook_hyperdrive_id              = "66666666666666666666666666666666"
     vercel_team_id                     = "team_productionvalidation"
     api_hostname                       = "api.example.com"
     web_hostname                       = "app.example.com"
@@ -387,6 +403,8 @@ run "reject_same_web_and_api_origin" {
     deployment_environment             = "production"
     cloudflare_account_id              = "33333333333333333333333333333333"
     cloudflare_zone_id                 = "cccccccccccccccccccccccccccccccc"
+    api_hyperdrive_id                  = "55555555555555555555555555555555"
+    webhook_hyperdrive_id              = "66666666666666666666666666666666"
     vercel_team_id                     = "team_productionvalidation"
     api_hostname                       = "app.example.com"
     web_hostname                       = "app.example.com"

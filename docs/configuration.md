@@ -4,6 +4,16 @@ Configuration is validated in each production Effect composition root before a
 request is accepted. Production roots accept only `development`, `preview`, or
 `production`; `test` is reserved for statically separate test Layers.
 
+The table below is the environment and secret inventory. “Source and rotation”
+states both the generation or issuance method and the rotation expectation.
+The checked example files are the placeholder-example contract: secrets and
+environment-specific values are deliberately unusable and contain
+`replace-with`, an example-only hostname or account, or an explicitly
+non-production development value. Fixed non-secret policy values such as the
+KMS region remain exact. A production composition root, manifest renderer,
+operator command, or infrastructure variable must reject placeholder forms.
+Secret examples never contain usable key material.
+
 | Value | Sensitivity | Consumer | Source and rotation |
 | --- | --- | --- | --- |
 | `DEPLOYMENT_ENVIRONMENT` | Non-secret | Web, API, provider-control | Set to the deployed environment. Change only as part of a deployment. |
@@ -29,6 +39,7 @@ request is accepted. Production roots accept only `development`, `preview`, or
 | `SENDS_PER_MINUTE` | Non-secret approved quota | API outbound-send workflow | Per-authorization exact rolling-minute send reservation limit. There is no production default. |
 | `SENDS_PER_DAY` | Non-secret approved quota | API outbound-send workflow | Per-Personal-Account UTC-day send reservation limit. There is no production default. |
 | `PROVIDER_APPROVED_SESSION_CAPACITY` | Non-secret operational limit | API | Vendor-approved session ceiling for the environment. Set the reviewed integer through `provider_approved_session_capacity`; missing, placeholder, fractional, or values below three fail closed. Increase only after written provider approval. |
+| `MESSAGE_RETENTION_DAY_OPTIONS` | Non-secret reviewed product policy | API and web Message Retention Policy controls | Set to the reviewed strictly increasing comma-separated finite-day choices containing the 30-day default; `7,30,90` is the private-beta example. Change only through a reviewed product deployment. |
 | `DATABASE_URL` | Secret | Database tooling that consumes `@whatsapp-mcp/db/config` | Issue a restricted Neon role URL, store it in the deployment secret store, and rotate it through Neon plus the deployment platform. API production traffic uses Hyperdrive instead. |
 | `MIGRATION_DATABASE_URL` | Secret | `bun run db:migrate` and `bun run db:check` | Obtain the direct, unpooled owner URL from the sensitive OpenTofu output. It must be a TLS Neon URL and must never be configured on a Worker or web deployable. Rotate it by rotating the Neon migration-owner password. |
 | `NEON_API_KEY` | Secret | OpenTofu Neon provider | Issue an organization-scoped automation key, keep it only in the infrastructure runner, and rotate it in Neon. |
@@ -604,6 +615,8 @@ repository:
 | `deployment_environment` | Exactly `development`, `preview`, or `production`. |
 | `cloudflare_account_id` | Account restricted to that environment's authority scope. |
 | `cloudflare_zone_id` | Zone that contains the API hostname. |
+| `api_hyperdrive_id` | Exact same-environment Hyperdrive ID backed by the restricted API runtime role; obtain it from `infra/production` output. |
+| `webhook_hyperdrive_id` | Distinct same-environment Hyperdrive ID backed by the restricted webhook runtime role; obtain it from `infra/production` output. |
 | `vercel_team_id` | Team restricted to that environment's authority scope. |
 | `api_hostname` | Public custom hostname routed to the API Worker. |
 | `web_hostname` | Distinct public hostname assigned to the Vercel web project. |
@@ -614,6 +627,10 @@ repository:
 | `provider_approved_session_capacity` | Required reviewed integer ceiling; each admitted Personal Account reserves three sessions. |
 | `mcp_requests_per_minute` | Required approved positive integer for authoritative per-Personal-Account requests in an exact rolling minute. |
 | `mcp_requests_per_hour` | Required approved integer for authoritative per-Personal-Account requests in an exact rolling hour; at least the minute value. |
+| `read_message_records_per_day` | Required approved positive integer for UTC-day Stored Message record reservations. |
+| `decrypted_media_bytes_per_day` | Required approved positive integer for UTC-day decrypted Stored Media byte reservations. |
+| `sends_per_minute` | Required approved positive integer for per-authorization rolling-minute send reservations. |
+| `sends_per_day` | Required approved positive integer for per-Personal-Account UTC-day send reservations. |
 
 Provider and backend credentials are ambient only:
 
