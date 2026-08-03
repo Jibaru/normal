@@ -31,13 +31,28 @@ describe("deployed production smoke command", () => {
         return json({ service: "api", status: "ready" });
       if (url.pathname === "/.well-known/oauth-authorization-server")
         return json({
+          authorization_endpoint: `${url.origin}/oauth/authorize`,
+          code_challenge_methods_supported: ["S256"],
           issuer: url.origin,
+          scopes_supported: [
+            "connections:read",
+            "directory:read",
+            "messages:read",
+            "messages:send",
+          ],
           token_endpoint: `${url.origin}/oauth/token`,
         });
       if (url.pathname === "/.well-known/oauth-protected-resource/mcp")
         return json({
           authorization_servers: [url.origin],
+          bearer_methods_supported: ["header"],
           resource: `${url.origin}/mcp`,
+          scopes_supported: [
+            "connections:read",
+            "directory:read",
+            "messages:read",
+            "messages:send",
+          ],
         });
       if (url.pathname === "/mcp") {
         const payload = (await request.json()) as { id: string };
@@ -123,9 +138,30 @@ describe("deployed production smoke command", () => {
       if (url.pathname === "/ready")
         return json({ service: "api", status: "ready" });
       if (url.pathname === "/.well-known/oauth-authorization-server")
-        return json({ issuer: url.origin });
+        return json({
+          authorization_endpoint: `${url.origin}/oauth/authorize`,
+          code_challenge_methods_supported: ["S256"],
+          issuer: url.origin,
+          scopes_supported: [
+            "connections:read",
+            "directory:read",
+            "messages:read",
+            "messages:send",
+          ],
+          token_endpoint: `${url.origin}/oauth/token`,
+        });
       if (url.pathname === "/.well-known/oauth-protected-resource/mcp")
-        return json({ resource: `${url.origin}/mcp` });
+        return json({
+          authorization_servers: [url.origin],
+          bearer_methods_supported: ["header"],
+          resource: `${url.origin}/mcp`,
+          scopes_supported: [
+            "connections:read",
+            "directory:read",
+            "messages:read",
+            "messages:send",
+          ],
+        });
       if (url.pathname === "/mcp") {
         const payload = (await request.json()) as { id: string };
         return json({ id: payload.id, jsonrpc: "2.0", result: {} });

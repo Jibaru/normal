@@ -2724,7 +2724,6 @@ export const createProductionQueueHandler =
       environment.HYPERDRIVE?.connectionString ?? "",
       environment.NEON_BRANCH_ID,
     );
-    if (await handleDeploymentSmokeMessages(batch, environment)) return;
     if (batch.queue === replayQueueName(environment)) {
       const layer = Layer.mergeAll(
         telemetryLayer,
@@ -2743,12 +2742,17 @@ export const createProductionQueueHandler =
       return;
     }
     if (batch.queue === ingestionQueueName(environment)) {
+      const ingestionBatch = await handleDeploymentSmokeMessages(
+        batch,
+        environment,
+      );
+      if (ingestionBatch.messages.length === 0) return;
       const layer = Layer.mergeAll(
         encryptionLayer(environment),
         telemetryLayer,
         webhookEventRuntimeLayer(environment),
       );
-      await handleWebhookEventBatch(batch, layer);
+      await handleWebhookEventBatch(ingestionBatch, layer);
       return;
     }
     if (batch.queue !== provisioningQueueName(environment)) {

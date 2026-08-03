@@ -11,10 +11,22 @@ interface Dependencies {
 }
 
 const remediation = "bun run deploy:smoke";
+const scopes = [
+  "connections:read",
+  "directory:read",
+  "messages:read",
+  "messages:send",
+];
+const canaryPattern = /^smk_[A-Za-z0-9_-]{43}$/u;
 
 const fail = (subsystem: string): never => {
   throw new Error(`${subsystem} failed; remediate with: ${remediation}`);
 };
+
+const sameStrings = (value: unknown, expected: ReadonlyArray<string>) =>
+  Array.isArray(value) &&
+  value.length === expected.length &&
+  expected.every((item) => value.includes(item));
 
 const requestJson = async (
   fetch: (input: string, init?: RequestInit) => Promise<Response>,
@@ -72,7 +84,18 @@ export const runDeploymentSmoke = async (
     "oauth",
     `${api}/.well-known/oauth-protected-resource/mcp`,
   );
-  if (authorization.issuer !== api || resource.resource !== `${api}/mcp`)
+  if (
+    authorization.issuer !== api ||
+    authorization.authorization_endpoint !== `${api}/oauth/authorize` ||
+    authorization.token_endpoint !== `${api}/oauth/token` ||
+    !sameStrings(authorization.code_challenge_methods_supported, ["S256"]) ||
+    !sameStrings(authorization.scopes_supported, scopes) ||
+    "registration_endpoint" in authorization ||
+    resource.resource !== `${api}/mcp` ||
+    !sameStrings(resource.authorization_servers, [api]) ||
+    !sameStrings(resource.bearer_methods_supported, ["header"]) ||
+    !sameStrings(resource.scopes_supported, scopes)
+  )
     fail("oauth");
 
   const mcpHeaders = {
@@ -104,7 +127,8 @@ export const runDeploymentSmoke = async (
     },
   );
   const canaryId =
-    typeof started.canary_id === "string"
+    typeof started.canary_id === "string" &&
+    canaryPattern.test(started.canary_id)
       ? started.canary_id
       : fail("deployment-canary");
 

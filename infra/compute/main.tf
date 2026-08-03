@@ -501,6 +501,10 @@ resource "cloudflare_worker_version" "api" {
       type = "inherit"
     },
     {
+      name = "SMOKE_CHECK_SECRET"
+      type = "inherit"
+    },
+    {
       name = "OAUTH_CLIENT_REGISTRY"
       text = local.oauth_client_registry
       type = "plain_text"

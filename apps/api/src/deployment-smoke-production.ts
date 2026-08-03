@@ -30,6 +30,20 @@ const isSmokeMessage = (value: unknown): value is SmokeMessage =>
     (value as Record<string, unknown>).canaryId as string,
   );
 
+export const partitionDeploymentSmokeMessages = (batch: MessageBatch) => {
+  const smoke = batch.messages.filter((message) =>
+    isSmokeMessage(message.body),
+  );
+  const handled = new Set(smoke);
+  return {
+    remaining: {
+      ...batch,
+      messages: batch.messages.filter((message) => !handled.has(message)),
+    } as MessageBatch,
+    smoke,
+  };
+};
+
 const base64 = (value: Uint8Array) => btoa(String.fromCharCode(...value));
 const unbase64 = (value: string) =>
   Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
@@ -76,22 +90,26 @@ export const makeProductionDeploymentSmoke = (
     );
     if (!generated.Plaintext || !generated.CiphertextBlob)
       throw new Error("KMS unavailable");
-    const key = await crypto.subtle.importKey(
-      "raw",
-      generated.Plaintext,
-      "AES-GCM",
-      false,
-      ["encrypt"],
-    );
+    let ciphertext: Uint8Array;
     const iv = crypto.getRandomValues(new Uint8Array(12));
-    const ciphertext = new Uint8Array(
-      await crypto.subtle.encrypt(
-        { name: "AES-GCM", iv, additionalData: encoder.encode(canaryId) },
-        key,
-        encoder.encode(canaryId),
-      ),
-    );
-    generated.Plaintext.fill(0);
+    try {
+      const key = await crypto.subtle.importKey(
+        "raw",
+        generated.Plaintext,
+        "AES-GCM",
+        false,
+        ["encrypt"],
+      );
+      ciphertext = new Uint8Array(
+        await crypto.subtle.encrypt(
+          { name: "AES-GCM", iv, additionalData: encoder.encode(canaryId) },
+          key,
+          encoder.encode(canaryId),
+        ),
+      );
+    } finally {
+      generated.Plaintext.fill(0);
+    }
     try {
       await (environment.STORED_MEDIA as R2Bucket).put(
         objectKey(canaryId),
@@ -135,11 +153,10 @@ export const makeProductionDeploymentSmoke = (
 export const handleDeploymentSmokeMessages = async (
   batch: MessageBatch,
   environment: ApiEnvironment,
-): Promise<boolean> => {
-  const messages = batch.messages.filter((message) =>
-    isSmokeMessage(message.body),
-  );
-  if (messages.length === 0) return false;
+): Promise<MessageBatch> => {
+  const { remaining, smoke: messages } =
+    partitionDeploymentSmokeMessages(batch);
+  if (messages.length === 0) return batch;
   for (const message of messages) {
     const { canaryId } = message.body as SmokeMessage;
     try {
@@ -160,23 +177,27 @@ export const handleDeploymentSmokeMessages = async (
         }),
       );
       if (!decrypted.Plaintext) throw new Error("KMS unavailable");
-      const key = await crypto.subtle.importKey(
-        "raw",
-        decrypted.Plaintext,
-        "AES-GCM",
-        false,
-        ["decrypt"],
-      );
-      const plaintext = await crypto.subtle.decrypt(
-        {
-          name: "AES-GCM",
-          iv: unbase64(value.iv),
-          additionalData: encoder.encode(canaryId),
-        },
-        key,
-        unbase64(value.ciphertext),
-      );
-      decrypted.Plaintext.fill(0);
+      let plaintext: ArrayBuffer;
+      try {
+        const key = await crypto.subtle.importKey(
+          "raw",
+          decrypted.Plaintext,
+          "AES-GCM",
+          false,
+          ["decrypt"],
+        );
+        plaintext = await crypto.subtle.decrypt(
+          {
+            name: "AES-GCM",
+            iv: unbase64(value.iv),
+            additionalData: encoder.encode(canaryId),
+          },
+          key,
+          unbase64(value.ciphertext),
+        );
+      } finally {
+        decrypted.Plaintext.fill(0);
+      }
       if (new TextDecoder().decode(plaintext) !== canaryId)
         throw new Error("canary mismatch");
       await (environment.STORED_MEDIA as R2Bucket).delete(objectKey(canaryId));
@@ -196,5 +217,5 @@ export const handleDeploymentSmokeMessages = async (
       message.ack();
     }
   }
-  return true;
+  return remaining;
 };

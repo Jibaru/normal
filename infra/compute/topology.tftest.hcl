@@ -107,6 +107,7 @@ run "development_topology" {
       "inherit:MCP_CURSOR_HMAC_SECRET",
       "inherit:NEON_BRANCH_ID",
       "inherit:SEND_FINGERPRINT_HMAC_SECRET",
+      "inherit:SMOKE_CHECK_SECRET",
       "inherit:OAUTH_PROTOCOL_ENCRYPTION_KEY",
       "inherit:WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
       "kv_namespace:OAUTH_KV",
