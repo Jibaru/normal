@@ -156,7 +156,7 @@ describe("restore-safe deletion markers", () => {
     ]);
   });
 
-  test("fails closed if the immutable marker key already has different timestamps", async () => {
+  test("reuses locked timestamps when a deletion request is retried", async () => {
     const storage = makeBucket();
     const markers = makeDeletionMarkerStore({
       bucket: storage.bucket,
@@ -170,24 +170,17 @@ describe("restore-safe deletion markers", () => {
       requestedAt: "2026-07-31T12:00:00.000Z",
     };
 
-    await Effect.runPromise(markers.create(base));
-
-    const result = await Effect.runPromise(
-      Effect.either(
-        markers.create({
-          ...base,
-          keyUnavailableAt: "2026-07-31T12:02:00.000Z",
-        }),
-      ),
+    const first = await Effect.runPromise(markers.create(base));
+    const replay = await Effect.runPromise(
+      markers.create({
+        ...base,
+        keyUnavailableAt: "2026-07-31T12:03:00.000Z",
+        requestedAt: "2026-07-31T12:02:00.000Z",
+      }),
     );
 
-    expect(result).toMatchObject({
-      _tag: "Left",
-      left: {
-        _tag: "DeletionPrimitiveError",
-        operation: "create-marker",
-      },
-    });
+    expect(replay).toEqual(first);
+    expect(storage.objects).toHaveLength(1);
   });
 
   test("enumerates and validates every marker page for restore replay", async () => {

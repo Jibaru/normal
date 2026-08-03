@@ -640,7 +640,7 @@ const deleteWhatsAppConnection = (clerkUserId: string, publicId: string) =>
         const receipt = yield* persistence.finishDeletion({
           clerkUserId,
           publicId,
-          requestedAt,
+          requestedAt: marker.marker.requestedAt,
           deletionMarkerId: marker.markerId,
         });
         if (receipt === null)

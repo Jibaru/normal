@@ -194,9 +194,14 @@ export const makeDeletionMarkerStore = ({
         });
         if (stored === null) {
           const existing = await bucket.get(objectKey);
-          if (!existing || (await existing.text()) !== body) {
+          if (!existing) {
             throw operationError("create-marker");
           }
+          const existingMarker = parseMarker(await existing.text());
+          if (existingMarker.deletionKind !== input.deletionKind) {
+            throw operationError("create-marker");
+          }
+          return { marker: existingMarker, markerId, objectKey };
         }
         return { marker, markerId, objectKey };
       },
