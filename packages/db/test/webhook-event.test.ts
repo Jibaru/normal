@@ -458,6 +458,7 @@ describe("Webhook Event repository", () => {
     const privileges = await database.query<{
       can_delete_pending: boolean;
       can_select_pending_identity: boolean;
+      can_update_message_identity: boolean;
     }>(
       `SELECT has_table_privilege(
          'whatsapp_webhook_runtime', 'app.pending_send_contents', 'DELETE'
@@ -468,10 +469,18 @@ describe("Webhook Event repository", () => {
        ) AND has_column_privilege(
          'whatsapp_webhook_runtime', 'app.pending_send_contents',
          'send_operation_id', 'SELECT'
-       ) AS can_select_pending_identity`,
+       ) AS can_select_pending_identity,
+       has_column_privilege(
+         'whatsapp_webhook_runtime', 'app.send_operations',
+         'message_identity', 'UPDATE'
+       ) AS can_update_message_identity`,
     );
     expect(privileges.rows).toEqual([
-      { can_delete_pending: true, can_select_pending_identity: true },
+      {
+        can_delete_pending: true,
+        can_select_pending_identity: true,
+        can_update_message_identity: false,
+      },
     ]);
   });
 
