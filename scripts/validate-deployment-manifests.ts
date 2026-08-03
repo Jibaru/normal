@@ -1,6 +1,10 @@
 const repositoryRoot = import.meta.dir.replace(/\/scripts$/, "");
 const environments = ["development", "preview", "production"] as const;
-const deployables = ["api", "provider-control"] as const;
+const deployables = [
+  "api",
+  "deletion-coordinator",
+  "provider-control",
+] as const;
 const oauthKvValidationId = "22222222222222222222222222222222";
 
 for (const deployable of deployables) {
@@ -50,6 +54,41 @@ for (const deployable of deployables) {
         throw new Error(
           `Provider-control ${configurationName} configuration must require both lifecycle secrets.`,
         );
+      }
+    }
+  } else if (deployable === "deletion-coordinator") {
+    const configurations = [
+      ["top level", manifest],
+      ...Object.entries(
+        (manifest.env as Record<string, Record<string, unknown>> | undefined) ??
+          {},
+      ),
+    ] as const;
+    const required = [
+      "AWS_ACCESS_KEY_ID",
+      "AWS_SECRET_ACCESS_KEY",
+      "AWS_SESSION_TOKEN",
+      "DELETION_COORDINATOR_DATABASE_URL",
+      "KMS_DELETION_COORDINATOR_KEY_ARN",
+    ].sort();
+    for (const [name, configuration] of configurations) {
+      const secrets = (
+        configuration.secrets as
+          | { readonly required?: ReadonlyArray<string> }
+          | undefined
+      )?.required;
+      if (
+        JSON.stringify([...(secrets ?? [])].sort()) !== JSON.stringify(required)
+      ) {
+        throw new Error(
+          `Deletion coordinator ${name} must require its isolated KMS and database credentials.`,
+        );
+      }
+      for (const forbidden of ["hyperdrive", "kv_namespaces", "queues"]) {
+        if (forbidden in configuration)
+          throw new Error(
+            `Deletion coordinator must not declare ${forbidden}.`,
+          );
       }
     }
   } else {
@@ -244,7 +283,11 @@ for (const deployable of deployables) {
       );
     }
 
-    if (!output.includes(`env.DEPLOYMENT_ENVIRONMENT ("${environment}")`)) {
+    const environmentBinding =
+      deployable === "deletion-coordinator"
+        ? "ENVIRONMENT"
+        : "DEPLOYMENT_ENVIRONMENT";
+    if (!output.includes(`env.${environmentBinding} ("${environment}")`)) {
       throw new Error(
         `${deployable}'s ${environment} manifest has the wrong environment binding.`,
       );
@@ -258,6 +301,17 @@ for (const deployable of deployables) {
     ) {
       throw new Error(
         `API ${environment} does not bind to provider-control in the same environment.`,
+      );
+    }
+
+    if (
+      deployable === "deletion-coordinator" &&
+      !output.includes(
+        `env.PROVIDER_CONTROL (whatsapp-mcp-provider-control${workerSuffix})`,
+      )
+    ) {
+      throw new Error(
+        `Deletion coordinator ${environment} is not bound to provider-control.`,
       );
     }
 
@@ -298,6 +352,7 @@ for (const deployable of deployables) {
         }
       }
     } else if (
+      deployable === "provider-control" &&
       ["KV Namespace", "Queue", "R2 Bucket"].some((resource) =>
         output.includes(resource),
       )

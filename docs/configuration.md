@@ -35,14 +35,15 @@ request is accepted. Production roots accept only `development`, `preview`, or
 | `CLOUDFLARE_HYPERDRIVE_ID` | Sensitive identifier | API Wrangler config renderer | Set from OpenTofu output `api_hyperdrive_id`; it is rendered into a mode-0600 generated config, not committed. |
 | `CLOUDFLARE_OAUTH_KV_ID` | Sensitive identifier | API Wrangler config renderer | Set from the sensitive `infra/compute` output `oauth_kv_namespace_id`; the renderer rejects a missing or malformed identifier. |
 | `CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID` | Sensitive identifier | API Wrangler config renderer | Set from OpenTofu output `webhook_hyperdrive_id`; it is rendered into a mode-0600 generated config, not committed. |
-| `AWS_KMS_REGION` | Non-secret | API | Must be exactly `us-east-1`, matching ADR 0013 and the KMS stack region. |
+| `AWS_KMS_REGION` | Non-secret | API and deletion coordinator | Must be exactly `us-east-1`, matching ADR 0013 and the KMS stack region. |
 | `KMS_CONTENT_ROOT_KEY_ARN` | Non-secret | API | The environment's `ContentRootKeyArn` CloudFormation output. The production root accepts only a `us-east-1` KMS key ARN. |
-| `KMS_DELETION_COORDINATOR_KEY_ARN` | Non-secret | API Deletion Capsule writer | The environment's distinct `DeletionCoordinatorKeyArn` output. The Content Runtime role may encrypt capsules with it but cannot decrypt them. |
+| `KMS_DELETION_COORDINATOR_KEY_ARN` | Non-secret | API Deletion Capsule writer and deletion coordinator | The environment's distinct `DeletionCoordinatorKeyArn` output. The Content Runtime role may encrypt capsules but cannot decrypt them; the coordinator role may decrypt but cannot encrypt. |
+| `DELETION_COORDINATOR_DATABASE_URL` | Secret | Deletion coordinator | TLS Neon URL authenticated only as `whatsapp_deletion_runtime`. The role can list marker IDs and confirm provider absence, but cannot select tenant tables. |
 | `DELETION_MARKER_HMAC_SECRET` | Secret | API deletion-marker writer | Dedicated 32-byte hex HMAC key for restore-external marker object keys. Generate independently with `openssl rand -hex 32`, retain it in the recovery inventory, and never reuse a provider-reference, webhook, cursor, or content key. |
 | `WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET` | Secret | API Connection Setup writer | Dedicated 32-byte hex HMAC key for platform-wide WhatsApp Number reservations. Generate independently with `openssl rand -hex 32`; never reuse Directory index, deletion-marker, provider-reference, webhook, cursor, OAuth, or content keys. Rotation requires rebuilding every retained reservation under a stopped-provisioning migration. |
-| `AWS_ACCESS_KEY_ID` | Secret | API | Short-lived access key from the environment's `ContentRuntimeRole`; rotate before the role session expires. |
-| `AWS_SECRET_ACCESS_KEY` | Secret | API | Short-lived secret paired with `AWS_ACCESS_KEY_ID`; never log or commit it. |
-| `AWS_SESSION_TOKEN` | Secret | API | Required role-session token. Its absence prevents the API composition root from serving requests. |
+| `AWS_ACCESS_KEY_ID` | Secret | API and deletion coordinator | Per-Worker short-lived access key from the API's `ContentRuntimeRole` or coordinator's `DeletionCoordinatorRole`; never copy one Worker's credential to the other. |
+| `AWS_SECRET_ACCESS_KEY` | Secret | API and deletion coordinator | Short-lived secret paired with that Worker's `AWS_ACCESS_KEY_ID`; never log or commit it. |
+| `AWS_SESSION_TOKEN` | Secret | API and deletion coordinator | Required role-session token. Its absence prevents the owning production composition root from running. |
 | `WASENDER_API_CREDENTIAL` | Secret | Provider-control | Account-level Wasender Personal Access Token used only for lifecycle endpoints. Store it as a Worker secret and rotate it in Wasender and Cloudflare together. |
 | `WASENDER_REFERENCE_SECRET` | Secret | Provider-control | Stable 32-byte hex HMAC key used to turn raw provider session IDs into opaque adapter locators. Generate with `openssl rand -hex 32`; rotate only through the reconciliation procedure below. |
 
@@ -632,6 +633,15 @@ minute, connection and webhook health reconciliation every five minutes, and
 retention/deletion cleanup hourly. Resource names use the
 deployment-environment suffix outside production so development, preview, and
 production never share state by name.
+
+The private deletion-coordinator Worker runs every minute with only the
+Deletion Capsule bucket, the deletion-coordinator KMS role, provider-control,
+and a `whatsapp_deletion_runtime` Neon credential. It confirms provider absence
+before recording that content-free fact and destroying the capsule. The API
+minute job then deletes the connection's encrypted Webhook Event and Stored
+Media objects, releases retained-media quota only after each Stored Media
+delete succeeds, and invokes the fixed-search-path purge function. A risk event
+is emitted at 23 hours so operators have warning before the 24-hour deadline.
 
 The five-minute reconciliation claims only due, non-deleting WhatsApp
 Connections through a fixed-`search_path` database function executable by the

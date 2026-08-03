@@ -387,9 +387,14 @@ describe("Deletion Capsules", () => {
       }),
     );
     const observations: Array<string> = [];
+    const cleanupCalls: Array<string> = [];
     const coordinator = makeDeletionCapsuleCoordinator({
       capsuleStore: capsules,
       kmsReader: reader,
+      confirmProviderAbsence: ({ deletionMarkerId }) => {
+        cleanupCalls.push(deletionMarkerId);
+        return Effect.succeed({ state: "complete" as const });
+      },
       reconcileProviderAbsence: ({ sessionLocator }) => {
         observations.push(sessionLocator);
         return Effect.succeed({ state: "absent" as const });
@@ -406,6 +411,7 @@ describe("Deletion Capsules", () => {
     expect(result).toEqual({ state: "complete" });
     expect(replay).toEqual({ state: "complete" });
     expect(observations).toEqual(["wsl_provider-cleanup-only"]);
+    expect(cleanupCalls).toEqual([markerId]);
     expect(storage.deleteCount()).toBe(1);
     expect(Array.from(plaintext)).toEqual(new Array(plaintext.length).fill(0));
     expect(decryptionCalls[0]).toEqual({
@@ -451,6 +457,8 @@ describe("Deletion Capsules", () => {
       kmsReader: {
         decrypt: () => Effect.succeed(malformed),
       },
+      confirmProviderAbsence: () =>
+        Effect.succeed({ state: "complete" as const }),
       reconcileProviderAbsence: () =>
         Effect.succeed({ state: "absent" as const }),
     });
@@ -549,6 +557,8 @@ describe("Deletion Capsules", () => {
     const coordinator = makeDeletionCapsuleCoordinator({
       capsuleStore: capsules,
       kmsReader: reader,
+      confirmProviderAbsence: () =>
+        Effect.succeed({ state: "complete" as const }),
       reconcileProviderAbsence: () =>
         Effect.succeed({ state: "present" as const }),
     });
@@ -560,5 +570,64 @@ describe("Deletion Capsules", () => {
     expect(result).toEqual({ state: "pending" });
     expect(storage.deleteCount()).toBe(0);
     expect(storage.objects.size).toBe(1);
+  });
+
+  test("records provider absence before capsule destruction and retains the capsule when recording fails", async () => {
+    const storage = makeBucket();
+    const markerId = "d".repeat(64);
+    const capsules = makeDeletionCapsuleStore({
+      bucket: storage.bucket,
+      environment: "production",
+      keyId: "arn:aws:kms:us-east-1:111122223333:key/deletion-coordinator-key",
+      kmsWriter: {
+        encrypt: () => Effect.succeed(new Uint8Array([1, 2, 3])),
+      },
+    });
+    await Effect.runPromise(
+      capsules.create({
+        deletionMarkerId: markerId,
+        keyVersion: 1,
+        providerCleanupIdentifiers: {
+          sessionLocator: "wsl_provider-cleanup-only",
+        },
+      }),
+    );
+    const calls: Array<string> = [];
+    const coordinator = makeDeletionCapsuleCoordinator({
+      capsuleStore: capsules,
+      kmsReader: {
+        decrypt: () =>
+          Effect.succeed(
+            new TextEncoder().encode(
+              JSON.stringify({
+                providerCleanupIdentifiers: {
+                  sessionLocator: "wsl_provider-cleanup-only",
+                },
+                version: 1,
+              }),
+            ),
+          ),
+      },
+      confirmProviderAbsence: () => {
+        calls.push("confirm-absence");
+        return Effect.fail(new Error("database unavailable"));
+      },
+      reconcileProviderAbsence: () => {
+        calls.push("provider-absent");
+        return Effect.succeed({ state: "absent" as const });
+      },
+    });
+
+    const result = await Effect.runPromise(
+      Effect.either(coordinator.reconcile({ deletionMarkerId: markerId })),
+    );
+
+    expect(calls).toEqual(["provider-absent", "confirm-absence"]);
+    expect(result).toMatchObject({
+      _tag: "Left",
+      left: { operation: "confirm-provider-absence" },
+    });
+    expect(storage.objects.size).toBe(1);
+    expect(storage.deleteCount()).toBe(0);
   });
 });

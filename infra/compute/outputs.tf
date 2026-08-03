@@ -18,6 +18,11 @@ output "provider_control_service" {
   value       = cloudflare_worker.provider_control.name
 }
 
+output "deletion_coordinator_service" {
+  description = "Private scheduled Connection Deletion coordinator with capsule-only KMS authority."
+  value       = cloudflare_worker.deletion_coordinator.name
+}
+
 output "oauth_kv_namespace_id" {
   description = "OAuth KV namespace identifier consumed by the API Wrangler config renderer."
   value       = cloudflare_workers_kv_namespace.oauth.id

@@ -1,4 +1,9 @@
-export const deployableNames = ["web", "api", "provider-control"] as const;
+export const deployableNames = [
+  "web",
+  "api",
+  "provider-control",
+  "deletion-coordinator",
+] as const;
 
 export type DeployableName = (typeof deployableNames)[number];
 

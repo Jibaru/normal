@@ -72,6 +72,19 @@ export interface WhatsAppConnectionDeletionReceipt {
   readonly deletionMarkerId: string;
 }
 
+export interface WhatsAppConnectionDeletionCandidate {
+  readonly deadlineAt: string;
+  readonly deadlineRisk: boolean;
+  readonly deletionMarkerId: string;
+  readonly requestedAt: string;
+}
+
+export interface WhatsAppConnectionDeletionObjects {
+  readonly personalAccountId: string;
+  readonly storedMediaObjectKeys: ReadonlyArray<string>;
+  readonly webhookSourceObjectKeys: ReadonlyArray<string>;
+}
+
 export type WhatsAppConnectionLifecycleAction = "disconnect" | "reconnect";
 
 export type WhatsAppConnectionLifecycleClaim =
@@ -152,6 +165,31 @@ export interface WhatsAppConnectionRepository {
     readonly deletionMarkerId: string;
     readonly requestedAt: string;
   }) => Promise<WhatsAppConnectionDeletionReceipt | null>;
+  readonly finishDeletionCleanup: (input: {
+    readonly deletionMarkerId: string;
+    readonly providerAbsenceConfirmedAt: string;
+  }) => Promise<boolean>;
+  readonly confirmProviderAbsence: (input: {
+    readonly confirmedAt: string;
+    readonly deletionMarkerId: string;
+  }) => Promise<boolean>;
+  readonly listDeletionCandidates: (input: {
+    readonly limit: number;
+    readonly observedAt: string;
+  }) => Promise<ReadonlyArray<WhatsAppConnectionDeletionCandidate>>;
+  readonly listDeletionPurgeCandidates: (input: {
+    readonly limit: number;
+    readonly observedAt: string;
+  }) => Promise<ReadonlyArray<WhatsAppConnectionDeletionCandidate>>;
+  readonly prepareDeletionCleanup: (input: {
+    readonly deletionMarkerId: string;
+    readonly limit: number;
+    readonly requestedAt: string;
+  }) => Promise<WhatsAppConnectionDeletionObjects | null>;
+  readonly finishWebhookSourceDeletion: (input: {
+    readonly deletionMarkerId: string;
+    readonly objectKey: string;
+  }) => Promise<boolean>;
   readonly claimLifecycle: (input: {
     readonly action: WhatsAppConnectionLifecycleAction;
     readonly claimId: string;
@@ -282,6 +320,45 @@ interface DeletionRow extends Record<string, unknown> {
   readonly locator_nonce?: unknown;
   readonly locator_ciphertext?: unknown;
 }
+
+interface DeletionCandidateRow extends Record<string, unknown> {
+  readonly deadline_at: unknown;
+  readonly deadline_risk: unknown;
+  readonly deletion_marker_id: unknown;
+  readonly requested_at: unknown;
+}
+
+interface DeletionObjectsRow extends Record<string, unknown> {
+  readonly personal_account_id: unknown;
+  readonly stored_media_object_keys: unknown;
+  readonly webhook_source_object_keys: unknown;
+}
+
+const stringArray = (value: unknown): ReadonlyArray<string> | null =>
+  Array.isArray(value) && value.every((entry) => typeof entry === "string")
+    ? value
+    : null;
+
+const deletionCandidate = (
+  row: DeletionCandidateRow,
+): WhatsAppConnectionDeletionCandidate => {
+  const deadlineAt = timestamp(row.deadline_at);
+  const requestedAt = timestamp(row.requested_at);
+  if (
+    deadlineAt === null ||
+    requestedAt === null ||
+    typeof row.deadline_risk !== "boolean" ||
+    typeof row.deletion_marker_id !== "string"
+  ) {
+    throw new Error("invalid Connection Deletion candidate");
+  }
+  return {
+    deadlineAt,
+    deadlineRisk: row.deadline_risk,
+    deletionMarkerId: row.deletion_marker_id,
+    requestedAt,
+  };
+};
 
 const deletionReceipt = (
   row: DeletionRow | undefined,
@@ -642,6 +719,104 @@ export const makeWhatsAppConnectionRepository = (
         ],
       );
       return deletionReceipt(result.rows[0]);
+    }),
+  finishDeletionCleanup: (input) =>
+    provider.withConnection(async (connection) => {
+      const result = await connection.query<{ complete: unknown }>(
+        `SELECT app_private.finish_whatsapp_connection_cleanup($1,$2)
+           AS complete`,
+        [input.deletionMarkerId, input.providerAbsenceConfirmedAt],
+      );
+      if (typeof result.rows[0]?.complete !== "boolean") {
+        throw new Error("invalid Connection Deletion cleanup result");
+      }
+      return result.rows[0].complete;
+    }),
+  confirmProviderAbsence: (input) =>
+    provider.withConnection(async (connection) => {
+      const result = await connection.query<{ confirmed: unknown }>(
+        `SELECT app_private.confirm_whatsapp_connection_provider_absence($1,$2)
+           AS confirmed`,
+        [input.deletionMarkerId, input.confirmedAt],
+      );
+      if (typeof result.rows[0]?.confirmed !== "boolean") {
+        throw new Error("invalid provider absence confirmation");
+      }
+      return result.rows[0].confirmed;
+    }),
+  listDeletionCandidates: (input) =>
+    provider.withConnection(async (connection) => {
+      if (
+        !Number.isSafeInteger(input.limit) ||
+        input.limit < 1 ||
+        input.limit > 1000
+      ) {
+        throw new Error("invalid Connection Deletion candidate limit");
+      }
+      const result = await connection.query<DeletionCandidateRow>(
+        "SELECT * FROM app_private.list_whatsapp_connection_deletion_candidates($1,$2)",
+        [input.observedAt, input.limit],
+      );
+      return result.rows.map(deletionCandidate);
+    }),
+  listDeletionPurgeCandidates: (input) =>
+    provider.withConnection(async (connection) => {
+      if (
+        !Number.isSafeInteger(input.limit) ||
+        input.limit < 1 ||
+        input.limit > 1000
+      ) {
+        throw new Error("invalid Connection Deletion purge limit");
+      }
+      const result = await connection.query<DeletionCandidateRow>(
+        "SELECT * FROM app_private.list_whatsapp_connection_active_purge_candidates($1,$2)",
+        [input.observedAt, input.limit],
+      );
+      return result.rows.map(deletionCandidate);
+    }),
+  prepareDeletionCleanup: (input) =>
+    provider.withConnection(async (connection) => {
+      if (
+        !Number.isSafeInteger(input.limit) ||
+        input.limit < 1 ||
+        input.limit > 1000
+      ) {
+        throw new Error("invalid Connection Deletion object limit");
+      }
+      const result = await connection.query<DeletionObjectsRow>(
+        "SELECT * FROM app_private.prepare_whatsapp_connection_cleanup($1,$2,$3)",
+        [input.deletionMarkerId, input.requestedAt, input.limit],
+      );
+      const row = result.rows[0];
+      if (row === undefined) return null;
+      const storedMediaObjectKeys = stringArray(row.stored_media_object_keys);
+      const webhookSourceObjectKeys = stringArray(
+        row.webhook_source_object_keys,
+      );
+      if (
+        typeof row.personal_account_id !== "string" ||
+        storedMediaObjectKeys === null ||
+        webhookSourceObjectKeys === null
+      ) {
+        throw new Error("invalid Connection Deletion objects");
+      }
+      return {
+        personalAccountId: row.personal_account_id,
+        storedMediaObjectKeys,
+        webhookSourceObjectKeys,
+      };
+    }),
+  finishWebhookSourceDeletion: (input) =>
+    provider.withConnection(async (connection) => {
+      const result = await connection.query<{ complete: unknown }>(
+        `SELECT app_private.finish_whatsapp_connection_webhook_source_deletion($1,$2)
+           AS complete`,
+        [input.deletionMarkerId, input.objectKey],
+      );
+      if (typeof result.rows[0]?.complete !== "boolean") {
+        throw new Error("invalid Webhook Event source deletion result");
+      }
+      return result.rows[0].complete;
     }),
   listForUser: (clerkUserId) =>
     provider.withConnection((connection) =>

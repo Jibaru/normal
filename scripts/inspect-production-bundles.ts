@@ -9,6 +9,7 @@ const forbiddenMarkers = [
 ] as const;
 const roots = [
   "apps/api/dist",
+  "apps/deletion-coordinator/dist",
   "apps/provider-control/dist",
   "apps/web/.next/server",
   "apps/web/.next/static",
@@ -83,6 +84,13 @@ await Promise.all([
     "WEBHOOK_INGRESS",
     "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
     "MCP_CURSOR_HMAC_SECRET",
+  ]),
+  inspectForForbiddenAuthority("apps/deletion-coordinator/dist", [
+    "KMS_CONTENT_ROOT_KEY_ARN",
+    "MCP_CURSOR_HMAC_SECRET",
+    "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
+    "STORED_MEDIA",
+    "WEBHOOK_INGRESS",
   ]),
 ]);
 console.info(

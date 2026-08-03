@@ -1,7 +1,12 @@
 import { Schema } from "effect";
 
 export const HealthResponse = Schema.Struct({
-  service: Schema.Literal("web", "api", "provider-control"),
+  service: Schema.Literal(
+    "web",
+    "api",
+    "provider-control",
+    "deletion-coordinator",
+  ),
   status: Schema.Literal("ok"),
 });
 

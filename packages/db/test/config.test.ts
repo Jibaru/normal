@@ -4,6 +4,7 @@ import {
   databaseConfig,
   migrationConfig,
   restrictedApiRuntimeConnectionString,
+  restrictedDeletionRuntimeConnectionString,
 } from "../src/config";
 
 describe("databaseConfig", () => {
@@ -32,6 +33,25 @@ describe("databaseConfig", () => {
         ),
       ),
     ).rejects.toBeDefined();
+  });
+});
+
+describe("restrictedDeletionRuntimeConnectionString", () => {
+  test("accepts only the deletion coordinator role over TLS to Neon", () => {
+    const value =
+      "postgresql://whatsapp_deletion_runtime:secret@ep-example-pooler.us-east-1.aws.neon.tech/database?sslmode=verify-full";
+    expect(restrictedDeletionRuntimeConnectionString(value)).toBe(value);
+  });
+
+  test.each([
+    "postgresql://whatsapp_api_runtime:secret@example.neon.tech/database?sslmode=require",
+    "postgresql://whatsapp_deletion_runtime:secret@localhost/database?sslmode=require",
+    "postgresql://whatsapp_deletion_runtime:secret@example.neon.tech/database?sslmode=disable",
+    "postgresql://whatsapp_deletion_runtime:secret@example.neon.tech/database?user=owner&sslmode=require",
+  ])("rejects unsafe deletion runtime URL %s", (connectionString) => {
+    expect(() =>
+      restrictedDeletionRuntimeConnectionString(connectionString),
+    ).toThrow("database URL is not the restricted TLS deletion runtime");
   });
 });
 

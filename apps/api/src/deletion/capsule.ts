@@ -70,6 +70,7 @@ const operationError = (
     | "create-capsule"
     | "decrypt-capsule"
     | "destroy-capsule"
+    | "confirm-provider-absence"
     | "read-capsule"
     | "reconcile-provider",
 ) => new DeletionPrimitiveError({ operation });
@@ -385,6 +386,27 @@ export const makeDeletionCapsuleStore = ({
   };
 };
 
+export const makeDeletionCapsuleCoordinatorStore = ({
+  bucket,
+  environment,
+  keyId,
+}: {
+  readonly bucket: Pick<DeletionObjectBucket, "delete" | "get">;
+  readonly environment: DeploymentEnvironment;
+  readonly keyId: string;
+}): DeletionCapsuleCoordinatorStore => ({
+  destroy: ({ deletionMarkerId }) => {
+    if (!hasMarkerId(deletionMarkerId)) {
+      return Effect.fail(operationError("destroy-capsule"));
+    }
+    return Effect.tryPromise({
+      try: () => bucket.delete(objectKeyFor(deletionMarkerId)),
+      catch: () => operationError("destroy-capsule"),
+    });
+  },
+  read: makeCapsuleReader({ bucket, environment, keyId }),
+});
+
 export interface DeletionCapsuleCoordinator {
   readonly reconcile: (input: {
     readonly deletionMarkerId: string;
@@ -401,10 +423,14 @@ type CoordinatorObservation = {
 export const makeDeletionCapsuleCoordinator = ({
   capsuleStore,
   kmsReader,
+  confirmProviderAbsence,
   reconcileProviderAbsence,
 }: {
   readonly capsuleStore: DeletionCapsuleCoordinatorStore;
   readonly kmsReader: DeletionCapsuleKmsReader;
+  readonly confirmProviderAbsence: (input: {
+    readonly deletionMarkerId: string;
+  }) => Effect.Effect<{ readonly state: "complete" | "pending" }, unknown>;
   readonly reconcileProviderAbsence: (
     identifiers: ProviderCleanupIdentifiers,
   ) => Effect.Effect<{ readonly state: "absent" | "present" }, unknown>;
@@ -451,10 +477,23 @@ export const makeDeletionCapsuleCoordinator = ({
                 DeletionPrimitiveError
               > =>
                 observation.state === "absent"
-                  ? capsuleStore.destroy({ deletionMarkerId }).pipe(
-                      Effect.as({
-                        state: "complete" as const,
-                      } satisfies CoordinatorObservation),
+                  ? confirmProviderAbsence({ deletionMarkerId }).pipe(
+                      Effect.mapError(() =>
+                        operationError("confirm-provider-absence"),
+                      ),
+                      Effect.flatMap(
+                        (
+                          purge,
+                        ): Effect.Effect<
+                          CoordinatorObservation,
+                          DeletionPrimitiveError
+                        > =>
+                          purge.state === "pending"
+                            ? Effect.succeed({ state: "pending" })
+                            : capsuleStore
+                                .destroy({ deletionMarkerId })
+                                .pipe(Effect.as({ state: "complete" })),
+                      ),
                     )
                   : Effect.succeed({
                       state: "pending" as const,

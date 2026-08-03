@@ -362,6 +362,17 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 33,
   },
+  {
+    name: "complete Connection Deletion cleanup",
+    sql: await readFile(
+      new NodeUrl(
+        "../migrations/0034_connection_deletion_cleanup.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    version: 34,
+  },
 ];
 
 const checksum = (sql: string): string =>

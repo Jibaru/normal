@@ -1,8 +1,9 @@
 locals {
-  environment_suffix            = var.deployment_environment == "production" ? "" : "-${var.deployment_environment}"
-  api_worker_name               = "whatsapp-mcp-api${local.environment_suffix}"
-  provider_control_worker_name  = "whatsapp-mcp-provider-control${local.environment_suffix}"
-  web_project_name              = "whatsapp-mcp-web${local.environment_suffix}"
+  environment_suffix               = var.deployment_environment == "production" ? "" : "-${var.deployment_environment}"
+  api_worker_name                  = "whatsapp-mcp-api${local.environment_suffix}"
+  provider_control_worker_name     = "whatsapp-mcp-provider-control${local.environment_suffix}"
+  deletion_coordinator_worker_name = "whatsapp-mcp-deletion-coordinator${local.environment_suffix}"
+  web_project_name                 = "whatsapp-mcp-web${local.environment_suffix}"
   webhook_ingress_bucket_name   = "whatsapp-mcp-webhook-ingress${local.environment_suffix}"
   stored_media_bucket_name      = "whatsapp-mcp-stored-media${local.environment_suffix}"
   deletion_capsules_bucket_name = "whatsapp-mcp-deletion-capsules${local.environment_suffix}"
@@ -22,6 +23,7 @@ locals {
   connection_setup_provisioning_queue_name = "whatsapp-mcp-connection-setup-provisioning${local.environment_suffix}"
   api_bundle_path                          = abspath("${path.root}/../../apps/api/dist/index.js")
   provider_control_bundle_path             = abspath("${path.root}/../../apps/provider-control/dist/index.js")
+  deletion_coordinator_bundle_path         = abspath("${path.root}/../../apps/deletion-coordinator/dist/index.js")
 }
 
 resource "cloudflare_r2_bucket" "webhook_ingress" {
@@ -255,6 +257,72 @@ resource "cloudflare_workers_deployment" "provider_control" {
       version_id = cloudflare_worker_version.provider_control.id
     }
   ]
+}
+
+resource "cloudflare_worker" "deletion_coordinator" {
+  account_id = var.cloudflare_account_id
+  name       = local.deletion_coordinator_worker_name
+  subdomain = {
+    enabled          = false
+    previews_enabled = false
+  }
+  observability = {
+    enabled            = true
+    head_sampling_rate = 1
+    logs = {
+      enabled            = true
+      head_sampling_rate = 1
+      invocation_logs    = true
+      persist            = true
+    }
+    traces = {
+      enabled            = true
+      head_sampling_rate = 1
+      persist            = true
+    }
+  }
+}
+
+resource "cloudflare_worker_version" "deletion_coordinator" {
+  account_id  = var.cloudflare_account_id
+  worker_id   = cloudflare_worker.deletion_coordinator.id
+  main_module = "index.js"
+  compatibility_date  = "2026-07-31"
+  compatibility_flags = ["nodejs_compat"]
+  modules = [{
+    name         = "index.js"
+    content_file = local.deletion_coordinator_bundle_path
+    content_type = "application/javascript+module"
+  }]
+  bindings = [
+    { name = "ENVIRONMENT", text = var.deployment_environment, type = "plain_text" },
+    { name = "AWS_KMS_REGION", text = "us-east-1", type = "plain_text" },
+    { name = "AWS_ACCESS_KEY_ID", type = "inherit" },
+    { name = "AWS_SECRET_ACCESS_KEY", type = "inherit" },
+    { name = "AWS_SESSION_TOKEN", type = "inherit" },
+    { name = "DELETION_COORDINATOR_DATABASE_URL", type = "inherit" },
+    { name = "KMS_DELETION_COORDINATOR_KEY_ARN", type = "inherit" },
+    { name = "DELETION_CAPSULES", bucket_name = cloudflare_r2_bucket.deletion_capsules.name, type = "r2_bucket" },
+    { name = "PROVIDER_CONTROL", service = cloudflare_worker.provider_control.name, type = "service" }
+  ]
+  depends_on = [cloudflare_workers_deployment.provider_control]
+}
+
+resource "cloudflare_workers_deployment" "deletion_coordinator" {
+  account_id  = var.cloudflare_account_id
+  script_name = cloudflare_worker.deletion_coordinator.name
+  strategy    = "percentage"
+  versions = [{
+    percentage = 100
+    version_id = cloudflare_worker_version.deletion_coordinator.id
+  }]
+}
+
+resource "cloudflare_workers_cron_trigger" "deletion_coordinator" {
+  account_id  = var.cloudflare_account_id
+  script_name = cloudflare_worker.deletion_coordinator.name
+  schedules = [{ cron = "* * * * *" }]
+  depends_on = [cloudflare_workers_deployment.deletion_coordinator]
 }
 
 resource "cloudflare_worker" "api" {

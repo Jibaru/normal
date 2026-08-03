@@ -1,0 +1,6 @@
+AWS_ACCESS_KEY_ID=replace-with-short-lived-coordinator-access-key
+AWS_SECRET_ACCESS_KEY=replace-with-short-lived-coordinator-secret-key
+AWS_SESSION_TOKEN=replace-with-short-lived-coordinator-session-token
+AWS_KMS_REGION=us-east-1
+DELETION_COORDINATOR_DATABASE_URL=postgresql://whatsapp_deletion_runtime:replace-with-password@replace-with-endpoint.us-east-1.aws.neon.tech/replace-with-database?sslmode=verify-full
+KMS_DELETION_COORDINATOR_KEY_ARN=arn:aws:kms:us-east-1:111122223333:key/00000000-0000-4000-8000-000000000000

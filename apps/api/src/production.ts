@@ -104,6 +104,10 @@ import {
   makeDeletionCapsuleWriter,
 } from "./deletion/capsule";
 import {
+  makeConnectionDeletionActiveDataPurger,
+  makeConnectionDeletionCleanupPersistence,
+} from "./deletion/connection-cleanup";
+import {
   type DeletionMarkerBucket,
   makeDeletionMarkerStore,
 } from "./deletion/marker";
@@ -3050,6 +3054,51 @@ export const createProductionScheduledHandler =
             deletion.objectKey,
           );
           await storedMediaRepository.finishObjectDeletion(deletion);
+        }),
+      );
+      const connectionDeletionRepository =
+        makePgWhatsAppConnectionRepository(connectionString);
+      const deletionMarkers =
+        await connectionDeletionRepository.listDeletionPurgeCandidates({
+          limit: 100,
+          observedAt,
+        });
+      const purgeConnection = makeConnectionDeletionActiveDataPurger({
+        clock: () => observedAt,
+        persistence: makeConnectionDeletionCleanupPersistence(
+          connectionDeletionRepository,
+          (input) =>
+            storedMediaRepository.finishObjectDeletion({
+              objectKey: input.objectKey,
+              personalAccountId: input.personalAccountId,
+            }),
+        ),
+        storedMedia: {
+          delete: (key) =>
+            (environment.STORED_MEDIA as Pick<R2Bucket, "delete">).delete(key),
+        },
+        webhookSources: {
+          delete: (key) =>
+            (environment.WEBHOOK_INGRESS as Pick<R2Bucket, "delete">).delete(
+              key,
+            ),
+        },
+      });
+      await Promise.all(
+        deletionMarkers.map((candidate) => {
+          if (candidate.deadlineRisk) {
+            Effect.runSync(
+              safeTelemetry.emit({
+                deadlineAt: candidate.deadlineAt,
+                event: "whatsapp_connection.deletion.deadline_risk",
+                marker: candidate.deletionMarkerId,
+                service: "api",
+              }),
+            );
+          }
+          return Effect.runPromise(
+            purgeConnection({ deletionMarkerId: candidate.deletionMarkerId }),
+          );
         }),
       );
     }

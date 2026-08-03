@@ -1,0 +1,113 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "whatsapp-mcp-deletion-coordinator",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-31",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "triggers": { "crons": ["* * * * *"] },
+  "vars": { "ENVIRONMENT": "production", "AWS_KMS_REGION": "us-east-1" },
+  "secrets": {
+    "required": [
+      "AWS_ACCESS_KEY_ID",
+      "AWS_SECRET_ACCESS_KEY",
+      "AWS_SESSION_TOKEN",
+      "DELETION_COORDINATOR_DATABASE_URL",
+      "KMS_DELETION_COORDINATOR_KEY_ARN"
+    ]
+  },
+  "r2_buckets": [
+    {
+      "binding": "DELETION_CAPSULES",
+      "bucket_name": "whatsapp-mcp-deletion-capsules"
+    }
+  ],
+  "services": [
+    {
+      "binding": "PROVIDER_CONTROL",
+      "service": "whatsapp-mcp-provider-control"
+    }
+  ],
+  "observability": { "enabled": true },
+  "env": {
+    "development": {
+      "name": "whatsapp-mcp-deletion-coordinator-development",
+      "vars": { "ENVIRONMENT": "development", "AWS_KMS_REGION": "us-east-1" },
+      "secrets": {
+        "required": [
+          "AWS_ACCESS_KEY_ID",
+          "AWS_SECRET_ACCESS_KEY",
+          "AWS_SESSION_TOKEN",
+          "DELETION_COORDINATOR_DATABASE_URL",
+          "KMS_DELETION_COORDINATOR_KEY_ARN"
+        ]
+      },
+      "r2_buckets": [
+        {
+          "binding": "DELETION_CAPSULES",
+          "bucket_name": "whatsapp-mcp-deletion-capsules-development"
+        }
+      ],
+      "services": [
+        {
+          "binding": "PROVIDER_CONTROL",
+          "service": "whatsapp-mcp-provider-control-development"
+        }
+      ],
+      "triggers": { "crons": ["* * * * *"] }
+    },
+    "preview": {
+      "name": "whatsapp-mcp-deletion-coordinator-preview",
+      "vars": { "ENVIRONMENT": "preview", "AWS_KMS_REGION": "us-east-1" },
+      "secrets": {
+        "required": [
+          "AWS_ACCESS_KEY_ID",
+          "AWS_SECRET_ACCESS_KEY",
+          "AWS_SESSION_TOKEN",
+          "DELETION_COORDINATOR_DATABASE_URL",
+          "KMS_DELETION_COORDINATOR_KEY_ARN"
+        ]
+      },
+      "r2_buckets": [
+        {
+          "binding": "DELETION_CAPSULES",
+          "bucket_name": "whatsapp-mcp-deletion-capsules-preview"
+        }
+      ],
+      "services": [
+        {
+          "binding": "PROVIDER_CONTROL",
+          "service": "whatsapp-mcp-provider-control-preview"
+        }
+      ],
+      "triggers": { "crons": ["* * * * *"] }
+    },
+    "production": {
+      "name": "whatsapp-mcp-deletion-coordinator",
+      "vars": { "ENVIRONMENT": "production", "AWS_KMS_REGION": "us-east-1" },
+      "secrets": {
+        "required": [
+          "AWS_ACCESS_KEY_ID",
+          "AWS_SECRET_ACCESS_KEY",
+          "AWS_SESSION_TOKEN",
+          "DELETION_COORDINATOR_DATABASE_URL",
+          "KMS_DELETION_COORDINATOR_KEY_ARN"
+        ]
+      },
+      "r2_buckets": [
+        {
+          "binding": "DELETION_CAPSULES",
+          "bucket_name": "whatsapp-mcp-deletion-capsules"
+        }
+      ],
+      "services": [
+        {
+          "binding": "PROVIDER_CONTROL",
+          "service": "whatsapp-mcp-provider-control"
+        }
+      ],
+      "triggers": { "crons": ["* * * * *"] }
+    }
+  }
+}

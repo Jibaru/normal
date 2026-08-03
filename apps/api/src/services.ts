@@ -188,6 +188,13 @@ export interface WhatsAppConnectionDeletionCompletedEvent {
   readonly service: "api";
 }
 
+export interface WhatsAppConnectionDeletionDeadlineRiskEvent {
+  readonly deadlineAt: string;
+  readonly event: "whatsapp_connection.deletion.deadline_risk";
+  readonly marker: string;
+  readonly service: "api";
+}
+
 export interface ConnectionHealthReconciliationCompletedEvent {
   readonly event: "connection_health.reconciliation.completed";
   readonly gapEvidence:
@@ -366,6 +373,7 @@ export type SafeTelemetryEvent =
   | WebhookIngressRecoveryCompletedEvent
   | WhatsAppConnectionLifecycleCompletedEvent
   | WhatsAppConnectionDeletionCompletedEvent
+  | WhatsAppConnectionDeletionDeadlineRiskEvent
   | WhatsAppConnectionListCompletedEvent;
 
 export const SafeTelemetry = Context.GenericTag<SafeTelemetry>(

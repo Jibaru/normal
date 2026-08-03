@@ -360,6 +360,141 @@ describe("WhatsApp Connection repository", () => {
     expect(state.rows[0]?.key_unavailable_at).not.toBeNull();
   });
 
+  test("purges a provider-absent Connection and permanently reserves its public handle", async () => {
+    const repository = makeWhatsAppConnectionRepository(provider);
+    const deletionRepository = makeWhatsAppConnectionRepository({
+      withConnection: async (use) => {
+        await database.exec("SET ROLE whatsapp_deletion_runtime");
+        try {
+          return await use(database);
+        } finally {
+          await database.exec("RESET ROLE");
+        }
+      },
+    });
+    await repository.activate(activationInput);
+    await repository.finishDeletion({
+      clerkUserId: "user_connectiona",
+      deletionMarkerId: "b".repeat(64),
+      publicId,
+      requestedAt: "2026-07-31T12:08:00.000Z",
+    });
+    await database.exec("SET ROLE whatsapp_deletion_runtime");
+    try {
+      await expect(
+        database.query("SELECT * FROM app.whatsapp_connections"),
+      ).rejects.toThrow();
+    } finally {
+      await database.exec("RESET ROLE");
+    }
+    const webhookEventId = "50000000-0000-4000-8000-000000000031";
+    await database.query(
+      `INSERT INTO app.webhook_events(
+         personal_account_id,whatsapp_connection_id,id,ciphertext_sha256,
+         payload_bytes,received_at,source_expires_at
+       ) VALUES ($1,$2,$3,$4,1,$5::timestamptz,$5::timestamptz + interval '7 days')`,
+      [accountA, connectionId, webhookEventId, "c".repeat(64), connectedAt],
+    );
+
+    await expect(
+      deletionRepository.listDeletionCandidates({
+        limit: 10,
+        observedAt: "2026-08-01T11:08:00.000Z",
+      }),
+    ).resolves.toEqual([
+      {
+        deadlineAt: "2026-08-01T12:08:00.000Z",
+        deadlineRisk: true,
+        deletionMarkerId: "b".repeat(64),
+        requestedAt: "2026-07-31T12:08:00.000Z",
+      },
+    ]);
+
+    await expect(
+      deletionRepository.confirmProviderAbsence({
+        confirmedAt: "2026-07-31T12:09:00.000Z",
+        deletionMarkerId: "b".repeat(64),
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      repository.listDeletionPurgeCandidates({
+        limit: 10,
+        observedAt: "2026-08-01T11:08:00.000Z",
+      }),
+    ).resolves.toEqual([
+      {
+        deadlineAt: "2026-08-01T12:08:00.000Z",
+        deadlineRisk: true,
+        deletionMarkerId: "b".repeat(64),
+        requestedAt: "2026-07-31T12:08:00.000Z",
+      },
+    ]);
+    await expect(
+      deletionRepository.listDeletionCandidates({
+        limit: 10,
+        observedAt: "2026-08-01T11:08:00.000Z",
+      }),
+    ).resolves.toHaveLength(1);
+
+    await expect(
+      repository.prepareDeletionCleanup({
+        deletionMarkerId: "b".repeat(64),
+        limit: 100,
+        requestedAt: "2026-07-31T12:09:00.000Z",
+      }),
+    ).resolves.toEqual({
+      personalAccountId: accountA,
+      storedMediaObjectKeys: [],
+      webhookSourceObjectKeys: [`webhook-events/${webhookEventId}`],
+    });
+
+    await expect(
+      repository.finishDeletionCleanup({
+        deletionMarkerId: "b".repeat(64),
+        providerAbsenceConfirmedAt: "2026-07-31T12:09:00.000Z",
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      repository.finishWebhookSourceDeletion({
+        deletionMarkerId: "b".repeat(64),
+        objectKey: `webhook-events/${webhookEventId}`,
+      }),
+    ).resolves.toBe(true);
+
+    await expect(
+      repository.finishDeletionCleanup({
+        deletionMarkerId: "b".repeat(64),
+        providerAbsenceConfirmedAt: "2026-07-31T12:09:00.000Z",
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      repository.finishDeletionCleanup({
+        deletionMarkerId: "b".repeat(64),
+        providerAbsenceConfirmedAt: "2026-07-31T12:10:00.000Z",
+      }),
+    ).resolves.toBe(true);
+
+    const counts = await database.query<{
+      connection_count: number;
+      reservation_count: number;
+      tombstone_count: number;
+    }>(`SELECT
+      (SELECT count(*)::integer FROM app.whatsapp_connections) AS connection_count,
+      (SELECT count(*)::integer FROM app.whatsapp_number_reservations) AS reservation_count,
+      (SELECT count(*)::integer FROM app_private.deleted_whatsapp_connection_handles) AS tombstone_count`);
+    expect(counts.rows).toEqual([
+      { connection_count: 0, reservation_count: 0, tombstone_count: 1 },
+    ]);
+
+    await expect(repository.activate(activationInput)).rejects.toThrow();
+    await expect(
+      deletionRepository.listDeletionCandidates({
+        limit: 10,
+        observedAt: "2026-08-01T11:08:00.000Z",
+      }),
+    ).resolves.toEqual([]);
+  });
+
   test("serializes disconnect and reconnect claims while preserving retained identity", async () => {
     const repository = makeWhatsAppConnectionRepository(provider);
     await repository.activate(activationInput);

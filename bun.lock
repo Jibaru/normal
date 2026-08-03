@@ -39,6 +39,23 @@
         "wrangler": "4.116.0",
       },
     },
+    "apps/deletion-coordinator": {
+      "name": "@whatsapp-mcp/deletion-coordinator",
+      "version": "0.1.0",
+      "dependencies": {
+        "@aws-sdk/client-kms": "3.1099.0",
+        "@whatsapp-mcp/api": "workspace:*",
+        "@whatsapp-mcp/contracts": "workspace:*",
+        "@whatsapp-mcp/db": "workspace:*",
+        "effect": "3.22.1",
+      },
+      "devDependencies": {
+        "@cloudflare/workers-types": "5.20260730.1",
+        "typescript": "^5",
+        "vitest": "4.1.10",
+        "wrangler": "4.116.0",
+      },
+    },
     "apps/provider-control": {
       "name": "@whatsapp-mcp/provider-control",
       "version": "0.1.0",
@@ -772,6 +789,8 @@
     "@whatsapp-mcp/contracts": ["@whatsapp-mcp/contracts@workspace:packages/contracts"],
 
     "@whatsapp-mcp/db": ["@whatsapp-mcp/db@workspace:packages/db"],
+
+    "@whatsapp-mcp/deletion-coordinator": ["@whatsapp-mcp/deletion-coordinator@workspace:apps/deletion-coordinator"],
 
     "@whatsapp-mcp/domain": ["@whatsapp-mcp/domain@workspace:packages/domain"],
 

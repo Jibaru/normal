@@ -13,6 +13,7 @@ export type DeletionOperation =
   | "decrypt-capsule"
   | "destroy-capsule"
   | "enumerate-markers"
+  | "confirm-provider-absence"
   | "read-capsule"
   | "reconcile-provider";
 

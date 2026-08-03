@@ -5,8 +5,13 @@ import {
 } from "../src/deployment";
 
 describe("deployment rules", () => {
-  test("names exactly the three independently deployed applications", () => {
-    expect(deployableNames).toEqual(["web", "api", "provider-control"]);
+  test("names every independently deployed application", () => {
+    expect(deployableNames).toEqual([
+      "web",
+      "api",
+      "provider-control",
+      "deletion-coordinator",
+    ]);
   });
 
   test("does not admit the test environment into a production composition root", () => {

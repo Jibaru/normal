@@ -38,17 +38,25 @@ projector fix. Never copy ciphertext from a Webhook Event into a tombstone.
    idempotent and leave an unavailable tombstone even if no envelope existed.
    Ordinary runtime can insert and load an initial available envelope, but
    cannot update, delete, or replace the tombstone.
-5. Start asynchronous active-data purge. The marker is never removed. The
-   Deletion Capsule remains until the isolated deletion coordinator confirms
-   provider absence.
+5. Start asynchronous provider reconciliation. The marker is never removed.
+   The Deletion Capsule remains until the isolated deletion coordinator
+   confirms provider absence and durably records that fact through its narrow
+   database function.
+6. The API cleanup schedule deletes encrypted Webhook Event sources and Stored
+   Media objects. It acknowledges each Stored Media deletion before quota is
+   released, then purges connection-owned Neon rows and releases the WhatsApp
+   Number reservation. The public handle is copied to a content-free tombstone
+   before the Connection row is removed, so it can never be reused.
 
 The deletion coordinator receives only its Deletion Capsule KMS decrypt
-authority and provider cleanup seam. It must not receive the content-root role,
+authority, provider cleanup seam, Deletion Capsule binding, and the
+`whatsapp_deletion_runtime` database role. It must not receive the content-root role,
 content key ARN, Personal Account key envelopes, WhatsApp Connection key
 envelopes, Stored Media binding, Webhook Event binding, or an ordinary
 application database role. A `present` provider observation retains the
-capsule for another bounded reconciliation. An `absent` observation destroys
-the capsule; replay after destruction is complete.
+capsule for another bounded reconciliation. An `absent` observation first
+records provider absence and then destroys the capsule; replay after destruction
+is complete. The separate API cleanup schedule owns active R2 and Neon purge.
 
 Alert before the 24-hour active-cleanup deadline on an overdue capsule,
 provider ambiguity, denied KMS operation, marker write failure, or attempted
