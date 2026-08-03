@@ -132,6 +132,18 @@ export interface McpToolPersistenceService {
     | null,
     McpToolPersistenceError
   >;
+  readonly completeMessageRead: (
+    input: McpAccessAuthorization & {
+      readonly auditLogId: string;
+      readonly dailyRecordLimit: number;
+      readonly observedAt: Date;
+      readonly resultCount: number;
+    },
+  ) => Effect.Effect<
+    | { readonly outcome: "success" }
+    | { readonly outcome: "record_quota_exhausted"; readonly resetsAt: Date },
+    McpToolPersistenceError
+  >;
   readonly loadGroupSearchMaterial: (
     input: McpAccessAuthorization & {
       readonly connectionPublicId: string;
@@ -1840,62 +1852,40 @@ const readMessages = (
       { concurrency: 4 },
     ).pipe(Effect.either);
     if (decrypted._tag === "Left") return yield* fail("service_unavailable");
-    let olderCursor: string | null = null;
-    const oldest = page.messages.at(-1);
-    if (page.hasOlder && oldest !== undefined) {
-      const encoded = yield* codec
-        .encode({
-          boundary: [oldest.sentAt, oldest.publicId],
-          context,
-          expiresAtEpochSeconds: Math.floor(startedAt.valueOf() / 1000) + 900,
-        })
-        .pipe(Effect.either);
-      if (encoded._tag === "Left") return yield* fail("service_unavailable");
-      olderCursor = encoded.right;
-    }
     const encoder = new TextEncoder();
-    const fitText = (text: string | null) => {
-      if (text === null) return { text, truncated: false, totalBytes: null };
-      const totalBytes = encoder.encode(text).byteLength;
-      if (totalBytes <= 48_000) return { text, truncated: false, totalBytes };
-      let prefix = "";
-      let bytes = 0;
-      for (const character of text) {
-        const next = encoder.encode(character).byteLength;
-        if (bytes + next > 48_000) break;
-        prefix += character;
-        bytes += next;
-      }
-      return { text: prefix, truncated: true, totalBytes };
-    };
-    const output: ReadMessagesOutput = ReadMessagesOutputContract.decodeUnknown(
-      {
-        messages: decrypted.right.reverse().map(({ message, text }) => ({
-          message_id: message.publicId,
-          sent_at: message.sentAt,
-          direction: message.direction,
-          sender: {
-            kind:
-              message.direction === "outbound"
-                ? "self"
-                : message.conversationKind === "group"
-                  ? "group_participant"
-                  : "contact",
-            display_name: null,
-            phone_last_four: null,
-          },
-          content_type: message.contentType,
-          text: fitText(text).text,
-          text_truncated: fitText(text).truncated,
-          text_total_utf8_bytes: fitText(text).totalBytes,
-          edited_at: null,
-          deleted: false,
-          media: null,
-        })),
-        size_limited:
-          page.sizeLimited ||
-          decrypted.right.some(({ text }) => fitText(text).truncated),
-        has_older: page.hasOlder,
+    const normalized = decrypted.right.map(({ message, text }) => ({
+      message_id: message.publicId,
+      sent_at: message.sentAt,
+      direction: message.direction,
+      sender: {
+        kind:
+          message.direction === "outbound"
+            ? "self"
+            : message.conversationKind === "group"
+              ? "group_participant"
+              : "contact",
+        display_name: null,
+        phone_last_four: null,
+      },
+      content_type: message.contentType,
+      text,
+      text_truncated: false,
+      text_total_utf8_bytes:
+        text === null ? null : encoder.encode(text).byteLength,
+      edited_at: null,
+      deleted: false,
+      media: null,
+    }));
+    const makeOutput = (
+      selectedNewestFirst: typeof normalized,
+      olderCursor: string | null,
+      sizeLimited: boolean,
+    ): ReadMessagesOutput =>
+      ReadMessagesOutputContract.decodeUnknown({
+        messages: [...selectedNewestFirst].reverse(),
+        size_limited: sizeLimited,
+        has_older:
+          page.hasOlder || selectedNewestFirst.length < normalized.length,
         older_cursor: olderCursor,
         history_starts_at: page.historyStartsAt,
         history_start_reason: page.historyStartReason,
@@ -1904,8 +1894,82 @@ const readMessages = (
           ends_at: gap.endsAt,
           cause: gap.cause,
         })),
-      },
-    );
+      });
+    const cursorFor = (selectedNewestFirst: typeof normalized) =>
+      Effect.gen(function* () {
+        const oldest = selectedNewestFirst.at(-1);
+        if (
+          oldest === undefined ||
+          (!page.hasOlder && selectedNewestFirst.length === normalized.length)
+        )
+          return null;
+        return yield* codec.encode({
+          boundary: [oldest.sent_at, oldest.message_id],
+          context,
+          expiresAtEpochSeconds: Math.floor(startedAt.valueOf() / 1000) + 900,
+        });
+      });
+    const jsonBytes = (value: ReadMessagesOutput) =>
+      encoder.encode(JSON.stringify(value)).byteLength;
+    let selected = normalized;
+    let output: ReadMessagesOutput | null = null;
+    while (selected.length > 0) {
+      const olderCursor = yield* cursorFor(selected).pipe(Effect.either);
+      if (olderCursor._tag === "Left")
+        return yield* fail("service_unavailable");
+      const candidate = makeOutput(
+        selected,
+        olderCursor.right,
+        page.sizeLimited || selected.length < normalized.length,
+      );
+      if (jsonBytes(candidate) <= 32_768 || selected.length === 1) {
+        output = candidate;
+        break;
+      }
+      selected = selected.slice(0, -1);
+    }
+    if (output === null) {
+      output = makeOutput([], null, page.sizeLimited);
+    } else if (jsonBytes(output) > 65_536) {
+      const only = selected[0];
+      if (only?.text === null || only?.text === undefined)
+        return yield* fail("service_unavailable");
+      const scalars = Array.from(only.text);
+      let low = 0;
+      let high = scalars.length;
+      let fitted: ReadMessagesOutput | null = null;
+      while (low <= high) {
+        const middle = Math.floor((low + high) / 2);
+        const truncated = [
+          {
+            ...only,
+            text: scalars.slice(0, middle).join(""),
+            text_truncated: middle < scalars.length,
+          },
+        ];
+        const candidate = makeOutput(truncated, output.older_cursor, true);
+        if (jsonBytes(candidate) <= 65_536) {
+          fitted = candidate;
+          low = middle + 1;
+        } else {
+          high = middle - 1;
+        }
+      }
+      if (fitted === null) return yield* fail("service_unavailable");
+      output = fitted;
+    }
+    const completion = yield* persistence
+      .completeMessageRead({
+        ...authorization,
+        auditLogId,
+        dailyRecordLimit,
+        observedAt: yield* clock.now,
+        resultCount: output.messages.length,
+      })
+      .pipe(Effect.either);
+    if (completion._tag === "Left") return auditUnavailable();
+    if (completion.right.outcome === "record_quota_exhausted")
+      return yield* fail("rate_limited", completion.right.resetsAt);
     yield* emitToolCompletion(
       "read_messages",
       "success",

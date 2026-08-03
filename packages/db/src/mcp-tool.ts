@@ -268,6 +268,17 @@ export interface McpToolRepository {
     | { readonly outcome: "record_quota_exhausted"; readonly resetsAt: Date }
     | null
   >;
+  readonly completeMessageRead: (
+    input: McpAccessAuthorization & {
+      readonly auditLogId: string;
+      readonly dailyRecordLimit: number;
+      readonly observedAt: Date;
+      readonly resultCount: number;
+    },
+  ) => Promise<
+    | { readonly outcome: "success" }
+    | { readonly outcome: "record_quota_exhausted"; readonly resetsAt: Date }
+  >;
   readonly loadGroupSearchMaterial: (
     input: McpAccessAuthorization & {
       readonly connectionPublicId: string;
@@ -1103,10 +1114,6 @@ export const makeMcpToolRepository = (
         if (accountId === null) return null;
         const scopes = await loadAuthorizationScopes(connection, input);
         if (scopes === null || !scopes.includes("messages:read")) return null;
-        await connection.query(
-          "SELECT id FROM app.personal_accounts WHERE id=$1 FOR UPDATE",
-          [accountId],
-        );
         const materialResult = await connection.query<Record<string, unknown>>(
           `SELECT * FROM app_private.load_mcp_message_read_material($1, $2, $3, $4, $5, $6)`,
           [
@@ -1199,44 +1206,8 @@ export const makeMcpToolRepository = (
             input.limit + 1,
           ],
         );
-        const used = await connection.query<{ count: unknown }>(
-          `SELECT coalesce(sum(result_count),0)::int AS count FROM app.tool_call_logs
-           WHERE personal_account_id=$1 AND tool_name='read_messages' AND outcome='success'
-             AND started_at >= (date_trunc('day',$2::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')
-             AND started_at < (date_trunc('day',$2::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') + interval '1 day'`,
-          [accountId, input.observedAt],
-        );
-        const usedCount = Number(used.rows[0]?.count);
-        if (!Number.isSafeInteger(usedCount))
-          throw new Error("invalid returned-record quota");
         const candidateRows = rows.rows.slice(0, input.limit);
-        const returnedRows: Array<Record<string, unknown>> = [];
-        let encryptedBytes = 0;
-        for (const candidate of candidateRows) {
-          const ciphertext = bytes(candidate.content_ciphertext);
-          if (ciphertext === null)
-            throw new Error("invalid Stored Message ciphertext");
-          if (
-            returnedRows.length > 0 &&
-            encryptedBytes + ciphertext.byteLength > 24_000
-          )
-            break;
-          returnedRows.push(candidate);
-          encryptedBytes += ciphertext.byteLength;
-        }
-        if (usedCount + returnedRows.length > input.dailyRecordLimit) {
-          return {
-            outcome: "record_quota_exhausted" as const,
-            resetsAt: new Date(
-              Date.UTC(
-                input.observedAt.getUTCFullYear(),
-                input.observedAt.getUTCMonth(),
-                input.observedAt.getUTCDate() + 1,
-              ),
-            ),
-          };
-        }
-        const messages = returnedRows.map((message): McpToolMessageRecord => {
+        const messages = candidateRows.map((message): McpToolMessageRecord => {
           const sentAt = timestampString(message.sent_at);
           const ciphertext = bytes(message.content_ciphertext);
           const nonce = bytes(message.content_nonce);
@@ -1307,23 +1278,13 @@ export const makeMcpToolRepository = (
             cause: gap.cause as McpToolMessagePage["gaps"][number]["cause"],
           };
         });
-        const updated = await connection.query(
-          `UPDATE app.tool_call_logs SET completed_at=$2,outcome='success',error_code=NULL,result_count=$3,
-             latency_ms=GREATEST(0,floor(extract(epoch FROM ($2::timestamptz-started_at))*1000))::integer
-           WHERE id=$1 AND outcome='started' RETURNING id`,
-          [input.auditLogId, input.observedAt, messages.length],
-        );
-        if (updated.rows.length !== 1)
-          throw new Error("Tool Call Log completion unavailable");
         return {
           outcome: "success" as const,
           page: {
             ...material,
             messages,
-            hasOlder: rows.rows.length > returnedRows.length,
-            sizeLimited:
-              returnedRows.length < candidateRows.length ||
-              encryptedBytes > 24_000,
+            hasOlder: rows.rows.length > candidateRows.length,
+            sizeLimited: false,
             historyStartsAt: historyStart.toISOString(),
             historyStartReason:
               historyStart === retentionStart
@@ -1332,6 +1293,63 @@ export const makeMcpToolRepository = (
             gaps,
           },
         };
+      }),
+    ),
+  completeMessageRead: (input) =>
+    provider.withConnection((connection) =>
+      withTransaction(connection, async () => {
+        if (
+          !Number.isSafeInteger(input.dailyRecordLimit) ||
+          input.dailyRecordLimit < 1 ||
+          !Number.isSafeInteger(input.resultCount) ||
+          input.resultCount < 0 ||
+          input.resultCount > 50
+        )
+          throw new Error("invalid MCP message completion");
+        const accountId = await enterAuthorizationContext(connection, input);
+        if (accountId === null) throw new Error("authorization unavailable");
+        await connection.query(
+          "SELECT id FROM app.personal_accounts WHERE id=$1 FOR UPDATE",
+          [accountId],
+        );
+        const used = await connection.query<{ count: unknown }>(
+          `SELECT coalesce(sum(result_count),0)::int AS count FROM app.tool_call_logs
+           WHERE personal_account_id=$1 AND tool_name='read_messages' AND outcome='success'
+             AND started_at >= (date_trunc('day',$2::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')
+             AND started_at < (date_trunc('day',$2::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') + interval '1 day'`,
+          [accountId, input.observedAt],
+        );
+        const usedCount = Number(used.rows[0]?.count);
+        if (!Number.isSafeInteger(usedCount))
+          throw new Error("invalid returned-record quota");
+        if (usedCount + input.resultCount > input.dailyRecordLimit) {
+          return {
+            outcome: "record_quota_exhausted" as const,
+            resetsAt: new Date(
+              Date.UTC(
+                input.observedAt.getUTCFullYear(),
+                input.observedAt.getUTCMonth(),
+                input.observedAt.getUTCDate() + 1,
+              ),
+            ),
+          };
+        }
+        const updated = await connection.query(
+          `UPDATE app.tool_call_logs SET completed_at=$2,outcome='success',error_code=NULL,result_count=$3,
+             latency_ms=GREATEST(0,floor(extract(epoch FROM ($2::timestamptz-started_at))*1000))::integer
+           WHERE id=$1 AND personal_account_id=$4 AND mcp_authorization_id=$5
+             AND tool_name='read_messages' AND outcome='started' RETURNING id`,
+          [
+            input.auditLogId,
+            input.observedAt,
+            input.resultCount,
+            accountId,
+            input.authorizationId,
+          ],
+        );
+        if (updated.rows.length !== 1)
+          throw new Error("Tool Call Log completion unavailable");
+        return { outcome: "success" as const };
       }),
     ),
   listGroups: (input) =>

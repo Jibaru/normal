@@ -3,6 +3,7 @@ import { ConnectionId } from "@whatsapp-mcp/contracts/handles";
 import type {
   BeginToolCallResult,
   McpToolGroupPage,
+  McpToolMessagePage,
 } from "@whatsapp-mcp/db/mcp-tool";
 import { Effect, Layer } from "effect";
 import { describe, expect, test } from "vitest";
@@ -121,6 +122,7 @@ const makeHarness = (
       "connections:read" | "directory:read" | "messages:read" | "messages:send"
     >;
     readonly groupPage?: McpToolGroupPage | null;
+    readonly messagePage?: McpToolMessagePage;
     readonly cursorKey?: CryptoKey;
     readonly sendResult?: SendTextMessageResult;
   } = {},
@@ -218,6 +220,10 @@ const makeHarness = (
           ? Effect.fail(new McpToolPersistenceError())
           : Effect.void;
       },
+      completeMessageRead: (input) => {
+        observations.push(`complete-message-read:${input.resultCount}`);
+        return Effect.succeed({ outcome: "success" as const });
+      },
       inspectAuthorization: () =>
         overrides.failInspect
           ? Effect.fail(new McpToolPersistenceError())
@@ -270,7 +276,7 @@ const makeHarness = (
         observations.push("read-messages");
         return Effect.succeed({
           outcome: "success" as const,
-          page: {
+          page: overrides.messagePage ?? {
             accountKey: {
               ciphertext: "AQI=",
               keyVersion: 1,
@@ -1341,6 +1347,180 @@ describe("read_messages MCP boundary", () => {
       "list_chats",
       "read_messages",
     ]);
+  });
+
+  test("reduces complete records to the 32 KiB target and cursors from the oldest returned record", async () => {
+    const message = (suffix: string, text: string, sentAt: string) => ({
+      publicId: `msg_${suffix.repeat(21)}`,
+      messageIdentity: `wi1_${suffix.repeat(43)}`,
+      sentAt,
+      direction: "inbound" as const,
+      conversationKind: "direct" as const,
+      contentType: "text" as const,
+      content: {
+        ciphertext: btoa(JSON.stringify({ text, mediaSource: null })),
+        keyVersion: 1,
+        nonce: "AQIDBAUGBwgJCgsM",
+        version: 1 as const,
+      },
+    });
+    const harness = makeHarness({
+      scopes: ["messages:read"],
+      messagePage: {
+        accountKey: {
+          ciphertext: "AQI=",
+          keyVersion: 1,
+          kmsKeyId: "kms-content-root",
+          personalAccountId: "10000000-0000-4000-8000-000000000030",
+          version: 1,
+        },
+        connectionKey: {
+          accountKeyVersion: 1,
+          ciphertext: "AQI=",
+          connectionId: "20000000-0000-4000-8000-000000000030",
+          keyVersion: 1,
+          nonce: "AQIDBAUGBwgJCgsM",
+          personalAccountId: "10000000-0000-4000-8000-000000000030",
+          version: 1,
+        },
+        messages: [
+          message("3", "a".repeat(16_000), "2026-07-31T11:59:00.000Z"),
+          message("2", "b".repeat(16_000), "2026-07-31T11:58:00.000Z"),
+          message("1", "c".repeat(16_000), "2026-07-31T11:57:00.000Z"),
+        ],
+        hasOlder: false,
+        sizeLimited: false,
+        historyStartsAt: "2026-07-01T00:00:00.000Z",
+        historyStartReason: "retention_policy",
+        gaps: [],
+      },
+    });
+    const body = (await (
+      await harness.handler(
+        jsonRpcRequest("tools/call", {
+          name: "read_messages",
+          arguments: {
+            connection_id: "con_123456789012345678901",
+            conversation_id: "cvs_123456789012345678901",
+            limit: 3,
+          },
+        }),
+        {},
+        executionContext,
+        authorization,
+      )
+    ).json()) as {
+      result: {
+        structuredContent: {
+          messages: unknown[];
+          older_cursor: string;
+          size_limited: boolean;
+        };
+        content: Array<{ text: string }>;
+      };
+    };
+    expect(
+      new TextEncoder().encode(body.result.content[0]?.text).byteLength,
+    ).toBeLessThanOrEqual(32_768);
+    expect(body.result.structuredContent.messages).toHaveLength(1);
+    expect(body.result.structuredContent.size_limited).toBe(true);
+    expect(
+      JSON.parse(atob(body.result.structuredContent.older_cursor)),
+    ).toEqual(["2026-07-31T11:59:00.000Z", "msg_333333333333333333333"]);
+    expect(harness.observations).toContain("complete-message-read:1");
+  });
+
+  test("Unicode-safely truncates one oversized record under 64 KiB with the full UTF-8 count", async () => {
+    const text = `${"e\u0301😀".repeat(20_000)}tail`;
+    const encoded = btoa(
+      String.fromCharCode(
+        ...new TextEncoder().encode(JSON.stringify({ text })),
+      ),
+    );
+    const oversized = makeHarness({
+      scopes: ["messages:read"],
+      messagePage: {
+        accountKey: {
+          ciphertext: "AQI=",
+          keyVersion: 1,
+          kmsKeyId: "kms-content-root",
+          personalAccountId: "10000000-0000-4000-8000-000000000030",
+          version: 1,
+        },
+        connectionKey: {
+          accountKeyVersion: 1,
+          ciphertext: "AQI=",
+          connectionId: "20000000-0000-4000-8000-000000000030",
+          keyVersion: 1,
+          nonce: "AQIDBAUGBwgJCgsM",
+          personalAccountId: "10000000-0000-4000-8000-000000000030",
+          version: 1,
+        },
+        messages: [
+          {
+            publicId: "msg_111111111111111111111",
+            messageIdentity: `wi1_${"A".repeat(43)}`,
+            sentAt: "2026-07-31T11:59:00.000Z",
+            direction: "inbound",
+            conversationKind: "direct",
+            contentType: "text",
+            content: {
+              ciphertext: encoded,
+              keyVersion: 1,
+              nonce: "AQIDBAUGBwgJCgsM",
+              version: 1,
+            },
+          },
+        ],
+        hasOlder: false,
+        sizeLimited: false,
+        historyStartsAt: "2026-07-01T00:00:00.000Z",
+        historyStartReason: "retention_policy",
+        gaps: [],
+      },
+    });
+    const body = (await (
+      await oversized.handler(
+        jsonRpcRequest("tools/call", {
+          name: "read_messages",
+          arguments: {
+            connection_id: "con_123456789012345678901",
+            conversation_id: "cvs_123456789012345678901",
+            limit: 1,
+          },
+        }),
+        {},
+        executionContext,
+        authorization,
+      )
+    ).json()) as {
+      result: {
+        structuredContent: {
+          messages: Array<{
+            text: string;
+            text_truncated: boolean;
+            text_total_utf8_bytes: number;
+          }>;
+        };
+        content: Array<{ text: string }>;
+      };
+    };
+    const returned = body.result.structuredContent.messages[0];
+    expect(returned).toBeDefined();
+    if (returned === undefined) throw new Error("expected one message");
+    expect(
+      new TextEncoder().encode(body.result.content[0]?.text).byteLength,
+    ).toBeLessThanOrEqual(65_536);
+    expect(returned.text_truncated).toBe(true);
+    expect(returned.text_total_utf8_bytes).toBe(
+      new TextEncoder().encode(text).byteLength,
+    );
+    expect(() =>
+      new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(
+        new TextEncoder().encode(returned.text),
+      ),
+    ).not.toThrow();
+    expect(text.startsWith(returned.text)).toBe(true);
   });
 });
 
