@@ -368,7 +368,6 @@ const SendTextMessageInput = z
     text: z
       .string()
       .min(1)
-      .max(4_096)
       .refine((value) => {
         const length = Array.from(value).length;
         return (

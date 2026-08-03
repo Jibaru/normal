@@ -289,18 +289,22 @@ export const makePgAtomicSendRepository = (
         );
         const quotas = await connection.query<Record<string, unknown>>(
           `SELECT
-             (SELECT count(*)::int FROM app.tool_call_logs WHERE personal_account_id=$1 AND quota_reserved AND started_at>$2) AS request_minute,
-             (SELECT max(started_at) FROM app.tool_call_logs WHERE personal_account_id=$1 AND quota_reserved AND started_at>$2) AS request_minute_latest,
-             (SELECT count(*)::int FROM app.tool_call_logs WHERE personal_account_id=$1 AND quota_reserved AND started_at>$3) AS request_hour,
-             (SELECT max(started_at) FROM app.tool_call_logs WHERE personal_account_id=$1 AND quota_reserved AND started_at>$3) AS request_hour_latest,
-             (SELECT count(*)::int FROM app.send_quota_reservations WHERE mcp_authorization_id=$4 AND reserved_at>$2) AS send_minute,
-             (SELECT max(reserved_at) FROM app.send_quota_reservations WHERE mcp_authorization_id=$4 AND reserved_at>$2) AS send_minute_latest,
-             (SELECT count(*)::int FROM app.send_quota_reservations WHERE personal_account_id=$1 AND reserved_at>=$5) AS send_day`,
+             (SELECT count(*)::int FROM app.tool_call_logs WHERE personal_account_id=$1 AND quota_reserved AND started_at>$2 AND started_at<=$5) AS request_minute,
+             (SELECT (array_agg(started_at ORDER BY started_at DESC))[($6::int)] FROM app.tool_call_logs WHERE personal_account_id=$1 AND quota_reserved AND started_at>$2 AND started_at<=$5) AS request_minute_reset,
+             (SELECT count(*)::int FROM app.tool_call_logs WHERE personal_account_id=$1 AND quota_reserved AND started_at>$3 AND started_at<=$5) AS request_hour,
+             (SELECT (array_agg(started_at ORDER BY started_at DESC))[($7::int)] FROM app.tool_call_logs WHERE personal_account_id=$1 AND quota_reserved AND started_at>$3 AND started_at<=$5) AS request_hour_reset,
+             (SELECT count(*)::int FROM app.send_quota_reservations WHERE mcp_authorization_id=$4 AND reserved_at>$2 AND reserved_at<=$5) AS send_minute,
+             (SELECT (array_agg(reserved_at ORDER BY reserved_at DESC))[($8::int)] FROM app.send_quota_reservations WHERE mcp_authorization_id=$4 AND reserved_at>$2 AND reserved_at<=$5) AS send_minute_reset,
+             (SELECT count(*)::int FROM app.send_quota_reservations WHERE personal_account_id=$1 AND reserved_at>=$9 AND reserved_at<=$5) AS send_day`,
           [
             accountId,
             minuteStart,
             new Date(input.observedAt.valueOf() - 3_600_000),
             input.authorizationId,
+            input.observedAt,
+            input.minuteRequestLimit,
+            input.hourRequestLimit,
+            input.sendPerMinuteLimit,
             dayStart,
           ],
         );
@@ -315,15 +319,15 @@ export const makePgAtomicSendRepository = (
           const candidates: Date[] = [];
           if (Number(q.request_minute) >= input.minuteRequestLimit)
             candidates.push(
-              new Date(date(q.request_minute_latest).valueOf() + 60_000),
+              new Date(date(q.request_minute_reset).valueOf() + 60_000),
             );
           if (Number(q.request_hour) >= input.hourRequestLimit)
             candidates.push(
-              new Date(date(q.request_hour_latest).valueOf() + 3_600_000),
+              new Date(date(q.request_hour_reset).valueOf() + 3_600_000),
             );
           if (Number(q.send_minute) >= input.sendPerMinuteLimit)
             candidates.push(
-              new Date(date(q.send_minute_latest).valueOf() + 60_000),
+              new Date(date(q.send_minute_reset).valueOf() + 60_000),
             );
           if (Number(q.send_day) >= input.sendDailyLimit)
             candidates.push(new Date(dayStart.valueOf() + 86_400_000));

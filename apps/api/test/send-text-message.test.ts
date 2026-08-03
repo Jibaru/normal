@@ -161,4 +161,10 @@ describe("atomic send workflow", () => {
       "record-outcome",
     ]);
   });
+
+  test("accepts an uppercase hexadecimal fingerprint key", async () => {
+    await expect(
+      importSendFingerprintKey("AB".repeat(32)),
+    ).resolves.toBeInstanceOf(CryptoKey);
+  });
 });

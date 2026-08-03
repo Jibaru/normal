@@ -1156,6 +1156,27 @@ describe("atomic send_text_message MCP boundary", () => {
     });
   });
 
+  test("accepts 4096 astral Unicode scalar values", async () => {
+    const harness = makeHarness({ scopes: ["messages:send"] });
+    const response = await harness.handler(
+      jsonRpcRequest("tools/call", {
+        name: "send_text_message",
+        arguments: {
+          connection_id: "con_123456789012345678901",
+          recipient_id: "ctc_123456789012345678901",
+          text: "😀".repeat(4_096),
+          idempotency_key: "123456789012345678901",
+        },
+      }),
+      {},
+      executionContext,
+      authorization,
+    );
+    expect(await response.json()).toMatchObject({
+      result: { structuredContent: { status: "accepted" } },
+    });
+  });
+
   test.each(["", " \n\t", "x".repeat(4_097)])(
     "rejects invalid exact text before the send service: %j",
     async (text) => {

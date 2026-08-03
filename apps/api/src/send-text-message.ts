@@ -281,7 +281,7 @@ export const makeAtomicSendTextMessageService = (
 export const importSendFingerprintKey = async (
   hex: string,
 ): Promise<CryptoKey> => {
-  if (!/^[a-f0-9]{64}$/u.test(hex))
+  if (!/^[a-f0-9]{64}$/iu.test(hex))
     throw new Error(
       "SEND_FINGERPRINT_HMAC_SECRET must be a 32-byte hex secret",
     );
