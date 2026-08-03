@@ -4,6 +4,7 @@ import {
   HumanIdentity,
   InvalidHumanIdentity,
 } from "../src/auth/human-identity";
+import { DeletionPrimitiveError } from "../src/deletion/marker";
 import {
   ClerkIdentityAdministration,
   ClerkWebhookVerification,
@@ -63,7 +64,9 @@ const makeHarness = (known = true, markerFails = false) => {
       markers: {
         create: () =>
           markerFails
-            ? Effect.fail(new Error("marker unavailable"))
+            ? Effect.fail(
+                new DeletionPrimitiveError({ operation: "create-marker" }),
+              )
             : Effect.sync(() => {
                 calls.push("marker");
                 return {
