@@ -1255,6 +1255,67 @@ describe("production migrations", () => {
       await database.exec("RESET ROLE");
     }
   });
+
+  test("keeps a restored branch closed while locked markers and wall-clock expiry replay", async () => {
+    await runMigrations(database);
+    await seedTenants(database);
+    await seedKeyEnvelopes(database);
+
+    await database.exec("SET ROLE whatsapp_api_runtime");
+    try {
+      const before = await database.query<{ ready: boolean }>(
+        "SELECT app_private.is_restore_ready('br-restored') AS ready",
+      );
+      expect(before.rows).toEqual([{ ready: false }]);
+      await expect(
+        database.query(
+          "SELECT * FROM app_private.begin_restore_replay('br-restored', statement_timestamp())",
+        ),
+      ).rejects.toThrow();
+    } finally {
+      await database.exec("RESET ROLE");
+    }
+
+    await database.exec("SET ROLE whatsapp_restore_runtime");
+    try {
+      const candidates = await database.query<{
+        deletion_kind: string;
+        opaque_entity_id: string;
+      }>(
+        "SELECT * FROM app_private.begin_restore_replay('br-restored', '2026-08-03T12:00:00Z')",
+      );
+      expect(candidates.rows).toContainEqual({
+        deletion_kind: "personal_account",
+        opaque_entity_id: accountA,
+      });
+      const replay = await database.query<{ replayed: boolean }>(
+        `SELECT app_private.replay_restore_deletion(
+          'personal_account', $1, $2, '2026-08-03T12:00:00Z'
+        ) AS replayed`,
+        [accountA, "a".repeat(64)],
+      );
+      expect(replay.rows).toEqual([{ replayed: true }]);
+      await database.query(
+        "SELECT app_private.complete_restore_replay('br-restored','2026-08-03T12:01:00Z',1,1,0)",
+      );
+    } finally {
+      await database.exec("RESET ROLE");
+    }
+
+    const protectedState = await database.query<{
+      account_count: number;
+      audit_columns: number;
+    }>(
+      `SELECT
+        (SELECT count(*)::integer FROM app.personal_accounts WHERE id = $1) AS account_count,
+        (SELECT count(*)::integer FROM information_schema.columns
+          WHERE table_schema = 'app_private' AND table_name = 'restore_replay_audit') AS audit_columns`,
+      [accountA],
+    );
+    expect(protectedState.rows).toEqual([
+      { account_count: 0, audit_columns: 5 },
+    ]);
+  });
 });
 
 const seedTenants = async (database: PGlite) => {

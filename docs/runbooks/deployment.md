@@ -443,6 +443,7 @@ without printing any secret:
 export CLOUDFLARE_HYPERDRIVE_ID="$(
   tofu -chdir=infra/production output -raw api_hyperdrive_id
 )"
+export NEON_BRANCH_ID="br_replace_with_exact_neon_branch_id"
 export CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID="$(
   tofu -chdir=infra/production output -raw webhook_hyperdrive_id
 )"
@@ -468,7 +469,7 @@ bun scripts/render-api-wrangler.ts \
 CI=true bun run --cwd apps/api wrangler deploy \
   --config .wrangler/production.jsonc \
   --env "$DEPLOYMENT_ENVIRONMENT"
-unset CLOUDFLARE_HYPERDRIVE_ID CLOUDFLARE_OAUTH_KV_ID \
+unset CLOUDFLARE_HYPERDRIVE_ID CLOUDFLARE_OAUTH_KV_ID NEON_BRANCH_ID \
   CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID CLERK_API_AUDIENCE \
   CLERK_AUTHORIZED_PARTY CLERK_ISSUER OAUTH_CLIENT_REGISTRY \
   MCP_REQUESTS_PER_HOUR MCP_REQUESTS_PER_MINUTE OAUTH_ISSUER OAUTH_RESOURCE \

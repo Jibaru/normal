@@ -22,12 +22,16 @@ const withClient = async <Value>(
 
 export const checkDatabaseReadiness = (
   connectionString: string,
+  branchId?: string,
 ): Promise<void> =>
   withClient(connectionString, async (client) => {
-    await assertExpectedSchemaVersion({
-      query: async (text, values) => {
-        const result = await client.query(text, values as Array<unknown>);
-        return { rows: result.rows };
+    await assertExpectedSchemaVersion(
+      {
+        query: async (text, values) => {
+          const result = await client.query(text, values as Array<unknown>);
+          return { rows: result.rows };
+        },
       },
-    });
+      branchId,
+    );
   });

@@ -1,0 +1,4 @@
+DEPLOYMENT_ENVIRONMENT=development
+NEON_BRANCH_ID=br_replace_with_neon_branch_id
+RESTORE_DATABASE_URL=postgresql://whatsapp_restore_runtime:replace-with-password@replace-with-endpoint.neon.tech/replace-with-database?sslmode=require
+DELETION_MARKER_HMAC_SECRET=replace-with-64-hex-characters

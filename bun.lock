@@ -74,6 +74,21 @@
         "wrangler": "4.116.0",
       },
     },
+    "apps/restore-coordinator": {
+      "name": "@whatsapp-mcp/restore-coordinator",
+      "version": "0.1.0",
+      "dependencies": {
+        "@whatsapp-mcp/api": "workspace:*",
+        "@whatsapp-mcp/db": "workspace:*",
+        "effect": "3.22.1",
+      },
+      "devDependencies": {
+        "@cloudflare/workers-types": "5.20260730.1",
+        "typescript": "^5",
+        "vitest": "4.1.10",
+        "wrangler": "4.116.0",
+      },
+    },
     "apps/web": {
       "name": "@whatsapp-mcp/web",
       "version": "0.1.0",
@@ -795,6 +810,8 @@
     "@whatsapp-mcp/domain": ["@whatsapp-mcp/domain@workspace:packages/domain"],
 
     "@whatsapp-mcp/provider-control": ["@whatsapp-mcp/provider-control@workspace:apps/provider-control"],
+
+    "@whatsapp-mcp/restore-coordinator": ["@whatsapp-mcp/restore-coordinator@workspace:apps/restore-coordinator"],
 
     "@whatsapp-mcp/wasender": ["@whatsapp-mcp/wasender@workspace:packages/wasender"],
 
