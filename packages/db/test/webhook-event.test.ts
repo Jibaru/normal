@@ -421,25 +421,73 @@ describe("Webhook Event repository", () => {
         messageIdentity,
       ],
     );
+    await database.query(
+      `INSERT INTO app.directory_contacts (
+         personal_account_id,whatsapp_connection_id,id,public_id,
+         provider_identity_index,provider_identity_ciphertext_version,
+         provider_identity_key_version,provider_identity_nonce,
+         provider_identity_ciphertext,display_name_sort,active,received_at
+       ) VALUES ($1,$2,'70000000-0000-4000-8000-000000000050',
+         'ctc_000000000000000000050',$3,1,1,
+         decode(repeat('11',12),'hex'),decode(repeat('12',32),'hex'),'',true,$4)`,
+      [accountId, connectionId, `di1_${"C".repeat(43)}`, receivedAt],
+    );
+    await database.query(
+      `INSERT INTO app.pending_send_contents (
+         send_operation_id,personal_account_id,whatsapp_connection_id,
+         ciphertext_version,key_version,nonce,ciphertext,expires_at
+       ) VALUES ($1,$2,$3,1,2,decode(repeat('13',12),'hex'),
+         decode(repeat('14',32),'hex'),$4::timestamptz + interval '7 days')`,
+      [sendId, accountId, connectionId, receivedAt],
+    );
     await repository.prepare(eventInput(firstEventId));
 
     const project = (
       status: "sent" | "delivered" | "read" | "failed",
       index: number,
+      materialize?: Parameters<typeof repository.projectSendEvidence>[1],
     ) =>
-      repository.projectSendEvidence({
-        eventId: firstEventId,
-        evidence: { occurredAt: null, version: null },
-        itemIdentity: itemIdentity(`send-${status}-${index}`),
-        itemIndex: index,
-        messageIdentity,
-        personalAccountId: accountId,
-        receivedAt,
-        status,
-        whatsappConnectionId: connectionId,
-      });
+      repository.projectSendEvidence(
+        {
+          eventId: firstEventId,
+          evidence: { occurredAt: null, version: null },
+          itemIdentity: itemIdentity(`send-${status}-${index}`),
+          itemIndex: index,
+          messageIdentity,
+          personalAccountId: accountId,
+          receivedAt,
+          status,
+          whatsappConnectionId: connectionId,
+        },
+        materialize,
+      );
 
-    expect(await project("delivered", 0)).toBe("applied");
+    expect(
+      await project("delivered", 0, async (pending) => {
+        expect(pending).toEqual({
+          ciphertext: new Uint8Array(32).fill(0x14),
+          keyVersion: 2,
+          nonce: new Uint8Array(12).fill(0x13),
+          sendId,
+        });
+        return {
+          content: {
+            ciphertext: Buffer.from(new Uint8Array(32).fill(0x16)).toString(
+              "base64",
+            ),
+            keyVersion: 3,
+            nonce: Buffer.from(new Uint8Array(12).fill(0x15)).toString(
+              "base64",
+            ),
+            version: 1,
+          },
+          conversationId: "80000000-0000-4000-8000-000000000050",
+          conversationPublicId: "cvs_000000000000000000050",
+          messageId: "90000000-0000-4000-8000-000000000050",
+          messagePublicId: "msg_000000000000000000050",
+        };
+      }),
+    ).toBe("applied");
     await expect(project("failed", 1)).resolves.toBe("superseded");
     await expect(project("read", 2)).resolves.toBe("applied");
     await expect(project("sent", 3)).resolves.toBe("superseded");
@@ -454,6 +502,30 @@ describe("Webhook Event repository", () => {
       [sendId],
     );
     expect(persisted.rows).toEqual([{ status: "sent" }]);
+    const materialized = await database.query<{
+      content_key_version: number;
+      direction: string;
+      pending_count: number;
+      stored_count: number;
+    }>(
+      `SELECT messages.content_key_version,messages.direction,
+         (SELECT count(*)::int FROM app.pending_send_contents
+          WHERE send_operation_id=$1) AS pending_count,
+         count(*) OVER ()::int AS stored_count
+       FROM app.stored_messages messages
+       WHERE messages.personal_account_id=$2
+         AND messages.whatsapp_connection_id=$3
+         AND messages.message_identity=$4`,
+      [sendId, accountId, connectionId, messageIdentity],
+    );
+    expect(materialized.rows).toEqual([
+      {
+        content_key_version: 3,
+        direction: "outbound",
+        pending_count: 0,
+        stored_count: 1,
+      },
+    ]);
 
     const privileges = await database.query<{
       can_delete_pending: boolean;

@@ -968,16 +968,20 @@ export const makeWebhookEventRepository = (
             ],
           );
           await connection.query(
-            `UPDATE app.whatsapp_conversations conversations SET
+            `WITH latest AS (
+               SELECT messages.conversation_id,messages.sent_at,messages.direction
+               FROM app.stored_messages messages
+               JOIN app.whatsapp_conversations conversations
+                 ON conversations.id=messages.conversation_id
+               WHERE messages.personal_account_id=$1
+                 AND messages.whatsapp_connection_id=$2
+                 AND conversations.recipient_locator=$3
+               ORDER BY messages.sent_at DESC,messages.public_id DESC LIMIT 1
+             )
+             UPDATE app.whatsapp_conversations conversations SET
                last_activity_at=latest.sent_at,last_activity_direction=latest.direction,
                updated_at=transaction_timestamp()
-             FROM (SELECT sent_at,direction FROM app.stored_messages
-               WHERE personal_account_id=$1 AND whatsapp_connection_id=$2
-                 AND conversation_id=conversations.id
-               ORDER BY sent_at DESC,public_id DESC LIMIT 1) latest
-             WHERE conversations.personal_account_id=$1
-               AND conversations.whatsapp_connection_id=$2
-               AND conversations.recipient_locator=$3`,
+             FROM latest WHERE conversations.id=latest.conversation_id`,
             [
               input.personalAccountId,
               input.whatsappConnectionId,
