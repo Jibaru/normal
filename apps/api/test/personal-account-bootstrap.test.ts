@@ -23,6 +23,8 @@ const makeHarness = (
   options: {
     readonly deleted?: boolean;
     readonly identityValid?: boolean;
+    readonly initiallyWaitlisted?: boolean;
+    readonly onboardingOpen?: boolean;
     readonly persistenceFailure?: boolean;
     readonly providerApprovedSessionCapacity?: number;
   } = {},
@@ -33,6 +35,7 @@ const makeHarness = (
   >();
   const events: Array<SafeTelemetryEvent> = [];
   const waitlistedUsers = new Set<string>();
+  if (options.initiallyWaitlisted) waitlistedUsers.add(clerkUserId);
   let generatedKeys = 0;
   let nextIdentifier = 0;
   let providerApprovedSessionCapacity =
@@ -105,6 +108,7 @@ const makeHarness = (
     }),
     Layer.succeed(PersonalAccountPersistence, persistence),
     Layer.succeed(PrivateBetaConfig, {
+      onboardingOpen: options.onboardingOpen ?? true,
       get providerApprovedSessionCapacity() {
         return providerApprovedSessionCapacity;
       },
@@ -169,6 +173,31 @@ const bootstrapRequest = (
   });
 
 describe("Personal Account bootstrap HTTP boundary", () => {
+  test("fails external onboarding closed before creating keys when the launch gate is closed", async () => {
+    const harness = makeHarness({ onboardingOpen: false });
+    const response = await harness.handler(bootstrapRequest());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      admission: { state: "waitlisted" },
+    });
+    expect(harness.generatedKeys()).toBe(0);
+    expect(harness.accounts.size).toBe(0);
+  });
+
+  test("keeps an existing waitlist entry closed without creating keys", async () => {
+    const harness = makeHarness({
+      initiallyWaitlisted: true,
+      onboardingOpen: false,
+    });
+    const response = await harness.handler(bootstrapRequest());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      admission: { state: "waitlisted" },
+    });
+    expect(harness.generatedKeys()).toBe(0);
+    expect(harness.waitlistedUsers.has(clerkUserId)).toBe(true);
+  });
+
   test("creates once, recovers idempotently, and never returns an internal account identifier", async () => {
     const harness = makeHarness();
 

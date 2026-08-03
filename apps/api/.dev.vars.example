@@ -57,3 +57,5 @@ OAUTH_CLIENT_REGISTRY='[{"clientClass":"approved","clientId":"replace-with-revie
 # Encrypts short-lived authorization requests handed to the web consent UI.
 # Generate independently with openssl rand -hex 32.
 OAUTH_PROTOCOL_ENCRYPTION_KEY=replace-with-dedicated-32-byte-hex-secret
+# External onboarding is fail-closed until the production launch-gate workflow passes.
+EXTERNAL_ONBOARDING_GATE=closed

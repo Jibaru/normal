@@ -156,6 +156,17 @@ variable "provider_approved_session_capacity" {
   }
 }
 
+variable "external_onboarding_gate" {
+  description = "Launch-gate result. Keep closed until recovery, smoke, quota, capacity, and governance evidence passes."
+  type        = string
+  default     = "closed"
+
+  validation {
+    condition     = contains(["closed", "open"], var.external_onboarding_gate)
+    error_message = "external_onboarding_gate must be closed or open."
+  }
+}
+
 variable "mcp_requests_per_minute" {
   description = "Approved authoritative MCP request reservations allowed in an exact rolling minute."
   type        = number

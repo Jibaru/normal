@@ -1,0 +1,61 @@
+name: Production recovery drills
+
+on:
+  schedule:
+    - cron: "17 3 1 * *"
+    - cron: "43 4 1 1,4,7,10 *"
+  workflow_dispatch:
+    inputs:
+      drill:
+        description: Drill to execute
+        required: true
+        type: choice
+        options: [monthly_restore, quarterly_game_day]
+
+permissions:
+  contents: read
+
+jobs:
+  monthly-restore:
+    if: github.event_name == 'schedule' && github.event.schedule == '17 3 1 * *' || inputs.drill == 'monthly_restore'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    environment: production-recovery
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun scripts/run-recovery-drill.ts monthly_restore
+        env:
+          RECOVERY_AUTOMATION_URL: ${{ secrets.RECOVERY_AUTOMATION_URL }}
+          RECOVERY_AUTOMATION_TOKEN: ${{ secrets.RECOVERY_AUTOMATION_TOKEN }}
+          RECOVERY_EVIDENCE_PATH: monthly_restore.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: monthly-restore-evidence
+          path: monthly_restore.json
+          retention-days: 400
+
+  quarterly-game-day:
+    if: github.event_name == 'schedule' && github.event.schedule == '43 4 1 1,4,7,10 *' || inputs.drill == 'quarterly_game_day'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    environment: production-recovery
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun scripts/run-recovery-drill.ts quarterly_game_day
+        env:
+          RECOVERY_AUTOMATION_URL: ${{ secrets.RECOVERY_AUTOMATION_URL }}
+          RECOVERY_AUTOMATION_TOKEN: ${{ secrets.RECOVERY_AUTOMATION_TOKEN }}
+          RECOVERY_EVIDENCE_PATH: quarterly_game_day.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quarterly-game-day-evidence
+          path: quarterly_game_day.json
+          retention-days: 400

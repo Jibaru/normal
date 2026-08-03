@@ -74,6 +74,7 @@ export const PersonalAccountIdentifiers =
   );
 
 export interface PrivateBetaConfigService {
+  readonly onboardingOpen: boolean;
   readonly providerApprovedSessionCapacity: number;
 }
 
@@ -133,13 +134,19 @@ export const bootstrapPersonalAccount = (
         whatsappConnectionLimit: resolved.whatsappConnectionLimit,
       } as const;
     }
+    const privateBeta = yield* PrivateBetaConfig;
+    if (!privateBeta.onboardingOpen && resolved?.admissionState !== "active") {
+      return {
+        admissionState: "waitlisted",
+        outcome: "waitlisted",
+      } as const;
+    }
 
     const identifiers = yield* PersonalAccountIdentifiers;
     const personalAccountId =
       resolved?.admissionState === "active"
         ? resolved.personalAccountId
         : yield* identifiers.next;
-    const privateBeta = yield* PrivateBetaConfig;
     const encryption = yield* EnvelopeEncryptionService;
     const envelope = yield* encryption.createPersonalAccountKey({
       accountId: personalAccountId,

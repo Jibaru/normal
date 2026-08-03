@@ -12,6 +12,7 @@ import worker from "./support/public-boundary-worker";
 
 describe("public-boundary Worker harness", () => {
   test("keeps the production Worker entrypoint under the runtime harness", async () => {
+    expect(env.EXTERNAL_ONBOARDING_GATE).toBe("closed");
     const response = await exports.default.fetch(
       "https://api.example.test/health",
     );

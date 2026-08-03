@@ -23,6 +23,7 @@ export interface Env {
   readonly DELETION_MARKER_HMAC_SECRET: string;
   readonly DELETION_MARKERS: R2Bucket;
   readonly DEPLOYMENT_ENVIRONMENT: string;
+  readonly EXTERNAL_ONBOARDING_GATE: string;
   readonly HYPERDRIVE: Hyperdrive;
   readonly INGESTION_QUEUE: Queue;
   readonly KMS_CONTENT_ROOT_KEY_ARN: string;

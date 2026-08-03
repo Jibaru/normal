@@ -1125,6 +1125,38 @@ under the production recovery authority.
 
 ## External rollout gates
 
+The source-controlled API binding `EXTERNAL_ONBOARDING_GATE` defaults to
+`closed`. While closed, an existing User can recover an existing Personal
+Account, but a new User receives the waitlist response before a tenant key is
+created. Do not open the binding manually from an individual check.
+
+The monthly and quarterly schedules in
+`.github/workflows/recovery-drills.yml` call the production recovery automation
+boundary and retain its validated, metadata-only evidence. The monthly restore
+must use a random point from the preceding 30 days and a non-serving branch.
+The quarterly game day covers endpoint rotation, OAuth KV reconstruction,
+immutable Queue replay, KMS/R2 access, permanent Stored Media loss, alert
+delivery, and deletion-gate bypass denial. Configure
+`RECOVERY_AUTOMATION_URL` and `RECOVERY_AUTOMATION_TOKEN` only in the isolated
+`production-recovery` GitHub environment; they are external rollout inputs, not
+test substitutes or application runtime bindings.
+
+Run the `External onboarding launch gate` workflow after successful drill
+artifacts exist. It reruns the real deployed smoke and production bundle
+inspection and requires the exact environment attestations `approved` for
+numeric quotas, provider capacity, and Wasender governance terms. Evidence
+older than 35 days for the monthly drill or 100 days for the quarterly drill is
+rejected. The successful result authorizes a reviewed infrastructure change of
+`external_onboarding_gate = "open"`; it does not mutate infrastructure itself.
+Any missing artifact, secret, external approval, malformed report, failed
+check, missed four-hour RTO, missed five-minute Neon RPO, or nonzero deletion
+marker loss keeps onboarding closed.
+
+Evidence records the 99.5 percent first-party monthly SLO separately from
+Wasender and WhatsApp availability. Reports contain timings, aggregate counts,
+and normalized checks only; never include a User, Personal Account, WhatsApp
+Connection, provider identifier, key, token, message, or object key.
+
 Applying real infrastructure remains gated on environment-specific Cloudflare
 accounts/zones, Vercel teams, state buckets/KMS keys, provider tokens, domain
 ownership, and DNS approval. These values are intentionally absent from source.

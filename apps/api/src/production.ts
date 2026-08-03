@@ -314,6 +314,7 @@ export interface ApiEnvironment {
   readonly OAUTH_RESOURCE?: string | undefined;
   readonly DECRYPTED_MEDIA_BYTES_PER_DAY?: string | undefined;
   readonly PROVIDER_APPROVED_SESSION_CAPACITY?: string | undefined;
+  readonly EXTERNAL_ONBOARDING_GATE?: string | undefined;
   readonly PROVIDER_CONTROL?: unknown;
   readonly STORED_MEDIA?: unknown;
   readonly WEBHOOK_INGRESS?: unknown;
@@ -414,6 +415,11 @@ const providerApprovedSessionCapacity = Config.integer(
     validation: (value) => Number.isSafeInteger(value) && value >= 3,
   }),
 );
+
+const externalOnboardingOpen = Config.literal(
+  "closed",
+  "open",
+)("EXTERNAL_ONBOARDING_GATE");
 
 const isExactHttpsOrigin = (value: string): boolean => {
   try {
@@ -2286,8 +2292,12 @@ const mcpAuthorizationRuntimeLayer = Layer.mergeAll(
 const privateBetaConfigLayer = (environment: ApiEnvironment) =>
   Layer.effect(
     PrivateBetaConfig,
-    providerApprovedSessionCapacity.pipe(
-      Effect.map((capacity) => ({
+    Config.all({
+      capacity: providerApprovedSessionCapacity,
+      gate: externalOnboardingOpen,
+    }).pipe(
+      Effect.map(({ capacity, gate }) => ({
+        onboardingOpen: gate === "open",
         providerApprovedSessionCapacity: capacity,
       })),
       Effect.withConfigProvider(environmentConfigProvider(environment)),
