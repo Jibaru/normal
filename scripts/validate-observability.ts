@@ -1,7 +1,15 @@
-import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
+
+const runtimeTelemetryModule = (await import(
+  fileURLToPath(new URL("../apps/api/src/safe-telemetry.ts", import.meta.url))
+)) as {
+  readonly safeTelemetryFieldsByEvent: Readonly<
+    Record<string, ReadonlyArray<string>>
+  >;
+};
 
 const sourceName = z.enum(["workerTelemetry", "cloudflarePlatform"]);
 const panel = z.object({
@@ -80,7 +88,108 @@ const requiredAlerts = [
   "wasender-dependency-outage",
   "whatsapp-dependency-outage",
   "alert-delivery-canary",
-];
+] as const;
+const expectedAlertPolicies = {
+  "active-dead-letters": {
+    condition: "gt",
+    filter: {},
+    for: "0m",
+    metric: "deadLetters",
+    severity: "page",
+    source: "cloudflarePlatform",
+    threshold: 0,
+  },
+  "alert-delivery-canary": {
+    condition: "canary",
+    filter: {},
+    for: "0m",
+    metric: "availability",
+    severity: "ticket",
+    source: "cloudflarePlatform",
+    threshold: null,
+  },
+  "deletion-cleanup-risk": {
+    condition: "lt",
+    filter: {},
+    for: "0m",
+    metric: "deletionDeadlineSeconds",
+    severity: "page",
+    source: "cloudflarePlatform",
+    threshold: 21_600,
+  },
+  "key-failures": {
+    condition: "gt",
+    filter: {},
+    for: "0m",
+    metric: "keyFailureCount",
+    severity: "page",
+    source: "cloudflarePlatform",
+    threshold: 0,
+  },
+  "quota-pressure": {
+    condition: "gte",
+    filter: {},
+    for: "15m",
+    metric: "quotaUtilization",
+    severity: "ticket",
+    source: "cloudflarePlatform",
+    threshold: 0.8,
+  },
+  "restore-gate-failure": {
+    condition: "gt",
+    filter: {},
+    for: "0m",
+    metric: "restoreGateFailures",
+    severity: "page",
+    source: "cloudflarePlatform",
+    threshold: 0,
+  },
+  "wasender-dependency-outage": {
+    condition: "lt",
+    filter: { dependency: "wasender" },
+    for: "5m",
+    metric: "availability",
+    severity: "page",
+    source: "cloudflarePlatform",
+    threshold: 0.995,
+  },
+  "whatsapp-dependency-outage": {
+    condition: "lt",
+    filter: { dependency: "whatsapp" },
+    for: "5m",
+    metric: "availability",
+    severity: "page",
+    source: "cloudflarePlatform",
+    threshold: 0.995,
+  },
+} as const;
+
+const expectedSlos = [
+  {
+    filter: { dependency: "first-party" },
+    id: "first-party-availability",
+    indicator: "availability",
+    objective: 99.5,
+    source: "cloudflarePlatform",
+    window: "30d",
+  },
+  {
+    filter: { dependency: "wasender" },
+    id: "wasender-availability",
+    indicator: "availability",
+    objective: null,
+    source: "cloudflarePlatform",
+    window: "30d",
+  },
+  {
+    filter: { dependency: "whatsapp" },
+    id: "whatsapp-availability",
+    indicator: "availability",
+    objective: null,
+    source: "cloudflarePlatform",
+    window: "30d",
+  },
+] as const;
 
 export const loadObservabilityConfig = async (): Promise<ObservabilityConfig> =>
   configSchema.parse(
@@ -112,8 +221,12 @@ export const validateObservabilityConfig = (input: unknown): void => {
       throw new Error(`missing operational view: ${term}`);
   }
   for (const alert of requiredAlerts) {
-    if (!alertIds.has(alert))
+    const policy = config.alerts.find(({ id }) => id === alert);
+    if (policy === undefined)
       throw new Error(`missing required alert: ${alert}`);
+    const { id: _id, ...actualPolicy } = policy;
+    if (!isDeepStrictEqual(actualPolicy, expectedAlertPolicies[alert]))
+      throw new Error(`required alert ${alert} has drifted`);
   }
   if (!config.delivery.canary.enabled)
     throw new Error("production alert delivery canary must be enabled");
@@ -125,28 +238,11 @@ export const validateObservabilityConfig = (input: unknown): void => {
   )
     throw new Error("alert delivery payload must remain identity-free");
 
-  const expectedSlos = [
-    "first-party-availability",
-    "wasender-availability",
-    "whatsapp-availability",
-  ];
-  if (config.slos.map(({ id }) => id).join(",") !== expectedSlos.join(","))
-    throw new Error("availability SLOs must be reported separately");
-  if (config.slos[0]?.objective !== 99.5)
-    throw new Error("first-party monthly availability objective must be 99.5");
-  if (config.slos.slice(1).some(({ objective }) => objective !== null))
-    throw new Error("dependencies must not inherit the first-party SLO");
+  if (!isDeepStrictEqual(config.slos, expectedSlos))
+    throw new Error("availability SLO definitions have drifted");
 
-  const runtimeAllowlistSource = readFileSync(
-    fileURLToPath(
-      new URL("../apps/api/src/safe-telemetry.ts", import.meta.url),
-    ),
-    "utf8",
-  );
-  const runtimeFields = new Set(
-    [...runtimeAllowlistSource.matchAll(/"([A-Za-z][A-Za-z0-9]+)"/gu)]
-      .map((match) => match[1])
-      .filter((field): field is string => field !== undefined),
+  const runtimeFields = new Set<string>(
+    Object.values(runtimeTelemetryModule.safeTelemetryFieldsByEvent).flat(),
   );
   for (const field of config.sources.workerTelemetry.fields) {
     if (!runtimeFields.has(field))

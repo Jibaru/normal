@@ -31,10 +31,32 @@ describe("production observability configuration", () => {
       "field tenantHash is not runtime telemetry-allowlisted",
     );
 
+    const sourceLiteralOnly = structuredClone(config);
+    sourceLiteralOnly.sources.workerTelemetry.fields.push("telemetry");
+    expect(() => validateObservabilityConfig(sourceLiteralOnly)).toThrow(
+      "field telemetry is not runtime telemetry-allowlisted",
+    );
+
     const noCanary = structuredClone(config);
     noCanary.delivery.canary.enabled = false;
     expect(() => validateObservabilityConfig(noCanary)).toThrow(
       "production alert delivery canary must be enabled",
+    );
+
+    const weakenedAlert = structuredClone(config);
+    const deletionAlert = weakenedAlert.alerts.find(
+      ({ id }) => id === "deletion-cleanup-risk",
+    );
+    if (deletionAlert) deletionAlert.threshold = 60;
+    expect(() => validateObservabilityConfig(weakenedAlert)).toThrow(
+      "required alert deletion-cleanup-risk has drifted",
+    );
+
+    const mergedAvailability = structuredClone(config);
+    const wasenderSlo = mergedAvailability.slos[1];
+    if (wasenderSlo) wasenderSlo.filter.dependency = "first-party";
+    expect(() => validateObservabilityConfig(mergedAvailability)).toThrow(
+      "availability SLO definitions have drifted",
     );
   });
 });
