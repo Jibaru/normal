@@ -692,6 +692,23 @@ describe("Webhook Event repository", () => {
       await repository.projectStoredMessageEdit(
         {
           ...base,
+          content: content(3),
+          contentType: "text",
+          editedAt: "2026-07-31T11:55:00.000Z",
+          evidence: {
+            occurredAt: "2026-07-31T11:55:00.000Z",
+            version: version("2026-07-31T11:55:00.000Z"),
+          },
+          itemIdentity: itemIdentity("older-edit"),
+          messageIdentity,
+        },
+        compareVersions,
+      ),
+    ).toBe("superseded");
+    expect(
+      await repository.projectStoredMessageEdit(
+        {
+          ...base,
           content: content(2),
           contentType: "text",
           editedAt: "2026-07-31T12:05:00.000Z",

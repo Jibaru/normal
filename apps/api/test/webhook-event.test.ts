@@ -200,6 +200,27 @@ const makeHarness = (options: HarnessOptions = {}) => {
           ).toBe("equal");
           return "applied" as const;
         }),
+      projectStoredMessageEdit: (input, compareVersions) =>
+        Effect.promise(async () => {
+          calls.push("project-message-edit");
+          expect(input.editedAt).toBe("2026-07-31T12:09:30.000Z");
+          expect(input.content.ciphertext).not.toContain("edited text");
+          expect(
+            await compareVersions("wv1.test.signature", "wv1.test.signature"),
+          ).toBe("equal");
+          return "applied" as const;
+        }),
+      projectStoredMessageDeletion: (input) =>
+        Effect.sync(() => {
+          calls.push("project-message-deletion");
+          expect(input).toMatchObject({
+            deletedAt: "2026-07-31T12:09:45.000Z",
+            direction: "inbound",
+            recipientKind: "group",
+            sentAt: "2026-07-31T12:09:00.000Z",
+          });
+          return "applied" as const;
+        }),
       quarantine: (input) =>
         Effect.sync(() => {
           calls.push(`quarantine:${input.classification}`);
@@ -210,6 +231,8 @@ const makeHarness = (options: HarnessOptions = {}) => {
     }),
     Layer.succeed(WebhookEventIdentifiers, {
       nextContactId: Effect.succeed("ctc_123456789012345678901"),
+      nextConversationId: Effect.succeed("cvs_123456789012345678901"),
+      nextMessageId: Effect.succeed("msg_123456789012345678901"),
     }),
     Layer.succeed(WebhookEventRetrySchedule, {
       delaySeconds: (attempt) =>
@@ -347,6 +370,65 @@ describe("Webhook Event processing", () => {
     expect(harness.calls).toEqual([
       "prepare",
       "project-group:Family",
+      "complete",
+    ]);
+    expect(queued.acknowledgements).toEqual(["ack"]);
+  });
+
+  test("projects authenticated edits and delete-before-upsert tombstones", async () => {
+    const messageIdentity = `wi1_${"message".padEnd(43, "0")}` as never;
+    const recipient = `wi1_${"group".padEnd(43, "0")}` as never;
+    const harness = makeHarness({
+      delivery: {
+        items: [
+          {
+            content: {
+              mediaSource: null,
+              text: "edited text",
+              type: "text",
+            },
+            editedAt: "2026-07-31T12:09:30.000Z" as never,
+            evidence: {
+              occurredAt: "2026-07-31T12:09:30.000Z",
+              version: "wv1.test.signature" as never,
+            },
+            itemIdentity: `wi1_${"edit-item".padEnd(43, "0")}` as never,
+            itemIndex: 0,
+            kind: "message_edit",
+            messageIdentity,
+          },
+          {
+            deletedAt: "2026-07-31T12:09:45.000Z" as never,
+            direction: "inbound",
+            evidence: {
+              occurredAt: "2026-07-31T12:09:45.000Z",
+              version: "wv1.test.signature" as never,
+            },
+            itemIdentity: `wi1_${"delete-item".padEnd(43, "0")}` as never,
+            itemIndex: 1,
+            kind: "message_delete",
+            messageIdentity,
+            recipient,
+            recipientKind: "group",
+            sentAt: "2026-07-31T12:09:00.000Z" as never,
+          },
+        ],
+      },
+    });
+    const queued = queueMessage(message);
+
+    await handleWebhookEventBatch(
+      {
+        messages: [queued.message],
+        queue: "whatsapp-mcp-ingestion",
+      } as unknown as MessageBatch,
+      harness.layer,
+    );
+
+    expect(harness.calls).toEqual([
+      "prepare",
+      "project-message-edit",
+      "project-message-deletion",
       "complete",
     ]);
     expect(queued.acknowledgements).toEqual(["ack"]);

@@ -1656,7 +1656,8 @@ export const makeWebhookEventRepository = (
         );
         if (claimed.rows.length === 0) return "duplicate" as const;
         const current = await connection.query<Record<string, unknown>>(
-          `SELECT deleted_at, edited_at, provider_version FROM app.stored_messages
+          `SELECT deleted_at, edited_at, provider_occurred_at, provider_version,
+             received_at, webhook_event_id FROM app.stored_messages
            WHERE personal_account_id=$1 AND whatsapp_connection_id=$2 AND message_identity=$3 FOR UPDATE`,
           [
             input.personalAccountId,
@@ -1667,20 +1668,24 @@ export const makeWebhookEventRepository = (
         const row = current.rows[0];
         if (row === undefined || timestamp(row.deleted_at) !== null)
           return "superseded" as const;
+        if (
+          !(await shouldApply(
+            input,
+            {
+              state_provider_occurred_at: row.provider_occurred_at,
+              state_provider_version: row.provider_version,
+              state_received_at: row.received_at,
+              state_snapshot_observed_at: null,
+              state_webhook_event_id: row.webhook_event_id,
+            },
+            compareVersions,
+          ))
+        )
+          return "superseded" as const;
         const oldEditedAt = timestamp(row.edited_at);
         const newEditedAt = timestamp(input.editedAt);
         if (newEditedAt === null) throw new Error("invalid edit timestamp");
         if (oldEditedAt !== null && newEditedAt < oldEditedAt)
-          return "superseded" as const;
-        if (
-          oldEditedAt?.valueOf() === newEditedAt.valueOf() &&
-          typeof row.provider_version === "string" &&
-          input.evidence.version !== null &&
-          (await compareVersions(
-            input.evidence.version,
-            row.provider_version,
-          )) === "before"
-        )
           return "superseded" as const;
         await connection.query(
           `UPDATE app.stored_messages SET content_type=$4,content_ciphertext_version=$5,
