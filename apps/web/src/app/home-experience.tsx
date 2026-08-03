@@ -33,6 +33,10 @@ const personalAccountConfiguration =
           "/v1/personal-account/bootstrap",
           apiOrigin,
         ).toString(),
+        personalAccountDeletionEndpoint: new URL(
+          "/v1/personal-account",
+          apiOrigin,
+        ).toString(),
       }
     : null;
 

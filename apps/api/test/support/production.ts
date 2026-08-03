@@ -9,6 +9,8 @@ export const validEnvironment = () => ({
   CLERK_AUTHORIZED_PARTY: "https://app.example.test",
   CLERK_ISSUER: "https://clerk.example.test",
   CLERK_JWT_KEY: TEST_CLERK_JWT_PUBLIC_KEY,
+  CLERK_SECRET_KEY: `sk_test_${"a".repeat(32)}`,
+  CLERK_WEBHOOK_SIGNING_SECRET: `whsec_${"b".repeat(32)}`,
   CONNECTION_SETUP_PROVISIONING_QUEUE: {
     send: async () => undefined,
     sendBatch: async () => undefined,

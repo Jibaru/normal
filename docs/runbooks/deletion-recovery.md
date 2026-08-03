@@ -4,6 +4,22 @@ This runbook covers the restore-safe primitives. Connection Deletion, Personal
 Account Deletion, provider cleanup scheduling, and the traffic restore gate are
 separate workflows, but they must preserve this ordering and authority split.
 
+## Personal Account Deletion entry points
+
+The product `DELETE /v1/personal-account` and verified Clerk
+`user.deleted` deliveries to `POST /v1/webhooks/clerk` enter the same terminal
+operation. The API first writes the locked Personal Account marker, starts
+Connection Deletion for every retained WhatsApp Connection, then atomically
+marks the Personal Account deleting, cancels incomplete Connection Setups,
+revokes MCP Authorizations and refresh families, and makes the account key
+unavailable. Only the product entry point then calls Clerk to delete the User.
+
+Configure and rotate `CLERK_SECRET_KEY` and `CLERK_WEBHOOK_SIGNING_SECRET` as
+Cloudflare secrets. Clerk webhook retries are safe for unknown and already
+deleting identities and must never be replaced with an unsigned operational
+request. Telemetry reports only entry-point class and outcome; it contains no
+Clerk User or Personal Account identifier.
+
 ## Deleted Message Tombstones
 
 Message-deletion webhook items are terminal Message Store evidence. Operators

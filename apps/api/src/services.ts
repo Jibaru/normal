@@ -47,6 +47,13 @@ export interface PersonalAccountBootstrapCompletedEvent {
   readonly service: "api";
 }
 
+export interface PersonalAccountDeletionCompletedEvent {
+  readonly event: "personal_account.deletion.completed";
+  readonly outcome: "deleting" | "unknown_identity";
+  readonly service: "api";
+  readonly source: "clerk_webhook" | "product";
+}
+
 export interface ConnectionSetupStartCompletedEvent {
   readonly event: "connection_setup.start.completed";
   readonly outcome:
@@ -361,6 +368,7 @@ export type SafeTelemetryEvent =
   | OAuthProtocolRequestFailedEvent
   | OAuthRefreshCompletedEvent
   | PersonalAccountBootstrapCompletedEvent
+  | PersonalAccountDeletionCompletedEvent
   | ProviderDirectoryCompletedEvent
   | ProviderTextSendCompletedEvent
   | SendDispatchLeaseSweepCompletedEvent

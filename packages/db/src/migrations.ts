@@ -373,6 +373,17 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 34,
   },
+  {
+    name: "unified Personal Account Deletion",
+    sql: await readFile(
+      new NodeUrl(
+        "../migrations/0035_personal_account_deletion.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    version: 35,
+  },
 ];
 
 const checksum = (sql: string): string =>

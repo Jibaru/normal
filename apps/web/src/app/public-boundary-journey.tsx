@@ -11,6 +11,7 @@ interface PublicBoundaryJourneyProps {
   readonly connectionSetupEndpoint: string;
   readonly mcpAuthorizationsEndpoint: string;
   readonly personalAccountEndpoint: string;
+  readonly personalAccountDeletionEndpoint: string;
 }
 
 type JourneyState =
@@ -210,6 +211,7 @@ export function PublicBoundaryJourney({
   connectionSetupEndpoint,
   mcpAuthorizationsEndpoint,
   personalAccountEndpoint,
+  personalAccountDeletionEndpoint,
 }: PublicBoundaryJourneyProps) {
   const [state, setState] = useState<JourneyState>("idle");
   const [setupState, setSetupState] = useState<SetupState>("idle");
@@ -248,6 +250,9 @@ export function PublicBoundaryJourney({
   } | null>(null);
   const [qrImageUrl, setQrImageUrl] = useState<string | null>(null);
   const [whatsappNumber, setWhatsappNumber] = useState("");
+  const [deletionState, setDeletionState] = useState<
+    "idle" | "deleting" | "unavailable"
+  >("idle");
   const setupIntent = useRef<{
     readonly idempotencyKey: string;
     readonly whatsappNumber: string;
@@ -289,6 +294,36 @@ export function PublicBoundaryJourney({
       return null;
     }
     return token;
+  };
+
+  const deletePersonalAccount = async () => {
+    if (
+      !window.confirm(
+        "Permanently delete your Personal Account and every WhatsApp Connection? This cannot be undone.",
+      )
+    )
+      return;
+    setDeletionState("deleting");
+    try {
+      const token = await getToken();
+      if (token === null) throw new Error("signed out");
+      const deletion = await fetch(personalAccountDeletionEndpoint, {
+        headers: { authorization: `Bearer ${token}` },
+        method: "DELETE",
+      });
+      const body = (await deletion.json()) as {
+        readonly personal_account?: { readonly state?: unknown };
+      };
+      if (
+        deletion.status !== 202 ||
+        body.personal_account?.state !== "deleting"
+      ) {
+        throw new Error("deletion unavailable");
+      }
+      setState("signed_out");
+    } catch {
+      setDeletionState("unavailable");
+    }
   };
 
   const replaceQrImage = (next: string | null) => {
@@ -1345,6 +1380,33 @@ export function PublicBoundaryJourney({
               ))}
             </ul>
           )}
+        </section>
+      ) : null}
+      {state === "ok" ? (
+        <section
+          aria-label="Personal Account Deletion"
+          className="space-y-3 rounded-lg border border-red-900 p-4"
+        >
+          <h2 className="text-xl font-semibold">Delete Personal Account</h2>
+          <p className="text-sm text-zinc-400">
+            Permanently revoke access, cancel incomplete Connection Setups, and
+            delete every WhatsApp Connection.
+          </p>
+          <button
+            className="rounded border border-red-500 px-3 py-2 text-sm text-red-300 disabled:opacity-50"
+            disabled={deletionState === "deleting"}
+            onClick={() => void deletePersonalAccount()}
+            type="button"
+          >
+            Delete Personal Account
+          </button>
+          <p aria-live="polite">
+            {deletionState === "deleting"
+              ? "Personal Account Deletion is starting."
+              : deletionState === "unavailable"
+                ? "Personal Account Deletion is temporarily unavailable."
+                : ""}
+          </p>
         </section>
       ) : null}
     </section>

@@ -16,6 +16,8 @@ export interface Env {
   readonly CLERK_AUTHORIZED_PARTY: string;
   readonly CLERK_ISSUER: string;
   readonly CLERK_JWT_KEY: string;
+  readonly CLERK_SECRET_KEY: string;
+  readonly CLERK_WEBHOOK_SIGNING_SECRET: string;
   readonly CONNECTION_SETUP_PROVISIONING_QUEUE: Queue;
   readonly DELETION_CAPSULES: R2Bucket;
   readonly DELETION_MARKER_HMAC_SECRET: string;

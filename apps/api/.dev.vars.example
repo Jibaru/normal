@@ -41,6 +41,8 @@ CLERK_ISSUER=https://replace-with-clerk-frontend-api.clerk.accounts.dev
 CLERK_JWT_KEY="-----BEGIN PUBLIC KEY-----
 replace-with-clerk-jwt-public-key
 -----END PUBLIC KEY-----"
+CLERK_SECRET_KEY=sk_test_replace-with-clerk-backend-secret
+CLERK_WEBHOOK_SIGNING_SECRET=whsec_replace-with-clerk-webhook-signing-secret
 
 # OAuth issuer and resource must use the API custom origin. The registry is the
 # reviewed MCP Client allowlist; every redirect is matched exactly.

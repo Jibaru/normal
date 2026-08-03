@@ -597,7 +597,11 @@ export const reconcileWhatsAppConnectionLifecycle = (
     };
   });
 
-const deleteWhatsAppConnection = (clerkUserId: string, publicId: string) =>
+export const deleteWhatsAppConnection = (
+  clerkUserId: string,
+  publicId: string,
+  fixedRequestedAt?: string,
+) =>
   Effect.gen(function* () {
     const persistence = yield* WhatsAppConnectionPersistence;
     const prepared = yield* persistence.prepareDeletion({
@@ -624,7 +628,7 @@ const deleteWhatsAppConnection = (clerkUserId: string, publicId: string) =>
       Effect.gen(function* () {
         const sessionLocator = new TextDecoder().decode(bytes);
         const clock = yield* WhatsAppConnectionClock;
-        const requestedAt = yield* clock.now;
+        const requestedAt = fixedRequestedAt ?? (yield* clock.now);
         const deletion = yield* RestoreSafeDeletion;
         const marker = yield* deletion.markers.create({
           deletionKind: "whatsapp_connection",

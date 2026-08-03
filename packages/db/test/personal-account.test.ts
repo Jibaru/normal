@@ -115,10 +115,19 @@ describe("Personal Account repository", () => {
       personalAccountId: accountId,
       providerApprovedSessionCapacity: 3,
     });
-    await database.query(
-      "UPDATE app.personal_accounts SET state = 'deleting' WHERE id = $1",
-      [accountId],
-    );
+    await expect(
+      repository.prepareDeletion({
+        clerkUserId: "user_repository123",
+        observedAt: "2026-08-03T00:00:00.000Z",
+      }),
+    ).resolves.toMatchObject({ state: "deleting" });
+    await expect(
+      repository.finishDeletion({
+        clerkUserId: "user_repository123",
+        deletionMarkerId: "a".repeat(64),
+        requestedAt: "2026-08-03T00:00:00.000Z",
+      }),
+    ).resolves.toBe(true);
 
     await expect(repository.resolve("user_repository123")).resolves.toBeNull();
     await expect(
@@ -131,6 +140,73 @@ describe("Personal Account repository", () => {
         providerApprovedSessionCapacity: 3,
       }),
     ).resolves.toBeNull();
+  });
+
+  test("prepares and idempotently finishes terminal deletion without creating unknown identities", async () => {
+    const repository = makePersonalAccountRepository(provider);
+    await repository.create({
+      clerkUserId: "user_delete123",
+      keyCiphertext: new Uint8Array([1, 2, 3]),
+      keyVersion: 1,
+      kmsKeyId: "arn:aws:kms:us-east-1:111122223333:key/content-root-key",
+      personalAccountId: accountId,
+      providerApprovedSessionCapacity: 3,
+    });
+
+    await expect(
+      repository.prepareDeletion({
+        clerkUserId: "user_unknown123",
+        observedAt: "2026-08-03T01:00:00.000Z",
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      repository.prepareDeletion({
+        clerkUserId: "user_delete123",
+        observedAt: "2026-08-03T01:00:00.000Z",
+      }),
+    ).resolves.toEqual({
+      connectionPublicIds: [],
+      personalAccountId: accountId,
+      requestedAt: "2026-08-03T01:00:00.000Z",
+      state: "deleting",
+    });
+    const input = {
+      clerkUserId: "user_delete123",
+      deletionMarkerId: "b".repeat(64),
+      requestedAt: "2026-08-03T01:00:00.000Z",
+    };
+    await expect(repository.finishDeletion(input)).resolves.toBe(true);
+    await expect(repository.finishDeletion(input)).resolves.toBe(true);
+    await expect(
+      repository.prepareDeletion({
+        clerkUserId: "user_delete123",
+        observedAt: "2026-08-03T02:00:00.000Z",
+      }),
+    ).resolves.toEqual({
+      connectionPublicIds: [],
+      personalAccountId: accountId,
+      requestedAt: "2026-08-03T01:00:00.000Z",
+      state: "deleting",
+    });
+
+    const account = await database.query<{
+      ciphertext: Uint8Array | null;
+      deletion_marker_id: string;
+      state: string;
+    }>(
+      `SELECT accounts.state, accounts.deletion_marker_id, keys.ciphertext
+       FROM app.personal_accounts accounts
+       JOIN app.personal_account_key_envelopes keys ON keys.personal_account_id = accounts.id
+       WHERE accounts.id = $1`,
+      [accountId],
+    );
+    expect(account.rows).toEqual([
+      {
+        ciphertext: null,
+        deletion_marker_id: "b".repeat(64),
+        state: "deleting",
+      },
+    ]);
   });
 
   test("creates and resolves one idempotent waitlist entry at capacity", async () => {

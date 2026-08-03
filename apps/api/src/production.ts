@@ -1,4 +1,6 @@
 import { KMSClient } from "@aws-sdk/client-kms";
+import { createClerkClient } from "@clerk/backend";
+import { verifyWebhook } from "@clerk/backend/webhooks";
 import { importCursorSigningKey } from "@whatsapp-mcp/contracts/cursor";
 import {
   makeConnectionId,
@@ -173,6 +175,14 @@ import {
   PrivateBetaConfig,
 } from "./personal-account";
 import {
+  ClerkIdentityAdministration,
+  ClerkWebhookVerification,
+  createPersonalAccountDeletionHandler,
+  isPersonalAccountDeletionRequest,
+  PersonalAccountDeletionPersistence,
+  PersonalAccountDeletionPersistenceError,
+} from "./personal-account-deletion";
+import {
   importSendFingerprintKey,
   makeAtomicSendTextMessageService,
 } from "./send-text-message";
@@ -231,6 +241,7 @@ import {
 } from "./webhook-replay";
 import {
   createWhatsAppConnectionHandler,
+  deleteWhatsAppConnection,
   isWhatsAppConnectionRequest,
   WhatsAppConnectionClock,
   WhatsAppConnectionIdentifiers,
@@ -248,6 +259,8 @@ export interface ApiEnvironment {
   readonly CLERK_AUTHORIZED_PARTY?: string | undefined;
   readonly CLERK_ISSUER?: string | undefined;
   readonly CLERK_JWT_KEY?: string | undefined;
+  readonly CLERK_SECRET_KEY?: string | undefined;
+  readonly CLERK_WEBHOOK_SIGNING_SECRET?: string | undefined;
   readonly DELETION_CAPSULES?: unknown;
   readonly DELETION_MARKER_HMAC_SECRET?: string | undefined;
   readonly DELETION_MARKERS?: unknown;
@@ -604,6 +617,26 @@ const configLayer = (environment: ApiEnvironment) =>
             return yield* Effect.fail(new MissingProviderControlBinding());
           }
           yield* validateCloudflareBindings(environment);
+          if (
+            !/^sk_(?:test|live)_[A-Za-z0-9]{20,}$/u.test(
+              environment.CLERK_SECRET_KEY ?? "",
+            )
+          ) {
+            return yield* Effect.fail(
+              new MissingCloudflareBinding({ binding: "CLERK_SECRET_KEY" }),
+            );
+          }
+          if (
+            !/^whsec_[A-Za-z0-9+/=_-]{20,}$/u.test(
+              environment.CLERK_WEBHOOK_SIGNING_SECRET ?? "",
+            )
+          ) {
+            return yield* Effect.fail(
+              new MissingCloudflareBinding({
+                binding: "CLERK_WEBHOOK_SIGNING_SECRET",
+              }),
+            );
+          }
           return {
             ...config,
             service: "api" as const,
@@ -687,6 +720,62 @@ const personalAccountPersistenceLayer = (environment: ApiEnvironment) =>
         catch: () => new PersonalAccountPersistenceError(),
       }),
   });
+
+const personalAccountDeletionLayer = (environment: ApiEnvironment) =>
+  Layer.mergeAll(
+    Layer.succeed(PersonalAccountDeletionPersistence, {
+      finish: (input) =>
+        Effect.tryPromise({
+          try: () => {
+            const connectionString = environment.HYPERDRIVE?.connectionString;
+            if (typeof connectionString !== "string")
+              throw new Error("database unavailable");
+            return makePgPersonalAccountRepository(
+              connectionString,
+            ).finishDeletion(input);
+          },
+          catch: () => new PersonalAccountDeletionPersistenceError(),
+        }),
+      prepare: (input) =>
+        Effect.tryPromise({
+          try: () => {
+            const connectionString = environment.HYPERDRIVE?.connectionString;
+            if (typeof connectionString !== "string")
+              throw new Error("database unavailable");
+            return makePgPersonalAccountRepository(
+              connectionString,
+            ).prepareDeletion(input);
+          },
+          catch: () => new PersonalAccountDeletionPersistenceError(),
+        }),
+    }),
+    Layer.succeed(ClerkIdentityAdministration, {
+      deleteUser: (clerkUserId) =>
+        Effect.tryPromise({
+          try: async () => {
+            await createClerkClient({
+              secretKey: environment.CLERK_SECRET_KEY ?? "",
+            }).users.deleteUser(clerkUserId);
+          },
+          catch: (cause) => cause,
+        }),
+    }),
+    Layer.succeed(ClerkWebhookVerification, {
+      verify: (request) =>
+        Effect.tryPromise({
+          try: async () => {
+            const event = await verifyWebhook(request, {
+              signingSecret: environment.CLERK_WEBHOOK_SIGNING_SECRET ?? "",
+            });
+            return event.type === "user.deleted" &&
+              typeof event.data.id === "string"
+              ? { clerkUserId: event.data.id, type: "user.deleted" as const }
+              : { clerkUserId: "", type: "ignored" as const };
+          },
+          catch: (cause) => cause,
+        }),
+    }),
+  );
 
 const personalAccountIdentifiersLayer = Layer.succeed(
   PersonalAccountIdentifiers,
@@ -2278,6 +2367,7 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     storedMediaContainerLayer(environment),
     humanIdentityLayer(environment),
     personalAccountPersistenceLayer(environment),
+    personalAccountDeletionLayer(environment),
     personalAccountIdentifiersLayer,
     privateBetaConfigLayer(environment),
     connectionSetupPersistenceLayer(environment),
@@ -2306,6 +2396,15 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     layer,
     environment.CLERK_AUTHORIZED_PARTY ?? "",
   );
+  const personalAccountDeletionHandler = createPersonalAccountDeletionHandler({
+    browserOrigin: environment.CLERK_AUTHORIZED_PARTY ?? "",
+    deleteConnection: (clerkUserId, publicId, requestedAt) =>
+      deleteWhatsAppConnection(clerkUserId, publicId, requestedAt).pipe(
+        Effect.provide(layer),
+        Effect.asVoid,
+      ),
+    layer,
+  });
   const connectionSetupHandler = createConnectionSetupHandler(
     layer,
     environment.CLERK_AUTHORIZED_PARTY ?? "",
@@ -2341,6 +2440,9 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     try {
       if (isWebhookIngressRequest(request)) {
         return webhookIngressHandler(request);
+      }
+      if (isPersonalAccountDeletionRequest(request)) {
+        return personalAccountDeletionHandler(request);
       }
       const [configuration, requestQuota] = await Promise.all([
         oauthConfiguration,

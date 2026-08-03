@@ -94,6 +94,8 @@ for (const deployable of deployables) {
   } else {
     const requiredSecretNames = [
       "CLERK_JWT_KEY",
+      "CLERK_SECRET_KEY",
+      "CLERK_WEBHOOK_SIGNING_SECRET",
       "MCP_CURSOR_HMAC_SECRET",
       "OAUTH_PROTOCOL_ENCRYPTION_KEY",
       "SEND_FINGERPRINT_HMAC_SECRET",

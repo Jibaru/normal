@@ -14,6 +14,8 @@ request is accepted. Production roots accept only `development`, `preview`, or
 | `CLERK_AUTHORIZED_PARTY` | Non-secret | API | Exact bare HTTPS web origin allowed by both the token `azp` claim and request `Origin`. OpenTofu derives it from `web_hostname`. |
 | `CLERK_ISSUER` | Non-secret | API | Exact HTTPS issuer for the same-environment Clerk instance. |
 | `CLERK_JWT_KEY` | Secret deployment material | API | PEM public key for the custom Clerk JWT template. Store it only as a Cloudflare Worker secret so verification does not depend on a network lookup. Replace it when Clerk rotates the template signing key. |
+| `CLERK_SECRET_KEY` | Secret deployment material | API | Same-environment Clerk Backend API secret used only after durable Personal Account Deletion intent to delete the owning Clerk User. |
+| `CLERK_WEBHOOK_SIGNING_SECRET` | Secret deployment material | API | Signing secret for Clerk deliveries. Configure `user.deleted` delivery to `/v1/webhooks/clerk`; invalid deliveries fail closed before identity lookup. |
 | `OAUTH_ISSUER` | Non-secret | API OAuth provider | Exact API HTTPS origin and RFC 8414 issuer. It must equal `CLERK_API_AUDIENCE`; OpenTofu derives both from `api_hostname`. |
 | `OAUTH_RESOURCE` | Non-secret | API OAuth provider | Exact protected MCP resource, formed as `OAUTH_ISSUER` plus `/mcp`. |
 | `OAUTH_CLIENT_REGISTRY` | Non-secret reviewed policy | API OAuth provider | JSON allowlist rendered from `oauth_clients`, containing each stable MCP Client ID, class, display name, and exact permitted redirects. |

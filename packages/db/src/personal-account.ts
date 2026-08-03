@@ -57,6 +57,20 @@ export interface PersonalAccountRepository {
   readonly resolve: (
     clerkUserId: string,
   ) => Promise<ResolvedPersonalAccount | null>;
+  readonly finishDeletion: (input: {
+    readonly clerkUserId: string;
+    readonly deletionMarkerId: string;
+    readonly requestedAt: string;
+  }) => Promise<boolean>;
+  readonly prepareDeletion: (input: {
+    readonly clerkUserId: string;
+    readonly observedAt: string;
+  }) => Promise<{
+    readonly connectionPublicIds: ReadonlyArray<string>;
+    readonly personalAccountId: string;
+    readonly requestedAt: string;
+    readonly state: "active" | "deleting";
+  } | null>;
 }
 
 const withTransaction = async <Value>(
@@ -130,6 +144,44 @@ const admissionState = (
 export const makePersonalAccountRepository = (
   provider: PersonalAccountConnectionProvider,
 ): PersonalAccountRepository => ({
+  finishDeletion: (input) =>
+    provider.withConnection(async (connection) => {
+      const result = await connection.query<{ finished: unknown }>(
+        "SELECT app_private.finish_personal_account_deletion($1, $2, $3) AS finished",
+        [input.clerkUserId, input.deletionMarkerId, input.requestedAt],
+      );
+      return result.rows[0]?.finished === true;
+    }),
+  prepareDeletion: (input) =>
+    provider.withConnection(async (connection) => {
+      const result = await connection.query<{
+        account_state: unknown;
+        connection_public_id: unknown;
+        personal_account_id: unknown;
+        requested_at: unknown;
+      }>(
+        "SELECT * FROM app_private.prepare_personal_account_deletion($1, $2)",
+        [input.clerkUserId, input.observedAt],
+      );
+      const first = result.rows[0];
+      if (
+        first === undefined ||
+        typeof first.personal_account_id !== "string" ||
+        !(first.requested_at instanceof Date) ||
+        (first.account_state !== "active" && first.account_state !== "deleting")
+      )
+        return null;
+      return {
+        connectionPublicIds: result.rows.flatMap((row) =>
+          typeof row.connection_public_id === "string"
+            ? [row.connection_public_id]
+            : [],
+        ),
+        personalAccountId: first.personal_account_id,
+        requestedAt: first.requested_at.toISOString(),
+        state: first.account_state,
+      };
+    }),
   create: (input) =>
     provider.withConnection((connection) =>
       withTransaction(connection, async () => {
