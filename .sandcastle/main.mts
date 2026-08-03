@@ -118,7 +118,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
     // not write code. (Structured output requires maxIterations: 1.)
     maxIterations: 1,
     // Codex handles dependency analysis and returns the structured plan.
-    agent: sandcastle.codex("gpt-5.6-sol", { effort: "high" }),
+    agent: sandcastle.codex("gpt-5.6-sol", { effort: "low" }),
     promptFile: "./.sandcastle/plan-prompt.md",
     // Extract and validate the <plan> JSON into a typed object. Throws
     // StructuredOutputError if the tag is missing, the JSON is malformed, or
@@ -161,15 +161,11 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
       });
 
       try {
-        const startingHead = (
-          await sandbox.exec("git rev-parse HEAD")
-        ).stdout.trim();
-
         // Run the implementer
         const implement = await sandbox.run({
           name: "implementer",
           maxIterations: 100,
-          agent: sandcastle.codex("gpt-5.6-sol", { effort: "high" }),
+          agent: sandcastle.codex("gpt-5.6-sol", { effort: "low" }),
           promptFile: "./.sandcastle/implement-prompt.md",
           promptArgs: {
             TASK_ID: issue.id,
@@ -183,11 +179,10 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
           const review = await sandbox.run({
             name: "reviewer",
             maxIterations: 1,
-            agent: sandcastle.codex("gpt-5.6-sol", { effort: "high" }),
+            agent: sandcastle.codex("gpt-5.6-sol", { effort: "low" }),
             promptFile: "./.sandcastle/review-prompt.md",
             promptArgs: {
               BRANCH: issue.branch,
-              TARGET_BRANCH: startingHead,
             },
           });
 
@@ -258,7 +253,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
     sandbox: codexSandbox(),
     name: "merger",
     maxIterations: 1,
-    agent: sandcastle.codex("gpt-5.6-sol", { effort: "high" }),
+    agent: sandcastle.codex("gpt-5.6-sol", { effort: "low" }),
     promptFile: "./.sandcastle/merge-prompt.md",
     promptArgs: {
       // A markdown list of branch names, one per line.
