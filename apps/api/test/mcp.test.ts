@@ -14,6 +14,7 @@ import {
   McpToolIdentifiers,
   McpToolPersistence,
   McpToolPersistenceError,
+  makeMcpCursorCodec,
 } from "../src/mcp";
 import type { SafeTelemetryEvent } from "../src/services";
 import { SafeTelemetry } from "../src/services";
@@ -122,6 +123,10 @@ const makeHarness = (
 ) => {
   const observations: Array<string> = [];
   const telemetry: Array<SafeTelemetryEvent> = [];
+  const contactQueries: Array<{
+    readonly searchIndex: string | null;
+    readonly searchKind: "name" | "phone" | null;
+  }> = [];
   const layer = Layer.mergeAll(
     Layer.succeed(McpToolClock, {
       now: Effect.succeed(new Date("2026-07-31T12:00:00.000Z")),
@@ -130,14 +135,22 @@ const makeHarness = (
       nextAuditLogId: Effect.succeed("50000000-0000-4000-8000-000000000030"),
     }),
     Layer.succeed(McpCursorCodec, {
-      decode: ({ cursor }) => {
+      decode: (input) => {
+        if (overrides.cursorKey !== undefined) {
+          return makeMcpCursorCodec(overrides.cursorKey).decode(input);
+        }
         try {
-          return Effect.succeed(JSON.parse(atob(cursor)) as [string, string]);
+          return Effect.succeed(
+            JSON.parse(atob(input.cursor)) as [string, string],
+          );
         } catch {
           return Effect.fail({ _tag: "InvalidCursorError" } as never);
         }
       },
-      encode: ({ boundary }) => Effect.succeed(btoa(JSON.stringify(boundary))),
+      encode: (input) =>
+        overrides.cursorKey === undefined
+          ? Effect.succeed(btoa(JSON.stringify(input.boundary)))
+          : makeMcpCursorCodec(overrides.cursorKey).encode(input),
     }),
     Layer.succeed(EnvelopeEncryptionService, {
       createConnectionKey: () => Effect.die("not used"),
@@ -321,6 +334,10 @@ const makeHarness = (
       },
       listEncryptedContacts: (input) => {
         observations.push("contacts");
+        contactQueries.push({
+          searchIndex: input.searchIndex,
+          searchKind: input.searchKind,
+        });
         const encrypted = (value: string) => ({
           ciphertext: btoa(value),
           keyVersion: 1,
@@ -353,6 +370,13 @@ const makeHarness = (
             stale: false,
           }),
           contacts: contacts
+            .filter((contact) =>
+              input.searchKind === "phone"
+                ? contact.displayNameSort === "ada"
+                : input.searchKind === "name"
+                  ? contact.displayNameSort === "grace"
+                  : true,
+            )
             .filter(
               (contact) =>
                 input.cursorDisplayNameSort === null ||
@@ -400,6 +424,7 @@ const makeHarness = (
       resourceUrl: "https://api.example.test/mcp",
     }),
     observations,
+    contactQueries,
     telemetry,
   };
 };
@@ -814,6 +839,89 @@ describe("stateless MCP list_connections boundary", () => {
           has_more: false,
           next_cursor: null,
         },
+      },
+    });
+  });
+
+  test("searches by normalized name prefix and exact E.164 without exposing query material", async () => {
+    const harness = makeHarness({ scopes: ["directory:read"] });
+    const requests = [
+      { search: "  GRA  ", expectedName: "Grace", kind: "name" },
+      { search: "+15550199", expectedName: "Ada", kind: "phone" },
+    ] as const;
+
+    for (const request of requests) {
+      const response = await harness.handler(
+        jsonRpcRequest("tools/call", {
+          arguments: {
+            connection_id: "con_123456789012345678901",
+            search: request.search,
+          },
+          name: "list_contacts",
+        }),
+        {},
+        executionContext,
+        authorization,
+      );
+      const body = await response.json();
+      expect(body).toMatchObject({
+        result: {
+          structuredContent: {
+            contacts: [{ display_name: request.expectedName }],
+          },
+        },
+      });
+      expect(JSON.stringify(body)).not.toContain(request.search);
+      expect(harness.contactQueries.at(-1)).toEqual({
+        searchIndex: expect.stringMatching(/^di1_[A-Za-z0-9_-]{43}$/u),
+        searchKind: request.kind,
+      });
+    }
+
+    expect(harness.contactQueries[0]?.searchIndex).not.toBe(
+      harness.contactQueries[1]?.searchIndex,
+    );
+    expect(JSON.stringify(harness.telemetry)).not.toContain("+15550199");
+  });
+
+  test("binds contact search cursors to the exact normalized query", async () => {
+    const cursorKey = await Effect.runPromise(
+      importCursorSigningKey(new Uint8Array(32).fill(17)),
+    );
+    const harness = makeHarness({ cursorKey, scopes: ["directory:read"] });
+    const cursor = await Effect.runPromise(
+      makeMcpCursorCodec(cursorKey).encode({
+        boundary: ["grace", "ctc_123456789012345678902"],
+        context: {
+          authorizationId: authorization.authorizationId,
+          connectionId: "con_123456789012345678901",
+          filters: { search: "gra" },
+          pageSize: 1,
+          sortVersion: "contacts-v1",
+          tool: "list_contacts",
+        },
+        expiresAtEpochSeconds: 1_785_499_200,
+      }),
+    );
+
+    const replay = await harness.handler(
+      jsonRpcRequest("tools/call", {
+        arguments: {
+          connection_id: "con_123456789012345678901",
+          cursor,
+          limit: 1,
+          search: "grace",
+        },
+        name: "list_contacts",
+      }),
+      {},
+      executionContext,
+      authorization,
+    );
+    expect(await replay.json()).toMatchObject({
+      result: {
+        isError: true,
+        structuredContent: { error_code: "invalid_cursor" },
       },
     });
   });

@@ -375,6 +375,36 @@ describe("MCP tool repository", () => {
       repository.listEncryptedContacts({
         ...authorization,
         connectionPublicId: connectionA,
+        cursorDisplayNameSort: null,
+        cursorPublicId: null,
+        limit: 21,
+        observedAt,
+        searchIndex: `di1_${"p".repeat(43)}`,
+        searchKind: "phone",
+      }),
+    ).resolves.toMatchObject({
+      contacts: [
+        expect.objectContaining({
+          publicId: "ctc_123456789012345678901",
+        }),
+      ],
+    });
+    await expect(
+      repository.listEncryptedContacts({
+        ...authorization,
+        connectionPublicId: connectionA,
+        cursorDisplayNameSort: null,
+        cursorPublicId: null,
+        limit: 21,
+        observedAt,
+        searchIndex: `di1_${"x".repeat(43)}`,
+        searchKind: "phone",
+      }),
+    ).resolves.toMatchObject({ contacts: [] });
+    await expect(
+      repository.listEncryptedContacts({
+        ...authorization,
+        connectionPublicId: connectionA,
         cursorDisplayNameSort: "ada",
         cursorPublicId: "ctc_123456789012345678901",
         limit: 1,
