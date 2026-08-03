@@ -1,7 +1,10 @@
 locals {
-  database_name        = "whatsapp_mcp"
-  api_runtime_role     = "whatsapp_api_runtime"
-  webhook_runtime_role = "whatsapp_webhook_runtime"
+  database_name              = "whatsapp_mcp"
+  api_runtime_role           = "whatsapp_api_runtime"
+  webhook_runtime_role       = "whatsapp_webhook_runtime"
+  break_glass_requester_role = "whatsapp_break_glass_requester"
+  break_glass_approver_role  = "whatsapp_break_glass_approver"
+  break_glass_runtime_role   = "whatsapp_break_glass_runtime"
 }
 
 resource "neon_project" "private_beta" {
@@ -33,6 +36,24 @@ resource "neon_role" "webhook_runtime" {
   project_id = neon_project.private_beta.id
   branch_id  = neon_project.private_beta.default_branch_id
   name       = local.webhook_runtime_role
+}
+
+resource "neon_role" "break_glass_requester" {
+  project_id = neon_project.private_beta.id
+  branch_id  = neon_project.private_beta.default_branch_id
+  name       = local.break_glass_requester_role
+}
+
+resource "neon_role" "break_glass_approver" {
+  project_id = neon_project.private_beta.id
+  branch_id  = neon_project.private_beta.default_branch_id
+  name       = local.break_glass_approver_role
+}
+
+resource "neon_role" "break_glass_runtime" {
+  project_id = neon_project.private_beta.id
+  branch_id  = neon_project.private_beta.default_branch_id
+  name       = local.break_glass_runtime_role
 }
 
 resource "cloudflare_hyperdrive_config" "api" {

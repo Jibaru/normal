@@ -31,6 +31,11 @@
       "AllowedPattern": "^arn:aws(-[a-z]+)?:iam::[0-9]{12}:(role|user)/.+$",
       "Description": "Human identity broker allowed to assume only ordinary operator authority.",
       "Type": "String"
+    },
+    "BreakGlassAssumerArn": {
+      "AllowedPattern": "^arn:aws(-[a-z]+)?:iam::[0-9]{12}:(role|user)/.+$",
+      "Description": "Credential broker allowed to assume scoped break-glass authority.",
+      "Type": "String"
     }
   },
   "Rules": {
@@ -98,6 +103,36 @@
                   {
                     "Fn::Equals": [
                       { "Ref": "ProviderControlAssumerArn" },
+                      { "Ref": "OrdinaryOperatorAssumerArn" }
+                    ]
+                  },
+                  {
+                    "Fn::Equals": [
+                      { "Ref": "BreakGlassAssumerArn" },
+                      { "Ref": "KmsAdministratorAssumerArn" }
+                    ]
+                  },
+                  {
+                    "Fn::Equals": [
+                      { "Ref": "BreakGlassAssumerArn" },
+                      { "Ref": "ContentRuntimeAssumerArn" }
+                    ]
+                  },
+                  {
+                    "Fn::Equals": [
+                      { "Ref": "BreakGlassAssumerArn" },
+                      { "Ref": "DeletionCoordinatorAssumerArn" }
+                    ]
+                  },
+                  {
+                    "Fn::Equals": [
+                      { "Ref": "BreakGlassAssumerArn" },
+                      { "Ref": "ProviderControlAssumerArn" }
+                    ]
+                  },
+                  {
+                    "Fn::Equals": [
+                      { "Ref": "BreakGlassAssumerArn" },
                       { "Ref": "OrdinaryOperatorAssumerArn" }
                     ]
                   }
@@ -251,6 +286,37 @@
         }
       }
     },
+    "BreakGlassRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": { "AWS": { "Ref": "BreakGlassAssumerArn" } },
+              "Action": ["sts:AssumeRole", "sts:TagSession"],
+              "Condition": {
+                "Bool": { "aws:MultiFactorAuthPresent": "true" },
+                "ForAllValues:StringEquals": {
+                  "aws:TagKeys": ["personalAccountId", "breakGlassRequestId"]
+                },
+                "Null": {
+                  "aws:RequestTag/personalAccountId": "false",
+                  "aws:RequestTag/breakGlassRequestId": "false"
+                }
+              }
+            }
+          ]
+        },
+        "Description": "Incident-only tenant content decryption constrained by approved session tags.",
+        "ManagedPolicyArns": [],
+        "MaxSessionDuration": 3600,
+        "RoleName": {
+          "Fn::Sub": "whatsapp-mcp-${DeploymentEnvironment}-break-glass"
+        }
+      }
+    },
     "ContentRootKey": {
       "Type": "AWS::KMS::Key",
       "Properties": {
@@ -352,6 +418,33 @@
               },
               "Action": "kms:Decrypt",
               "Resource": "*"
+            },
+            {
+              "Sid": "AllowScopedBreakGlassDecrypt",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": { "Fn::GetAtt": ["BreakGlassRole", "Arn"] }
+              },
+              "Action": "kms:Decrypt",
+              "Resource": "*",
+              "Condition": {
+                "ForAllValues:StringEquals": {
+                  "kms:EncryptionContextKeys": [
+                    "environment",
+                    "purpose",
+                    "personalAccountId",
+                    "keyVersion"
+                  ]
+                },
+                "StringEquals": {
+                  "kms:EncryptionContext:environment": {
+                    "Ref": "DeploymentEnvironment"
+                  },
+                  "kms:EncryptionContext:purpose": "personal-account-key",
+                  "kms:EncryptionContext:personalAccountId": "${aws:PrincipalTag/personalAccountId}"
+                },
+                "Null": { "aws:PrincipalTag/breakGlassRequestId": "false" }
+              }
             }
           ]
         },
@@ -569,6 +662,9 @@
       "Value": {
         "Fn::GetAtt": ["DeletionCoordinatorRole", "Arn"]
       }
+    },
+    "BreakGlassRoleArn": {
+      "Value": { "Fn::GetAtt": ["BreakGlassRole", "Arn"] }
     }
   }
 }

@@ -53,6 +53,11 @@ variable "ordinary_operator_assumer_arn" {
   type        = string
 }
 
+variable "break_glass_assumer_arn" {
+  description = "Incident credential broker allowed to assume scoped break-glass authority."
+  type        = string
+}
+
 locals {
   bootstrap_principals = [
     var.kms_administrator_assumer_arn,
@@ -60,6 +65,7 @@ locals {
     var.deletion_coordinator_assumer_arn,
     var.provider_control_assumer_arn,
     var.ordinary_operator_assumer_arn,
+    var.break_glass_assumer_arn,
   ]
 }
 
@@ -76,6 +82,7 @@ resource "aws_cloudformation_stack" "kms" {
     DeletionCoordinatorAssumerArn = var.deletion_coordinator_assumer_arn
     ProviderControlAssumerArn     = var.provider_control_assumer_arn
     OrdinaryOperatorAssumerArn    = var.ordinary_operator_assumer_arn
+    BreakGlassAssumerArn           = var.break_glass_assumer_arn
   }
 
   lifecycle {
@@ -102,4 +109,9 @@ output "deletion_coordinator_key_arn" {
 
 output "deletion_coordinator_role_arn" {
   value = aws_cloudformation_stack.kms.outputs["DeletionCoordinatorRoleArn"]
+}
+
+output "break_glass_role_arn" {
+  description = "Short-lived, Personal-Account-tag-bound incident decryption role."
+  value       = aws_cloudformation_stack.kms.outputs["BreakGlassRoleArn"]
 }

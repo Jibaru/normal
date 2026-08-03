@@ -12,6 +12,9 @@ type Statement = {
 
 type TemplateResource = {
   readonly Properties?: {
+    readonly AssumeRolePolicyDocument?: {
+      readonly Statement?: ReadonlyArray<Statement>;
+    };
     readonly EnableKeyRotation?: boolean;
     readonly KeyPolicy?: {
       readonly Statement?: ReadonlyArray<Statement>;
@@ -193,6 +196,7 @@ describe("AWS KMS infrastructure", () => {
       "DeletionCoordinatorRole",
       "ProviderControlRole",
       "OrdinaryOperatorRole",
+      "BreakGlassRole",
     ]) {
       expect(resources[name]?.Properties?.ManagedPolicyArns ?? []).toEqual([]);
     }
@@ -205,6 +209,7 @@ describe("AWS KMS infrastructure", () => {
       KmsAdministratorRole: "KmsAdministratorAssumerArn",
       OrdinaryOperatorRole: "OrdinaryOperatorAssumerArn",
       ProviderControlRole: "ProviderControlAssumerArn",
+      BreakGlassRole: "BreakGlassAssumerArn",
     } as const;
 
     for (const [roleName, parameterName] of Object.entries(roleToPrincipal)) {
@@ -213,7 +218,6 @@ describe("AWS KMS infrastructure", () => {
           AssumeRolePolicyDocument: {
             Statement: [
               {
-                Action: "sts:AssumeRole",
                 Effect: "Allow",
                 Principal: {
                   AWS: { Ref: parameterName },
@@ -223,6 +227,9 @@ describe("AWS KMS infrastructure", () => {
           },
         },
       });
+      const statement = resources[roleName]?.Properties
+        ?.AssumeRolePolicyDocument?.Statement?.[0] as Statement | undefined;
+      expect(statement && actions(statement)).toContain("sts:AssumeRole");
     }
 
     const principalParameters = Object.values(roleToPrincipal).sort();
@@ -244,5 +251,41 @@ describe("AWS KMS infrastructure", () => {
       .sort();
 
     expect(actualPairs).toEqual(expectedPairs);
+  });
+
+  test("limits break-glass decryption to MFA sessions tagged for one Personal Account", () => {
+    expect(resources.BreakGlassRole).toMatchObject({
+      Properties: {
+        MaxSessionDuration: 3600,
+        AssumeRolePolicyDocument: {
+          Statement: [
+            {
+              Action: ["sts:AssumeRole", "sts:TagSession"],
+              Condition: {
+                Bool: { "aws:MultiFactorAuthPresent": "true" },
+                Null: {
+                  "aws:RequestTag/personalAccountId": "false",
+                  "aws:RequestTag/breakGlassRequestId": "false",
+                },
+              },
+            },
+          ],
+        },
+      },
+    });
+    const scoped = statementsFor("ContentRootKey").find(
+      (statement) => statement.Sid === "AllowScopedBreakGlassDecrypt",
+    );
+    expect(scoped).toMatchObject({
+      Action: "kms:Decrypt",
+      Condition: {
+        StringEquals: {
+          "kms:EncryptionContext:personalAccountId":
+            "$" + "{aws:PrincipalTag/personalAccountId}",
+        },
+        Null: { "aws:PrincipalTag/breakGlassRequestId": "false" },
+      },
+      Effect: "Allow",
+    });
   });
 });

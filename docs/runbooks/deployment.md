@@ -331,7 +331,8 @@ tofu -chdir=infra/aws plan \
   -var="content_runtime_assumer_arn=arn:aws:iam::111122223333:role/replace-api-workload-bootstrap" \
   -var="deletion_coordinator_assumer_arn=arn:aws:iam::111122223333:role/replace-deletion-bootstrap" \
   -var="provider_control_assumer_arn=arn:aws:iam::111122223333:role/replace-provider-bootstrap" \
-  -var="ordinary_operator_assumer_arn=arn:aws:iam::111122223333:role/replace-human-operator-bootstrap"
+  -var="ordinary_operator_assumer_arn=arn:aws:iam::111122223333:role/replace-human-operator-bootstrap" \
+  -var="break_glass_assumer_arn=arn:aws:iam::111122223333:role/replace-incident-credential-broker"
 
 tofu -chdir=infra/aws apply kms.tfplan
 ```

@@ -50,7 +50,7 @@ assert(
 assert.equal(
   template.Rules.AuthoritiesUseDistinctBootstrapPrincipals.Assertions?.[0]
     ?.Assert?.["Fn::Not"]?.[0]?.["Fn::Or"]?.length,
-  10,
+  15,
   "CloudFormation template must compare every pair of authority principals",
 );
 

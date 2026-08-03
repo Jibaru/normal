@@ -406,6 +406,17 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 37,
   },
+  {
+    name: "two-person break-glass access",
+    sql: await readFile(
+      new NodeUrl(
+        "../migrations/0038_two_person_break_glass.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    version: 38,
+  },
 ];
 
 const checksum = (sql: string): string =>

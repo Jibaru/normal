@@ -2,7 +2,7 @@
 
 `main.tf` is the OpenTofu entry point and manages `kms.template.json` as one
 CloudFormation stack per environment. The template declares two non-exportable,
-single-Region symmetric KMS keys and five separated IAM authorities. Deploy it
+single-Region symmetric KMS keys and six separated IAM authorities. Deploy it
 only in `us-east-1`; both OpenTofu and the template enforce that region.
 
 - `ContentRuntimeRole` can generate and decrypt only Personal Account data keys
@@ -14,6 +14,10 @@ only in `us-east-1`; both OpenTofu and the template enforce that region.
   decryption.
 - `KmsAdministratorRole` can manage lifecycle and policy but receives no
   cryptographic operation.
+- `BreakGlassRole` can decrypt a Personal Account key only from an MFA-backed,
+  one-hour-or-shorter session whose `personalAccountId` tag exactly equals the
+  KMS encryption context. Its separate request ID tag binds CloudTrail evidence
+  to the immutable database audit. No application runtime assumes this role.
 
 The owning AWS account principal has the same non-cryptographic lifecycle
 permissions as an emergency recovery path, preventing a retained key from
