@@ -53,6 +53,65 @@ describe("production migrations", () => {
     ).toBe(true);
   });
 
+  test("clears only retention limitations superseded by a complete Directory snapshot", async () => {
+    await runMigrations(database);
+    await seedTenants(database);
+    const initialSnapshot = new Date("2026-07-31T12:00:00.000Z");
+    const partialSnapshot = new Date("2026-07-31T12:01:00.000Z");
+    const completeSnapshot = new Date("2026-07-31T12:02:00.000Z");
+
+    await database.query(
+      `INSERT INTO app.directory_contact_projections (
+         personal_account_id, whatsapp_connection_id, as_of,
+         snapshot_observed_at, stale, partial, retention_limited, updated_at
+       ) VALUES ($1, $2, $3, $3, false, true, true, $3)`,
+      [accountA, connectionA, initialSnapshot],
+    );
+    await database.query(
+      `INSERT INTO app.whatsapp_group_directory_states (
+         personal_account_id, whatsapp_connection_id, as_of,
+         snapshot_observed_at, stale, partial, retention_limited, updated_at
+       ) VALUES ($1, $2, $3, $3, false, true, true, $3)`,
+      [accountA, connectionA, initialSnapshot],
+    );
+
+    for (const table of [
+      "directory_contact_projections",
+      "whatsapp_group_directory_states",
+    ]) {
+      await database.query(
+        `UPDATE app.${table}
+         SET as_of = $3, snapshot_observed_at = $3, updated_at = $3
+         WHERE personal_account_id = $1
+           AND whatsapp_connection_id = $2`,
+        [accountA, connectionA, partialSnapshot],
+      );
+      const partial = await database.query<{ retention_limited: boolean }>(
+        `SELECT retention_limited FROM app.${table}
+         WHERE personal_account_id = $1
+           AND whatsapp_connection_id = $2`,
+        [accountA, connectionA],
+      );
+      expect(partial.rows).toEqual([{ retention_limited: true }]);
+
+      await database.query(
+        `UPDATE app.${table}
+         SET as_of = $3, snapshot_observed_at = $3,
+             partial = false, updated_at = $3
+         WHERE personal_account_id = $1
+           AND whatsapp_connection_id = $2`,
+        [accountA, connectionA, completeSnapshot],
+      );
+      const complete = await database.query<{ retention_limited: boolean }>(
+        `SELECT retention_limited FROM app.${table}
+         WHERE personal_account_id = $1
+           AND whatsapp_connection_id = $2`,
+        [accountA, connectionA],
+      );
+      expect(complete.rows).toEqual([{ retention_limited: false }]);
+    }
+  });
+
   test("preserves an activated connection ingress identity when upgrading from version 11", async () => {
     const migrationsDirectory = new URL("../migrations/", import.meta.url);
     const migrationFiles = (await readdir(migrationsDirectory))

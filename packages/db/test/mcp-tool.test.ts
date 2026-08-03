@@ -1027,10 +1027,17 @@ describe("MCP tool repository", () => {
     );
     await database.query(
       `INSERT INTO app.whatsapp_group_directory_states (
-         personal_account_id, whatsapp_connection_id, as_of,
+         personal_account_id, whatsapp_connection_id, as_of, snapshot_observed_at,
          stale, partial, updated_at
-       ) VALUES ($1, '20000000-0000-4000-8000-000000000030', $2,
+       ) VALUES ($1, '20000000-0000-4000-8000-000000000030', $2, $2,
          false, false, $2)`,
+      [accountId, observedAt],
+    );
+    await database.query(
+      `UPDATE app.whatsapp_connections
+       SET health_last_confirmed_at = $2
+       WHERE personal_account_id = $1
+         AND id = '20000000-0000-4000-8000-000000000030'`,
       [accountId, observedAt],
     );
     await expect(
@@ -1124,6 +1131,47 @@ describe("MCP tool repository", () => {
       stale: false,
     });
     expect(page?.groups[0]?.displayName?.ciphertext).not.toContain("Family");
+
+    await database.query(
+      `INSERT INTO app.ingestion_gaps (
+         personal_account_id, whatsapp_connection_id, cause,
+         history_window_started_at, starts_at, detected_at, updated_at
+       ) VALUES (
+         $1, '20000000-0000-4000-8000-000000000030',
+         'processing_failure', $2, $3, $3, $3
+       )`,
+      [accountId, observedAt, new Date(observedAt.valueOf() + 1_000)],
+    );
+    await expect(
+      repository.listGroups({
+        ...authorization,
+        connectionPublicId: connectionA,
+        observedAt: new Date(observedAt.valueOf() + 2_000),
+        searchIndex: `gi1_${"A".repeat(43)}`,
+      }),
+    ).resolves.toMatchObject({ partial: true, stale: false });
+    await database.query(
+      `UPDATE app.ingestion_gaps
+       SET ends_at = $2, updated_at = $2
+       WHERE personal_account_id = $1
+         AND whatsapp_connection_id = '20000000-0000-4000-8000-000000000030'`,
+      [accountId, new Date(observedAt.valueOf() + 3_000)],
+    );
+    await database.query(
+      `UPDATE app.whatsapp_group_directory_states
+       SET retention_limited = true
+       WHERE personal_account_id = $1
+         AND whatsapp_connection_id = '20000000-0000-4000-8000-000000000030'`,
+      [accountId],
+    );
+    await expect(
+      repository.listGroups({
+        ...authorization,
+        connectionPublicId: connectionA,
+        observedAt: new Date(observedAt.valueOf() + 4_000),
+        searchIndex: `gi1_${"A".repeat(43)}`,
+      }),
+    ).resolves.toMatchObject({ partial: true, stale: false });
 
     await database.query(
       `UPDATE app.whatsapp_groups

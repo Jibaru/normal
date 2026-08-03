@@ -973,8 +973,7 @@ const listGroups = (
       has_more: hasMore,
       next_cursor: nextCursor,
       as_of: page.asOf,
-      stale:
-        page.stale || readAt.valueOf() - asOf.valueOf() > 2 * 60 * 60 * 1_000,
+      stale: page.stale || readAt.valueOf() - asOf.valueOf() > 10 * 60 * 1_000,
       partial: page.partial,
     });
     const result = buildListGroupsResult(output);

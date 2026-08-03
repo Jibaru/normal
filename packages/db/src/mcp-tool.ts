@@ -419,7 +419,45 @@ const loadGroupProjectionMaterial = async (
       input.connectionPublicId,
     ],
   );
-  return parseGroupMaterial(material.rows[0]);
+  const parsed = parseGroupMaterial(material.rows[0]);
+  if (parsed === null) return null;
+  const freshness = await connection.query<Record<string, unknown>>(
+    `SELECT
+       CASE
+         WHEN states.snapshot_observed_at IS NULL THEN true
+         ELSE app_private.directory_projection_stale(
+           states.personal_account_id,
+           states.whatsapp_connection_id,
+           $3,
+           states.snapshot_observed_at,
+           states.stale
+         )
+       END AS stale,
+       CASE
+         WHEN states.snapshot_observed_at IS NULL THEN true
+         ELSE app_private.directory_projection_partial(
+           states.personal_account_id,
+           states.whatsapp_connection_id,
+           states.snapshot_observed_at,
+           states.partial,
+           states.retention_limited
+         )
+       END AS partial
+     FROM app.whatsapp_group_directory_states AS states
+     WHERE states.personal_account_id = $1
+       AND states.whatsapp_connection_id = $2`,
+    [
+      parsed.accountKey.personalAccountId,
+      parsed.connectionKey.connectionId,
+      input.observedAt,
+    ],
+  );
+  const row = freshness.rows[0];
+  if (row === undefined) return { ...parsed, partial: true, stale: true };
+  if (typeof row.stale !== "boolean" || typeof row.partial !== "boolean") {
+    throw new Error("invalid MCP group projection freshness");
+  }
+  return { ...parsed, partial: row.partial, stale: row.stale };
 };
 
 const loadGroupIndexMaterial = async (
@@ -1160,8 +1198,26 @@ export const makeMcpToolRepository = (
           `SELECT
              coalesce(projections.as_of, connections.created_at)
                AS projection_as_of,
-             coalesce(projections.stale, true) AS projection_stale,
-             coalesce(projections.partial, true) AS projection_partial,
+             CASE
+               WHEN projections.snapshot_observed_at IS NULL THEN true
+               ELSE app_private.directory_projection_stale(
+                 connections.personal_account_id,
+                 connections.id,
+                 $3,
+                 projections.snapshot_observed_at,
+                 projections.stale
+               )
+             END AS projection_stale,
+             CASE
+               WHEN projections.snapshot_observed_at IS NULL THEN true
+               ELSE app_private.directory_projection_partial(
+                 connections.personal_account_id,
+                 connections.id,
+                 projections.snapshot_observed_at,
+                 projections.partial,
+                 projections.retention_limited
+               )
+             END AS projection_partial,
              projections.snapshot_observed_at
                AS projection_snapshot_observed_at
            FROM app.mcp_authorization_connections AS selected
@@ -1174,7 +1230,7 @@ export const makeMcpToolRepository = (
            WHERE selected.mcp_authorization_id = $1
              AND connections.public_id = $2
              AND connections.state <> 'deleting'`,
-          [input.authorizationId, input.connectionPublicId],
+          [input.authorizationId, input.connectionPublicId, input.observedAt],
         );
         const projection = projectionResult.rows[0];
         const asOf = timestampString(projection?.projection_as_of);

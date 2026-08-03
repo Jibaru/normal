@@ -633,6 +633,16 @@ The API calls provider-control's bounded safe `reconcileSession` read with the
 Connection Setup marker and exact persisted webhook ingress URL. No message,
 conversation, or Directory activity timestamp participates in the decision.
 
+Directory reconciliation treats every newly activated WhatsApp Connection as
+an initial, partial projection until its first bounded provider observation.
+Contact reads are claimed by the five-minute schedule and joined groups by the
+hourly schedule. Public Directory freshness is evaluated at read time: either
+projection is stale ten minutes after its latest complete provider snapshot,
+or immediately when stored reconciliation evidence or Connection health cannot
+confirm the source. A known Ingestion Gap after that snapshot, an initial or
+failed/partial sync, or an explicit retention limitation keeps `partial` true;
+a later complete snapshot supersedes only gaps that ended before it.
+
 A confirmed connected session with the exact disabled-message-logging,
 disabled-auto-read, enabled-webhook URL and event set advances the last
 confirmed healthy point and closes active reconciliation gaps. Confirmed
