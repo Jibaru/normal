@@ -1738,6 +1738,18 @@ const mcpToolPersistenceLayer = (environment: ApiEnvironment) =>
         },
         catch: () => new McpToolPersistenceError(),
       }),
+    completeMessageRead: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string")
+            throw new Error("database unavailable");
+          return makePgMcpToolRepository(connectionString).completeMessageRead(
+            input,
+          );
+        },
+        catch: () => new McpToolPersistenceError(),
+      }),
     listGroups: (input) =>
       Effect.tryPromise({
         try: () => {

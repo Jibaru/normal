@@ -1271,11 +1271,20 @@ describe("MCP tool repository", () => {
         ],
       },
     });
+    await expect(
+      repository.completeMessageRead({
+        ...authorization,
+        auditLogId,
+        dailyRecordLimit: 2,
+        observedAt: readAt,
+        resultCount: 1,
+      }),
+    ).resolves.toEqual({ outcome: "success" });
     const log = await database.query(
       `SELECT outcome, result_count FROM app.tool_call_logs WHERE id=$1`,
       [auditLogId],
     );
-    expect(log.rows).toEqual([{ outcome: "success", result_count: 2 }]);
+    expect(log.rows).toEqual([{ outcome: "success", result_count: 1 }]);
   });
 
   test("rechecks directory scope, selected connection, and joined state for encrypted groups", async () => {
