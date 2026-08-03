@@ -435,10 +435,23 @@ describe("MCP tool repository", () => {
     await expect(
       sends.recordProviderOutcome({
         changedAt: new Date(observedAt.valueOf() + 15_000),
+        messageIdentity: `wi1_${"M".repeat(43)}`,
         sendId: input.sendId,
-        status: "accepted",
+        status: "sent",
+        storedMessage: {
+          content: {
+            ciphertext: new Uint8Array(32).fill(21),
+            keyVersion: 1,
+            nonce: new Uint8Array(12).fill(20),
+          },
+          contentType: "text",
+          conversationId: "70000000-0000-4000-8000-000000000099",
+          conversationPublicId: "cvs_123456789012345678999",
+          messageId: "80000000-0000-4000-8000-000000000099",
+          messagePublicId: "msg_123456789012345678999",
+        },
       }),
-    ).resolves.toMatchObject({ status: "accepted" });
+    ).resolves.toMatchObject({ status: "sent" });
     await expect(
       repository.getSendStatus({
         ...authorization,
@@ -448,8 +461,18 @@ describe("MCP tool repository", () => {
       }),
     ).resolves.toMatchObject({
       publicId: input.sendPublicId,
-      status: "accepted",
+      status: "sent",
     });
+    const projected = await database.query<{
+      pending_count: number;
+      stored_count: number;
+    }>(
+      `SELECT
+        (SELECT count(*)::int FROM app.pending_send_contents WHERE send_operation_id=$1) AS pending_count,
+        (SELECT count(*)::int FROM app.stored_messages WHERE message_identity=$2 AND direction='outbound') AS stored_count`,
+      [input.sendId, `wi1_${"M".repeat(43)}`],
+    );
+    expect(projected.rows).toEqual([{ pending_count: 0, stored_count: 1 }]);
     await expect(
       repository.getSendStatus({
         ...authorization,

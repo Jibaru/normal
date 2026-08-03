@@ -1,3 +1,7 @@
+import {
+  makeConversationId,
+  makeMessageId,
+} from "@whatsapp-mcp/contracts/handles";
 import type { SendTextMessageOutput } from "@whatsapp-mcp/contracts/mcp-schema";
 import type {
   AtomicSendRepository,
@@ -104,6 +108,12 @@ export interface AtomicSendServiceOptions {
   readonly hourRequestLimit: number;
   readonly minuteRequestLimit: number;
   readonly nextAuditLogId: () => string;
+  readonly nextStoredMessage?: () => {
+    readonly conversationId: string;
+    readonly conversationPublicId: string;
+    readonly messageId: string;
+    readonly messagePublicId: string;
+  };
   readonly nextSend: () => { readonly id: string; readonly publicId: string };
   readonly now: () => Date;
   readonly repository: AtomicSendRepository;
@@ -273,6 +283,55 @@ export const makeAtomicSendTextMessageService = (
           ...(messageIdentity === undefined ? {} : { messageIdentity }),
           sendId: send.id,
           status,
+          ...(messageIdentity !== undefined &&
+          (status === "sent" || status === "delivered" || status === "read")
+            ? {
+                storedMessage: await (async () => {
+                  const identifiers = options.nextStoredMessage?.() ?? {
+                    conversationId: crypto.randomUUID(),
+                    conversationPublicId: makeConversationId(),
+                    messageId: crypto.randomUUID(),
+                    messagePublicId: makeMessageId(),
+                  };
+                  const plaintext = encoder.encode(
+                    JSON.stringify({ mediaSource: null, text: input.text }),
+                  );
+                  const protectedContent = await Effect.runPromise(
+                    Effect.acquireUseRelease(
+                      Effect.succeed(plaintext),
+                      (bytes) =>
+                        options.encryption.encrypt({
+                          ...opened,
+                          context: {
+                            accountId: provider.accountKey.personalAccountId,
+                            connectionId: provider.connectionKey.connectionId,
+                            entity: "stored-message",
+                            fieldOrObjectPurpose: "content",
+                            recordId: messageIdentity,
+                          },
+                          plaintext: bytes,
+                        }),
+                      (bytes) => Effect.sync(() => bytes.fill(0)),
+                    ),
+                  );
+                  return {
+                    content: {
+                      ciphertext: Uint8Array.from(
+                        atob(protectedContent.ciphertext),
+                        (character) => character.charCodeAt(0),
+                      ),
+                      keyVersion: protectedContent.keyVersion,
+                      nonce: Uint8Array.from(
+                        atob(protectedContent.nonce),
+                        (character) => character.charCodeAt(0),
+                      ),
+                    },
+                    contentType: "text" as const,
+                    ...identifiers,
+                  };
+                })(),
+              }
+            : {}),
         })
         .catch(() => committed.receipt);
       return { outcome: "receipt", receipt: receipt(updated, false) };

@@ -229,9 +229,19 @@ const makeHarness = (options: HarnessOptions = {}) => {
           });
           return "applied" as const;
         }),
-      projectSendEvidence: (input) =>
-        Effect.sync(() => {
+      projectSendEvidence: (input, materialize) =>
+        Effect.promise(async () => {
           calls.push(`send-evidence:${input.status}:${input.messageIdentity}`);
+          if (input.status === "sent" && materialize !== undefined) {
+            const stored = await materialize({
+              ciphertext: new TextEncoder().encode("pending"),
+              keyVersion: 1,
+              nonce: new Uint8Array(12),
+              sendId: "60000000-0000-4000-8000-000000000051",
+            });
+            expect(stored.content.ciphertext).not.toContain("sent text");
+            expect(stored.messagePublicId).toMatch(/^msg_/u);
+          }
           return "applied" as const;
         }),
       quarantine: (input) =>

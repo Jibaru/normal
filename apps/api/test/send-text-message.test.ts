@@ -163,6 +163,116 @@ describe("atomic send workflow", () => {
     ]);
   });
 
+  test("projects identity-bearing sent evidence as a Stored Message", async () => {
+    const recordProviderOutcome = vi.fn(async ({ status }) => ({
+      createdAt: new Date("2026-08-03T12:00:00.000Z"),
+      publicId: "snd_123456789012345678947",
+      status,
+      statusChangedAt: new Date("2026-08-03T12:00:01.000Z"),
+    }));
+    const repository: AtomicSendRepository = {
+      commit: async () => ({
+        outcome: "created",
+        provider: {
+          ...material,
+          authority: protectedValue("session-authority"),
+          identityKey: protectedValue("x".repeat(32)),
+          recipient: protectedValue("15551234567@s.whatsapp.net"),
+          recipientRecordId: `di1_${"B".repeat(43)}`,
+          recipientType: "contact",
+        },
+        receipt: {
+          createdAt: new Date("2026-08-03T12:00:00.000Z"),
+          publicId: "snd_123456789012345678947",
+          status: "processing",
+          statusChangedAt: new Date("2026-08-03T12:00:00.000Z"),
+        },
+      }),
+      expireLeases: vi.fn(),
+      recordProviderOutcome,
+    };
+    const encryption: EnvelopeEncryption = {
+      createConnectionKey: () => Effect.die("unused"),
+      createPersonalAccountKey: () => Effect.die("unused"),
+      decrypt: ({ context }) =>
+        Effect.succeed(
+          new TextEncoder().encode(
+            context.fieldOrObjectPurpose === "webhook-identity-key"
+              ? "x".repeat(32)
+              : context.fieldOrObjectPurpose === "provider-session-authority"
+                ? "session-authority"
+                : "15551234567@s.whatsapp.net",
+          ),
+        ),
+      encrypt: ({ plaintext }) =>
+        Effect.succeed({
+          ciphertext: btoa(String.fromCharCode(...new Uint8Array(plaintext))),
+          keyVersion: 1,
+          nonce: btoa(String.fromCharCode(...new Uint8Array(12))),
+          version: 1,
+        }),
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              success: true,
+              data: {
+                key: {
+                  fromMe: true,
+                  id: "provider-message-51",
+                  remoteJid: "15551234567@s.whatsapp.net",
+                },
+                status: "sent",
+              },
+            }),
+          ),
+      ),
+    );
+    const service = makeAtomicSendTextMessageService({
+      encryption,
+      fingerprintKey: await importSendFingerprintKey("47".repeat(32)),
+      hourRequestLimit: 600,
+      minuteRequestLimit: 60,
+      nextAuditLogId: () => "50000000-0000-4000-8000-000000000047",
+      nextStoredMessage: () => ({
+        conversationId: "70000000-0000-4000-8000-000000000051",
+        conversationPublicId: "cvs_123456789012345678951",
+        messageId: "80000000-0000-4000-8000-000000000051",
+        messagePublicId: "msg_123456789012345678951",
+      }),
+      nextSend: () => ({
+        id: "60000000-0000-4000-8000-000000000047",
+        publicId: "snd_123456789012345678947",
+      }),
+      now: (() => {
+        let offset = 0;
+        return () => new Date(1_775_390_400_000 + offset++ * 1_000);
+      })(),
+      repository,
+      sendDailyLimit: 200,
+      sendPerMinuteLimit: 10,
+      telemetry: () => undefined,
+    });
+
+    await Effect.runPromise(service.send(input));
+
+    expect(recordProviderOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageIdentity: expect.stringMatching(/^wi1_/u),
+        status: "sent",
+        storedMessage: expect.objectContaining({
+          content: expect.objectContaining({ keyVersion: 1 }),
+          contentType: "text",
+          conversationPublicId: "cvs_123456789012345678951",
+          messagePublicId: "msg_123456789012345678951",
+        }),
+      }),
+    );
+  });
+
   test("returns an exact replay without encryption or provider work", async () => {
     const repository: AtomicSendRepository = {
       commit: async (_request, encrypt) => {

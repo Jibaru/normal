@@ -943,6 +943,14 @@ oversized responses. Never replay an ambiguous Send Operation during an
 incident. Reconcile it only from authenticated webhook evidence carrying the
 same connection and HMAC-protected stable message identity.
 
+For an identity-bearing `sent`, `delivered`, or `read` response or webhook,
+confirm the same-connection Send Operation produces exactly one outbound Stored
+Message and removes its Pending Send Content. An authenticated outbound upsert
+with a different identity must create its own Stored Message without changing
+the Send Operation. Treat correlation by recipient, text, timing, status order,
+or apparent uniqueness as an incident; telemetry must expose only normalized
+outcomes and counts, never either identity or message content.
+
 If a Worker terminates after the durable transaction but before a complete
 provider response is recorded, allow the 30-second dispatch lease to expire.
 The minute schedule atomically changes unresolved operations to `unknown`; an

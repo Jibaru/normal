@@ -7,6 +7,8 @@ import {
 } from "@whatsapp-mcp/contracts/handles";
 import type {
   DeadLetterWebhookEventResult,
+  MaterializedPendingSend,
+  PendingSendProjection,
   ProjectConnectionStateInput,
   ProjectDirectoryContactInput,
   ProjectGroupInput,
@@ -138,6 +140,9 @@ export interface WebhookEventPersistenceService {
   >;
   readonly projectSendEvidence?: (
     input: ProjectSendEvidenceInput,
+    materialize?: (
+      pending: PendingSendProjection,
+    ) => Promise<MaterializedPendingSend>,
   ) => Effect.Effect<
     WebhookItemProjectionOutcome,
     WebhookEventPersistenceError
@@ -822,17 +827,80 @@ const processItems = (
       if (item.kind === "send_evidence") {
         if (persistence.projectSendEvidence === undefined)
           return yield* Effect.fail(new WebhookEventPersistenceError());
-        const outcome = yield* persistence.projectSendEvidence({
-          eventId: message.object_id,
-          evidence: item.evidence,
-          itemIdentity: item.itemIdentity,
-          itemIndex: item.itemIndex,
-          messageIdentity: item.messageIdentity,
-          personalAccountId: message.personal_account_id,
-          receivedAt: message.received_at,
-          status: item.status,
-          whatsappConnectionId: message.whatsapp_connection_id,
-        });
+        const storedIdentifiers = {
+          conversationId: crypto.randomUUID(),
+          conversationPublicId: yield* identifiers.nextConversationId ??
+            Effect.sync(() => makeConversationId()),
+          messageId: crypto.randomUUID(),
+          messagePublicId: yield* identifiers.nextMessageId ??
+            Effect.sync(() => makeMessageId()),
+        };
+        const outcome = yield* persistence.projectSendEvidence(
+          {
+            eventId: message.object_id,
+            evidence: item.evidence,
+            itemIdentity: item.itemIdentity,
+            itemIndex: item.itemIndex,
+            messageIdentity: item.messageIdentity,
+            personalAccountId: message.personal_account_id,
+            receivedAt: message.received_at,
+            status: item.status,
+            whatsappConnectionId: message.whatsapp_connection_id,
+          },
+          async (pending) => {
+            const plaintext = await Effect.runPromise(
+              encryption.decrypt({
+                accountKey: material.accountKey,
+                connectionKey: material.connectionKey,
+                ciphertext: {
+                  ciphertext: btoa(String.fromCharCode(...pending.ciphertext)),
+                  keyVersion: pending.keyVersion,
+                  nonce: btoa(String.fromCharCode(...pending.nonce)),
+                  version: 1,
+                },
+                context: {
+                  accountId: message.personal_account_id,
+                  connectionId: message.whatsapp_connection_id,
+                  entity: "send-operation",
+                  fieldOrObjectPurpose: "pending-send-content",
+                  recordId: pending.sendId,
+                },
+              }),
+            );
+            try {
+              const text = new TextDecoder("utf-8", {
+                fatal: true,
+                ignoreBOM: false,
+              }).decode(plaintext);
+              const content = new TextEncoder().encode(
+                JSON.stringify({ mediaSource: null, text }),
+              );
+              try {
+                return {
+                  ...storedIdentifiers,
+                  content: await Effect.runPromise(
+                    encryption.encrypt({
+                      accountKey: material.accountKey,
+                      connectionKey: material.connectionKey,
+                      context: {
+                        accountId: message.personal_account_id,
+                        connectionId: message.whatsapp_connection_id,
+                        entity: "stored-message",
+                        fieldOrObjectPurpose: "content",
+                        recordId: item.messageIdentity,
+                      },
+                      plaintext: content,
+                    }),
+                  ),
+                };
+              } finally {
+                content.fill(0);
+              }
+            } finally {
+              plaintext.fill(0);
+            }
+          },
+        );
         counts = increment(
           counts,
           outcome === "applied"

@@ -174,6 +174,21 @@ export interface ProjectSendEvidenceInput
   readonly status: "accepted" | "sent" | "delivered" | "read" | "failed";
 }
 
+export interface PendingSendProjection {
+  readonly ciphertext: Uint8Array;
+  readonly keyVersion: number;
+  readonly nonce: Uint8Array;
+  readonly sendId: string;
+}
+
+export interface MaterializedPendingSend {
+  readonly content: PersistedDirectoryCiphertext;
+  readonly conversationId: string;
+  readonly conversationPublicId: string;
+  readonly messageId: string;
+  readonly messagePublicId: string;
+}
+
 export interface ProjectStoredMessageEditInput
   extends EvidenceOrderedProjectionInput {
   readonly content: PersistedDirectoryCiphertext;
@@ -250,6 +265,9 @@ export interface WebhookEventRepository {
   ) => Promise<WebhookItemProjectionOutcome>;
   readonly projectSendEvidence: (
     input: ProjectSendEvidenceInput,
+    materialize?: (
+      pending: PendingSendProjection,
+    ) => Promise<MaterializedPendingSend>,
   ) => Promise<WebhookItemProjectionOutcome>;
   readonly projectStoredMessageEdit: (
     input: ProjectStoredMessageEditInput,
@@ -309,6 +327,12 @@ const bytes = (value: unknown): Uint8Array | null => {
     return new Uint8Array(value);
   }
   return null;
+};
+
+const scalar = (row: Record<string, unknown>, key: string): string => {
+  const value = row[key];
+  if (typeof value !== "string") throw new Error(`invalid ${key}`);
+  return value;
 };
 
 const encodeBase64 = (value: Uint8Array): string =>
@@ -816,7 +840,7 @@ export const makeWebhookEventRepository = (
       }),
     ),
 
-  projectSendEvidence: (input) =>
+  projectSendEvidence: (input, materialize) =>
     provider.withConnection((connection) =>
       withTransaction(connection, async () => {
         await enterPersonalAccountContext(connection, input.personalAccountId);
@@ -838,6 +862,31 @@ export const makeWebhookEventRepository = (
         );
         if (claimed.rows.length === 0) return "duplicate" as const;
         const changedAt = input.evidence.occurredAt ?? input.receivedAt;
+        const correlated = await connection.query<Record<string, unknown>>(
+          `SELECT operations.id,operations.recipient_type,operations.recipient_public_id,
+             pending.key_version,pending.nonce,pending.ciphertext,
+             CASE operations.recipient_type WHEN 'contact' THEN contacts.provider_identity_index
+               ELSE groups.provider_locator END AS recipient_locator
+           FROM app.send_operations operations
+           LEFT JOIN app.pending_send_contents pending ON pending.send_operation_id=operations.id
+             AND pending.expires_at>$4
+           LEFT JOIN app.directory_contacts contacts ON operations.recipient_type='contact'
+             AND contacts.personal_account_id=operations.personal_account_id
+             AND contacts.whatsapp_connection_id=operations.whatsapp_connection_id
+             AND contacts.public_id=operations.recipient_public_id
+           LEFT JOIN app.whatsapp_groups groups ON operations.recipient_type='group'
+             AND groups.personal_account_id=operations.personal_account_id
+             AND groups.whatsapp_connection_id=operations.whatsapp_connection_id
+             AND groups.public_id=operations.recipient_public_id
+           WHERE operations.personal_account_id=$1 AND operations.whatsapp_connection_id=$2
+             AND operations.message_identity=$3 AND operations.expires_at>$4 FOR UPDATE OF operations`,
+          [
+            input.personalAccountId,
+            input.whatsappConnectionId,
+            input.messageIdentity,
+            input.receivedAt,
+          ],
+        );
         const updated = await connection.query(
           `UPDATE app.send_operations SET status=$4,status_changed_at=$5
            WHERE personal_account_id=$1 AND whatsapp_connection_id=$2
@@ -863,6 +912,83 @@ export const makeWebhookEventRepository = (
             input.receivedAt,
           ],
         );
+        const operation = correlated.rows[0];
+        if (
+          operation !== undefined &&
+          materialize !== undefined &&
+          ["sent", "delivered", "read"].includes(input.status) &&
+          operation.ciphertext != null
+        ) {
+          const projected = await materialize({
+            ciphertext: bytes(operation.ciphertext) ?? new Uint8Array(),
+            keyVersion: positiveInteger(operation.key_version) ?? 0,
+            nonce: bytes(operation.nonce) ?? new Uint8Array(),
+            sendId: scalar(operation, "id"),
+          });
+          const recipientLocator = scalar(operation, "recipient_locator");
+          const recipientType = scalar(operation, "recipient_type");
+          const recipientPublicId = scalar(operation, "recipient_public_id");
+          await connection.query(
+            `INSERT INTO app.whatsapp_conversations (id,personal_account_id,whatsapp_connection_id,
+               public_id,kind,recipient_locator,recipient_public_id,last_activity_at,last_activity_direction)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'outbound')
+             ON CONFLICT (personal_account_id,whatsapp_connection_id,recipient_locator) DO NOTHING`,
+            [
+              projected.conversationId,
+              input.personalAccountId,
+              input.whatsappConnectionId,
+              projected.conversationPublicId,
+              recipientType === "contact" ? "direct" : "group",
+              recipientLocator,
+              recipientPublicId,
+              changedAt,
+            ],
+          );
+          await connection.query(
+            `INSERT INTO app.stored_messages (id,personal_account_id,whatsapp_connection_id,conversation_id,
+               public_id,message_identity,direction,sent_at,content_type,content_ciphertext_version,
+               content_key_version,content_nonce,content_ciphertext,received_at,webhook_item_identity)
+             SELECT $1,$2,$3,id,$4,$5,'outbound',$6,'text',$7,$8,$9,$10,$11,NULL
+             FROM app.whatsapp_conversations WHERE personal_account_id=$2 AND whatsapp_connection_id=$3
+               AND recipient_locator=$12
+             ON CONFLICT (personal_account_id,whatsapp_connection_id,message_identity) DO NOTHING`,
+            [
+              projected.messageId,
+              input.personalAccountId,
+              input.whatsappConnectionId,
+              projected.messagePublicId,
+              input.messageIdentity,
+              changedAt,
+              projected.content.version,
+              projected.content.keyVersion,
+              decodeNonce(projected.content),
+              decodeCiphertext(projected.content),
+              input.receivedAt,
+              recipientLocator,
+            ],
+          );
+          await connection.query(
+            `UPDATE app.whatsapp_conversations conversations SET
+               last_activity_at=latest.sent_at,last_activity_direction=latest.direction,
+               updated_at=transaction_timestamp()
+             FROM (SELECT sent_at,direction FROM app.stored_messages
+               WHERE personal_account_id=$1 AND whatsapp_connection_id=$2
+                 AND conversation_id=conversations.id
+               ORDER BY sent_at DESC,public_id DESC LIMIT 1) latest
+             WHERE conversations.personal_account_id=$1
+               AND conversations.whatsapp_connection_id=$2
+               AND conversations.recipient_locator=$3`,
+            [
+              input.personalAccountId,
+              input.whatsappConnectionId,
+              recipientLocator,
+            ],
+          );
+          await connection.query(
+            `DELETE FROM app.pending_send_contents WHERE personal_account_id=$1 AND send_operation_id=$2`,
+            [input.personalAccountId, scalar(operation, "id")],
+          );
+        }
         const outcome = updated.rows.length === 1 ? "applied" : "superseded";
         await connection.query(
           `UPDATE app.webhook_items SET outcome=$4

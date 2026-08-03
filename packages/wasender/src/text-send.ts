@@ -13,7 +13,6 @@ import {
 } from "./session";
 
 const sendMessageUrl = "https://www.wasenderapi.com/api/send-message";
-const identityDomain = "whatsapp-mcp/wasender/message-identity/v1\0";
 const textEncoder = new TextEncoder();
 
 interface TextSendRuntime {
@@ -168,9 +167,9 @@ const protectMessageIdentity = async (
   const signature = await crypto.subtle.sign(
     "HMAC",
     key,
-    textEncoder.encode(`${identityDomain}${providerIdentity}`),
+    textEncoder.encode(`message-identity\0${JSON.stringify(providerIdentity)}`),
   );
-  return `wmi_v1_${base64Url(new Uint8Array(signature))}` as StableMessageIdentity;
+  return `wi1_${base64Url(new Uint8Array(signature))}` as StableMessageIdentity;
 };
 
 const definitiveFailure = (

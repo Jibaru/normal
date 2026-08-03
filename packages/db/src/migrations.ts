@@ -321,6 +321,17 @@ const loadMigrations = async (): Promise<Array<Migration>> => [
     ),
     version: 29,
   },
+  {
+    name: "outbound Stored Message correlation",
+    sql: await readFile(
+      new NodeUrl(
+        "../migrations/0030_outbound_stored_message_correlation.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    version: 30,
+  },
 ];
 
 const checksum = (sql: string): string =>

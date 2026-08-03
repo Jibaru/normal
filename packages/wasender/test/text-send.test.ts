@@ -8,6 +8,10 @@ import type {
   WasenderRecipientIdentity,
 } from "../src/session";
 import { makeWasenderTextSendingWithRuntime } from "../src/text-send";
+import {
+  importWebhookIdentityKey,
+  makeWasenderWebhookNormalization,
+} from "../src/webhook";
 
 const authority = Redacted.make(
   "session-api-key-do-not-log",
@@ -150,6 +154,35 @@ describe("real Wasender text-send adapter", () => {
     expect(JSON.stringify(result)).not.toContain("message-id-456");
     expect(JSON.stringify(result)).not.toContain("15551234567@s.whatsapp.net");
     expect(harness.attempts).toHaveLength(1);
+
+    const webhookKey = await Effect.runPromise(
+      importWebhookIdentityKey(new Uint8Array(Redacted.value(identityKey))),
+    );
+    const normalized = await Effect.runPromise(
+      makeWasenderWebhookNormalization(webhookKey).normalize({
+        payload: new TextEncoder().encode(
+          JSON.stringify({
+            event: "messages.update",
+            data: {
+              key: {
+                fromMe: true,
+                id: "message-id-456",
+                remoteJid: "15551234567@s.whatsapp.net",
+              },
+              update: { status: 2 },
+            },
+          }),
+        ),
+        receivedAt: "2026-08-03T12:00:00.000Z",
+      }),
+    );
+    expect(normalized.items[0]).toMatchObject({
+      kind: "send_evidence",
+      messageIdentity:
+        result.outcome === "identity_evidence"
+          ? result.messageIdentity
+          : "unreachable",
+    });
   });
 
   test("treats mismatched identity evidence as an ambiguous response", async () => {

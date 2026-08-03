@@ -100,6 +100,14 @@ export interface AtomicSendRepository {
       | "read"
       | "failed"
       | "unknown";
+    readonly storedMessage?: {
+      readonly content: SendCiphertext;
+      readonly contentType: "text";
+      readonly conversationId: string;
+      readonly conversationPublicId: string;
+      readonly messageId: string;
+      readonly messagePublicId: string;
+    };
   }) => Promise<SendReceiptRecord>;
 }
 
@@ -516,6 +524,101 @@ export const makePgAtomicSendRepository = (
       if (operation === undefined) {
         await connection.query("ROLLBACK");
         throw new Error("send operation unavailable");
+      }
+      if (
+        result.rows[0] !== undefined &&
+        input.messageIdentity !== undefined &&
+        input.storedMessage !== undefined &&
+        ["sent", "delivered", "read"].includes(input.status)
+      ) {
+        const recipient = await connection.query<Record<string, unknown>>(
+          `SELECT operations.recipient_type,operations.recipient_public_id,
+             CASE operations.recipient_type
+               WHEN 'contact' THEN contacts.provider_identity_index
+               ELSE groups.provider_locator
+             END AS recipient_locator
+           FROM app.send_operations operations
+           LEFT JOIN app.directory_contacts contacts ON operations.recipient_type='contact'
+             AND contacts.personal_account_id=operations.personal_account_id
+             AND contacts.whatsapp_connection_id=operations.whatsapp_connection_id
+             AND contacts.public_id=operations.recipient_public_id
+           LEFT JOIN app.whatsapp_groups groups ON operations.recipient_type='group'
+             AND groups.personal_account_id=operations.personal_account_id
+             AND groups.whatsapp_connection_id=operations.whatsapp_connection_id
+             AND groups.public_id=operations.recipient_public_id
+           WHERE operations.id=$1`,
+          [input.sendId],
+        );
+        const recipientLocator = scalar(recipient.rows[0], "recipient_locator");
+        const recipientType = scalar(recipient.rows[0], "recipient_type");
+        const recipientPublicId = scalar(
+          recipient.rows[0],
+          "recipient_public_id",
+        );
+        await connection.query(
+          `INSERT INTO app.whatsapp_conversations (id,personal_account_id,whatsapp_connection_id,
+             public_id,kind,recipient_locator,recipient_public_id,last_activity_at,last_activity_direction)
+           SELECT $2,personal_account_id,whatsapp_connection_id,$3,$4,$5,$6,$7,'outbound'
+           FROM app.send_operations WHERE id=$1
+           ON CONFLICT (personal_account_id,whatsapp_connection_id,recipient_locator) DO NOTHING`,
+          [
+            input.sendId,
+            input.storedMessage.conversationId,
+            input.storedMessage.conversationPublicId,
+            recipientType === "contact" ? "direct" : "group",
+            recipientLocator,
+            recipientPublicId,
+            input.changedAt,
+          ],
+        );
+        await connection.query(
+          `INSERT INTO app.stored_messages (id,personal_account_id,whatsapp_connection_id,conversation_id,
+             public_id,message_identity,direction,sent_at,content_type,content_ciphertext_version,
+             content_key_version,content_nonce,content_ciphertext,received_at,webhook_item_identity)
+           SELECT $2,operations.personal_account_id,operations.whatsapp_connection_id,conversations.id,
+             $3,$4,'outbound',$5,$6,1,$7,$8,$9,$5,NULL
+           FROM app.send_operations operations
+           JOIN app.whatsapp_conversations conversations
+             ON conversations.personal_account_id=operations.personal_account_id
+             AND conversations.whatsapp_connection_id=operations.whatsapp_connection_id
+             AND conversations.recipient_locator=$10
+           WHERE operations.id=$1
+           ON CONFLICT (personal_account_id,whatsapp_connection_id,message_identity) DO NOTHING`,
+          [
+            input.sendId,
+            input.storedMessage.messageId,
+            input.storedMessage.messagePublicId,
+            input.messageIdentity,
+            input.changedAt,
+            input.storedMessage.contentType,
+            input.storedMessage.content.keyVersion,
+            input.storedMessage.content.nonce,
+            input.storedMessage.content.ciphertext,
+            recipientLocator,
+          ],
+        );
+        await connection.query(
+          `UPDATE app.whatsapp_conversations conversations SET
+             last_activity_at=latest.sent_at,last_activity_direction=latest.direction,
+             updated_at=transaction_timestamp()
+           FROM (SELECT messages.conversation_id,messages.sent_at,messages.direction
+             FROM app.stored_messages messages
+             JOIN app.send_operations operations
+               ON operations.personal_account_id=messages.personal_account_id
+               AND operations.whatsapp_connection_id=messages.whatsapp_connection_id
+             WHERE operations.id=$1 AND messages.conversation_id=(
+               SELECT id FROM app.whatsapp_conversations
+               WHERE personal_account_id=operations.personal_account_id
+                 AND whatsapp_connection_id=operations.whatsapp_connection_id
+                 AND recipient_locator=$2)
+             ORDER BY messages.sent_at DESC,messages.public_id DESC LIMIT 1) latest
+           WHERE conversations.id=latest.conversation_id`,
+          [input.sendId, recipientLocator],
+        );
+        await connection.query(
+          "DELETE FROM app.pending_send_contents WHERE send_operation_id=$1",
+          [input.sendId],
+        );
       }
       if (result.rows[0] !== undefined && input.status === "failed") {
         await connection.query(

@@ -1202,7 +1202,7 @@ const webhookEventPersistenceLayer = (environment: ApiEnvironment) =>
         },
         catch: () => new WebhookEventPersistenceError(),
       }),
-    projectSendEvidence: (input) =>
+    projectSendEvidence: (input, materialize) =>
       Effect.tryPromise({
         try: () => {
           const connectionString =
@@ -1211,7 +1211,7 @@ const webhookEventPersistenceLayer = (environment: ApiEnvironment) =>
             throw new Error("Webhook Hyperdrive unavailable");
           return makePgWebhookEventRepository(
             connectionString,
-          ).projectSendEvidence(input);
+          ).projectSendEvidence(input, materialize);
         },
         catch: () => new WebhookEventPersistenceError(),
       }),
@@ -1910,6 +1910,12 @@ const atomicSendLayer = (environment: ApiEnvironment) =>
         hourRequestLimit: requestHourLimit,
         minuteRequestLimit: requestMinuteLimit,
         nextAuditLogId: () => crypto.randomUUID(),
+        nextStoredMessage: () => ({
+          conversationId: crypto.randomUUID(),
+          conversationPublicId: makeConversationId(),
+          messageId: crypto.randomUUID(),
+          messagePublicId: makeMessageId(),
+        }),
         nextSend: () => ({ id: crypto.randomUUID(), publicId: makeSendId() }),
         now: () => new Date(),
         repository: makePgAtomicSendRepositoryFromConnectionString(
