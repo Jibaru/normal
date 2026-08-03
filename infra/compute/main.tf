@@ -312,6 +312,10 @@ resource "cloudflare_worker_version" "api" {
       type = "inherit"
     },
     {
+      name = "MCP_CURSOR_HMAC_SECRET"
+      type = "inherit"
+    },
+    {
       name = "OAUTH_CLIENT_REGISTRY"
       text = local.oauth_client_registry
       type = "plain_text"

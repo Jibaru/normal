@@ -499,17 +499,18 @@ const listGroups = (
       if (material.right === null) {
         return yield* failAfterAudit("authorization_denied");
       }
+      const searchMaterial = material.right;
       const identityKey = yield* encryption
         .decrypt({
-          accountKey: material.right.accountKey,
-          ciphertext: material.right.identityKey,
-          connectionKey: material.right.connectionKey,
+          accountKey: searchMaterial.accountKey,
+          ciphertext: searchMaterial.identityKey,
+          connectionKey: searchMaterial.connectionKey,
           context: {
-            accountId: material.right.accountKey.personalAccountId,
-            connectionId: material.right.connectionKey.connectionId,
+            accountId: searchMaterial.accountKey.personalAccountId,
+            connectionId: searchMaterial.connectionKey.connectionId,
             entity: "whatsapp-connection",
             fieldOrObjectPurpose: "webhook-identity-key",
-            recordId: material.right.connectionKey.connectionId,
+            recordId: searchMaterial.connectionKey.connectionId,
           },
         })
         .pipe(Effect.either);
@@ -523,7 +524,7 @@ const listGroups = (
             Effect.flatMap((key) =>
               groupSearchIndex(
                 key,
-                material.right.connectionKey.connectionId,
+                searchMaterial.connectionKey.connectionId,
                 normalizedSearch,
               ),
             ),

@@ -305,5 +305,36 @@ describe("WhatsApp group projection repository", () => {
         limit: 10,
       }),
     ).resolves.toEqual([]);
+
+    await database.query(
+      `UPDATE app.whatsapp_group_directory_states
+       SET as_of = $3
+       WHERE personal_account_id = $1
+         AND whatsapp_connection_id = $2`,
+      [accountId, connectionId, observedAt],
+    );
+    const staleClaim = await repository.claim({
+      claimedAt: "2026-07-31T14:00:00.000Z",
+      limit: 10,
+    });
+    expect(staleClaim).toHaveLength(1);
+    const failedStaleClaim = staleClaim[0];
+    if (failedStaleClaim === undefined) {
+      throw new Error("missing stale group claim");
+    }
+    await expect(
+      repository.fail({
+        claimId: failedStaleClaim.claimId,
+        connectionId,
+        failedAt: "2026-07-31T14:00:00.000Z",
+        personalAccountId: accountId,
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      repository.claim({
+        claimedAt: "2026-07-31T14:00:00.000Z",
+        limit: 10,
+      }),
+    ).resolves.toEqual([]);
   });
 });

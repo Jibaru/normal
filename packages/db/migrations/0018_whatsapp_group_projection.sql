@@ -384,8 +384,9 @@ BEGIN
         states.reconciliation_lease_expires_at IS NULL
         OR states.reconciliation_lease_expires_at <= requested_at
       )
+      AND states.updated_at < requested_at
       AND (
-        (states.as_of IS NULL AND states.updated_at < requested_at)
+        states.as_of IS NULL
         OR states.as_of <= requested_at - interval '55 minutes'
       )
     ORDER BY states.as_of NULLS FIRST, states.whatsapp_connection_id
