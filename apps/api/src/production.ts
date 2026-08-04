@@ -235,10 +235,9 @@ import {
   isWhatsAppConnectionRequest,
   WhatsAppConnectionClock,
   WhatsAppConnectionIdentifiers,
-  WhatsAppConnectionPersistence,
-  WhatsAppConnectionPersistenceError,
   WhatsAppConnectionProvider,
 } from "./whatsapp-connection";
+import { makeWhatsAppConnectionPersistenceLayer } from "./whatsapp-connection-production";
 
 export interface ApiEnvironment {
   readonly AWS_ACCESS_KEY_ID?: string | undefined;
@@ -883,99 +882,6 @@ const whatsAppConnectionProviderLayer = (environment: ApiEnvironment) =>
           ).reconcileSession(input),
         catch: () => unavailableProviderResult("safe-read"),
       }).pipe(Effect.catchAll((failure) => Effect.succeed(failure))),
-  });
-
-const whatsAppConnectionPersistenceLayer = (environment: ApiEnvironment) =>
-  Layer.succeed(WhatsAppConnectionPersistence, {
-    activate: (input) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString = environment.HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string") {
-            throw new Error("database unavailable");
-          }
-          return makePgWhatsAppConnectionRepository(connectionString).activate(
-            input,
-          );
-        },
-        catch: () => new WhatsAppConnectionPersistenceError(),
-      }),
-    claimLifecycle: (input) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString = environment.HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string") {
-            throw new Error("database unavailable");
-          }
-          return makePgWhatsAppConnectionRepository(
-            connectionString,
-          ).claimLifecycle(input);
-        },
-        catch: () => new WhatsAppConnectionPersistenceError(),
-      }),
-    finishLifecycle: (input) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString = environment.HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string") {
-            throw new Error("database unavailable");
-          }
-          return makePgWhatsAppConnectionRepository(
-            connectionString,
-          ).finishLifecycle(input);
-        },
-        catch: () => new WhatsAppConnectionPersistenceError(),
-      }),
-    prepareDeletion: (input) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString = environment.HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string")
-            throw new Error("database unavailable");
-          return makePgWhatsAppConnectionRepository(
-            connectionString,
-          ).prepareDeletion(input);
-        },
-        catch: () => new WhatsAppConnectionPersistenceError(),
-      }),
-    finishDeletion: (input) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString = environment.HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string")
-            throw new Error("database unavailable");
-          return makePgWhatsAppConnectionRepository(
-            connectionString,
-          ).finishDeletion(input);
-        },
-        catch: () => new WhatsAppConnectionPersistenceError(),
-      }),
-    list: (clerkUserId) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString = environment.HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string") {
-            throw new Error("database unavailable");
-          }
-          return makePgWhatsAppConnectionRepository(
-            connectionString,
-          ).listForUser(clerkUserId);
-        },
-        catch: () => new WhatsAppConnectionPersistenceError(),
-      }),
-    loadSetup: (input) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString = environment.HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string") {
-            throw new Error("database unavailable");
-          }
-          return makePgWhatsAppConnectionRepository(
-            connectionString,
-          ).loadSetupForActivation(input);
-        },
-        catch: () => new WhatsAppConnectionPersistenceError(),
-      }),
   });
 
 const messageRetentionLayer = (environment: ApiEnvironment) =>
@@ -1760,7 +1666,7 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     connectionSetupIdentifiersLayer,
     connectionSetupClockLayer,
     connectionSetupNumberTokensLayer(environment),
-    whatsAppConnectionPersistenceLayer(environment),
+    makeWhatsAppConnectionPersistenceLayer(environment),
     whatsAppConnectionProviderLayer(environment),
     whatsAppConnectionRuntimeLayer,
     mcpAuthorizationPersistenceLayer(environment),
