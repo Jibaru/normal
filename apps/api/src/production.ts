@@ -71,8 +71,6 @@ import {
   ConnectionSetupClock,
   ConnectionSetupIdentifiers,
   ConnectionSetupNumberTokens,
-  ConnectionSetupPersistence,
-  ConnectionSetupPersistenceError,
   createConnectionSetupHandler,
   isConnectionSetupRequest,
   makeConnectionSetupNumberTokens,
@@ -80,18 +78,15 @@ import {
 import {
   ConnectionSetupCleanupClock,
   ConnectionSetupCleanupIdentifiers,
-  ConnectionSetupCleanupPersistence,
-  ConnectionSetupCleanupPersistenceError,
   ConnectionSetupCleanupProvider,
   connectionSetupCleanupMessage,
   handleConnectionSetupCleanupBatch,
   isConnectionSetupCleanupMessage,
 } from "./connection-setup-cleanup";
+import { makeConnectionSetupPersistenceLayers } from "./connection-setup-production";
 import {
   ConnectionSetupProvisioningClock,
   ConnectionSetupProvisioningIdentifiers,
-  ConnectionSetupProvisioningPersistence,
-  ConnectionSetupProvisioningPersistenceError,
   ConnectionSetupProvisioningProvider,
   ConnectionSetupProvisioningQueue,
   ConnectionSetupProvisioningQueueError,
@@ -792,200 +787,6 @@ const personalAccountIdentifiersLayer = Layer.succeed(
     next: Effect.sync(() => crypto.randomUUID()),
   },
 );
-
-const connectionSetupPersistenceLayer = (environment: ApiEnvironment) =>
-  Layer.succeed(ConnectionSetupPersistence, {
-    cancel: (input) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString = environment.HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string") {
-            throw new Error("database unavailable");
-          }
-          return makePgConnectionSetupRepository(connectionString).cancel(
-            input,
-          );
-        },
-        catch: () => new ConnectionSetupPersistenceError(),
-      }),
-    prepare: (input) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString = environment.HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string") {
-            throw new Error("database unavailable");
-          }
-          return makePgConnectionSetupRepository(connectionString).prepare(
-            input,
-          );
-        },
-        catch: () => new ConnectionSetupPersistenceError(),
-      }),
-    start: (input) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString = environment.HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string") {
-            throw new Error("database unavailable");
-          }
-          return makePgConnectionSetupRepository(connectionString).start(input);
-        },
-        catch: () => new ConnectionSetupPersistenceError(),
-      }),
-  });
-
-const connectionSetupProvisioningPersistenceLayer = (
-  environment: ApiEnvironment,
-) =>
-  Layer.succeed(ConnectionSetupProvisioningPersistence, {
-    claim: (input) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString = environment.HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string") {
-            throw new Error("database unavailable");
-          }
-          return makePgConnectionSetupRepository(
-            connectionString,
-          ).claimProvisioning(input);
-        },
-        catch: () => new ConnectionSetupProvisioningPersistenceError(),
-      }),
-    finish: (input) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString = environment.HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string") {
-            throw new Error("database unavailable");
-          }
-          return makePgConnectionSetupRepository(
-            connectionString,
-          ).finishProvisioning(input);
-        },
-        catch: () => new ConnectionSetupProvisioningPersistenceError(),
-      }),
-    fail: (input) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString = environment.HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string") {
-            throw new Error("database unavailable");
-          }
-          return makePgConnectionSetupRepository(
-            connectionString,
-          ).failProvisioning(input);
-        },
-        catch: () => new ConnectionSetupProvisioningPersistenceError(),
-      }),
-    listCandidates: (input) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString = environment.HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string") {
-            throw new Error("database unavailable");
-          }
-          return makePgConnectionSetupRepository(
-            connectionString,
-          ).listProvisioningCandidates(input);
-        },
-        catch: () => new ConnectionSetupProvisioningPersistenceError(),
-      }),
-    release: (input) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString = environment.HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string") {
-            throw new Error("database unavailable");
-          }
-          return makePgConnectionSetupRepository(
-            connectionString,
-          ).releaseProvisioningLease(input);
-        },
-        catch: () => new ConnectionSetupProvisioningPersistenceError(),
-      }),
-    renew: (input) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString = environment.HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string") {
-            throw new Error("database unavailable");
-          }
-          return makePgConnectionSetupRepository(
-            connectionString,
-          ).renewProvisioningLease(input);
-        },
-        catch: () => new ConnectionSetupProvisioningPersistenceError(),
-      }),
-  });
-
-const connectionSetupCleanupPersistenceLayer = (environment: ApiEnvironment) =>
-  Layer.succeed(ConnectionSetupCleanupPersistence, {
-    claim: (input) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString = environment.HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string") {
-            throw new Error("database unavailable");
-          }
-          return makePgConnectionSetupRepository(connectionString).claimCleanup(
-            input,
-          );
-        },
-        catch: () => new ConnectionSetupCleanupPersistenceError(),
-      }),
-    finish: (input) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString = environment.HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string") {
-            throw new Error("database unavailable");
-          }
-          return makePgConnectionSetupRepository(
-            connectionString,
-          ).finishCleanup(input);
-        },
-        catch: () => new ConnectionSetupCleanupPersistenceError(),
-      }),
-    listCandidates: (input) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString = environment.HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string") {
-            throw new Error("database unavailable");
-          }
-          return makePgConnectionSetupRepository(
-            connectionString,
-          ).listCleanupCandidates(input);
-        },
-        catch: () => new ConnectionSetupCleanupPersistenceError(),
-      }),
-    release: (input) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString = environment.HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string") {
-            throw new Error("database unavailable");
-          }
-          return makePgConnectionSetupRepository(
-            connectionString,
-          ).releaseCleanupLease(input);
-        },
-        catch: () => new ConnectionSetupCleanupPersistenceError(),
-      }),
-    renew: (input) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString = environment.HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string") {
-            throw new Error("database unavailable");
-          }
-          return makePgConnectionSetupRepository(
-            connectionString,
-          ).renewCleanupLease(input);
-        },
-        catch: () => new ConnectionSetupCleanupPersistenceError(),
-      }),
-  });
 
 const unavailableProviderResult = (
   operation: "lifecycle-write" | "safe-read",
@@ -1934,6 +1735,8 @@ const unavailable = (): Response =>
   });
 
 export const createProductionHandler = (environment: ApiEnvironment) => {
+  const connectionSetupPersistenceLayers =
+    makeConnectionSetupPersistenceLayers(environment);
   const sendLayer = atomicSendLayer(environment).pipe(
     Layer.provide(Layer.merge(encryptionLayer(environment), telemetryLayer)),
   );
@@ -1949,8 +1752,8 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     personalAccountDeletionLayer(environment),
     personalAccountIdentifiersLayer,
     privateBetaConfigLayer(environment),
-    connectionSetupPersistenceLayer(environment),
-    connectionSetupProvisioningPersistenceLayer(environment),
+    connectionSetupPersistenceLayers.setup,
+    connectionSetupPersistenceLayers.provisioning,
     connectionSetupProvisioningProviderLayer(environment),
     connectionSetupProvisioningQueueLayer(environment),
     connectionSetupProvisioningRuntimeLayer(environment),
@@ -2238,6 +2041,8 @@ const replayQueueName = (environment: ApiEnvironment): string | null => {
 export const createProductionQueueHandler =
   (environment: ApiEnvironment) =>
   async (batch: MessageBatch): Promise<void> => {
+    const connectionSetupPersistenceLayers =
+      makeConnectionSetupPersistenceLayers(environment);
     if (!environment.NEON_BRANCH_ID)
       throw new Error("Neon branch identity unavailable");
     await checkDatabaseReadiness(
@@ -2291,7 +2096,7 @@ export const createProductionQueueHandler =
     if (cleanupMessages.length > 0) {
       const cleanupLayer = Layer.mergeAll(
         telemetryLayer,
-        connectionSetupCleanupPersistenceLayer(environment),
+        connectionSetupPersistenceLayers.cleanup,
         connectionSetupCleanupProviderLayer(environment),
         connectionSetupCleanupRuntimeLayer,
       );
@@ -2304,7 +2109,7 @@ export const createProductionQueueHandler =
       const provisioningLayer = Layer.mergeAll(
         encryptionLayer(environment),
         telemetryLayer,
-        connectionSetupProvisioningPersistenceLayer(environment),
+        connectionSetupPersistenceLayers.provisioning,
         connectionSetupProvisioningProviderLayer(environment),
         connectionSetupProvisioningRuntimeLayer(environment),
       );
