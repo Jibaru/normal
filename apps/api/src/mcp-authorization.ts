@@ -28,7 +28,10 @@ const MCP_AUTHORIZATION_HANDLE_PATTERN = /^mca_[A-Za-z0-9_-]{21}$/u;
 
 export class McpAuthorizationPersistenceError extends Data.TaggedError(
   "McpAuthorizationPersistenceError",
-) {}
+)<{
+  readonly code?: string;
+  readonly constraint?: string;
+}> {}
 
 export interface McpAuthorizationPersistenceService {
   readonly create: (input: {
@@ -50,10 +53,11 @@ export interface McpAuthorizationPersistenceService {
     readonly observedAt: Date;
     readonly oauthSubject: string;
   }) => Effect.Effect<boolean, McpAuthorizationPersistenceError>;
-  readonly listConnections: (
-    clerkUserId: string,
-  ) => Effect.Effect<
-    ReadonlyArray<{ readonly connectionId: string }> | null,
+  readonly listConnections: (clerkUserId: string) => Effect.Effect<
+    ReadonlyArray<{
+      readonly connectionId: string;
+      readonly numberSuffix: string | null;
+    }> | null,
     McpAuthorizationPersistenceError
   >;
   readonly list: (
@@ -133,8 +137,15 @@ interface ConsentHandlerOptions {
   readonly telemetry?:
     | ((event: {
         readonly clientClass: string;
+        readonly code?: string;
+        readonly constraint?: string;
         readonly event: "oauth.authorization.decision.completed";
-        readonly outcome: "approved" | "denied";
+        readonly outcome:
+          | "approved"
+          | "denied"
+          | "unavailable_identifiers"
+          | "unavailable_oauth"
+          | "unavailable_persistence";
         readonly service: "api";
       }) => void)
     | undefined;
@@ -269,9 +280,13 @@ const inspect = async (
   return jsonResponse(
     {
       client: { name: opened.client.clientName },
-      connections: connections.right.map(({ connectionId }) => ({
+      connections: connections.right.map(({ connectionId, numberSuffix }) => ({
         connection_id: connectionId,
-        label: `WhatsApp Connection …${connectionId.slice(-6)}`,
+        label:
+          numberSuffix === null
+            ? `WhatsApp Connection …${connectionId.slice(-6)}`
+            : "WhatsApp",
+        number_suffix: numberSuffix,
       })),
       presentation: await presentationFor(body.request, identity.right, opened),
       requested_scopes: opened.request.scope,
@@ -499,6 +514,12 @@ const decide = async (
     options.layer,
   );
   if (generated._tag === "Left") {
+    options.telemetry?.({
+      clientClass: opened.client.clientClass,
+      event: "oauth.authorization.decision.completed",
+      outcome: "unavailable_identifiers",
+      service: "api",
+    });
     return jsonResponse({ error: "unavailable" }, 503, options.browserOrigin);
   }
   let completed: Awaited<ReturnType<OAuthHelpers["completeAuthorization"]>>;
@@ -518,6 +539,12 @@ const decide = async (
       userId: generated.right.oauthSubject,
     });
   } catch {
+    options.telemetry?.({
+      clientClass: opened.client.clientClass,
+      event: "oauth.authorization.decision.completed",
+      outcome: "unavailable_oauth",
+      service: "api",
+    });
     return jsonResponse({ error: "unavailable" }, 503, options.browserOrigin);
   }
   const persistence = await runEither(
@@ -542,6 +569,20 @@ const decide = async (
     options.layer,
   );
   if (persistence._tag === "Left") {
+    const failure =
+      persistence.left instanceof McpAuthorizationPersistenceError
+        ? persistence.left
+        : undefined;
+    options.telemetry?.({
+      clientClass: opened.client.clientClass,
+      ...(failure?.code === undefined ? {} : { code: failure.code }),
+      ...(failure?.constraint === undefined
+        ? {}
+        : { constraint: failure.constraint }),
+      event: "oauth.authorization.decision.completed",
+      outcome: "unavailable_persistence",
+      service: "api",
+    });
     return jsonResponse({ error: "unavailable" }, 503, options.browserOrigin);
   }
   if (!persistence.right) {

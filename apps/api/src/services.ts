@@ -241,8 +241,15 @@ export interface OAuthProtocolRequestFailedEvent {
 
 export interface OAuthAuthorizationDecisionCompletedEvent {
   readonly clientClass: string;
+  readonly code?: string | undefined;
+  readonly constraint?: string | undefined;
   readonly event: "oauth.authorization.decision.completed";
-  readonly outcome: "approved" | "denied";
+  readonly outcome:
+    | "approved"
+    | "denied"
+    | "unavailable_identifiers"
+    | "unavailable_oauth"
+    | "unavailable_persistence";
   readonly service: "api";
 }
 
@@ -262,6 +269,13 @@ export interface McpAuthorizationManagementCompletedEvent {
 
 export interface McpToolCallCompletedEvent {
   readonly event: "mcp.tool_call.completed";
+  readonly failureStage?:
+    | "audit_completion"
+    | "configuration"
+    | "decryption"
+    | "output"
+    | "query"
+    | undefined;
   readonly outcome:
     | "audit_unavailable"
     | "authorization_denied"

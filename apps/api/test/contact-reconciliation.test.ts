@@ -78,9 +78,15 @@ const makeHarness = () => {
       decrypt: ({ context }) =>
         Effect.succeed(
           context.fieldOrObjectPurpose === "provider-session-authority"
-            ? encoder.encode("session-directory-authority")
+            ? encoder.encode(
+                JSON.stringify({
+                  sessionCredential: "session-directory-authority",
+                  webhookVerificationSecret: "webhook-secret",
+                }),
+              )
             : new Uint8Array(32).fill(37),
         ),
+      decryptMany: () => Effect.die("not used"),
       encrypt: ({ plaintext }) =>
         Effect.succeed({
           ciphertext: btoa(
@@ -103,8 +109,14 @@ const makeHarness = () => {
 
 describe("contact reconciliation", () => {
   test("protects a complete provider observation before atomically finishing", async () => {
-    globalThis.fetch = (async () =>
-      new Response(
+    globalThis.fetch = (async (
+      _input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        "Bearer session-directory-authority",
+      );
+      return new Response(
         JSON.stringify({
           data: {
             items: [{ jid: "15550199@s.whatsapp.net", name: "Ada" }],
@@ -113,7 +125,8 @@ describe("contact reconciliation", () => {
           success: true,
         }),
         { headers: { "content-type": "application/json" } },
-      )) as unknown as typeof fetch;
+      );
+    }) as unknown as typeof fetch;
     const harness = makeHarness();
 
     await Effect.runPromise(

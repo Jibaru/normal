@@ -45,6 +45,7 @@ export interface SendEncryptionMaterial {
 
 export interface SendProviderMaterial extends SendEncryptionMaterial {
   readonly authority: SendCiphertext;
+  readonly contactPhone?: SendCiphertext | null;
   readonly identityKey: SendCiphertext;
   readonly recipient: SendCiphertext;
   readonly recipientType: "contact" | "group";
@@ -343,6 +344,11 @@ export const makePgAtomicSendRepository = (
           recipientType === "contact"
             ? await db
                 .select({
+                  phone_ciphertext_version:
+                    directoryContactsInApp.phoneCiphertextVersion,
+                  phone_key_version: directoryContactsInApp.phoneKeyVersion,
+                  phone_nonce: directoryContactsInApp.phoneNonce,
+                  phone_ciphertext: directoryContactsInApp.phoneCiphertext,
                   recipient_record_id:
                     directoryContactsInApp.providerIdentityIndex,
                   provider_identity_ciphertext_version:
@@ -371,6 +377,10 @@ export const makePgAtomicSendRepository = (
                 )
             : await db
                 .select({
+                  phone_ciphertext_version: sql<null>`NULL`,
+                  phone_key_version: sql<null>`NULL`,
+                  phone_nonce: sql<null>`NULL`,
+                  phone_ciphertext: sql<null>`NULL`,
                   recipient_record_id: whatsappGroupsInApp.id,
                   provider_identity_ciphertext_version:
                     whatsappGroupsInApp.providerIdentityCiphertextVersion,
@@ -559,6 +569,17 @@ export const makePgAtomicSendRepository = (
               keyVersion: integer(row.identity_key_version),
               nonce: bytes(row.identity_nonce),
             },
+            contactPhone:
+              recipientType === "contact" &&
+              recipientRow.phone_ciphertext !== null &&
+              recipientRow.phone_key_version !== null &&
+              recipientRow.phone_nonce !== null
+                ? {
+                    ciphertext: bytes(recipientRow.phone_ciphertext),
+                    keyVersion: integer(recipientRow.phone_key_version),
+                    nonce: bytes(recipientRow.phone_nonce),
+                  }
+                : null,
             recipient: {
               ciphertext: bytes(recipientRow.provider_identity_ciphertext),
               keyVersion: integer(recipientRow.provider_identity_key_version),

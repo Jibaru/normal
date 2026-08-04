@@ -57,8 +57,11 @@ import {
   normalizeContactDisplayName,
 } from "./directory-privacy";
 import {
+  type EncryptionContext,
+  type EncryptionError,
   type EnvelopeEncryption,
   EnvelopeEncryptionService,
+  type VersionedCiphertext,
 } from "./encryption/envelope";
 import {
   type StoredMediaContainer,
@@ -70,6 +73,7 @@ import {
   normalizeGroupDisplayName,
 } from "./group-privacy";
 import {
+  type McpToolCallCompletedEvent,
   SafeTelemetry,
   type SafeTelemetry as SafeTelemetryService,
 } from "./services";
@@ -359,6 +363,10 @@ const ListChatsOutputSchema = z
             kind: z.enum(["direct", "group"]),
             recipient_id: z.string().regex(/^(ctc|grp)_[A-Za-z0-9_-]{21}$/u),
             display_name: z.string().nullable(),
+            phone: z
+              .string()
+              .regex(/^\+[1-9][0-9]{6,14}$/u)
+              .nullable(),
             phone_last_four: z
               .string()
               .regex(/^\d{4}$/u)
@@ -722,15 +730,21 @@ type McpToolOutcome =
   | "service_unavailable"
   | "success";
 
+type McpToolFailureStage = NonNullable<
+  McpToolCallCompletedEvent["failureStage"]
+>;
+
 const emitToolCompletion = (
   tool: McpToolName,
   outcome: McpToolOutcome,
   resultCount?: number,
+  failureStage?: McpToolFailureStage,
 ): Effect.Effect<void, never, SafeTelemetryService> =>
   Effect.gen(function* () {
     const telemetry = yield* SafeTelemetry;
     yield* telemetry.emit({
       event: "mcp.tool_call.completed",
+      ...(failureStage === undefined ? {} : { failureStage }),
       outcome,
       ...(resultCount === undefined ? {} : { resultCount }),
       service: "api",
@@ -1759,11 +1773,18 @@ const listChats = (
         toolName: "list_chats",
       })
       .pipe(Effect.either);
-    if (begun._tag === "Left") return auditUnavailable();
-    if (begun.right.outcome === "authorization_denied")
+    if (begun._tag === "Left") {
+      yield* emitToolCompletion("list_chats", "audit_unavailable");
+      return auditUnavailable();
+    }
+    if (begun.right.outcome === "authorization_denied") {
+      yield* emitToolCompletion("list_chats", "authorization_denied");
       return authorizationDenied();
-    if (begun.right.outcome === "rate_limited")
+    }
+    if (begun.right.outcome === "rate_limited") {
+      yield* emitToolCompletion("list_chats", "rate_limited");
       return rateLimited(begun.right.retryAfterSeconds, begun.right.resetsAt);
+    }
     if (persistence.listChats === undefined) {
       const completed = yield* persistence
         .completeToolCall({
@@ -1774,6 +1795,16 @@ const listChats = (
           resultCount: null,
         })
         .pipe(Effect.either);
+      const outcome =
+        completed._tag === "Left"
+          ? ("audit_unavailable" as const)
+          : ("service_unavailable" as const);
+      yield* emitToolCompletion(
+        "list_chats",
+        outcome,
+        undefined,
+        "configuration",
+      );
       return completed._tag === "Left"
         ? auditUnavailable()
         : serviceUnavailable();
@@ -1789,7 +1820,10 @@ const listChats = (
         observedAt: yield* clock.now,
       })
       .pipe(Effect.either);
-    const fail = (code: "authorization_denied" | "service_unavailable") =>
+    const fail = (
+      code: "authorization_denied" | "service_unavailable",
+      failureStage?: McpToolFailureStage,
+    ) =>
       Effect.gen(function* () {
         const complete = yield* persistence
           .completeToolCall({
@@ -1803,80 +1837,139 @@ const listChats = (
             resultCount: null,
           })
           .pipe(Effect.either);
+        const outcome =
+          complete._tag === "Left"
+            ? ("audit_unavailable" as const)
+            : code === "authorization_denied"
+              ? ("authorization_denied" as const)
+              : ("service_unavailable" as const);
+        yield* emitToolCompletion(
+          "list_chats",
+          outcome,
+          undefined,
+          complete._tag === "Left" ? "audit_completion" : failureStage,
+        );
         return complete._tag === "Left"
           ? auditUnavailable()
           : code === "authorization_denied"
             ? authorizationDenied()
             : serviceUnavailable();
       });
-    if (loaded._tag === "Left") return yield* fail("service_unavailable");
+    if (loaded._tag === "Left")
+      return yield* fail("service_unavailable", "query");
     if (loaded.right === null) return yield* fail("authorization_denied");
     const page = loaded.right;
     const selected = page.chats.slice(0, input.limit);
     const hasMore = page.chats.length > input.limit;
-    const decryptString = (
-      cipher: NonNullable<(typeof selected)[number]["displayName"]>,
-      entity: "directory-contact" | "whatsapp-group",
-      recordId: string,
-      purpose: string,
-    ) =>
-      encryption
-        .decrypt({
-          accountKey: page.accountKey,
-          connectionKey: page.connectionKey,
-          ciphertext: cipher,
+    if (
+      selected.length > 0 &&
+      (page.accountKey === null || page.connectionKey === null)
+    ) {
+      return yield* fail("service_unavailable", "query");
+    }
+    const accountKey = page.accountKey;
+    const connectionKey = page.connectionKey;
+    const encryptedMetadata: Array<{
+      readonly ciphertext: VersionedCiphertext;
+      readonly context: EncryptionContext;
+    }> = [];
+    const metadataIndexes = selected.map((chat) => {
+      const add = (
+        ciphertext: VersionedCiphertext | null,
+        entity: string,
+        purpose: string,
+      ): number | null => {
+        if (ciphertext === null) return null;
+        if (accountKey === null || connectionKey === null)
+          throw new Error("missing chat key material");
+        encryptedMetadata.push({
+          ciphertext,
           context: {
-            accountId: page.accountKey.personalAccountId,
-            connectionId: page.connectionKey.connectionId,
+            accountId: accountKey.personalAccountId,
+            connectionId: connectionKey.connectionId,
             entity,
             fieldOrObjectPurpose: purpose,
-            recordId,
+            recordId: chat.displayNameRecordId,
           },
-        })
-        .pipe(
-          Effect.flatMap((bytes) =>
-            Effect.acquireUseRelease(
-              Effect.succeed(bytes),
-              (value) =>
-                Effect.try({
-                  try: () =>
-                    new TextDecoder("utf-8", {
-                      fatal: true,
-                      ignoreBOM: false,
-                    }).decode(value),
-                  catch: () => new McpToolPersistenceError(),
-                }),
-              (value) => Effect.sync(() => value.fill(0)),
-            ),
-          ),
-        );
-    const chats = yield* Effect.forEach(selected, (chat) =>
-      Effect.all({
-        displayName:
-          chat.displayName === null
-            ? Effect.succeed(null)
-            : decryptString(
-                chat.displayName,
-                chat.displayNameEntity,
-                chat.displayNameRecordId,
-                "display-name",
-              ),
-        phone:
-          chat.phone === null
-            ? Effect.succeed(null)
-            : decryptString(
-                chat.phone,
-                "directory-contact",
-                chat.displayNameRecordId,
-                "phone-number",
-              ),
-      }).pipe(Effect.map((meta) => ({ ...chat, ...meta }))),
-    ).pipe(Effect.either);
-    if (chats._tag === "Left") return yield* fail("service_unavailable");
+        });
+        return encryptedMetadata.length - 1;
+      };
+      return {
+        displayName: add(
+          chat.displayName,
+          chat.displayNameEntity,
+          "display-name",
+        ),
+        phone: add(chat.phone, "directory-contact", "phone-number"),
+      };
+    });
+    let metadataDecryption: Effect.Effect<
+      ReadonlyArray<Uint8Array>,
+      EncryptionError | McpToolPersistenceError
+    >;
+    if (encryptedMetadata.length === 0) {
+      metadataDecryption = Effect.succeed([]);
+    } else if (accountKey === null || connectionKey === null) {
+      metadataDecryption = Effect.fail(new McpToolPersistenceError());
+    } else {
+      metadataDecryption = encryption.decryptMany({
+        accountKey,
+        connectionKey,
+        items: encryptedMetadata,
+      });
+    }
+    const decryptedMetadata = yield* metadataDecryption.pipe(
+      Effect.flatMap((values) =>
+        Effect.acquireUseRelease(
+          Effect.succeed(values),
+          (plaintexts) =>
+            Effect.try({
+              try: () => {
+                const decoder = new TextDecoder("utf-8", {
+                  fatal: true,
+                  ignoreBOM: false,
+                });
+                return plaintexts.map((value) => decoder.decode(value));
+              },
+              catch: () => new McpToolPersistenceError(),
+            }),
+          (plaintexts) =>
+            Effect.sync(() => {
+              for (const value of plaintexts) value.fill(0);
+            }),
+        ),
+      ),
+      Effect.either,
+    );
+    const chats =
+      decryptedMetadata._tag === "Left"
+        ? decryptedMetadata
+        : {
+            _tag: "Right" as const,
+            right: selected.map((chat, index) => {
+              const indexes = metadataIndexes[index];
+              if (indexes === undefined)
+                throw new Error("missing chat metadata indexes");
+              return {
+                ...chat,
+                displayName:
+                  indexes.displayName === null
+                    ? null
+                    : (decryptedMetadata.right[indexes.displayName] ?? null),
+                phone:
+                  indexes.phone === null
+                    ? null
+                    : (decryptedMetadata.right[indexes.phone] ?? null),
+              };
+            }),
+          };
+    if (chats._tag === "Left")
+      return yield* fail("service_unavailable", "decryption");
     let nextCursor: string | null = null;
     if (hasMore) {
       const last = selected.at(-1);
-      if (last === undefined) return yield* fail("service_unavailable");
+      if (last === undefined)
+        return yield* fail("service_unavailable", "output");
       nextCursor = yield* codec.encode({
         boundary: [last.lastActivityAt, last.conversationId],
         context,
@@ -1889,6 +1982,7 @@ const listChats = (
         kind: chat.kind,
         recipient_id: chat.recipientId,
         display_name: chat.displayName,
+        phone: chat.kind === "direct" ? chat.phone : null,
         phone_last_four:
           chat.kind === "direct" && chat.phone !== null
             ? chat.phone.replace(/\D/gu, "").slice(-4) || null
@@ -1915,6 +2009,7 @@ const listChats = (
       "list_chats",
       complete._tag === "Left" ? "audit_unavailable" : "success",
       complete._tag === "Left" ? undefined : output.chats.length,
+      complete._tag === "Left" ? "audit_completion" : undefined,
     );
     return complete._tag === "Left"
       ? auditUnavailable()
@@ -1975,14 +2070,27 @@ const readMessages = (
         toolName: "read_messages",
       })
       .pipe(Effect.either);
-    if (begun._tag === "Left") return auditUnavailable();
-    if (begun.right.outcome === "authorization_denied")
+    if (begun._tag === "Left") {
+      yield* emitToolCompletion(
+        "read_messages",
+        "audit_unavailable",
+        undefined,
+        "query",
+      );
+      return auditUnavailable();
+    }
+    if (begun.right.outcome === "authorization_denied") {
+      yield* emitToolCompletion("read_messages", "authorization_denied");
       return authorizationDenied();
-    if (begun.right.outcome === "rate_limited")
+    }
+    if (begun.right.outcome === "rate_limited") {
+      yield* emitToolCompletion("read_messages", "rate_limited");
       return rateLimited(begun.right.retryAfterSeconds, begun.right.resetsAt);
+    }
     const fail = (
       code: "authorization_denied" | "rate_limited" | "service_unavailable",
       quotaResetsAt?: Date,
+      failureStage?: McpToolFailureStage,
     ) =>
       Effect.gen(function* () {
         const completed = yield* persistence
@@ -1997,6 +2105,20 @@ const readMessages = (
             resultCount: null,
           })
           .pipe(Effect.either);
+        const outcome =
+          completed._tag === "Left"
+            ? ("audit_unavailable" as const)
+            : code === "authorization_denied"
+              ? ("authorization_denied" as const)
+              : code === "rate_limited"
+                ? ("rate_limited" as const)
+                : ("service_unavailable" as const);
+        yield* emitToolCompletion(
+          "read_messages",
+          outcome,
+          undefined,
+          completed._tag === "Left" ? "audit_completion" : failureStage,
+        );
         if (completed._tag === "Left") return auditUnavailable();
         return code === "authorization_denied"
           ? authorizationDenied()
@@ -2031,7 +2153,7 @@ const readMessages = (
             : serviceUnavailable();
       });
     if (persistence.readMessages === undefined)
-      return yield* fail("service_unavailable");
+      return yield* fail("service_unavailable", undefined, "configuration");
     const loaded = yield* persistence
       .readMessages({
         ...authorization,
@@ -2045,109 +2167,161 @@ const readMessages = (
         observedAt: startedAt,
       })
       .pipe(Effect.either);
-    if (loaded._tag === "Left") return yield* fail("service_unavailable");
+    if (loaded._tag === "Left")
+      return yield* fail("service_unavailable", undefined, "query");
     if (loaded.right === null) return yield* fail("authorization_denied");
     if (loaded.right.outcome === "record_quota_exhausted")
       return yield* fail("rate_limited", loaded.right.resetsAt);
     const page = loaded.right.page;
-    const decrypted = yield* Effect.forEach(
-      page.messages,
-      (message) => {
-        const content =
-          message.content === null
-            ? Effect.succeed({ message, text: null })
-            : encryption
-                .decrypt({
-                  accountKey: page.accountKey,
-                  connectionKey: page.connectionKey,
-                  ciphertext: message.content,
-                  context: {
-                    accountId: page.accountKey.personalAccountId,
-                    connectionId: page.connectionKey.connectionId,
-                    entity: "stored-message",
-                    fieldOrObjectPurpose: "content",
-                    recordId: message.messageIdentity,
-                  },
-                })
-                .pipe(
-                  Effect.map((bytes) => {
-                    try {
-                      const value = JSON.parse(
-                        new TextDecoder("utf-8", {
-                          fatal: true,
-                          ignoreBOM: false,
-                        }).decode(bytes),
+    const encryptedContent: Array<{
+      readonly ciphertext: VersionedCiphertext;
+      readonly context: EncryptionContext;
+    }> = [];
+    const contentIndexes = page.messages.map((message) => {
+      const add = (
+        ciphertext: VersionedCiphertext | null | undefined,
+        entity: string,
+        purpose: string,
+        recordId: string,
+      ): number | null => {
+        if (ciphertext == null) return null;
+        encryptedContent.push({
+          ciphertext,
+          context: {
+            accountId: page.accountKey.personalAccountId,
+            connectionId: page.connectionKey.connectionId,
+            entity,
+            fieldOrObjectPurpose: purpose,
+            recordId,
+          },
+        });
+        return encryptedContent.length - 1;
+      };
+      return {
+        content: add(
+          message.content,
+          "stored-message",
+          "content",
+          message.messageIdentity,
+        ),
+        mediaMetadata: add(
+          message.media?.metadata,
+          "stored-media",
+          "metadata",
+          message.media?.id ?? "",
+        ),
+        senderDisplayName: add(
+          message.sender?.displayName,
+          "directory-contact",
+          "display-name",
+          message.sender?.recordId ?? "",
+        ),
+        senderPhone: add(
+          message.sender?.phone,
+          "directory-contact",
+          "phone-number",
+          message.sender?.recordId ?? "",
+        ),
+      };
+    });
+    const decrypted = yield* encryption
+      .decryptMany({
+        accountKey: page.accountKey,
+        connectionKey: page.connectionKey,
+        items: encryptedContent,
+      })
+      .pipe(
+        Effect.flatMap((plaintexts) =>
+          Effect.acquireUseRelease(
+            Effect.succeed(plaintexts),
+            (values) =>
+              Effect.try({
+                try: () => {
+                  const decoder = new TextDecoder("utf-8", {
+                    fatal: true,
+                    ignoreBOM: false,
+                  });
+                  return page.messages.map((message, index) => {
+                    const indexes = contentIndexes[index];
+                    if (indexes === undefined)
+                      throw new Error("missing message content indexes");
+                    let text: string | null = null;
+                    if (indexes.content !== null) {
+                      const plaintext = values[indexes.content];
+                      if (plaintext === undefined)
+                        throw new Error("missing message content");
+                      const content = JSON.parse(
+                        decoder.decode(plaintext),
                       ) as unknown;
                       if (
-                        typeof value !== "object" ||
-                        value === null ||
-                        !("text" in value) ||
-                        ((value as { text: unknown }).text !== null &&
-                          typeof (value as { text: unknown }).text !== "string")
+                        typeof content !== "object" ||
+                        content === null ||
+                        !("text" in content) ||
+                        ((content as { text: unknown }).text !== null &&
+                          typeof (content as { text: unknown }).text !==
+                            "string")
                       )
-                        throw new Error();
-                      return {
-                        message,
-                        text: (value as { text: string | null }).text,
-                      };
-                    } finally {
-                      bytes.fill(0);
+                        throw new Error("invalid message content");
+                      text = (content as { text: string | null }).text;
                     }
-                  }),
-                );
-        const mediaMetadata =
-          message.media?.metadata == null
-            ? Effect.succeed(null)
-            : encryption
-                .decrypt({
-                  accountKey: page.accountKey,
-                  connectionKey: page.connectionKey,
-                  ciphertext: message.media.metadata,
-                  context: {
-                    accountId: page.accountKey.personalAccountId,
-                    connectionId: page.connectionKey.connectionId,
-                    entity: "stored-media",
-                    fieldOrObjectPurpose: "metadata",
-                    recordId: message.media.id,
-                  },
-                })
-                .pipe(
-                  Effect.map((bytes) => {
-                    try {
-                      const value = JSON.parse(
-                        new TextDecoder("utf-8", {
-                          fatal: true,
-                          ignoreBOM: false,
-                        }).decode(bytes),
-                      ) as { fileName?: unknown; mimeType?: unknown };
+                    let mediaMetadata: {
+                      readonly fileName: string | null;
+                      readonly mimeType: string;
+                    } | null = null;
+                    if (indexes.mediaMetadata !== null) {
+                      const plaintext = values[indexes.mediaMetadata];
+                      if (plaintext === undefined)
+                        throw new Error("missing media metadata");
+                      const metadata = JSON.parse(
+                        decoder.decode(plaintext),
+                      ) as {
+                        fileName?: unknown;
+                        mimeType?: unknown;
+                      };
                       if (
-                        (value.fileName !== null &&
-                          typeof value.fileName !== "string") ||
-                        typeof value.mimeType !== "string"
+                        (metadata.fileName !== null &&
+                          typeof metadata.fileName !== "string") ||
+                        typeof metadata.mimeType !== "string"
                       )
-                        throw new Error();
-                      return {
-                        fileName: value.fileName as string | null,
-                        mimeType: value.mimeType,
+                        throw new Error("invalid media metadata");
+                      mediaMetadata = {
+                        fileName: metadata.fileName as string | null,
+                        mimeType: metadata.mimeType,
                       };
-                    } finally {
-                      bytes.fill(0);
                     }
-                  }),
-                );
-        return Effect.all({ content, mediaMetadata }).pipe(
-          Effect.map(({ content, mediaMetadata }) => ({
-            ...content,
-            mediaMetadata,
-          })),
-        );
-      },
-      { concurrency: 4 },
-    ).pipe(Effect.either);
-    if (decrypted._tag === "Left") return yield* fail("service_unavailable");
+                    const decodeString = (valueIndex: number | null) => {
+                      if (valueIndex === null) return null;
+                      const plaintext = values[valueIndex];
+                      if (plaintext === undefined)
+                        throw new Error("missing sender metadata");
+                      return decoder.decode(plaintext);
+                    };
+                    return {
+                      mediaMetadata,
+                      message,
+                      senderDisplayName: decodeString(
+                        indexes.senderDisplayName,
+                      ),
+                      senderPhone: decodeString(indexes.senderPhone),
+                      text,
+                    };
+                  });
+                },
+                catch: () => new McpToolPersistenceError(),
+              }),
+            (values) =>
+              Effect.sync(() => {
+                for (const value of values) value.fill(0);
+              }),
+          ),
+        ),
+        Effect.either,
+      );
+    if (decrypted._tag === "Left")
+      return yield* fail("service_unavailable", undefined, "decryption");
     const encoder = new TextEncoder();
     const normalized = decrypted.right.map(
-      ({ message, text, mediaMetadata }) => ({
+      ({ message, text, mediaMetadata, senderDisplayName, senderPhone }) => ({
         message_id: message.publicId,
         sent_at: message.sentAt,
         direction: message.direction,
@@ -2158,8 +2332,12 @@ const readMessages = (
               : message.conversationKind === "group"
                 ? "group_participant"
                 : "contact",
-          display_name: null,
-          phone_last_four: null,
+          display_name:
+            message.direction === "inbound" ? senderDisplayName : null,
+          phone_last_four:
+            message.direction === "inbound" && senderPhone !== null
+              ? senderPhone.replace(/\D/gu, "").slice(-4) || null
+              : null,
         },
         content_type: message.contentType,
         text,
@@ -2248,7 +2426,7 @@ const readMessages = (
     while (selected.length > 0) {
       const olderCursor = yield* cursorFor(selected).pipe(Effect.either);
       if (olderCursor._tag === "Left")
-        return yield* fail("service_unavailable");
+        return yield* fail("service_unavailable", undefined, "output");
       const candidate = makeOutput(
         selected,
         olderCursor.right,
@@ -2265,7 +2443,7 @@ const readMessages = (
     } else if (jsonBytes(output) > 65_536) {
       const only = selected[0];
       if (only?.text === null || only?.text === undefined)
-        return yield* fail("service_unavailable");
+        return yield* fail("service_unavailable", undefined, "output");
       const scalars = Array.from(only.text);
       let low = 0;
       let high = scalars.length;
@@ -2287,7 +2465,8 @@ const readMessages = (
           high = middle - 1;
         }
       }
-      if (fitted === null) return yield* fail("service_unavailable");
+      if (fitted === null)
+        return yield* fail("service_unavailable", undefined, "output");
       output = fitted;
     }
     const completion = yield* persistence
@@ -2299,7 +2478,15 @@ const readMessages = (
         resultCount: output.messages.length,
       })
       .pipe(Effect.either);
-    if (completion._tag === "Left") return auditUnavailable();
+    if (completion._tag === "Left") {
+      yield* emitToolCompletion(
+        "read_messages",
+        "audit_unavailable",
+        undefined,
+        "audit_completion",
+      );
+      return auditUnavailable();
+    }
     if (completion.right.outcome === "record_quota_exhausted")
       return yield* fail("rate_limited", completion.right.resetsAt);
     yield* emitToolCompletion(
@@ -2623,7 +2810,7 @@ export const createMcpRequestHandler =
         "list_chats",
         {
           description:
-            "List only WhatsApp Conversations with observed Stored Message activity, without message snippets or unread state.",
+            "List WhatsApp Conversations with observed Stored Message activity, including the current contact or group name and direct-chat phone number when available, without message snippets or unread state.",
           inputSchema: ListChatsInput,
           outputSchema: ListChatsOutputSchema,
           title: "List WhatsApp Chats",
@@ -2800,7 +2987,7 @@ export const createMcpRequestHandler =
         if (hasMessagesRead) {
           tools.push({
             description:
-              "List only WhatsApp Conversations with observed Stored Message activity, without message snippets or unread state.",
+              "List WhatsApp Conversations with observed Stored Message activity, including the current contact or group name and direct-chat phone number when available, without message snippets or unread state.",
             inputSchema: z.toJSONSchema(ListChatsInput, {
               target: "draft-2020-12",
             }),

@@ -89,6 +89,14 @@ export interface EnvelopeEncryption {
     readonly connectionKey: ConnectionKeyEnvelope;
     readonly context: EncryptionContext;
   }) => Effect.Effect<Uint8Array, EncryptionError>;
+  readonly decryptMany: (input: {
+    readonly accountKey: PersonalAccountKeyEnvelope;
+    readonly connectionKey: ConnectionKeyEnvelope;
+    readonly items: ReadonlyArray<{
+      readonly ciphertext: VersionedCiphertext;
+      readonly context: EncryptionContext;
+    }>;
+  }) => Effect.Effect<ReadonlyArray<Uint8Array>, EncryptionError>;
 }
 
 export const EnvelopeEncryptionService = Context.GenericTag<EnvelopeEncryption>(
@@ -484,6 +492,71 @@ export const makeEnvelopeEncryption = ({
             );
             return new Uint8Array(plaintext);
           }),
+      );
+    },
+
+    decryptMany: ({ accountKey, connectionKey, items }) => {
+      const operation = "decrypt";
+      if (
+        items.some(
+          ({ ciphertext, context }) =>
+            !validateContext(context) ||
+            ciphertext.version !== FORMAT_VERSION ||
+            ciphertext.keyVersion !== connectionKey.keyVersion ||
+            !hasText(ciphertext.nonce) ||
+            !hasText(ciphertext.ciphertext) ||
+            context.accountId !== accountKey.personalAccountId ||
+            context.accountId !== connectionKey.personalAccountId ||
+            context.connectionId !== connectionKey.connectionId,
+        )
+      ) {
+        return Effect.fail(operationError(operation));
+      }
+
+      if (items.length === 0) return Effect.succeed([]);
+
+      return withConnectionKey(
+        operation,
+        accountKey,
+        connectionKey,
+        (connectionCryptoKey) => {
+          const plaintexts: Uint8Array[] = [];
+          return Effect.forEach(
+            items,
+            ({ ciphertext, context }) =>
+              attemptCrypto(operation, async () => {
+                const plaintext = await crypto.subtle.decrypt(
+                  {
+                    additionalData: toArrayBuffer(
+                      ciphertextAdditionalData(
+                        environment,
+                        context,
+                        ciphertext.keyVersion,
+                      ),
+                    ),
+                    iv: toArrayBuffer(decodeBase64(ciphertext.nonce)),
+                    name: "AES-GCM",
+                  },
+                  connectionCryptoKey,
+                  toArrayBuffer(decodeBase64(ciphertext.ciphertext)),
+                );
+                return new Uint8Array(plaintext);
+              }).pipe(
+                Effect.tap((plaintext) =>
+                  Effect.sync(() => {
+                    plaintexts.push(plaintext);
+                  }),
+                ),
+              ),
+            { concurrency: 1 },
+          ).pipe(
+            Effect.onError(() =>
+              Effect.sync(() => {
+                for (const plaintext of plaintexts) plaintext.fill(0);
+              }),
+            ),
+          );
+        },
       );
     },
   };

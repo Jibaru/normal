@@ -103,7 +103,7 @@ describe("real Wasender Directory adapter", () => {
       /^wi1_[A-Za-z0-9_-]{43}$/u,
     );
     expect(observation.entries[0]?.recipient).toMatch(
-      /^loc_v1_c_[A-Za-z0-9_-]+$/u,
+      /^loc_v2_c_[A-Za-z0-9_-]+$/u,
     );
   });
 
@@ -128,7 +128,7 @@ describe("real Wasender Directory adapter", () => {
     expect(JSON.stringify(observation)).not.toContain("@g.us");
     expect(JSON.stringify(observation)).not.toContain("provider.invalid");
     expect(observation.entries[0]?.identity).toMatch(/^wi1_/u);
-    expect(observation.entries[0]?.recipient).toMatch(/^loc_v1_g_/u);
+    expect(observation.entries[0]?.recipient).toMatch(/^loc_v2_g_/u);
   });
 
   test("accepts a schema-valid empty Directory observation", async () => {
@@ -142,6 +142,52 @@ describe("real Wasender Directory adapter", () => {
     expect(observation.entries).toEqual([]);
     expect(observation.completeness).toBe("complete");
     expect(observation.stale).toBe(false);
+  });
+
+  test("accepts the live contact identifier field", async () => {
+    globalThis.fetch = (async () =>
+      jsonResponse({
+        data: {
+          items: [{ id: "15550199@s.whatsapp.net", notify: "Ada" }],
+          pagination: { limit: 100, page: 1, total: 1, totalPages: 1 },
+        },
+        success: true,
+      })) as unknown as typeof fetch;
+
+    const observation = await Effect.runPromise(
+      makeWasenderSessionDirectory({ authority, identityKey }).readContacts(),
+    );
+
+    expect(observation).toMatchObject({
+      completeness: "complete",
+      entries: [{ displayName: "Ada", phoneNumber: "+15550199" }],
+      stale: false,
+    });
+  });
+
+  test("keeps valid contacts from a mixed provider page as partial evidence", async () => {
+    globalThis.fetch = (async () =>
+      jsonResponse({
+        data: {
+          items: [
+            { jid: "15550199@s.whatsapp.net", name: "Ada" },
+            { jid: "status@broadcast", name: null },
+            { jid: 42, name: ["invalid"] },
+          ],
+          pagination: { limit: 100, page: 1, total: 3, totalPages: 1 },
+        },
+        success: true,
+      })) as unknown as typeof fetch;
+
+    const observation = await Effect.runPromise(
+      makeWasenderSessionDirectory({ authority, identityKey }).readContacts(),
+    );
+
+    expect(observation).toMatchObject({
+      completeness: "partial",
+      entries: [{ displayName: "Ada", phoneNumber: "+15550199" }],
+      stale: true,
+    });
   });
 
   test("rejects an oversized first response before parsing it", async () => {

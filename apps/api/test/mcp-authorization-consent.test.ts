@@ -95,7 +95,8 @@ const makeHarness = async (
       }),
     isActive: () => Effect.succeed(true),
     list: () => Effect.succeed([]),
-    listConnections: () => Effect.succeed([{ connectionId }] as const),
+    listConnections: () =>
+      Effect.succeed([{ connectionId, numberSuffix: "3456" }] as const),
     registerRefreshCredential: () => Effect.succeed(true),
     rotateRefreshCredential: (_input, issue) =>
       Effect.promise(issue).pipe(
@@ -175,7 +176,7 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
       client: { name: "Approved MCP Client" },
-      connections: [{ connection_id: connectionId }],
+      connections: [{ connection_id: connectionId, number_suffix: "3456" }],
       requested_scopes: ["connections:read", "messages:send"],
     });
   });
@@ -361,7 +362,7 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
     expect(response.status).toBe(404);
   });
 
-  test("exchanges the approved code over real OAuth HTTP for a resource-bound ten-minute token and refresh credential", async () => {
+  test("exchanges the approved code over real OAuth HTTP for a resource-bound one-hour token and refresh credential", async () => {
     const harness = await makeHarness();
     const verifier = "v".repeat(64);
     const challengeBytes = new Uint8Array(
@@ -526,7 +527,7 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
     const token = (await tokenResponse.json()) as Record<string, unknown>;
     expect(tokenResponse.status, JSON.stringify(token)).toBe(200);
     expect(token).toMatchObject({
-      expires_in: 600,
+      expires_in: 3_600,
       resource: "https://api.example.test/mcp",
       scope: "connections:read",
       token_type: "bearer",
@@ -598,7 +599,7 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
     const rotated = (await rotatedResponse?.json()) as Record<string, unknown>;
     expect(rotated).toMatchObject({
       access_token: expect.any(String),
-      expires_in: 600,
+      expires_in: 3_600,
       resource: "https://api.example.test/mcp",
       scope: "connections:read",
     });

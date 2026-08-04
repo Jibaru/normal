@@ -209,7 +209,8 @@ template with a 60-second lifetime and only an `aud` claim whose value is the
 exact `https://<api_hostname>` origin. Record the exact issuer and publishable
 key in the protected `.tfvars` file as `clerk_issuer` and
 `clerk_publishable_key`. The browser configuration fixes the template name as
-`whatsapp-api`. Record the written
+`whatsapp-api`. Set the Clerk session token custom claims to the same `aud`
+value so consent approval carries the session-bound `fva` claim. Record the written
 vendor-approved session ceiling as the required
 `provider_approved_session_capacity` integer; there is no default, and one
 admitted Personal Account reserves three sessions. Record the approved

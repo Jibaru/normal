@@ -1,6 +1,10 @@
 import { Data, Effect, Either, Encoding, Layer, Redacted } from "effect";
 import type { ProviderNeutralFailure, UtcTimestamp } from "./common";
 import type { LifecycleConnectionState } from "./control";
+import {
+  deriveIdentityRecipientRouteKeys,
+  sealIdentityRecipientRoute,
+} from "./recipient-route";
 import type {
   ContactLocator,
   GroupLocator,
@@ -141,6 +145,16 @@ const makeIdentity = async (
   value: unknown,
 ): Promise<string> =>
   `wi1_${Encoding.encodeBase64Url(await sign(key, namespace, value))}`;
+
+const makeSenderRecipientRoute = async (
+  key: CryptoKey,
+  providerIdentifier: string,
+): Promise<ContactLocator> =>
+  (await sealIdentityRecipientRoute(
+    await deriveIdentityRecipientRouteKeys(key),
+    "contact",
+    providerIdentifier,
+  )) as ContactLocator;
 
 interface ParsedTimestamp {
   readonly epochMilliseconds: number;
@@ -351,6 +365,22 @@ const makeContact = async (
     canonicalContactIdentity(raw),
   )) as ContactLocator;
 
+const senderPhoneNumber = (raw: string): string | null => {
+  const digits = phoneNumberDigits(raw);
+  return digits !== null && /^[1-9]\d{6,14}$/u.test(digits)
+    ? `+${digits}`
+    : null;
+};
+
+const senderDisplayName = (record: JsonRecord): string | null => {
+  const value = firstString(record.pushName, record.notify);
+  if (value === null) return null;
+  const normalized = value.trim();
+  return normalized.length > 0 && normalized.length <= 4_096
+    ? normalized
+    : null;
+};
+
 const makeGroup = async (key: CryptoKey, raw: string): Promise<GroupLocator> =>
   (await makeIdentity(key, "group-recipient", raw)) as GroupLocator;
 
@@ -486,14 +516,14 @@ const normalizeMessage = async (
     direction === "inbound"
       ? isGroup(remoteJid)
         ? firstString(
-            keyRecord?.participantPn,
             keyRecord?.cleanedParticipantPn,
+            keyRecord?.participantPn,
             keyRecord?.participant,
             keyRecord?.participantLid,
           )
         : firstString(
-            keyRecord?.senderPn,
             keyRecord?.cleanedSenderPn,
+            keyRecord?.senderPn,
             keyRecord?.senderLid,
             remoteJid,
           )
@@ -502,6 +532,15 @@ const normalizeMessage = async (
   if (content === null) {
     return malformed(itemIndex);
   }
+  const sender = senderRaw === null ? null : await makeContact(key, senderRaw);
+  const senderName = senderDisplayName(record);
+  const senderPhone = senderRaw === null ? null : senderPhoneNumber(senderRaw);
+  const recipient = await makeRecipient(
+    key,
+    direction === "inbound" && !isGroup(remoteJid) && senderRaw !== null
+      ? senderRaw
+      : remoteJid,
+  );
   return {
     content,
     direction,
@@ -514,9 +553,24 @@ const normalizeMessage = async (
     itemIndex,
     kind: "message_upsert",
     messageIdentity: await makeMessageIdentity(key, rawId),
-    recipient: await makeRecipient(key, remoteJid),
+    recipient,
     recipientKind: isGroup(remoteJid) ? "group" : "direct",
-    sender: senderRaw === null ? null : await makeContact(key, senderRaw),
+    sender,
+    senderContact:
+      senderRaw === null || sender === null
+        ? null
+        : {
+            displayName: senderName === null ? null : Redacted.make(senderName),
+            identity: sender,
+            itemIdentity: (await makeIdentity(
+              key,
+              "item:message-sender-contact",
+              rawId,
+            )) as WebhookItemIdentity,
+            phoneNumber:
+              senderPhone === null ? null : Redacted.make(senderPhone),
+            recipient: await makeSenderRecipientRoute(key, senderRaw),
+          },
     sentAt,
   };
 };

@@ -183,6 +183,47 @@ describe("KMS-rooted envelope encryption", () => {
     expect(textDecoder.decode(decrypted)).toBe("  preserve exact Unicode 🏖️  ");
   });
 
+  test("decrypts a metadata batch with one KMS unwrap", async () => {
+    const { accountKey, connectionKey, encryption, kms } = await setup();
+    const firstContext = context({ recordId: "contact_one" });
+    const secondContext = context({ recordId: "contact_two" });
+    const [first, second] = await Promise.all(
+      [
+        [firstContext, "First"],
+        [secondContext, "Second"],
+      ].map(async ([encryptionContext, value]) =>
+        Effect.runPromise(
+          encryption.encrypt({
+            accountKey,
+            connectionKey,
+            context: encryptionContext as EncryptionContext,
+            plaintext: textEncoder.encode(value as string),
+          }),
+        ),
+      ),
+    );
+    if (first === undefined || second === undefined)
+      throw new Error("expected encrypted metadata");
+    const unwrapsBefore = kms.decryptedPlaintexts.length;
+
+    const plaintexts = await Effect.runPromise(
+      encryption.decryptMany({
+        accountKey,
+        connectionKey,
+        items: [
+          { ciphertext: first, context: firstContext },
+          { ciphertext: second, context: secondContext },
+        ],
+      }),
+    );
+
+    expect(plaintexts.map((value) => textDecoder.decode(value))).toEqual([
+      "First",
+      "Second",
+    ]);
+    expect(kms.decryptedPlaintexts).toHaveLength(unwrapsBefore + 1);
+  });
+
   test.each([
     ["account", { accountId: "pa_account_two" }],
     ["connection", { connectionId: "wac_connection_two" }],

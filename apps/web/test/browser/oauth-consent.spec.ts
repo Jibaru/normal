@@ -7,13 +7,22 @@ const installClerk = async (
   page: Page,
   factorAge: number,
   onReverification = () => undefined,
+  onTokenRequest = (_options: unknown) => undefined,
 ) => {
   await page.exposeFunction("__recordReverification", onReverification);
+  await page.exposeFunction("__recordTokenRequest", onTokenRequest);
   await page.addInitScript((initialFactorAge: number) => {
     const session = {
       clearCache: () => undefined,
       factorVerificationAge: [initialFactorAge, -1] as [number, number],
-      getToken: async () => "signed-test-user",
+      getToken: async (options: unknown) => {
+        void (
+          window as unknown as {
+            __recordTokenRequest: (options: unknown) => Promise<void>;
+          }
+        ).__recordTokenRequest(options);
+        return "signed-test-user";
+      },
     };
     Object.defineProperty(window, "Clerk", {
       configurable: false,
@@ -42,10 +51,18 @@ test("approves only explicit authority after recent Clerk reverification", async
 }) => {
   let decision: Record<string, unknown> | undefined;
   let reverificationOpened = false;
-  await installClerk(page, 10, () => {
-    reverificationOpened = true;
-  });
-  await page.route("https://api.example.test/**", async (route) => {
+  const tokenRequests: Array<unknown> = [];
+  await installClerk(
+    page,
+    10,
+    () => {
+      reverificationOpened = true;
+    },
+    (options) => {
+      tokenRequests.push(options);
+    },
+  );
+  await page.route("**/v1/oauth/consent/**", async (route) => {
     const request = route.request();
     if (request.url().endsWith("/inspect")) {
       await route.fulfill({
@@ -53,7 +70,11 @@ test("approves only explicit authority after recent Clerk reverification", async
         body: JSON.stringify({
           client: { name: "Approved MCP Client" },
           connections: [
-            { connection_id: connectionId, label: "Personal WhatsApp" },
+            {
+              connection_id: connectionId,
+              label: "Personal WhatsApp",
+              number_suffix: "3456",
+            },
           ],
           presentation: "presentation",
           requested_scopes: ["connections:read", "messages:send"],
@@ -76,9 +97,11 @@ test("approves only explicit authority after recent Clerk reverification", async
   ).toBeVisible();
   await expect(page.getByLabel("Share selected read data")).not.toBeChecked();
   await expect(page.getByLabel("Allow outbound sends")).not.toBeChecked();
-  await expect(page.getByLabel("Personal WhatsApp")).not.toBeChecked();
+  await expect(
+    page.getByLabel("Personal WhatsApp, ending in 3456"),
+  ).not.toBeChecked();
 
-  await page.getByLabel("Personal WhatsApp").check();
+  await page.getByLabel("Personal WhatsApp, ending in 3456").check();
   await page.getByLabel("Send messages").check();
   await page.getByLabel("Allow outbound sends").check();
   await page.getByRole("button", { name: "Approve" }).click();
@@ -94,19 +117,26 @@ test("approves only explicit authority after recent Clerk reverification", async
       send_confirmed: true,
     });
   expect(reverificationOpened).toBe(true);
+  expect(tokenRequests).toContainEqual({
+    skipCache: true,
+  });
 });
 
 test("denies without selecting a Connection or scope", async ({ page }) => {
   let decision: Record<string, unknown> | undefined;
   await installClerk(page, 0);
-  await page.route("https://api.example.test/**", async (route) => {
+  await page.route("**/v1/oauth/consent/**", async (route) => {
     if (route.request().url().endsWith("/inspect")) {
       await route.fulfill({
         contentType: "application/json",
         body: JSON.stringify({
           client: { name: "Approved MCP Client" },
           connections: [
-            { connection_id: connectionId, label: "Personal WhatsApp" },
+            {
+              connection_id: connectionId,
+              label: "Personal WhatsApp",
+              number_suffix: null,
+            },
           ],
           presentation: "presentation",
           requested_scopes: ["connections:read"],

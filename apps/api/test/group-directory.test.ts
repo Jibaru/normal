@@ -58,6 +58,7 @@ const makeHarness = (providerFails = false) => {
                 JSON.stringify({ sessionCredential: "session-api-key" }),
               ),
         ),
+      decryptMany: () => Effect.die("not used"),
       encrypt: ({ plaintext }) =>
         Effect.succeed({
           ciphertext: btoa(

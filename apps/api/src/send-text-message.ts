@@ -8,10 +8,11 @@ import type {
   SendEncryptionMaterial,
 } from "@whatsapp-mcp/db/send";
 import {
+  makeWasenderRecipientRoute,
   makeWasenderTextSending,
   type RecipientLocator,
   type WasenderIdentityProtectionKey,
-  type WasenderRecipientIdentity,
+  type WasenderRecipientRoute,
 } from "@whatsapp-mcp/wasender/session";
 import { Effect, Redacted } from "effect";
 import type {
@@ -36,6 +37,19 @@ const envelope = (value: {
   nonce: base64(value.nonce),
   version: 1,
 });
+const sessionCredential = (authority: string): string => {
+  const parsed = JSON.parse(authority) as unknown;
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    !("sessionCredential" in parsed) ||
+    typeof parsed.sessionCredential !== "string" ||
+    !/^[\x21-\x7e]{1,4096}$/u.test(parsed.sessionCredential)
+  ) {
+    throw new Error("invalid Wasender send authority");
+  }
+  return parsed.sessionCredential;
+};
 const keys = (material: SendEncryptionMaterial) => ({
   accountKey: {
     ciphertext: base64(material.accountKey.ciphertext),
@@ -220,11 +234,13 @@ export const makeAtomicSendTextMessageService = (
         | "unknown";
       let messageIdentity: string | undefined;
       try {
-        const authority = await decryptString(envelope(provider.authority), {
-          entity: "whatsapp-connection",
-          purpose: "provider-session-authority",
-          recordId: provider.connectionKey.connectionId,
-        });
+        const authority = sessionCredential(
+          await decryptString(envelope(provider.authority), {
+            entity: "whatsapp-connection",
+            purpose: "provider-session-authority",
+            recordId: provider.connectionKey.connectionId,
+          }),
+        );
         const recipient = await decryptString(envelope(provider.recipient), {
           entity:
             provider.recipientType === "contact"
@@ -233,6 +249,14 @@ export const makeAtomicSendTextMessageService = (
           purpose: "provider-identity",
           recordId: provider.recipientRecordId,
         });
+        const contactPhone =
+          provider.recipientType === "contact" && provider.contactPhone != null
+            ? await decryptString(envelope(provider.contactPhone), {
+                entity: "directory-contact",
+                purpose: "phone-number",
+                recordId: provider.recipientRecordId,
+              })
+            : null;
         const identityBytes = await Effect.runPromise(
           options.encryption.decrypt({
             ...opened,
@@ -247,6 +271,14 @@ export const makeAtomicSendTextMessageService = (
           }),
         );
         try {
+          const resolvedRecipient =
+            contactPhone === null
+              ? (Redacted.make(recipient) as WasenderRecipientRoute)
+              : await makeWasenderRecipientRoute(
+                  Redacted.make(identityBytes) as WasenderIdentityProtectionKey,
+                  "contact",
+                  contactPhone,
+                );
           const locator = "send-recipient" as RecipientLocator;
           const adapter = makeWasenderTextSending({
             authority: Redacted.make(authority) as never,
@@ -254,9 +286,7 @@ export const makeAtomicSendTextMessageService = (
               identityBytes,
             ) as WasenderIdentityProtectionKey,
             resolveRecipient: (candidate) =>
-              candidate === locator
-                ? (Redacted.make(recipient) as WasenderRecipientIdentity)
-                : null,
+              candidate === locator ? resolvedRecipient : null,
             telemetry: { emit: options.telemetry },
           });
           const result = await Effect.runPromise(

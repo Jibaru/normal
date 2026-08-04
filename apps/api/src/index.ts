@@ -1,4 +1,5 @@
 import type { ProviderControlService } from "@whatsapp-mcp/contracts/provider-control";
+import { withPgRequestConnectionScope } from "@whatsapp-mcp/db/request-connection";
 import {
   createProductionHandler,
   createProductionQueueHandler,
@@ -51,8 +52,12 @@ export interface Env {
 }
 
 export default createWorker<Env>({
-  fetch: (request, env, context) =>
-    createProductionHandler(env)(request, context),
+  fetch: (request, env, context) => {
+    const handle = () => createProductionHandler(env)(request, context);
+    return new URL(request.url).pathname === "/mcp"
+      ? withPgRequestConnectionScope(handle)
+      : handle();
+  },
   queue: (batch, env) => createProductionQueueHandler(env)(batch),
   scheduled: (controller, env) =>
     createProductionScheduledHandler(env)(controller),

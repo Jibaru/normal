@@ -136,6 +136,7 @@ const makeHarness = (
         }),
       createConnectionKey: () => Effect.die("not used"),
       decrypt: () => Effect.die("not used"),
+      decryptMany: () => Effect.die("not used"),
       encrypt: () => Effect.die("not used"),
     }),
     Layer.succeed(SafeTelemetry, {

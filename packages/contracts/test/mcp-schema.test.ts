@@ -187,6 +187,7 @@ describe("makePublicObjectContract", () => {
           kind: "direct",
           recipient_id: "ctc_123456789012345678901",
           display_name: "Ada",
+          phone: "+15550190199",
           phone_last_four: "0199",
           last_activity_at: "2026-07-30T11:59:00Z",
           last_activity_direction: "inbound",
@@ -205,6 +206,12 @@ describe("makePublicObjectContract", () => {
       ListChatsOutputContract.decodeUnknown({
         ...output,
         chats: [{ ...output.chats[0], snippet: "secret" }],
+      }),
+    ).toThrow();
+    expect(() =>
+      ListChatsOutputContract.decodeUnknown({
+        ...output,
+        chats: [{ ...output.chats[0], phone: "5550199" }],
       }),
     ).toThrow();
   });

@@ -20,6 +20,7 @@ export const OAUTH_SCOPES = [
 ] as const;
 
 const AUTHORIZATION_REQUEST_TTL_SECONDS = 10 * 60;
+const ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
 
 export interface AllowlistedOAuthClient {
   readonly clientClass: string;
@@ -39,7 +40,10 @@ const OAUTH_CLIENTS: ReadonlyArray<AllowlistedOAuthClient> = [
     clientClass: "chatgpt",
     clientId: "chatgpt",
     clientName: "ChatGPT",
-    redirectUris: ["https://chatgpt.com/connector_platform_oauth_redirect"],
+    redirectUris: [
+      "https://chatgpt.com/connector/oauth/djePJ1RTfjI5",
+      "https://chatgpt.com/connector_platform_oauth_redirect",
+    ],
   },
 ];
 
@@ -568,9 +572,19 @@ const makeAuthorizationHandler = (
   },
 });
 
-const addNoStore = (response: Response): Response => {
+const addNoStore = (response: Response, issuer?: string): Response => {
   const headers = new Headers(response.headers);
   headers.set("cache-control", "no-store");
+  const challenge = headers.get("www-authenticate");
+  if (challenge !== null && issuer !== undefined) {
+    headers.set(
+      "www-authenticate",
+      challenge.replace(
+        /resource_metadata="[^"]+"/,
+        `resource_metadata="${issuer}/.well-known/oauth-protected-resource/mcp"`,
+      ),
+    );
+  }
   return new Response(response.body, {
     headers,
     status: response.status,
@@ -739,8 +753,14 @@ const isOAuthProviderRequest = (
   configuration: OAuthConfiguration,
 ): boolean => {
   const url = new URL(request.url);
+  const issuer = new URL(configuration.issuer);
+  const isIssuer =
+    url.origin === issuer.origin ||
+    (url.protocol === "http:" &&
+      url.host === issuer.host &&
+      request.headers.get("x-forwarded-proto") === "https");
   return (
-    url.origin === configuration.issuer &&
+    isIssuer &&
     (url.pathname === "/oauth/authorize" ||
       url.pathname === "/oauth/token" ||
       url.pathname === "/oauth/register" ||
@@ -754,6 +774,25 @@ const isOAuthProviderRequest = (
   );
 };
 
+const normalizeForwardedIssuerRequest = (
+  request: Request,
+  issuer: string,
+): Request => {
+  const url = new URL(request.url);
+  const issuerUrl = new URL(issuer);
+  if (
+    url.protocol !== "http:" ||
+    url.host !== issuerUrl.host ||
+    request.headers.get("x-forwarded-proto") !== "https"
+  ) {
+    return request;
+  }
+  return new Request(
+    `${issuerUrl.origin}${url.pathname}${url.search}${url.hash}`,
+    request,
+  );
+};
+
 export const createOAuthHandler = (
   options: OAuthHandlerOptions,
 ): ((request: Request, context: ExecutionContext) => Promise<Response>) => {
@@ -762,7 +801,7 @@ export const createOAuthHandler = (
     options.configuration.clients,
   );
   const provider = new OAuthProvider<OAuthEnvironment>({
-    accessTokenTTL: 10 * 60,
+    accessTokenTTL: ACCESS_TOKEN_TTL_SECONDS,
     allowImplicitFlow: false,
     allowPlainPKCE: false,
     apiHandler: {
@@ -832,7 +871,7 @@ export const createOAuthHandler = (
         });
       }
       const tokenProperties = {
-        accessTokenTTL: 10 * 60,
+        accessTokenTTL: ACCESS_TOKEN_TTL_SECONDS,
         accessTokenProps: {
           ...props,
           clientId: exchange.clientId,
@@ -851,8 +890,12 @@ export const createOAuthHandler = (
     if (!isOAuthProviderRequest(request, options.configuration)) {
       return options.applicationHandler(request, options.environment, context);
     }
-    const tokenRequest = await parseTokenRequest(
+    const providerRequest = normalizeForwardedIssuerRequest(
       request,
+      options.configuration.issuer,
+    );
+    const tokenRequest = await parseTokenRequest(
+      providerRequest,
       options.configuration,
     );
     if (
@@ -878,7 +921,12 @@ export const createOAuthHandler = (
           },
           async () => {
             const response = addNoStore(
-              await provider.fetch(request, allowlistedEnvironment, context),
+              await provider.fetch(
+                providerRequest,
+                allowlistedEnvironment,
+                context,
+              ),
+              options.configuration.issuer,
             );
             const pair = await readIssuedTokenPair(response);
             if (pair === null) {
@@ -911,7 +959,8 @@ export const createOAuthHandler = (
     }
 
     const response = addNoStore(
-      await provider.fetch(request, allowlistedEnvironment, context),
+      await provider.fetch(providerRequest, allowlistedEnvironment, context),
+      options.configuration.issuer,
     );
     if (tokenRequest?.grantType !== "authorization_code") {
       return response;

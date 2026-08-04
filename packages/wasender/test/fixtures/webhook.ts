@@ -22,10 +22,12 @@ export const messageBatchFixture = {
   data: {
     messages: [
       {
+        pushName: "Ada Lovelace",
         key: {
           id: "inbound-text-1",
           fromMe: false,
-          remoteJid: "15550101@s.whatsapp.net",
+          remoteJid: "987654321@lid",
+          senderPn: "987654321@lid",
           cleanedSenderPn: "15550101",
         },
         messageBody: "hello",

@@ -30,8 +30,8 @@ export type StableMessageIdentity = AdapterReference<"StableMessageIdentity">;
 export type RecipientLocator = ContactLocator | GroupLocator;
 export type DirectorySessionAuthority =
   ProtectedAdapterValue<"SessionAuthority">;
-export type WasenderRecipientIdentity =
-  ProtectedAdapterValue<"WasenderRecipientIdentity">;
+export type WasenderRecipientRoute =
+  ProtectedAdapterValue<"WasenderRecipientRoute">;
 
 declare const wasenderIdentityProtectionKey: unique symbol;
 
@@ -160,15 +160,15 @@ export interface TextSendTelemetry {
 
 /**
  * Per-connection production dependencies. The domain resolver unwraps only
- * the encrypted provider identity belonging to the already-authorized
- * Directory recipient; it returns no identity for any other locator.
+ * the encrypted provider route belonging to the already-authorized Directory
+ * recipient; it returns no route for any other locator.
  */
 export interface WasenderTextSendingOptions {
   readonly authority: SessionAuthority;
   readonly identityKey: WasenderIdentityProtectionKey;
   readonly resolveRecipient: (
     recipient: RecipientLocator,
-  ) => WasenderRecipientIdentity | null;
+  ) => WasenderRecipientRoute | null;
   readonly telemetry: TextSendTelemetry;
 }
 
@@ -283,6 +283,7 @@ export {
   type WasenderSessionDirectoryConfig,
 } from "./directory";
 export {
+  makeWasenderRecipientRoute,
   makeWasenderTextSending,
   makeWasenderTextSendingLayer,
 } from "./text-send";

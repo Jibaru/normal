@@ -333,6 +333,7 @@ const makeHarness = (
           : context.fieldOrObjectPurpose === "provider-session-locator"
             ? Effect.succeed(new TextEncoder().encode(lifecycleSession.session))
             : Effect.die("unexpected decryption"),
+      decryptMany: () => Effect.die("not used"),
       encrypt: ({ context }) =>
         Effect.sync(() => {
           encryptedPurposes.push(context.fieldOrObjectPurpose);

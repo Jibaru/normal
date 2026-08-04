@@ -157,6 +157,7 @@ export interface ProjectDirectoryContactInput
   readonly providerIdentityCiphertext: PersistedDirectoryCiphertext;
   readonly providerIdentityIndex: string;
   readonly publicId: string;
+  readonly insertOnly?: boolean;
 }
 
 export interface ProjectStoredMessageInput
@@ -1610,10 +1611,19 @@ export const makeWebhookEventRepository = (
           webhookItemIdentity: input.itemIdentity,
           updatedAt: input.receivedAt,
         };
-        await db
+        const insertContact = db
           .insert(directoryContactsInApp)
-          .values(contactValues)
-          .onConflictDoUpdate({
+          .values(contactValues);
+        if (input.insertOnly === true) {
+          await insertContact.onConflictDoNothing({
+            target: [
+              directoryContactsInApp.personalAccountId,
+              directoryContactsInApp.whatsappConnectionId,
+              directoryContactsInApp.providerIdentityIndex,
+            ],
+          });
+        } else {
+          await insertContact.onConflictDoUpdate({
             target: [
               directoryContactsInApp.personalAccountId,
               directoryContactsInApp.whatsappConnectionId,
@@ -1648,6 +1658,7 @@ export const makeWebhookEventRepository = (
               updatedAt: contactValues.updatedAt,
             },
           });
+        }
         await markWebhookItemApplied(db, input);
         return "applied" as const;
       }),
