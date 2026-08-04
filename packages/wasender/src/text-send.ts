@@ -9,12 +9,15 @@ import {
   deriveRecipientRouteKeys,
   openIdentityRecipientRoute,
   openRecipientRoute,
+  sealIdentityRecipientRoute,
 } from "./recipient-route";
 import {
   type IdentityBearingSendStatus,
   type StableMessageIdentity,
   TextSending,
   type TextSendResult,
+  type WasenderIdentityProtectionKey,
+  type WasenderRecipientRoute,
   type WasenderTextSendingOptions,
 } from "./session";
 
@@ -225,6 +228,9 @@ const classifyResponse = async (
 ): Promise<TextSendResult> => {
   const parsed = parseJsonRecord(body.text);
 
+  if (response.status >= 300 && response.status < 400) {
+    return definitiveFailure("provider_rejected");
+  }
   if (response.status === 401 || response.status === 403) {
     return definitiveFailure("authentication_failed");
   }
@@ -306,6 +312,27 @@ const productionRuntime: TextSendRuntime = {
     globalThis.setTimeout(callback, milliseconds),
 };
 
+export const makeWasenderRecipientRoute = async (
+  identityKey: WasenderIdentityProtectionKey,
+  kind: "contact" | "group",
+  providerIdentifier: string,
+): Promise<WasenderRecipientRoute> => {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new Uint8Array(Redacted.value(identityKey)),
+    { hash: "SHA-256", name: "HMAC" },
+    false,
+    ["sign"],
+  );
+  return Redacted.make(
+    await sealIdentityRecipientRoute(
+      await deriveIdentityRecipientRouteKeys(key),
+      kind,
+      providerIdentifier,
+    ),
+  ) as WasenderRecipientRoute;
+};
+
 /**
  * Internal test seam. Package consumers can construct only the production
  * adapter below, whose host, transport, timeout, and attempt count are fixed.
@@ -373,7 +400,7 @@ export const makeWasenderTextSendingWithRuntime = (
                     "content-type": "application/json",
                   },
                   method: "POST",
-                  redirect: "error",
+                  redirect: "manual",
                   signal: controller.signal,
                 });
                 const body = await readBoundedBody(response);

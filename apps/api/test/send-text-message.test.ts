@@ -66,8 +66,9 @@ describe("atomic send workflow", () => {
     const provider: SendProviderMaterial = {
       ...material,
       authority: protectedValue(storedAuthority),
+      contactPhone: protectedValue("+15551234567"),
       identityKey: protectedValue("x".repeat(32)),
-      recipient: protectedValue(recipientRoute),
+      recipient: protectedValue(`wi1_${"r".repeat(43)}`),
       recipientRecordId: `di1_${"B".repeat(43)}`,
       recipientType: "contact",
     };
@@ -116,7 +117,9 @@ describe("atomic send workflow", () => {
             ? storedAuthority
             : context.fieldOrObjectPurpose === "webhook-identity-key"
               ? "x".repeat(32)
-              : recipientRoute;
+              : context.fieldOrObjectPurpose === "phone-number"
+                ? "+15551234567"
+                : `wi1_${"r".repeat(43)}`;
         return Effect.succeed(new TextEncoder().encode(value));
       },
       decryptMany: () => Effect.die("unused"),

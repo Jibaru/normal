@@ -283,6 +283,7 @@ export {
   type WasenderSessionDirectoryConfig,
 } from "./directory";
 export {
+  makeWasenderRecipientRoute,
   makeWasenderTextSending,
   makeWasenderTextSendingLayer,
 } from "./text-send";

@@ -48,6 +48,7 @@ interface RecordedAttempt {
   readonly body: string;
   readonly headers: Headers;
   readonly method: string;
+  readonly redirect: "error" | "follow" | "manual" | undefined;
   readonly signal: AbortSignal | null;
   readonly url: string;
 }
@@ -82,6 +83,7 @@ const makeHarness = (options: {
           body: typeof init?.body === "string" ? init.body : "",
           headers: new Headers(init?.headers),
           method: init?.method ?? "GET",
+          redirect: init?.redirect,
           signal: init?.signal ?? null,
           url: String(input),
         };
@@ -163,6 +165,7 @@ describe("real Wasender text-send adapter", () => {
         text: exactText,
       }),
       method: "POST",
+      redirect: "manual",
       url: "https://www.wasenderapi.com/api/send-message",
     });
     expect(harness.attempts[0]?.headers.get("authorization")).toBe(
