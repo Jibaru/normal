@@ -10,10 +10,7 @@ import {
   makeMessageId,
   makeSendId,
 } from "@whatsapp-mcp/contracts/handles";
-import type {
-  ProviderControlFailure,
-  ProviderControlService,
-} from "@whatsapp-mcp/contracts/provider-control";
+import type { ProviderControlService } from "@whatsapp-mcp/contracts/provider-control";
 import {
   type ConnectionHealthRepository,
   makePgConnectionHealthRepository,
@@ -64,7 +61,6 @@ import {
   ConnectionHealthClock,
   ConnectionHealthPersistence,
   ConnectionHealthPersistenceError,
-  ConnectionHealthProvider,
   reconcileConnectionHealth,
 } from "./connection-health";
 import {
@@ -78,7 +74,6 @@ import {
 import {
   ConnectionSetupCleanupClock,
   ConnectionSetupCleanupIdentifiers,
-  ConnectionSetupCleanupProvider,
   connectionSetupCleanupMessage,
   handleConnectionSetupCleanupBatch,
   isConnectionSetupCleanupMessage,
@@ -87,7 +82,6 @@ import { makeConnectionSetupPersistenceLayers } from "./connection-setup-product
 import {
   ConnectionSetupProvisioningClock,
   ConnectionSetupProvisioningIdentifiers,
-  ConnectionSetupProvisioningProvider,
   ConnectionSetupProvisioningQueue,
   ConnectionSetupProvisioningQueueError,
   ConnectionSetupProvisioningWebhook,
@@ -190,6 +184,7 @@ import {
   PersonalAccountDeletionPersistence,
   PersonalAccountDeletionPersistenceError,
 } from "./personal-account-deletion";
+import { makeProviderControlLayers } from "./provider-control-production";
 import { serializeSafeTelemetry } from "./safe-telemetry";
 import {
   importSendFingerprintKey,
@@ -235,7 +230,6 @@ import {
   isWhatsAppConnectionRequest,
   WhatsAppConnectionClock,
   WhatsAppConnectionIdentifiers,
-  WhatsAppConnectionProvider,
 } from "./whatsapp-connection";
 import { makeWhatsAppConnectionPersistenceLayer } from "./whatsapp-connection-production";
 
@@ -786,103 +780,6 @@ const personalAccountIdentifiersLayer = Layer.succeed(
     next: Effect.sync(() => crypto.randomUUID()),
   },
 );
-
-const unavailableProviderResult = (
-  operation: "lifecycle-write" | "safe-read",
-): {
-  readonly error: ProviderControlFailure;
-  readonly ok: false;
-} => ({
-  error: {
-    _tag: "ProviderControlFailure",
-    code: "unavailable",
-    operation,
-    retryAfterMs: null,
-    retryDecision:
-      operation === "lifecycle-write"
-        ? "reconcile_before_repeat"
-        : "retry_within_safe_read_budget",
-  },
-  ok: false,
-});
-
-const connectionSetupProvisioningProviderLayer = (
-  environment: ApiEnvironment,
-) =>
-  Layer.succeed(ConnectionSetupProvisioningProvider, {
-    create: (input) =>
-      Effect.tryPromise({
-        try: () =>
-          (
-            environment.PROVIDER_CONTROL as ProviderControlService
-          ).createSession(input),
-        catch: () => unavailableProviderResult("lifecycle-write"),
-      }).pipe(Effect.catchAll((failure) => Effect.succeed(failure))),
-    reconcile: (input) =>
-      Effect.tryPromise({
-        try: () =>
-          (
-            environment.PROVIDER_CONTROL as ProviderControlService
-          ).reconcileSession(input),
-        catch: () => unavailableProviderResult("safe-read"),
-      }).pipe(Effect.catchAll((failure) => Effect.succeed(failure))),
-  });
-
-const connectionSetupCleanupProviderLayer = (environment: ApiEnvironment) =>
-  Layer.succeed(ConnectionSetupCleanupProvider, {
-    delete: (input) =>
-      Effect.tryPromise({
-        try: () =>
-          (
-            environment.PROVIDER_CONTROL as ProviderControlService
-          ).deleteSession(input),
-        catch: () => unavailableProviderResult("lifecycle-write"),
-      }).pipe(Effect.catchAll((failure) => Effect.succeed(failure))),
-    reconcile: (input) =>
-      Effect.tryPromise({
-        try: () =>
-          (
-            environment.PROVIDER_CONTROL as ProviderControlService
-          ).reconcileSession(input),
-        catch: () => unavailableProviderResult("safe-read"),
-      }).pipe(Effect.catchAll((failure) => Effect.succeed(failure))),
-  });
-
-const whatsAppConnectionProviderLayer = (environment: ApiEnvironment) =>
-  Layer.succeed(WhatsAppConnectionProvider, {
-    connect: (input) =>
-      Effect.tryPromise({
-        try: () =>
-          (
-            environment.PROVIDER_CONTROL as ProviderControlService
-          ).connectSession(input),
-        catch: () => unavailableProviderResult("lifecycle-write"),
-      }).pipe(Effect.catchAll((failure) => Effect.succeed(failure))),
-    disconnect: (input) =>
-      Effect.tryPromise({
-        try: () =>
-          (
-            environment.PROVIDER_CONTROL as ProviderControlService
-          ).disconnectSession(input),
-        catch: () => unavailableProviderResult("lifecycle-write"),
-      }).pipe(Effect.catchAll((failure) => Effect.succeed(failure))),
-    getQrCode: (input) =>
-      Effect.tryPromise({
-        try: () =>
-          (environment.PROVIDER_CONTROL as ProviderControlService).getQrCode(
-            input,
-          ),
-        catch: () => unavailableProviderResult("safe-read"),
-      }).pipe(Effect.catchAll((failure) => Effect.succeed(failure))),
-    reconcile: (input) =>
-      Effect.tryPromise({
-        try: () =>
-          (
-            environment.PROVIDER_CONTROL as ProviderControlService
-          ).reconcileSession(input),
-        catch: () => unavailableProviderResult("safe-read"),
-      }).pipe(Effect.catchAll((failure) => Effect.succeed(failure))),
-  });
 
 const messageRetentionLayer = (environment: ApiEnvironment) =>
   Layer.mergeAll(
@@ -1641,6 +1538,9 @@ const unavailable = (): Response =>
   });
 
 export const createProductionHandler = (environment: ApiEnvironment) => {
+  const providerControlLayers = makeProviderControlLayers(
+    environment.PROVIDER_CONTROL as ProviderControlService,
+  );
   const connectionSetupPersistenceLayers =
     makeConnectionSetupPersistenceLayers(environment);
   const sendLayer = atomicSendLayer(environment).pipe(
@@ -1660,14 +1560,14 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     privateBetaConfigLayer(environment),
     connectionSetupPersistenceLayers.setup,
     connectionSetupPersistenceLayers.provisioning,
-    connectionSetupProvisioningProviderLayer(environment),
+    providerControlLayers.connectionSetupProvisioning,
     connectionSetupProvisioningQueueLayer(environment),
     connectionSetupProvisioningRuntimeLayer(environment),
     connectionSetupIdentifiersLayer,
     connectionSetupClockLayer,
     connectionSetupNumberTokensLayer(environment),
     makeWhatsAppConnectionPersistenceLayer(environment),
-    whatsAppConnectionProviderLayer(environment),
+    providerControlLayers.whatsAppConnection,
     whatsAppConnectionRuntimeLayer,
     mcpAuthorizationPersistenceLayer(environment),
     mcpAuthorizationRuntimeLayer,
@@ -1947,6 +1847,9 @@ const replayQueueName = (environment: ApiEnvironment): string | null => {
 export const createProductionQueueHandler =
   (environment: ApiEnvironment) =>
   async (batch: MessageBatch): Promise<void> => {
+    const providerControlLayers = makeProviderControlLayers(
+      environment.PROVIDER_CONTROL as ProviderControlService,
+    );
     const connectionSetupPersistenceLayers =
       makeConnectionSetupPersistenceLayers(environment);
     if (!environment.NEON_BRANCH_ID)
@@ -2003,7 +1906,7 @@ export const createProductionQueueHandler =
       const cleanupLayer = Layer.mergeAll(
         telemetryLayer,
         connectionSetupPersistenceLayers.cleanup,
-        connectionSetupCleanupProviderLayer(environment),
+        providerControlLayers.connectionSetupCleanup,
         connectionSetupCleanupRuntimeLayer,
       );
       await handleConnectionSetupCleanupBatch(
@@ -2016,7 +1919,7 @@ export const createProductionQueueHandler =
         encryptionLayer(environment),
         telemetryLayer,
         connectionSetupPersistenceLayers.provisioning,
-        connectionSetupProvisioningProviderLayer(environment),
+        providerControlLayers.connectionSetupProvisioning,
         connectionSetupProvisioningRuntimeLayer(environment),
       );
       await handleConnectionSetupProvisioningBatch(
@@ -2425,16 +2328,9 @@ export const createProductionScheduledHandler =
               catch: () => new ConnectionHealthPersistenceError(),
             }),
         }),
-        Layer.succeed(ConnectionHealthProvider, {
-          reconcile: (input) =>
-            Effect.tryPromise({
-              try: () =>
-                (
-                  environment.PROVIDER_CONTROL as ProviderControlService
-                ).reconcileSession(input),
-              catch: () => unavailableProviderResult("safe-read"),
-            }).pipe(Effect.catchAll((failure) => Effect.succeed(failure))),
-        }),
+        makeProviderControlLayers(
+          environment.PROVIDER_CONTROL as unknown as ProviderControlService,
+        ).connectionHealth,
       );
       const claimedAt = now();
       while (true) {
