@@ -1291,6 +1291,25 @@ describe("MCP tool repository", () => {
         new Date("2026-07-31T12:03:00Z"),
       ],
     );
+    await database.query(
+      `INSERT INTO app.directory_contacts (
+         personal_account_id, whatsapp_connection_id, public_id,
+         provider_identity_index, provider_identity_ciphertext_version,
+         provider_identity_key_version, provider_identity_nonce,
+         provider_identity_ciphertext, display_name_ciphertext_version,
+         display_name_key_version, display_name_nonce, display_name_ciphertext,
+         display_name_sort, phone_ciphertext_version, phone_key_version,
+         phone_nonce, phone_ciphertext, active, received_at
+       ) VALUES (
+         $1, '20000000-0000-4000-8000-000000000030',
+         'ctc_123456789012345678942', $2, 1, 1,
+         decode(repeat('13',12),'hex'), decode(repeat('14',32),'hex'),
+         1, 1, decode(repeat('15',12),'hex'), decode(repeat('16',32),'hex'),
+         'ada', 1, 1, decode(repeat('17',12),'hex'),
+         decode(repeat('18',32),'hex'), true, $3
+       )`,
+      [accountId, `di1_${"C".repeat(43)}`, observedAt],
+    );
     for (const [suffix, sentAt] of [
       ["1", "2026-07-31T12:01:00Z"],
       ["2", "2026-07-31T12:02:00Z"],
@@ -1342,8 +1361,22 @@ describe("MCP tool repository", () => {
       page: {
         hasOlder: true,
         messages: [
-          { publicId: "msg_123456789012345678943" },
-          { publicId: "msg_123456789012345678942" },
+          {
+            publicId: "msg_123456789012345678943",
+            sender: {
+              displayName: { keyVersion: 1 },
+              phone: { keyVersion: 1 },
+              recordId: `di1_${"C".repeat(43)}`,
+            },
+          },
+          {
+            publicId: "msg_123456789012345678942",
+            sender: {
+              displayName: { keyVersion: 1 },
+              phone: { keyVersion: 1 },
+              recordId: `di1_${"C".repeat(43)}`,
+            },
+          },
         ],
       },
     });
@@ -1361,6 +1394,135 @@ describe("MCP tool repository", () => {
       [auditLogId],
     );
     expect(log.rows).toEqual([{ outcome: "success", result_count: 1 }]);
+
+    const concurrentAuditLogIds = [
+      "50000000-0000-4000-8000-000000000043",
+      "50000000-0000-4000-8000-000000000044",
+    ] as const;
+    await Promise.all(
+      concurrentAuditLogIds.map((concurrentAuditLogId) =>
+        repository.beginToolCall({
+          ...authorization,
+          auditLogId: concurrentAuditLogId,
+          hourLimit: 10,
+          minuteLimit: 10,
+          observedAt: readAt,
+          toolName: "read_messages",
+        }),
+      ),
+    );
+    const completions = await Promise.all(
+      concurrentAuditLogIds.map((concurrentAuditLogId) =>
+        repository.completeMessageRead({
+          ...authorization,
+          auditLogId: concurrentAuditLogId,
+          dailyRecordLimit: 2,
+          observedAt: readAt,
+          resultCount: 1,
+        }),
+      ),
+    );
+    expect(completions.map(({ outcome }) => outcome).sort()).toEqual([
+      "record_quota_exhausted",
+      "success",
+    ]);
+    const concurrentLogs = await database.query(
+      `SELECT outcome, result_count
+         FROM app.tool_call_logs
+        WHERE id = ANY($1::uuid[])
+        ORDER BY outcome`,
+      [concurrentAuditLogIds],
+    );
+    expect(concurrentLogs.rows).toEqual([
+      { outcome: "started", result_count: null },
+      { outcome: "success", result_count: 1 },
+    ]);
+  });
+
+  test("lists chats without direct runtime access to key envelope tables", async () => {
+    const conversationId = "70000000-0000-4000-8000-000000000047";
+    const conversationPublicId = "cvs_123456789012345678947";
+    await database.query(
+      `UPDATE app.mcp_authorizations SET scopes=ARRAY['messages:read']::text[] WHERE id=$1`,
+      [authorizationId],
+    );
+    await database.query(
+      `INSERT INTO app.whatsapp_conversations (
+         id, personal_account_id, whatsapp_connection_id, public_id, kind,
+         recipient_locator, recipient_public_id, last_activity_at,
+         last_activity_direction
+       ) VALUES (
+         $1, $2, '20000000-0000-4000-8000-000000000030', $3, 'direct',
+         $4, 'ctc_123456789012345678947', $5, 'inbound'
+       )`,
+      [
+        conversationId,
+        accountId,
+        conversationPublicId,
+        `di1_${"E".repeat(43)}`,
+        observedAt,
+      ],
+    );
+    await database.query(
+      `INSERT INTO app.stored_messages (
+         id, personal_account_id, whatsapp_connection_id, conversation_id,
+         public_id, message_identity, direction, sent_at, content_type,
+         content_ciphertext_version, content_key_version, content_nonce,
+         content_ciphertext, received_at, webhook_item_identity
+       ) VALUES (
+         '71000000-0000-4000-8000-000000000047', $1,
+         '20000000-0000-4000-8000-000000000030', $2,
+         'msg_123456789012345678947', $3, 'inbound', $4, 'text', 1, 1,
+         decode(repeat('11',12),'hex'), decode(repeat('12',32),'hex'), $4, $3
+       )`,
+      [accountId, conversationId, `wi1_${"E".repeat(43)}`, observedAt],
+    );
+    await database.query(
+      `INSERT INTO app.directory_contacts (
+         personal_account_id, whatsapp_connection_id, public_id,
+         provider_identity_index, provider_identity_ciphertext_version,
+         provider_identity_key_version, provider_identity_nonce,
+         provider_identity_ciphertext, display_name_ciphertext_version,
+         display_name_key_version, display_name_nonce, display_name_ciphertext,
+         display_name_sort, phone_ciphertext_version, phone_key_version,
+         phone_nonce, phone_ciphertext, active, received_at
+       ) VALUES (
+         $1, '20000000-0000-4000-8000-000000000030',
+         'ctc_123456789012345678948', $2, 1, 1,
+         decode(repeat('13',12),'hex'), decode(repeat('14',32),'hex'),
+         1, 1, decode(repeat('15',12),'hex'), decode(repeat('16',32),'hex'),
+         'ada', 1, 1, decode(repeat('17',12),'hex'),
+         decode(repeat('18',32),'hex'), true, $3
+       )`,
+      [accountId, `di1_${"E".repeat(43)}`, observedAt],
+    );
+    await database.exec("REVOKE neon_superuser FROM whatsapp_api_runtime");
+
+    const page = await repository.listChats({
+      ...authorization,
+      connectionPublicId: connectionA,
+      cursorActivityAt: null,
+      cursorPublicId: null,
+      kind: "all",
+      limit: 20,
+      observedAt,
+    });
+
+    expect(page).toMatchObject({
+      accountKey: { personalAccountId: accountId },
+      chats: [
+        {
+          conversationId: conversationPublicId,
+          displayName: { keyVersion: 1 },
+          displayNameRecordId: `di1_${"E".repeat(43)}`,
+          phone: { keyVersion: 1 },
+          recipientId: "ctc_123456789012345678948",
+        },
+      ],
+      connectionKey: {
+        connectionId: "20000000-0000-4000-8000-000000000030",
+      },
+    });
   });
 
   test("atomically reauthorizes and reserves protected Stored Media bytes", async () => {

@@ -1,5 +1,10 @@
 import { Effect, Redacted } from "effect";
 import { makeBoundedRetryAfterMs, maximumJsonResponseBytes } from "./common";
+import {
+  deriveIdentityRecipientRouteKeys,
+  type RecipientRouteKeys,
+  sealIdentityRecipientRoute,
+} from "./recipient-route";
 import type {
   ContactLocator,
   DirectoryContact,
@@ -259,6 +264,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 const invalidStringField = Symbol("invalidStringField");
+const unsupportedDirectoryEntry = Symbol("unsupportedDirectoryEntry");
 
 const optionalNullableString = (
   record: Record<string, unknown>,
@@ -274,22 +280,35 @@ const optionalNullableString = (
 const parseEntry = (
   value: unknown,
   kind: DirectoryKind,
-): RawDirectoryEntry | null => {
+): RawDirectoryEntry | null | typeof unsupportedDirectoryEntry => {
   if (!isRecord(value)) {
     return null;
   }
-  const { jid } = value;
+  const jidField = value.jid;
+  const idField = value.id;
+  if (
+    (jidField !== undefined && typeof jidField !== "string") ||
+    (idField !== undefined && typeof idField !== "string") ||
+    (typeof jidField === "string" &&
+      typeof idField === "string" &&
+      jidField !== idField)
+  ) {
+    return null;
+  }
+  const jid = typeof jidField === "string" ? jidField : idField;
   if (typeof jid !== "string" || jid.length < 1 || jid.length > 512) {
     return null;
   }
   const validIdentifier =
     kind === "groups"
       ? /^[1-9]\d{1,31}(?:-[1-9]\d{1,31})?@g\.us$/u.test(jid)
-      : /^(?:[1-9]\d{1,14}|[1-9]\d{1,31}(?::\d{1,5})?@s\.whatsapp\.net|[1-9]\d{1,31}@lid)$/u.test(
+      : /^(?:[1-9]\d{1,14}|[1-9]\d{1,31}(?::\d{1,5})?@(?:s\.whatsapp\.net|lid))$/u.test(
           jid,
         );
   if (!validIdentifier) {
-    return null;
+    return /^[^\s@]{1,128}@[^\s@]{1,128}$/u.test(jid)
+      ? unsupportedDirectoryEntry
+      : null;
   }
 
   const name = optionalNullableString(value, "name");
@@ -358,8 +377,12 @@ const parseDirectoryPage = (
   ) {
     throw safeReadFailure("invalid_response", "do_not_retry");
   }
-  const entries = items.map((item) => parseEntry(item, kind));
-  if (entries.some((entry) => entry === null)) {
+  const parsedEntries = items.map((item) => parseEntry(item, kind));
+  const entries = parsedEntries.filter(
+    (entry): entry is RawDirectoryEntry =>
+      entry !== null && entry !== unsupportedDirectoryEntry,
+  );
+  if (items.length > 0 && entries.length === 0) {
     throw safeReadFailure("invalid_response", "do_not_retry");
   }
   return {
@@ -393,52 +416,28 @@ const contactPhoneNumber = (jid: string): string | null => {
     : null;
 };
 
-interface LocatorKeys {
-  readonly encryption: CryptoKey;
+interface LocatorKeys extends RecipientRouteKeys {
   readonly identity: CryptoKey;
-  readonly nonce: CryptoKey;
 }
 
 const deriveLocatorKeys = async (
-  credential: string,
   identityKey: WasenderIdentityProtectionKey,
 ): Promise<LocatorKeys> => {
   const identityBytes = Redacted.value(identityKey);
   if (identityBytes.byteLength < 32) {
     throw new TypeError("Invalid Directory identity key configuration");
   }
-  const [encryptionSeed, nonceSeed] = await Promise.all([
-    crypto.subtle.digest(
-      "SHA-256",
-      textEncoder.encode(`directory-locator-encryption-v1\0${credential}`),
-    ),
-    crypto.subtle.digest(
-      "SHA-256",
-      textEncoder.encode(`directory-locator-nonce-v1\0${credential}`),
-    ),
-  ]);
+  const identity = await crypto.subtle.importKey(
+    "raw",
+    identityBytes,
+    { hash: "SHA-256", name: "HMAC" },
+    false,
+    ["sign"],
+  );
+  const routeKeys = await deriveIdentityRecipientRouteKeys(identity);
   return {
-    encryption: await crypto.subtle.importKey(
-      "raw",
-      encryptionSeed,
-      { name: "AES-GCM" },
-      false,
-      ["encrypt"],
-    ),
-    identity: await crypto.subtle.importKey(
-      "raw",
-      identityBytes,
-      { hash: "SHA-256", name: "HMAC" },
-      false,
-      ["sign"],
-    ),
-    nonce: await crypto.subtle.importKey(
-      "raw",
-      nonceSeed,
-      { hash: "SHA-256", name: "HMAC" },
-      false,
-      ["sign"],
-    ),
+    ...routeKeys,
+    identity,
   };
 };
 
@@ -473,34 +472,6 @@ const base64Url = (bytes: Uint8Array): string => {
     .replaceAll("+", "-")
     .replaceAll("/", "_")
     .replace(/=+$/u, "");
-};
-
-const sealLocator = async (
-  keys: LocatorKeys,
-  kind: "contact" | "group",
-  providerIdentifier: string,
-): Promise<string> => {
-  const context = textEncoder.encode(`directory-locator-v1:${kind}`);
-  const plaintext = textEncoder.encode(providerIdentifier);
-  const nonceMaterial = new Uint8Array(
-    await crypto.subtle.sign(
-      "HMAC",
-      keys.nonce,
-      textEncoder.encode(`${kind}\0${providerIdentifier}`),
-    ),
-  );
-  const iv = nonceMaterial.slice(0, 12);
-  const ciphertext = new Uint8Array(
-    await crypto.subtle.encrypt(
-      { additionalData: context, iv, name: "AES-GCM" },
-      keys.encryption,
-      plaintext,
-    ),
-  );
-  const sealed = new Uint8Array(iv.byteLength + ciphertext.byteLength);
-  sealed.set(iv);
-  sealed.set(ciphertext, iv.byteLength);
-  return `loc_v1_${kind === "contact" ? "c" : "g"}_${base64Url(sealed)}`;
 };
 
 const outputBytes = (value: unknown): number =>
@@ -661,7 +632,7 @@ const readDirectory = async (
                   entry.jid,
                 )) as ContactLocator,
                 phoneNumber: contactPhoneNumber(entry.jid),
-                recipient: (await sealLocator(
+                recipient: (await sealIdentityRecipientRoute(
                   keys,
                   "contact",
                   entry.jid,
@@ -675,7 +646,7 @@ const readDirectory = async (
                   entry.jid,
                 )) as GroupLocator,
                 joined: true,
-                recipient: (await sealLocator(
+                recipient: (await sealIdentityRecipientRoute(
                   keys,
                   "group",
                   entry.jid,
@@ -759,7 +730,7 @@ export const makeWasenderSessionDirectory = (
   config: WasenderSessionDirectoryConfig,
 ): SessionDirectory => {
   const credential = validateCredential(config.authority);
-  const locatorKeys = deriveLocatorKeys(credential, config.identityKey);
+  const locatorKeys = deriveLocatorKeys(config.identityKey);
   return {
     readContacts: () =>
       Effect.tryPromise({

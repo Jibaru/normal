@@ -2,7 +2,7 @@ export { EXPECTED_SCHEMA_VERSION } from "./schema-version";
 
 import { sql } from "drizzle-orm";
 import { makeDatabase, type QueryConnection } from "./database";
-import { EXPECTED_SCHEMA_VERSION } from "./schema-version";
+import { EXPECTED_SCHEMA_VERSION, LEGACY_SCHEMA_HASH } from "./schema-version";
 
 export interface SchemaVersionConnection extends QueryConnection {}
 
@@ -34,6 +34,7 @@ const isMissingRelation = (error: unknown): boolean => {
 export const assertExpectedSchemaVersion = async (
   connection: SchemaVersionConnection,
   branchId?: string,
+  allowLegacyMigrationTable = false,
 ): Promise<void> => {
   const db = makeDatabase(connection);
   let actual = 0;
@@ -45,10 +46,30 @@ export const assertExpectedSchemaVersion = async (
     `);
     actual = Number(result[0]?.version ?? 0);
   } catch (error) {
-    if (isMissingRelation(error)) {
+    if (!isMissingRelation(error)) throw error;
+    if (!allowLegacyMigrationTable) {
       throw new SchemaVersionMismatch(0, EXPECTED_SCHEMA_VERSION);
     }
-    throw error;
+    const legacy = await db.execute<{
+      count: number | string;
+      hash: string | null;
+      version: number | string;
+    }>(sql`
+      SELECT
+        count(*)::integer AS count,
+        COALESCE(max(hash), '') AS hash,
+        COALESCE(max(created_at), 0)::bigint AS version
+      FROM app_private.schema_migrations
+    `);
+    const ledger = legacy[0];
+    if (
+      Number(ledger?.count) !== 1 ||
+      ledger?.hash !== LEGACY_SCHEMA_HASH ||
+      Number(ledger?.version) !== EXPECTED_SCHEMA_VERSION
+    ) {
+      throw new SchemaVersionMismatch(0, EXPECTED_SCHEMA_VERSION);
+    }
+    actual = EXPECTED_SCHEMA_VERSION;
   }
 
   if (actual !== EXPECTED_SCHEMA_VERSION) {

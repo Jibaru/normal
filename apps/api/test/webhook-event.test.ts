@@ -195,9 +195,11 @@ const makeHarness = (options: HarnessOptions = {}) => {
           expect(input.providerIdentityCiphertext.ciphertext).not.toContain(
             input.providerIdentityIndex,
           );
-          expect(
-            await compareVersions("wv1.test.signature", "wv1.test.signature"),
-          ).toBe("equal");
+          if (input.insertOnly !== true) {
+            expect(
+              await compareVersions("wv1.test.signature", "wv1.test.signature"),
+            ).toBe("equal");
+          }
           return "applied" as const;
         }),
       projectStoredMessage: (input) =>
@@ -286,6 +288,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
           : context.fieldOrObjectPurpose === "webhook-identity-key"
             ? Effect.succeed(identityKey.slice())
             : Effect.succeed(new Uint8Array(message.payload_bytes)),
+      decryptMany: () => Effect.die("not used"),
       encrypt: ({ plaintext }) =>
         Effect.succeed({
           ciphertext: btoa(
@@ -346,6 +349,13 @@ describe("Webhook Event processing", () => {
             recipient,
             recipientKind: "direct",
             sender: null,
+            senderContact: {
+              displayName: Redacted.make("Ada Lovelace"),
+              identity: `wi1_${"sender-contact".padEnd(43, "0")}` as never,
+              itemIdentity: `wi1_${"sender-item".padEnd(43, "0")}` as never,
+              phoneNumber: Redacted.make("+15550199"),
+              recipient,
+            },
             sentAt: "2026-07-31T12:09:00.000Z" as never,
           },
         ],
@@ -364,6 +374,7 @@ describe("Webhook Event processing", () => {
     expect(harness.calls).toContain(
       "project-message:med_123456789012345678901",
     );
+    expect(harness.calls).toContain("project-contact");
     expect(queued.acknowledgements).toEqual(["ack"]);
   });
 

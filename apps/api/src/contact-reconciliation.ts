@@ -74,6 +74,22 @@ export type ContactReconciliationRequirements =
 
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
 
+const decodeSessionAuthority = (
+  plaintext: Uint8Array,
+): DirectorySessionAuthority => {
+  const parsed = JSON.parse(decoder.decode(plaintext)) as unknown;
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    !("sessionCredential" in parsed) ||
+    typeof parsed.sessionCredential !== "string" ||
+    !/^[\x21-\x7e]{1,4096}$/u.test(parsed.sessionCredential)
+  ) {
+    throw new Error("invalid Wasender Directory authority");
+  }
+  return Redacted.make(parsed.sessionCredential) as DirectorySessionAuthority;
+};
+
 const emit = (outcome: "complete" | "failed" | "partial", count: number) =>
   Effect.gen(function* () {
     const telemetry = yield* SafeTelemetry;
@@ -127,10 +143,7 @@ export const reconcileContacts = (
           (identity) =>
             Effect.gen(function* () {
               const sessionAuthority = yield* Effect.try({
-                try: () =>
-                  Redacted.make(
-                    decoder.decode(authority),
-                  ) as DirectorySessionAuthority,
+                try: () => decodeSessionAuthority(authority),
                 catch: () => new ContactReconciliationPersistenceError(),
               });
               const identityProtectionKey = Redacted.make(

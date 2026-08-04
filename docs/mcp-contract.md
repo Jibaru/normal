@@ -145,6 +145,7 @@ Input fields:
       "kind": "direct",
       "recipient_id": "ctc_k2M...21-characters",
       "display_name": "Ada",
+      "phone": "+15550190199",
       "phone_last_four": "0199",
       "last_activity_at": "2026-07-30T11:59:00Z",
       "last_activity_direction": "inbound"
@@ -158,7 +159,7 @@ Input fields:
 }
 ```
 
-`recipient_id` is a `ctc_` handle for a direct conversation or a `grp_` handle for a group. `display_name` and direct-chat `phone_last_four` are nullable; group phone suffixes are always `null`. `last_activity_direction` is `inbound` or `outbound`. Results sort by `last_activity_at` descending and then `conversation_id`. No body, snippet, unread state, provider identifier, or roster is returned.
+`recipient_id` is the current Directory `ctc_` handle for a direct conversation or `grp_` handle for a group. Direct-chat `display_name`, normalized E.164 `phone`, and `phone_last_four` are nullable when the provider Directory lacks that metadata; group phone fields are always `null`. Conversations are reconciled to Directory entries by their connection-scoped identity index rather than an early placeholder handle. `last_activity_direction` is `inbound` or `outbound`. Results sort by `last_activity_at` descending and then `conversation_id`. No body, snippet, unread state, provider identifier, or roster is returned.
 
 ## `read_messages`
 

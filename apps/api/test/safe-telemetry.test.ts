@@ -62,6 +62,26 @@ describe("safe telemetry serialization", () => {
     }
   });
 
+  test("allows a stage-only MCP failure diagnostic", () => {
+    expect(
+      JSON.parse(
+        serializeSafeTelemetry({
+          event: "mcp.tool_call.completed",
+          failureStage: "decryption",
+          outcome: "service_unavailable",
+          service: "api",
+          tool: "list_chats",
+        }),
+      ),
+    ).toEqual({
+      event: "mcp.tool_call.completed",
+      failureStage: "decryption",
+      outcome: "service_unavailable",
+      service: "api",
+      tool: "list_chats",
+    });
+  });
+
   test("drops credential material added to timeout and break-glass-shaped events", () => {
     const serialized = serializeSafeTelemetry({
       event: "provider.text_send.completed",

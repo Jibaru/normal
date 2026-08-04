@@ -11,9 +11,9 @@ import {
   or,
   sql,
 } from "drizzle-orm";
-import type { Client as PgClient } from "pg";
 import { makeDatabase, makeQueryConnection } from "./database";
 import type { McpAuthorizationScope } from "./mcp-authorization";
+import { withPgRequestConnection } from "./request-connection";
 import {
   ingestionGapsInApp,
   mcpAuthorizationConnectionsInApp,
@@ -94,6 +94,11 @@ export interface McpToolMessageRecord {
   readonly content: McpToolDirectoryCiphertext | null;
   readonly editedAt?: string | null;
   readonly deleted?: boolean;
+  readonly sender: {
+    readonly displayName: McpToolDirectoryCiphertext | null;
+    readonly phone: McpToolDirectoryCiphertext | null;
+    readonly recordId: string;
+  } | null;
   readonly media?: {
     readonly id: string;
     readonly publicId: string;
@@ -147,8 +152,8 @@ export interface McpToolChatRecord {
   readonly lastActivityDirection: "inbound" | "outbound";
 }
 export interface McpToolChatPage {
-  readonly accountKey: AccountKeyEnvelope;
-  readonly connectionKey: ConnectionKeyEnvelope;
+  readonly accountKey: AccountKeyEnvelope | null;
+  readonly connectionKey: ConnectionKeyEnvelope | null;
   readonly chats: ReadonlyArray<McpToolChatRecord>;
   readonly asOf: string;
   readonly stale: boolean;
@@ -715,15 +720,24 @@ const enterAuthorizationContext = async (
   const db = makeDatabase(connection);
   const result = await db.execute<{
     personal_account_id: unknown;
-  }>(sql`SELECT app_private.bootstrap_mcp_tool_call(
-       ${input.authorizationId}, ${input.oauthSubject}, ${input.clientId ?? null}
-     ) AS personal_account_id`);
+  }>(sql`
+    WITH authorized AS MATERIALIZED (
+      SELECT app_private.bootstrap_mcp_tool_call(
+        ${input.authorizationId}, ${input.oauthSubject}, ${input.clientId ?? null}
+      ) AS personal_account_id
+    ), context AS MATERIALIZED (
+      SELECT set_config(
+        'app.personal_account_id',
+        COALESCE((SELECT personal_account_id::text FROM authorized), ''),
+        true
+      )
+    )
+    SELECT authorized.personal_account_id
+    FROM authorized
+    CROSS JOIN context
+  `);
   const personalAccountId = result[0]?.personal_account_id;
-  if (typeof personalAccountId !== "string") return null;
-  await db.execute(
-    sql`SELECT set_config('app.personal_account_id', ${personalAccountId}, true)`,
-  );
-  return personalAccountId;
+  return typeof personalAccountId === "string" ? personalAccountId : null;
 };
 
 const authorizationScopes = (
@@ -1011,11 +1025,6 @@ export const makeMcpToolRepository = (
           };
         }
 
-        await db
-          .select({ id: personalAccountsInApp.id })
-          .from(personalAccountsInApp)
-          .where(eq(personalAccountsInApp.id, personalAccountId))
-          .for("update");
         const scopes = await loadAuthorizationScopes(connection, input);
         if (
           scopes === null ||
@@ -1040,22 +1049,24 @@ export const makeMcpToolRepository = (
           };
         }
 
-        const recent = await db
-          .select({ startedAt: toolCallLogsInApp.startedAt })
-          .from(toolCallLogsInApp)
-          .where(
-            and(
-              eq(toolCallLogsInApp.personalAccountId, personalAccountId),
-              eq(toolCallLogsInApp.quotaReserved, true),
-              gt(
-                toolCallLogsInApp.startedAt,
-                sql`${input.observedAt}::timestamptz - interval '1 hour'`,
-              ),
-              lte(toolCallLogsInApp.startedAt, input.observedAt.toISOString()),
-            ),
+        const recent = await db.execute<{ started_at: unknown }>(sql`
+          WITH locked_account AS MATERIALIZED (
+            SELECT accounts.id
+            FROM app.personal_accounts accounts
+            WHERE accounts.id = ${personalAccountId}
+            FOR UPDATE
           )
-          .orderBy(asc(toolCallLogsInApp.startedAt), asc(toolCallLogsInApp.id));
-        const hourStarts = recent.map(({ startedAt }) => timestamp(startedAt));
+          SELECT logs.started_at
+          FROM app.tool_call_logs logs
+          JOIN locked_account ON locked_account.id = logs.personal_account_id
+          WHERE logs.quota_reserved = true
+            AND logs.started_at > ${input.observedAt}::timestamptz - interval '1 hour'
+            AND logs.started_at <= ${input.observedAt}
+          ORDER BY logs.started_at, logs.id
+        `);
+        const hourStarts = recent.map(({ started_at }) =>
+          timestamp(started_at),
+        );
         if (hourStarts.some((value) => value === null)) {
           throw new Error("invalid Tool Call Log timestamp");
         }
@@ -1311,30 +1322,58 @@ export const makeMcpToolRepository = (
           return null;
         const scopes = await loadAuthorizationScopes(connection, input);
         if (scopes === null || !scopes.includes("messages:read")) return null;
-        const materialResult = await db.execute<Record<string, unknown>>(sql`
+        const projectionResult = await db.execute<Record<string, unknown>>(sql`
            SELECT connections.personal_account_id, connections.id AS connection_id,
-             account_keys.key_version AS account_key_version, account_keys.kms_key_id AS account_kms_key_id,
-             account_keys.ciphertext AS account_key_ciphertext,
-             connection_keys.account_key_version AS connection_key_account_version,
-             connection_keys.key_version AS connection_key_version, connection_keys.nonce AS connection_key_nonce,
-             connection_keys.ciphertext AS connection_key_ciphertext,
-             greatest(coalesce(contacts.as_of, connections.created_at), coalesce(groups.as_of, connections.created_at)) AS as_of,
-             (coalesce(contacts.stale,true) OR coalesce(groups.stale,true)) AS stale,
-             (coalesce(contacts.partial,true) OR coalesce(groups.partial,true)) AS partial
-           FROM app.mcp_authorization_connections selected
-           JOIN app.whatsapp_connections connections ON connections.personal_account_id=selected.personal_account_id AND connections.id=selected.whatsapp_connection_id
-           JOIN app.whatsapp_connection_key_envelopes connection_keys ON connection_keys.personal_account_id=connections.personal_account_id AND connection_keys.whatsapp_connection_id=connections.id
-           JOIN app.personal_account_key_envelopes account_keys ON account_keys.personal_account_id=connections.personal_account_id AND account_keys.key_version=connection_keys.account_key_version
-           LEFT JOIN app.directory_contact_projections contacts ON contacts.personal_account_id=connections.personal_account_id AND contacts.whatsapp_connection_id=connections.id
-           LEFT JOIN app.whatsapp_group_directory_states groups ON groups.personal_account_id=connections.personal_account_id AND groups.whatsapp_connection_id=connections.id
-           WHERE selected.mcp_authorization_id=${input.authorizationId}
-             AND connections.public_id=${input.connectionPublicId}
-              AND connections.state <> 'deleting'`);
-        const material = parseGroupMaterial(materialResult[0]);
-        if (material === null) return null;
+              connections.created_at AS connection_created_at,
+              greatest(coalesce(contacts.as_of, connections.created_at), coalesce(groups.as_of, connections.created_at)) AS as_of,
+              (coalesce(contacts.stale,true) OR coalesce(groups.stale,true)) AS stale,
+              (coalesce(contacts.partial,true) OR coalesce(groups.partial,true)) AS partial,
+              (SELECT conversations.public_id
+                 FROM app.whatsapp_conversations conversations
+                WHERE conversations.personal_account_id=connections.personal_account_id
+                  AND conversations.whatsapp_connection_id=connections.id
+                ORDER BY conversations.created_at
+                LIMIT 1) AS conversation_public_id
+            FROM app.mcp_authorization_connections selected
+            JOIN app.whatsapp_connections connections ON connections.personal_account_id=selected.personal_account_id AND connections.id=selected.whatsapp_connection_id
+            LEFT JOIN app.directory_contact_projections contacts ON contacts.personal_account_id=connections.personal_account_id AND contacts.whatsapp_connection_id=connections.id
+            LEFT JOIN app.whatsapp_group_directory_states groups ON groups.personal_account_id=connections.personal_account_id AND groups.whatsapp_connection_id=connections.id
+            WHERE selected.mcp_authorization_id=${input.authorizationId}
+              AND connections.public_id=${input.connectionPublicId}
+               AND connections.state <> 'deleting'`);
+        const projection = projectionResult[0];
+        const personalAccountId = projection?.personal_account_id;
+        const connectionId = projection?.connection_id;
+        const asOf = timestampString(
+          projection?.as_of ?? projection?.connection_created_at,
+        );
+        if (
+          typeof personalAccountId !== "string" ||
+          typeof connectionId !== "string" ||
+          asOf === null ||
+          typeof projection?.stale !== "boolean" ||
+          typeof projection.partial !== "boolean"
+        ) {
+          return null;
+        }
+        const conversationPublicId = projection.conversation_public_id;
+        const keyMaterial =
+          typeof conversationPublicId === "string"
+            ? parseGroupKeyMaterial(
+                (
+                  await db.execute<Record<string, unknown>>(sql`
+                    SELECT * FROM app_private.load_mcp_message_read_material(
+                      ${input.authorizationId}, ${input.oauthSubject}, ${input.clientId ?? null},
+                      ${input.observedAt}, ${input.connectionPublicId}, ${conversationPublicId}
+                    )
+                  `)
+                )[0],
+              )
+            : null;
         const rows = await db.execute<Record<string, unknown>>(sql`
-           SELECT conversations.public_id, conversations.kind, conversations.recipient_public_id,
-             conversations.last_activity_at, conversations.last_activity_direction,
+           SELECT conversations.public_id, conversations.kind,
+              coalesce(contacts.public_id, groups.public_id, conversations.recipient_public_id) AS recipient_public_id,
+              conversations.last_activity_at, conversations.last_activity_direction,
              coalesce(contacts.provider_identity_index, groups.id::text, conversations.recipient_public_id) AS recipient_record_id,
              coalesce(contacts.display_name_ciphertext_version, groups.display_name_ciphertext_version) AS display_version,
              coalesce(contacts.display_name_key_version, groups.display_name_key_version) AS display_key_version,
@@ -1343,10 +1382,10 @@ export const makeMcpToolRepository = (
              contacts.phone_ciphertext_version AS phone_version, contacts.phone_key_version,
              contacts.phone_nonce, contacts.phone_ciphertext
            FROM app.whatsapp_conversations conversations
-           LEFT JOIN app.directory_contacts contacts ON conversations.kind='direct' AND contacts.personal_account_id=conversations.personal_account_id AND contacts.whatsapp_connection_id=conversations.whatsapp_connection_id AND contacts.public_id=conversations.recipient_public_id
-           LEFT JOIN app.whatsapp_groups groups ON conversations.kind='group' AND groups.personal_account_id=conversations.personal_account_id AND groups.whatsapp_connection_id=conversations.whatsapp_connection_id AND groups.public_id=conversations.recipient_public_id
-           WHERE conversations.personal_account_id=${material.accountKey.personalAccountId}
-             AND conversations.whatsapp_connection_id=${material.connectionKey.connectionId}
+            LEFT JOIN app.directory_contacts contacts ON conversations.kind='direct' AND contacts.personal_account_id=conversations.personal_account_id AND contacts.whatsapp_connection_id=conversations.whatsapp_connection_id AND contacts.provider_identity_index=conversations.recipient_locator
+            LEFT JOIN app.whatsapp_groups groups ON conversations.kind='group' AND groups.personal_account_id=conversations.personal_account_id AND groups.whatsapp_connection_id=conversations.whatsapp_connection_id AND groups.provider_locator=conversations.recipient_locator
+            WHERE conversations.personal_account_id=${personalAccountId}
+              AND conversations.whatsapp_connection_id=${connectionId}
              AND EXISTS (SELECT 1 FROM app.stored_messages retained
                WHERE retained.personal_account_id=conversations.personal_account_id
                  AND retained.whatsapp_connection_id=conversations.whatsapp_connection_id
@@ -1393,7 +1432,11 @@ export const makeMcpToolRepository = (
           };
         };
         return {
-          ...material,
+          accountKey: keyMaterial?.accountKey ?? null,
+          asOf,
+          connectionKey: keyMaterial?.connectionKey ?? null,
+          partial: projection.partial,
+          stale: projection.stale,
           chats: rows.map((row) => {
             const activity = timestampString(row.last_activity_at);
             if (
@@ -1441,8 +1484,6 @@ export const makeMcpToolRepository = (
           throw new Error("invalid MCP message query");
         const accountId = await enterAuthorizationContext(connection, input);
         if (accountId === null) return null;
-        const scopes = await loadAuthorizationScopes(connection, input);
-        if (scopes === null || !scopes.includes("messages:read")) return null;
         const materialResult = await db.execute<Record<string, unknown>>(sql`
           SELECT * FROM app_private.load_mcp_message_read_material(
             ${input.authorizationId}, ${input.oauthSubject}, ${input.clientId ?? null},
@@ -1517,11 +1558,25 @@ export const makeMcpToolRepository = (
              messages.deleted_at, conversations.kind, media.id AS media_id, media.public_id AS media_public_id,
              media.state AS media_state, media.plaintext_size_bytes,
              media.metadata_ciphertext_version,media.metadata_key_version,
-             media.metadata_nonce,media.metadata_ciphertext
+             media.metadata_nonce,media.metadata_ciphertext,
+             sender.provider_identity_index AS sender_record_id,
+             sender.display_name_ciphertext_version AS sender_display_version,
+             sender.display_name_key_version AS sender_display_key_version,
+             sender.display_name_nonce AS sender_display_nonce,
+             sender.display_name_ciphertext AS sender_display_ciphertext,
+             sender.phone_ciphertext_version AS sender_phone_version,
+             sender.phone_key_version AS sender_phone_key_version,
+             sender.phone_nonce AS sender_phone_nonce,
+             sender.phone_ciphertext AS sender_phone_ciphertext
            FROM app.stored_messages messages
            JOIN app.whatsapp_conversations conversations ON conversations.personal_account_id=messages.personal_account_id AND conversations.whatsapp_connection_id=messages.whatsapp_connection_id AND conversations.id=messages.conversation_id
            LEFT JOIN app.stored_media media ON media.personal_account_id=messages.personal_account_id
              AND media.whatsapp_connection_id=messages.whatsapp_connection_id AND media.stored_message_id=messages.id
+           LEFT JOIN app.directory_contacts sender ON messages.direction='inbound'
+             AND conversations.kind='direct'
+             AND sender.personal_account_id=messages.personal_account_id
+             AND sender.whatsapp_connection_id=messages.whatsapp_connection_id
+             AND sender.provider_identity_index=conversations.recipient_locator
            WHERE messages.personal_account_id=${accountId}
              AND messages.whatsapp_connection_id=${material.connectionKey.connectionId}
              AND messages.content_expired_at IS NULL
@@ -1549,6 +1604,36 @@ export const makeMcpToolRepository = (
           encryptedBytes += ciphertext?.byteLength ?? 0;
         }
         const messages = returnedRows.map((message): McpToolMessageRecord => {
+          const directoryCiphertext = (
+            prefix: "sender_display" | "sender_phone",
+          ): McpToolDirectoryCiphertext | null => {
+            const ciphertext = bytes(message[`${prefix}_ciphertext`]);
+            const nonce = bytes(message[`${prefix}_nonce`]);
+            const version = positiveInteger(message[`${prefix}_version`]);
+            const keyVersion = positiveInteger(
+              message[`${prefix}_key_version`],
+            );
+            if (
+              ciphertext === null &&
+              nonce === null &&
+              version === null &&
+              keyVersion === null
+            )
+              return null;
+            if (
+              ciphertext === null ||
+              nonce?.byteLength !== 12 ||
+              version !== 1 ||
+              keyVersion === null
+            )
+              throw new Error("invalid message sender ciphertext");
+            return {
+              ciphertext: base64(ciphertext),
+              keyVersion,
+              nonce: base64(nonce),
+              version: 1,
+            };
+          };
           const sentAt = timestampString(message.sent_at);
           const ciphertext = bytes(message.content_ciphertext);
           const nonce = bytes(message.content_nonce);
@@ -1562,6 +1647,17 @@ export const makeMcpToolRepository = (
           const mediaCiphertext = bytes(message.metadata_ciphertext);
           const mediaNonce = bytes(message.metadata_nonce);
           const mediaKeyVersion = positiveInteger(message.metadata_key_version);
+          const senderRecordId = message.sender_record_id;
+          const sender =
+            message.direction === "inbound" &&
+            message.kind === "direct" &&
+            typeof senderRecordId === "string"
+              ? {
+                  displayName: directoryCiphertext("sender_display"),
+                  phone: directoryCiphertext("sender_phone"),
+                  recordId: senderRecordId,
+                }
+              : null;
           const media =
             mediaState === null || mediaState === undefined
               ? null
@@ -1643,6 +1739,7 @@ export const makeMcpToolRepository = (
                 },
             editedAt,
             deleted,
+            sender,
             media,
           };
         });
@@ -1724,32 +1821,53 @@ export const makeMcpToolRepository = (
           throw new Error("invalid MCP message completion");
         const accountId = await enterAuthorizationContext(connection, input);
         if (accountId === null) throw new Error("authorization unavailable");
-        await db
-          .select({ id: personalAccountsInApp.id })
-          .from(personalAccountsInApp)
-          .where(eq(personalAccountsInApp.id, accountId))
-          .for("update");
-        const used = await db
-          .select({
-            count: sql<unknown>`coalesce(sum(${toolCallLogsInApp.resultCount}), 0)::int`,
-          })
-          .from(toolCallLogsInApp)
-          .where(
-            and(
-              eq(toolCallLogsInApp.personalAccountId, accountId),
-              eq(toolCallLogsInApp.toolName, "read_messages"),
-              eq(toolCallLogsInApp.outcome, "success"),
-              gte(
-                toolCallLogsInApp.startedAt,
-                sql`date_trunc('day', ${input.observedAt}::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`,
-              ),
-              lt(
-                toolCallLogsInApp.startedAt,
-                sql`(date_trunc('day', ${input.observedAt}::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') + interval '1 day'`,
-              ),
-            ),
-          );
-        const usedCount = Number(used[0]?.count);
+        const completion = await db.execute<{
+          completed: unknown;
+          used_count: unknown;
+        }>(sql`
+          WITH locked_account AS MATERIALIZED (
+            SELECT accounts.id
+            FROM app.personal_accounts accounts
+            WHERE accounts.id = ${accountId}
+            FOR UPDATE
+          ), used AS MATERIALIZED (
+            SELECT coalesce(sum(logs.result_count), 0)::int AS count
+            FROM app.tool_call_logs logs
+            JOIN locked_account ON locked_account.id = logs.personal_account_id
+            WHERE logs.tool_name = 'read_messages'
+              AND logs.outcome = 'success'
+              AND logs.started_at >= date_trunc(
+                'day', ${input.observedAt}::timestamptz AT TIME ZONE 'UTC'
+              ) AT TIME ZONE 'UTC'
+              AND logs.started_at < (
+                date_trunc(
+                  'day', ${input.observedAt}::timestamptz AT TIME ZONE 'UTC'
+                ) AT TIME ZONE 'UTC'
+              ) + interval '1 day'
+          ), updated AS (
+            UPDATE app.tool_call_logs logs
+            SET completed_at = ${input.observedAt},
+                outcome = 'success',
+                error_code = NULL,
+                result_count = ${input.resultCount},
+                latency_ms = GREATEST(
+                  0,
+                  floor(extract(epoch FROM (${input.observedAt}::timestamptz - logs.started_at)) * 1000)
+                )::integer
+            FROM used
+            WHERE used.count + ${input.resultCount} <= ${input.dailyRecordLimit}
+              AND logs.id = ${input.auditLogId}
+              AND logs.personal_account_id = ${accountId}
+              AND logs.mcp_authorization_id = ${input.authorizationId}
+              AND logs.tool_name = 'read_messages'
+              AND logs.outcome = 'started'
+            RETURNING logs.id
+          )
+          SELECT used.count AS used_count,
+                 EXISTS (SELECT 1 FROM updated) AS completed
+          FROM used
+        `);
+        const usedCount = Number(completion[0]?.used_count);
         if (!Number.isSafeInteger(usedCount))
           throw new Error("invalid returned-record quota");
         if (usedCount + input.resultCount > input.dailyRecordLimit) {
@@ -1764,26 +1882,7 @@ export const makeMcpToolRepository = (
             ),
           };
         }
-        const updated = await db
-          .update(toolCallLogsInApp)
-          .set({
-            completedAt: input.observedAt.toISOString(),
-            outcome: "success",
-            errorCode: null,
-            resultCount: input.resultCount,
-            latencyMs: sql`GREATEST(0, floor(extract(epoch FROM (${input.observedAt}::timestamptz - ${toolCallLogsInApp.startedAt})) * 1000))::integer`,
-          })
-          .where(
-            and(
-              eq(toolCallLogsInApp.id, input.auditLogId),
-              eq(toolCallLogsInApp.personalAccountId, accountId),
-              eq(toolCallLogsInApp.mcpAuthorizationId, input.authorizationId),
-              eq(toolCallLogsInApp.toolName, "read_messages"),
-              eq(toolCallLogsInApp.outcome, "started"),
-            ),
-          )
-          .returning({ id: toolCallLogsInApp.id });
-        if (updated.length !== 1)
+        if (completion[0]?.completed !== true)
           throw new Error("Tool Call Log completion unavailable");
         return { outcome: "success" as const };
       }),
@@ -2201,20 +2300,10 @@ const makePgConnectionProvider = (
 ): McpToolConnectionProvider => ({
   withConnection: async <Value>(
     use: (connection: McpToolConnection) => Promise<Value>,
-  ): Promise<Value> => {
-    const { Client } = await import("pg");
-    const client: PgClient = new Client({
-      connectionString,
-      connectionTimeoutMillis: 5_000,
-      query_timeout: 5_000,
-    });
-    await client.connect();
-    try {
-      return await use(makeQueryConnection(client));
-    } finally {
-      await client.end();
-    }
-  },
+  ): Promise<Value> =>
+    withPgRequestConnection(connectionString, (client) =>
+      use(makeQueryConnection(client)),
+    ),
 });
 
 export const makePgMcpToolRepository = (

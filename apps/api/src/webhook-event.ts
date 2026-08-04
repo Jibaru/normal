@@ -767,6 +767,29 @@ const processItems = (
             }),
           (bytes) => Effect.sync(() => bytes.fill(0)),
         );
+        const senderContact = item.senderContact;
+        const protectedSenderContact =
+          senderContact === null
+            ? null
+            : yield* protectDirectoryContact({
+                accountKey: material.accountKey,
+                connectionKey: material.connectionKey,
+                contact: {
+                  active: true,
+                  displayName:
+                    senderContact.displayName === null
+                      ? null
+                      : Redacted.value(senderContact.displayName),
+                  identity: senderContact.identity,
+                  phoneNumber:
+                    senderContact.phoneNumber === null
+                      ? null
+                      : Redacted.value(senderContact.phoneNumber),
+                  recipient: senderContact.recipient,
+                },
+                encryption,
+                indexKey,
+              });
         if (persistence.projectStoredMessage === undefined) {
           return yield* Effect.fail(new WebhookEventPersistenceError());
         }
@@ -814,6 +837,33 @@ const processItems = (
               }),
             ),
         );
+        if (protectedSenderContact !== null && senderContact !== null) {
+          yield* persistence.projectDirectoryContact(
+            {
+              ...protectedSenderContact,
+              active: true,
+              eventId: message.object_id,
+              evidence: {
+                occurredAt: item.evidence.occurredAt,
+                version: item.evidence.version,
+              },
+              insertOnly: true,
+              itemIdentity: senderContact.itemIdentity,
+              itemIndex: item.itemIndex,
+              personalAccountId: message.personal_account_id,
+              publicId: yield* identifiers.nextContactId,
+              receivedAt: message.received_at,
+              whatsappConnectionId: message.whatsapp_connection_id,
+            },
+            (left, right) =>
+              Effect.runPromise(
+                normalizer.compareVersions({
+                  left: left as ConvergenceVersion,
+                  right: right as ConvergenceVersion,
+                }),
+              ),
+          );
+        }
         counts = increment(
           counts,
           outcome === "applied"

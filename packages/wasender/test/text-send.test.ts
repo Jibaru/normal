@@ -1,11 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { Effect, Redacted } from "effect";
 import type { SessionAuthority } from "../src/control";
+import {
+  deriveIdentityRecipientRouteKeys,
+  deriveRecipientRouteKeys,
+  sealIdentityRecipientRoute,
+  sealRecipientRoute,
+} from "../src/recipient-route";
 import type {
   ContactLocator,
   TextSendTelemetryEvent,
   WasenderIdentityProtectionKey,
-  WasenderRecipientIdentity,
+  WasenderRecipientRoute,
 } from "../src/session";
 import { makeWasenderTextSendingWithRuntime } from "../src/text-send";
 import {
@@ -17,12 +23,25 @@ const authority = Redacted.make(
   "session-api-key-do-not-log",
 ) as SessionAuthority;
 const recipient = "opaque-directory-recipient" as ContactLocator;
-const providerRecipient = Redacted.make(
-  "15551234567@s.whatsapp.net",
-) as WasenderRecipientIdentity;
+const routeKeys = await deriveRecipientRouteKeys(Redacted.value(authority));
+const recipientRoute = Redacted.make(
+  await sealRecipientRoute(routeKeys, "contact", "15551234567"),
+) as WasenderRecipientRoute;
 const identityKey = Redacted.make(
   new Uint8Array(Array.from({ length: 32 }, (_, index) => index + 1)),
 ) as WasenderIdentityProtectionKey;
+const webhookIdentityKey = await Effect.runPromise(
+  importWebhookIdentityKey(new Uint8Array(Redacted.value(identityKey))),
+);
+const identityRouteKeys =
+  await deriveIdentityRecipientRouteKeys(webhookIdentityKey);
+const identityRecipientRoute = Redacted.make(
+  await sealIdentityRecipientRoute(
+    identityRouteKeys,
+    "contact",
+    "15551234567@s.whatsapp.net",
+  ),
+) as WasenderRecipientRoute;
 const exactText = "  cafe\u0301\nsecond line  ";
 
 interface RecordedAttempt {
@@ -35,6 +54,7 @@ interface RecordedAttempt {
 
 const makeHarness = (options: {
   readonly fetch: (attempt: RecordedAttempt) => Promise<Response> | Response;
+  readonly recipientRoute?: WasenderRecipientRoute;
   readonly timeoutImmediately?: boolean;
 }) => {
   const attempts: Array<RecordedAttempt> = [];
@@ -46,7 +66,9 @@ const makeHarness = (options: {
       authority,
       identityKey,
       resolveRecipient: (requestedRecipient) =>
-        requestedRecipient === recipient ? providerRecipient : null,
+        requestedRecipient === recipient
+          ? (options.recipientRoute ?? recipientRoute)
+          : null,
       telemetry: {
         emit: (event) => {
           telemetry.push(event);
@@ -87,6 +109,30 @@ const send = (sending: ReturnType<typeof makeHarness>["sending"]) =>
   Effect.runPromise(sending.sendText({ recipient, text: exactText }));
 
 describe("real Wasender text-send adapter", () => {
+  test("sends a recipient route created from the webhook identity key", async () => {
+    const harness = makeHarness({
+      fetch: () =>
+        Response.json({
+          data: {
+            jid: "15551234567@s.whatsapp.net",
+            msgId: 100_000,
+            status: "in_progress",
+          },
+          success: true,
+        }),
+      recipientRoute: identityRecipientRoute,
+    });
+
+    await expect(send(harness.sending)).resolves.toEqual({
+      outcome: "provider_acknowledgement",
+      status: "accepted",
+    });
+    expect(harness.attempts).toHaveLength(1);
+    expect(harness.attempts[0]?.body).toBe(
+      JSON.stringify({ to: "+15551234567", text: exactText }),
+    );
+  });
+
   test("sends the resolved provider identity and exact text once", async () => {
     const harness = makeHarness({
       fetch: () =>
@@ -113,7 +159,7 @@ describe("real Wasender text-send adapter", () => {
     expect(harness.attempts).toHaveLength(1);
     expect(harness.attempts[0]).toMatchObject({
       body: JSON.stringify({
-        to: "15551234567@s.whatsapp.net",
+        to: "+15551234567",
         text: exactText,
       }),
       method: "POST",
@@ -399,6 +445,33 @@ describe("real Wasender text-send adapter", () => {
     expect(harness.attempts).toHaveLength(0);
   });
 
+  test("does not invoke Wasender with a tampered recipient route", async () => {
+    const route = Redacted.value(recipientRoute);
+    const tampered = Redacted.make(
+      `${route.slice(0, -1)}${route.endsWith("A") ? "B" : "A"}`,
+    ) as WasenderRecipientRoute;
+    const harness = makeHarness({
+      fetch: () => Response.json({ success: true }),
+      recipientRoute: tampered,
+    });
+
+    await expect(send(harness.sending)).resolves.toEqual({
+      outcome: "definitive_failure",
+      reason: "recipient_rejected",
+      retryAfterMs: null,
+    });
+    expect(harness.attempts).toHaveLength(0);
+    expect(harness.telemetry).toEqual([
+      {
+        attemptCount: 0,
+        durationMs: 7,
+        operationClass: "text-send",
+        outcome: "definitive_failure",
+        responseBytes: null,
+      },
+    ]);
+  });
+
   test("fails closed on invalid per-connection authority", () => {
     const runtime = {
       clearTimeout: () => undefined,
@@ -408,7 +481,7 @@ describe("real Wasender text-send adapter", () => {
     };
     const baseOptions = {
       identityKey,
-      resolveRecipient: () => providerRecipient,
+      resolveRecipient: () => recipientRoute,
       telemetry: { emit: () => undefined },
     };
 

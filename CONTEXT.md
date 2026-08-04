@@ -28,6 +28,10 @@ _Avoid_: Deleted connection
 The permanent removal of a WhatsApp Connection, including revocation of its MCP access and erasure of its provider session, keys, Stored Messages, and Stored Media. Access and key use stop immediately, active data is purged within 24 hours, encrypted backup remnants expire within 30 days, and a deleted connection cannot be reconnected.
 _Avoid_: Disconnect, archive
 
+**Deletion Continuation**:
+The terminal period of Connection or Personal Account Deletion after access and key use have stopped but before provider cleanup and active-data purge are complete. Only opaque lifecycle evidence and WhatsApp Number reservation evidence remain available during this period, including after a restore; they are removed after cleanup is confirmed.
+_Avoid_: Active account, recoverable deletion
+
 **Connection Setup**:
 The 15-minute flow in which a User enters a WhatsApp Number and scans its QR code to create a WhatsApp Connection. QR data is ephemeral and never retained; an incomplete Connection Setup expires and its provisional provider resources are removed.
 _Avoid_: QR-only setup

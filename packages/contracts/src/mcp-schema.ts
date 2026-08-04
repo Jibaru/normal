@@ -152,6 +152,9 @@ export const ListChatsOutputContract = makePublicObjectContract({
       kind: Schema.Literal("direct", "group"),
       recipient_id: Schema.Union(ContactId, GroupId),
       display_name: Schema.NullOr(Schema.String),
+      phone: Schema.NullOr(
+        Schema.String.pipe(Schema.pattern(/^\+[1-9][0-9]{6,14}$/)),
+      ),
       phone_last_four: Schema.NullOr(
         Schema.String.pipe(Schema.pattern(/^[0-9]{4}$/)),
       ),

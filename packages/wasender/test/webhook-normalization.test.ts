@@ -86,7 +86,29 @@ describe("Wasender webhook normalization", () => {
       itemIndex: 0,
       kind: "message_upsert",
       sentAt: "2025-07-28T10:59:50.000Z",
+      senderContact: {
+        identity: expect.stringMatching(/^wi1_/u),
+        itemIdentity: expect.stringMatching(/^wi1_/u),
+        recipient: expect.stringMatching(/^loc_v2_c_/u),
+      },
     });
+    const first = delivery.items[0];
+    if (
+      first?.kind !== "message_upsert" ||
+      first.sender === null ||
+      first.senderContact?.displayName === null ||
+      first.senderContact?.displayName === undefined ||
+      first.senderContact.phoneNumber === null
+    )
+      throw new Error("expected protected sender contact");
+    expect(Redacted.value(first.senderContact.displayName)).toBe(
+      "Ada Lovelace",
+    );
+    expect(Redacted.value(first.senderContact.phoneNumber)).toBe("+15550101");
+    expect(first.senderContact.recipient).not.toBe(
+      first.senderContact.identity,
+    );
+    expect(first.recipient).toBe(first.sender);
     expect(delivery.items[1]).toMatchObject({
       content: { text: "photo", type: "image" },
       itemIndex: 1,

@@ -5,6 +5,10 @@ import type {
 } from "@whatsapp-mcp/db/send";
 import { Effect } from "effect";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import {
+  deriveRecipientRouteKeys,
+  sealRecipientRoute,
+} from "../../../packages/wasender/src/recipient-route";
 import type { EnvelopeEncryption } from "../src/encryption/envelope";
 import {
   importSendFingerprintKey,
@@ -34,6 +38,16 @@ const protectedValue = (value: string) => ({
   nonce: new Uint8Array(12),
 });
 
+const recipientRoute = await sealRecipientRoute(
+  await deriveRecipientRouteKeys("session-authority"),
+  "contact",
+  "15551234567",
+);
+const storedAuthority = JSON.stringify({
+  sessionCredential: "session-authority",
+  webhookVerificationSecret: "webhook-secret",
+});
+
 const input = {
   authorizationId: "40000000-0000-4000-8000-000000000047",
   clientId: "approved-client",
@@ -51,9 +65,9 @@ describe("atomic send workflow", () => {
     const order: string[] = [];
     const provider: SendProviderMaterial = {
       ...material,
-      authority: protectedValue("session-authority"),
+      authority: protectedValue(storedAuthority),
       identityKey: protectedValue("x".repeat(32)),
-      recipient: protectedValue("15551234567@s.whatsapp.net"),
+      recipient: protectedValue(recipientRoute),
       recipientRecordId: `di1_${"B".repeat(43)}`,
       recipientType: "contact",
     };
@@ -99,21 +113,25 @@ describe("atomic send workflow", () => {
       decrypt: ({ context }) => {
         const value =
           context.fieldOrObjectPurpose === "provider-session-authority"
-            ? "session-authority"
+            ? storedAuthority
             : context.fieldOrObjectPurpose === "webhook-identity-key"
               ? "x".repeat(32)
-              : "15551234567@s.whatsapp.net";
+              : recipientRoute;
         return Effect.succeed(new TextEncoder().encode(value));
       },
+      decryptMany: () => Effect.die("unused"),
     };
     vi.stubGlobal(
       "fetch",
       vi.fn(async (_url: unknown, request: RequestInit) => {
         order.push("provider-attempt");
         expect(JSON.parse(String(request.body))).toEqual({
-          to: "15551234567@s.whatsapp.net",
+          to: "+15551234567",
           text: input.text,
         });
+        expect(new Headers(request.headers).get("authorization")).toBe(
+          "Bearer session-authority",
+        );
         return new Response(
           JSON.stringify({
             success: true,
@@ -175,9 +193,9 @@ describe("atomic send workflow", () => {
         outcome: "created",
         provider: {
           ...material,
-          authority: protectedValue("session-authority"),
+          authority: protectedValue(storedAuthority),
           identityKey: protectedValue("x".repeat(32)),
-          recipient: protectedValue("15551234567@s.whatsapp.net"),
+          recipient: protectedValue(recipientRoute),
           recipientRecordId: `di1_${"B".repeat(43)}`,
           recipientType: "contact",
         },
@@ -200,10 +218,11 @@ describe("atomic send workflow", () => {
             context.fieldOrObjectPurpose === "webhook-identity-key"
               ? "x".repeat(32)
               : context.fieldOrObjectPurpose === "provider-session-authority"
-                ? "session-authority"
-                : "15551234567@s.whatsapp.net",
+                ? storedAuthority
+                : recipientRoute,
           ),
         ),
+      decryptMany: () => Effect.die("unused"),
       encrypt: ({ plaintext }) =>
         Effect.succeed({
           ciphertext: btoa(String.fromCharCode(...new Uint8Array(plaintext))),
@@ -294,6 +313,8 @@ describe("atomic send workflow", () => {
       createConnectionKey: () => Effect.die("unused"),
       createPersonalAccountKey: () => Effect.die("unused"),
       decrypt: () => Effect.die("replay must not decrypt provider material"),
+      decryptMany: () =>
+        Effect.die("replay must not decrypt provider material"),
       encrypt: () => Effect.die("replay must not encrypt pending content"),
     };
     const providerAttempt = vi.fn();
@@ -339,10 +360,11 @@ describe("atomic send workflow", () => {
             context.fieldOrObjectPurpose === "webhook-identity-key"
               ? "x".repeat(32)
               : context.fieldOrObjectPurpose === "provider-session-authority"
-                ? "session-authority"
-                : "15551234567@s.whatsapp.net",
+                ? storedAuthority
+                : recipientRoute,
           ),
         ),
+      decryptMany: () => Effect.die("unused"),
       encrypt: () =>
         Effect.succeed({
           ciphertext: btoa("encrypted-pending-content"),
@@ -398,9 +420,9 @@ describe("atomic send workflow", () => {
         outcome: "created",
         provider: {
           ...material,
-          authority: protectedValue("session-authority"),
+          authority: protectedValue(storedAuthority),
           identityKey: protectedValue("x".repeat(32)),
-          recipient: protectedValue("15551234567@s.whatsapp.net"),
+          recipient: protectedValue(recipientRoute),
           recipientRecordId: `di1_${"B".repeat(43)}`,
           recipientType: "contact",
         },
@@ -450,9 +472,9 @@ describe("atomic send workflow", () => {
           outcome: "created" as const,
           provider: {
             ...material,
-            authority: protectedValue("session-authority"),
+            authority: protectedValue(storedAuthority),
             identityKey: protectedValue("x".repeat(32)),
-            recipient: protectedValue("15551234567@s.whatsapp.net"),
+            recipient: protectedValue(recipientRoute),
             recipientRecordId: `di1_${"B".repeat(43)}`,
             recipientType: "contact" as const,
           },
@@ -475,10 +497,11 @@ describe("atomic send workflow", () => {
             context.fieldOrObjectPurpose === "webhook-identity-key"
               ? "x".repeat(32)
               : context.fieldOrObjectPurpose === "provider-session-authority"
-                ? "session-authority"
-                : "15551234567@s.whatsapp.net",
+                ? storedAuthority
+                : recipientRoute,
           ),
         ),
+      decryptMany: () => Effect.die("unused"),
       encrypt: () => Effect.die("repository controls this test"),
     };
     const providerAttempt = vi.fn(async () => {

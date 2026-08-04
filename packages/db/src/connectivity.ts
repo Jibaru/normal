@@ -5,33 +5,48 @@ import {
   type QueryConnection,
 } from "./database";
 import { assertExpectedSchemaVersion } from "./readiness";
+import { withPgRequestConnection } from "./request-connection";
+
+const DEVELOPMENT_READINESS_TTL_MS = 15_000;
+let recentDevelopmentReadiness:
+  | { readonly branchId: string | undefined; readonly checkedAt: number }
+  | undefined;
 
 const withClient = async <Value>(
   connectionString: string,
   use: (client: QueryConnection) => Promise<Value>,
 ): Promise<Value> => {
-  const { Client } = await import("pg");
-  const client = new Client({
-    connectionString,
-    connectionTimeoutMillis: 5_000,
-    query_timeout: 5_000,
-  });
-
-  await client.connect();
-  try {
-    return await use(makeQueryConnection(client));
-  } finally {
-    await client.end();
-  }
+  return withPgRequestConnection(connectionString, (client) =>
+    use(makeQueryConnection(client)),
+  );
 };
 
 export const checkDatabaseReadiness = (
   connectionString: string,
   branchId?: string,
-): Promise<void> =>
-  withClient(connectionString, async (client) => {
-    await assertExpectedSchemaVersion(client, branchId);
+  allowLegacyMigrationTable = false,
+): Promise<void> => {
+  const now = Date.now();
+  const recent = recentDevelopmentReadiness;
+  if (
+    allowLegacyMigrationTable &&
+    recent !== undefined &&
+    recent.branchId === branchId &&
+    now - recent.checkedAt < DEVELOPMENT_READINESS_TTL_MS
+  ) {
+    return Promise.resolve();
+  }
+  return withClient(connectionString, async (client) => {
+    await assertExpectedSchemaVersion(
+      client,
+      branchId,
+      allowLegacyMigrationTable,
+    );
+    if (allowLegacyMigrationTable) {
+      recentDevelopmentReadiness = { branchId, checkedAt: Date.now() };
+    }
   });
+};
 
 export const checkRestrictedDatabaseAccess = (
   connectionString: string,

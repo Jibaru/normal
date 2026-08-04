@@ -35,6 +35,7 @@ import {
   makePgPersonalAccountRepository,
   type PersonalAccountRepository,
 } from "@whatsapp-mcp/db/personal-account";
+import { withPgRequestConnectionScope } from "@whatsapp-mcp/db/request-connection";
 import {
   type AtomicSendRepository,
   makePgAtomicSendRepositoryFromConnectionString,
@@ -1829,7 +1830,30 @@ const mcpAuthorizationPersistenceLayer = (environment: ApiEnvironment) =>
             input,
           );
         },
-        catch: () => new McpAuthorizationPersistenceError(),
+        catch: (cause) => {
+          const wrapper =
+            typeof cause === "object" && cause !== null
+              ? (cause as { readonly cause?: unknown })
+              : undefined;
+          const candidate = wrapper?.cause ?? cause;
+          const failure =
+            typeof candidate === "object" && candidate !== null
+              ? (candidate as {
+                  readonly code?: unknown;
+                  readonly constraint?: unknown;
+                })
+              : undefined;
+          return new McpAuthorizationPersistenceError({
+            ...(typeof failure?.code === "string" &&
+            /^[0-9A-Z]{5}$/u.test(failure.code)
+              ? { code: failure.code }
+              : {}),
+            ...(typeof failure?.constraint === "string" &&
+            /^[a-z0-9_]{1,128}$/u.test(failure.constraint)
+              ? { constraint: failure.constraint }
+              : {}),
+          });
+        },
       }),
     isActive: (input) =>
       Effect.tryPromise({
@@ -1842,7 +1866,7 @@ const mcpAuthorizationPersistenceLayer = (environment: ApiEnvironment) =>
             input,
           );
         },
-        catch: () => new McpAuthorizationPersistenceError(),
+        catch: () => new McpAuthorizationPersistenceError({}),
       }),
     listConnections: (clerkUserId) =>
       Effect.tryPromise({
@@ -1855,7 +1879,7 @@ const mcpAuthorizationPersistenceLayer = (environment: ApiEnvironment) =>
             connectionString,
           ).listConnections(clerkUserId);
         },
-        catch: () => new McpAuthorizationPersistenceError(),
+        catch: () => new McpAuthorizationPersistenceError({}),
       }),
     list: (clerkUserId, observedAt) =>
       Effect.tryPromise({
@@ -1869,7 +1893,7 @@ const mcpAuthorizationPersistenceLayer = (environment: ApiEnvironment) =>
             observedAt,
           );
         },
-        catch: () => new McpAuthorizationPersistenceError(),
+        catch: () => new McpAuthorizationPersistenceError({}),
       }),
     registerRefreshCredential: (input) =>
       Effect.tryPromise({
@@ -1882,7 +1906,7 @@ const mcpAuthorizationPersistenceLayer = (environment: ApiEnvironment) =>
             connectionString,
           ).registerRefreshCredential(input);
         },
-        catch: () => new McpAuthorizationPersistenceError(),
+        catch: () => new McpAuthorizationPersistenceError({}),
       }),
     rotateRefreshCredential: (input, issue) =>
       Effect.tryPromise({
@@ -1895,7 +1919,7 @@ const mcpAuthorizationPersistenceLayer = (environment: ApiEnvironment) =>
             connectionString,
           ).rotateRefreshCredential(input, issue);
         },
-        catch: () => new McpAuthorizationPersistenceError(),
+        catch: () => new McpAuthorizationPersistenceError({}),
       }),
     revoke: (input) =>
       Effect.tryPromise({
@@ -1908,7 +1932,7 @@ const mcpAuthorizationPersistenceLayer = (environment: ApiEnvironment) =>
             input,
           );
         },
-        catch: () => new McpAuthorizationPersistenceError(),
+        catch: () => new McpAuthorizationPersistenceError({}),
       }),
   });
 
@@ -2408,6 +2432,7 @@ const databaseLayer = (environment: ApiEnvironment) =>
               checkDatabaseReadiness(
                 environment.HYPERDRIVE?.connectionString ?? "",
                 environment.NEON_BRANCH_ID,
+                environment.DEPLOYMENT_ENVIRONMENT === "development",
               ),
             catch: (cause) => cause,
           })
@@ -2509,7 +2534,6 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
       Effect.withConfigProvider(environmentConfigProvider(environment)),
     ),
   );
-
   return async (
     request: Request,
     context?: ExecutionContext,
@@ -2522,6 +2546,7 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
         await checkDatabaseReadiness(
           environment.HYPERDRIVE?.connectionString ?? "",
           environment.NEON_BRANCH_ID,
+          environment.DEPLOYMENT_ENVIRONMENT === "development",
         );
       }
       if (isWebhookIngressRequest(request)) {
@@ -2570,15 +2595,17 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
               status: 401,
             });
           }
-          return createMcpRequestHandler({
-            browserOrigin: environment.CLERK_AUTHORIZED_PARTY ?? "",
-            hourLimit: requestQuota.hourLimit,
-            layer,
-            minuteLimit: requestQuota.minuteLimit,
-            readMessageDailyRecordLimit: requestQuota.dailyRecordLimit,
-            storedMediaDailyByteLimit: requestQuota.dailyMediaByteLimit,
-            resourceUrl: configuration.resource,
-          })(nextRequest, nextEnvironment, nextContext, authorization);
+          return withPgRequestConnectionScope(() =>
+            createMcpRequestHandler({
+              browserOrigin: environment.CLERK_AUTHORIZED_PARTY ?? "",
+              hourLimit: requestQuota.hourLimit,
+              layer,
+              minuteLimit: requestQuota.minuteLimit,
+              readMessageDailyRecordLimit: requestQuota.dailyRecordLimit,
+              storedMediaDailyByteLimit: requestQuota.dailyMediaByteLimit,
+              resourceUrl: configuration.resource,
+            })(nextRequest, nextEnvironment, nextContext, authorization),
+          );
         }
         if (
           isMcpAuthorizationConsentRequest(nextRequest) &&
@@ -2732,6 +2759,7 @@ export const createProductionQueueHandler =
     await checkDatabaseReadiness(
       environment.HYPERDRIVE?.connectionString ?? "",
       environment.NEON_BRANCH_ID,
+      environment.DEPLOYMENT_ENVIRONMENT === "development",
     );
     if (batch.queue === replayQueueName(environment)) {
       const layer = Layer.mergeAll(
@@ -3062,6 +3090,7 @@ export const createProductionScheduledHandler =
     await checkDatabaseReadiness(
       environment.HYPERDRIVE?.connectionString ?? "",
       environment.NEON_BRANCH_ID,
+      environment.DEPLOYMENT_ENVIRONMENT === "development",
     );
     if (controller.cron === "0 * * * *") {
       const connectionString = environment.HYPERDRIVE?.connectionString;

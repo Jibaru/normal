@@ -143,7 +143,7 @@
         "DEPLOYMENT_ENVIRONMENT": "development",
         "NEON_BRANCH_ID": "replace-with-neon-branch-id",
         "PROVIDER_APPROVED_SESSION_CAPACITY": "3",
-        "EXTERNAL_ONBOARDING_GATE": "closed",
+        "EXTERNAL_ONBOARDING_GATE": "open",
         "MCP_REQUESTS_PER_MINUTE": "replace-with-approved-minute-request-limit",
         "MESSAGE_RETENTION_DAY_OPTIONS": "7,30,90",
         "MCP_REQUESTS_PER_HOUR": "replace-with-approved-hour-request-limit",

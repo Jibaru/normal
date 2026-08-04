@@ -5,6 +5,12 @@ import {
   maximumRetryAfterMs,
 } from "./common";
 import {
+  deriveIdentityRecipientRouteKeys,
+  deriveRecipientRouteKeys,
+  openIdentityRecipientRoute,
+  openRecipientRoute,
+} from "./recipient-route";
+import {
   type IdentityBearingSendStatus,
   type StableMessageIdentity,
   TextSending,
@@ -14,6 +20,37 @@ import {
 
 const sendMessageUrl = "https://www.wasenderapi.com/api/send-message";
 const textEncoder = new TextEncoder();
+
+const contactIdentifier =
+  /^(?:\+?[1-9]\d{6,14}|[1-9]\d{6,14}(?::\d{1,5})?@s\.whatsapp\.net|[1-9]\d{1,31}(?::\d{1,5})?@lid)$/u;
+const groupIdentifier = /^[1-9]\d{1,31}(?:-[1-9]\d{1,31})?@g\.us$/u;
+
+const providerDestination = (
+  kind: "contact" | "group",
+  identifier: string,
+): string | null => {
+  if (kind === "group")
+    return groupIdentifier.test(identifier) ? identifier : null;
+  if (!contactIdentifier.test(identifier)) return null;
+  const phone =
+    /^(?:\+)?([1-9]\d{6,14})$/u.exec(identifier)?.[1] ??
+    /^([1-9]\d{6,14})(?::\d{1,5})?@s\.whatsapp\.net$/u.exec(identifier)?.[1];
+  return phone === undefined ? identifier : `+${phone}`;
+};
+
+const canonicalRecipient = (value: string): string | null => {
+  const phone =
+    /^(?:\+)?([1-9]\d{6,14})$/u.exec(value)?.[1] ??
+    /^([1-9]\d{6,14})(?::\d{1,5})?@s\.whatsapp\.net$/u.exec(value)?.[1];
+  if (phone !== undefined) return `pn:${phone}`;
+  if (/^[1-9]\d{1,31}(?::\d{1,5})?@lid$/u.test(value)) return `lid:${value}`;
+  return groupIdentifier.test(value) ? `group:${value}` : null;
+};
+
+const sameRecipient = (left: unknown, right: string): boolean =>
+  typeof left === "string" &&
+  canonicalRecipient(left) !== null &&
+  canonicalRecipient(left) === canonicalRecipient(right);
 
 interface TextSendRuntime {
   readonly clearTimeout: (handle: unknown) => void;
@@ -235,7 +272,7 @@ const classifyResponse = async (
       key.fromMe !== true ||
       typeof key.id !== "string" ||
       !isProtectedString(key.id) ||
-      key.remoteJid !== providerRecipient ||
+      !sameRecipient(key.remoteJid, providerRecipient) ||
       status === null
     ) {
       return { outcome: "ambiguous", reason: "invalid_response" };
@@ -252,7 +289,7 @@ const classifyResponse = async (
     typeof data.msgId === "number" &&
     Number.isSafeInteger(data.msgId) &&
     data.msgId > 0 &&
-    data.jid === providerRecipient &&
+    sameRecipient(data.jid, providerRecipient) &&
     data.status === "in_progress";
 
   return documentedDataAcknowledgement
@@ -285,6 +322,12 @@ export const makeWasenderTextSendingWithRuntime = (
   if (identityKey.byteLength !== 32) {
     throw new Error("Wasender identity protection key must contain 32 bytes");
   }
+  const recipientRouteKeys = deriveRecipientRouteKeys(authority);
+  const identityRecipientRouteKeys = crypto.subtle
+    .importKey("raw", identityKey, { hash: "SHA-256", name: "HMAC" }, false, [
+      "sign",
+    ])
+    .then(deriveIdentityRecipientRouteKeys);
 
   return {
     sendText: ({ recipient, text }) =>
@@ -299,8 +342,19 @@ export const makeWasenderTextSendingWithRuntime = (
           if (resolved === null) {
             result = definitiveFailure("recipient_rejected");
           } else {
-            const providerRecipient = Redacted.value(resolved);
-            if (!isProtectedString(providerRecipient)) {
+            const route = Redacted.value(resolved);
+            const opened = isProtectedString(route)
+              ? ((await openIdentityRecipientRoute(
+                  await identityRecipientRouteKeys,
+                  route,
+                )) ??
+                (await openRecipientRoute(await recipientRouteKeys, route)))
+              : null;
+            const providerRecipient =
+              opened === null
+                ? null
+                : providerDestination(opened.kind, opened.identifier);
+            if (providerRecipient === null) {
               result = definitiveFailure("recipient_rejected");
             } else {
               const controller = new AbortController();

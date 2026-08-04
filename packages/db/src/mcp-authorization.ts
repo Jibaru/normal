@@ -1,10 +1,10 @@
-import { and, asc, desc, eq, gt, inArray, notExists, sql } from "drizzle-orm";
-import type { Client as PgClient } from "pg";
+import { and, asc, desc, eq, inArray, notExists, sql } from "drizzle-orm";
 import { makeDatabase, makeQueryConnection } from "./database";
 import type {
   PersonalAccountConnection,
   PersonalAccountConnectionProvider,
 } from "./personal-account";
+import { withPgRequestConnection } from "./request-connection";
 import {
   mcpAuthorizationConnectionsInApp,
   mcpAuthorizationsInApp,
@@ -193,7 +193,7 @@ export const makeMcpAuthorizationRepository = (
     ),
   isActive: (input) =>
     provider.withConnection((connection) =>
-      withTransaction(connection, async () => {
+      (async () => {
         const db = makeDatabase(connection);
         const context = await db.execute<{
           personal_account_id: string | null;
@@ -208,29 +208,8 @@ export const makeMcpAuthorizationRepository = (
               ) AS personal_account_id`,
         );
         const personalAccountId = context[0]?.personal_account_id;
-        if (typeof personalAccountId !== "string") return false;
-        await db.execute(
-          sql`SELECT set_config('app.personal_account_id', ${personalAccountId}, true)`,
-        );
-        const authorization = await db
-          .select({ id: mcpAuthorizationsInApp.id })
-          .from(mcpAuthorizationsInApp)
-          .where(
-            and(
-              eq(mcpAuthorizationsInApp.id, input.authorizationId),
-              eq(mcpAuthorizationsInApp.oauthSubject, input.oauthSubject),
-              input.clientId === undefined
-                ? undefined
-                : eq(mcpAuthorizationsInApp.clientId, input.clientId),
-              eq(mcpAuthorizationsInApp.state, "active"),
-              gt(
-                mcpAuthorizationsInApp.absoluteExpiresAt,
-                input.observedAt.toISOString(),
-              ),
-            ),
-          );
-        return authorization.length === 1;
-      }),
+        return typeof personalAccountId === "string";
+      })(),
     ),
   listConnections: (clerkUserId) =>
     provider.withConnection((connection) =>
@@ -580,20 +559,10 @@ const makePgConnectionProvider = (
 ): PersonalAccountConnectionProvider => ({
   withConnection: async <Value>(
     use: (connection: PersonalAccountConnection) => Promise<Value>,
-  ): Promise<Value> => {
-    const { Client } = await import("pg");
-    const client: PgClient = new Client({
-      connectionString,
-      connectionTimeoutMillis: 5_000,
-      query_timeout: 5_000,
-    });
-    await client.connect();
-    try {
-      return await use(makeQueryConnection(client));
-    } finally {
-      await client.end();
-    }
-  },
+  ): Promise<Value> =>
+    withPgRequestConnection(connectionString, (client) =>
+      use(makeQueryConnection(client)),
+    ),
 });
 
 export const makePgMcpAuthorizationRepository = (

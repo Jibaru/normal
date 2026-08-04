@@ -834,6 +834,7 @@ const makeTestLayer = (
                     return payload.slice();
                   })
                 : Effect.die("not used"),
+      decryptMany: () => Effect.die("not used"),
       encrypt: ({ context, plaintext }) =>
         Effect.sync(() => {
           if (

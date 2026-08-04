@@ -133,6 +133,7 @@ const makeHarness = (
         context.fieldOrObjectPurpose === "provider-session-authority"
           ? Effect.succeed(options.authorityBytes?.slice() ?? authority.slice())
           : Effect.die("unexpected decryption"),
+      decryptMany: () => Effect.die("not used"),
       encrypt: ({ context, plaintext }) =>
         Effect.sync(() => {
           expect(context).toEqual({

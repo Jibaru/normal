@@ -2,6 +2,7 @@ import { importCursorSigningKey } from "@whatsapp-mcp/contracts/cursor";
 import { ConnectionId } from "@whatsapp-mcp/contracts/handles";
 import type {
   BeginToolCallResult,
+  McpToolChatPage,
   McpToolGroupPage,
   McpToolMessagePage,
 } from "@whatsapp-mcp/db/mcp-tool";
@@ -114,6 +115,7 @@ const responseMessages = async (
 const makeHarness = (
   overrides: {
     readonly beginResult?: BeginToolCallResult;
+    readonly chatPage?: McpToolChatPage;
     readonly contactPage?: {
       readonly asOf: string;
       readonly partial: boolean;
@@ -181,6 +183,16 @@ const makeHarness = (
             value.charCodeAt(0),
           ),
         ),
+      decryptMany: ({ items }) => {
+        observations.push("decrypt-many");
+        return Effect.succeed(
+          items.map(({ ciphertext }) =>
+            Uint8Array.from(atob(ciphertext.ciphertext), (value) =>
+              value.charCodeAt(0),
+            ),
+          ),
+        );
+      },
       encrypt: () => Effect.die("not used"),
     }),
     Layer.succeed(StoredMediaContainerService, {
@@ -358,6 +370,33 @@ const makeHarness = (
           },
         ]);
       },
+      listChats: () => {
+        observations.push("list-chats");
+        return Effect.succeed(
+          overrides.chatPage ?? {
+            accountKey: {
+              ciphertext: "AQI=",
+              keyVersion: 1,
+              kmsKeyId: "kms-content-root",
+              personalAccountId: "10000000-0000-4000-8000-000000000030",
+              version: 1,
+            },
+            asOf: "2026-07-31T12:00:00.000Z",
+            chats: [],
+            connectionKey: {
+              accountKeyVersion: 1,
+              ciphertext: "AQI=",
+              connectionId: "20000000-0000-4000-8000-000000000030",
+              keyVersion: 1,
+              nonce: "AQIDBAUGBwgJCgsM",
+              personalAccountId: "10000000-0000-4000-8000-000000000030",
+              version: 1,
+            },
+            partial: false,
+            stale: false,
+          },
+        );
+      },
       readMessages: () => {
         observations.push("read-messages");
         return Effect.succeed({
@@ -391,6 +430,7 @@ const makeHarness = (
                     content: null,
                     editedAt: null,
                     deleted: true,
+                    sender: null,
                   },
                 ]
               : [
@@ -409,6 +449,21 @@ const makeHarness = (
                       nonce: "AQIDBAUGBwgJCgsM",
                       version: 1 as const,
                     },
+                    sender: {
+                      displayName: {
+                        ciphertext: btoa("Ada"),
+                        keyVersion: 1,
+                        nonce: "AQIDBAUGBwgJCgsM",
+                        version: 1 as const,
+                      },
+                      phone: {
+                        ciphertext: btoa("+15550199"),
+                        keyVersion: 1,
+                        nonce: "AQIDBAUGBwgJCgsM",
+                        version: 1 as const,
+                      },
+                      recordId: `di1_${"B".repeat(43)}`,
+                    },
                   },
                   {
                     publicId: "msg_111111111111111111111",
@@ -425,6 +480,7 @@ const makeHarness = (
                       nonce: "AQIDBAUGBwgJCgsM",
                       version: 1 as const,
                     },
+                    sender: null,
                   },
                 ],
             hasOlder: true,
@@ -1504,6 +1560,99 @@ describe("stateless MCP list_groups boundary", () => {
   });
 });
 
+describe("list_chats MCP boundary", () => {
+  test("decrypts all chat metadata in one batch", async () => {
+    const encrypted = (value: string) => ({
+      ciphertext: btoa(value),
+      keyVersion: 1,
+      nonce: "AQIDBAUGBwgJCgsM",
+      version: 1 as const,
+    });
+    const harness = makeHarness({
+      scopes: ["messages:read"],
+      chatPage: {
+        accountKey: {
+          ciphertext: "AQI=",
+          keyVersion: 1,
+          kmsKeyId: "kms-content-root",
+          personalAccountId: "10000000-0000-4000-8000-000000000030",
+          version: 1,
+        },
+        connectionKey: {
+          accountKeyVersion: 1,
+          ciphertext: "AQI=",
+          connectionId: "20000000-0000-4000-8000-000000000030",
+          keyVersion: 1,
+          nonce: "AQIDBAUGBwgJCgsM",
+          personalAccountId: "10000000-0000-4000-8000-000000000030",
+          version: 1,
+        },
+        chats: [
+          {
+            conversationId: "cvs_111111111111111111111",
+            displayName: encrypted("Ada"),
+            displayNameEntity: "directory-contact",
+            displayNameRecordId: "contact-one",
+            kind: "direct",
+            lastActivityAt: "2026-07-31T11:59:00.000Z",
+            lastActivityDirection: "inbound",
+            phone: encrypted("+15550123456"),
+            recipientId: "ctc_111111111111111111111",
+          },
+          {
+            conversationId: "cvs_222222222222222222222",
+            displayName: encrypted("Family"),
+            displayNameEntity: "whatsapp-group",
+            displayNameRecordId: "group-two",
+            kind: "group",
+            lastActivityAt: "2026-07-31T11:58:00.000Z",
+            lastActivityDirection: "outbound",
+            phone: null,
+            recipientId: "grp_222222222222222222222",
+          },
+        ],
+        asOf: "2026-07-31T12:00:00.000Z",
+        partial: false,
+        stale: false,
+      },
+    });
+
+    const body = (await (
+      await harness.handler(
+        jsonRpcRequest("tools/call", {
+          name: "list_chats",
+          arguments: { connection_id: "con_123456789012345678901" },
+        }),
+        {},
+        executionContext,
+        authorization,
+      )
+    ).json()) as {
+      result: {
+        structuredContent: {
+          chats: Array<{
+            display_name: string | null;
+            phone: string | null;
+            phone_last_four: string | null;
+          }>;
+        };
+      };
+    };
+
+    expect(body.result.structuredContent.chats).toMatchObject([
+      {
+        display_name: "Ada",
+        phone: "+15550123456",
+        phone_last_four: "3456",
+      },
+      { display_name: "Family", phone: null, phone_last_four: null },
+    ]);
+    expect(
+      harness.observations.filter((value) => value === "decrypt-many"),
+    ).toHaveLength(1);
+  });
+});
+
 describe("read_messages MCP boundary", () => {
   test("returns Deleted Message Tombstones without content while retaining the record", async () => {
     const harness = makeHarness({ scopes: ["messages:read"], tombstone: true });
@@ -1568,7 +1717,11 @@ describe("read_messages MCP boundary", () => {
           message_id: "msg_222222222222222222222",
           text: "newest",
           direction: "inbound",
-          sender: { kind: "contact" },
+          sender: {
+            kind: "contact",
+            display_name: "Ada",
+            phone_last_four: "0199",
+          },
           media: null,
         },
       ],
@@ -1580,6 +1733,101 @@ describe("read_messages MCP boundary", () => {
       expect.any(String),
     );
     expect(harness.observations).toContain("read-messages");
+    expect(
+      harness.observations.filter((value) => value === "decrypt-many"),
+    ).toHaveLength(1);
+  });
+
+  test("decrypts message content and image metadata in one batch", async () => {
+    const encrypted = (value: unknown) => ({
+      ciphertext: btoa(JSON.stringify(value)),
+      keyVersion: 1,
+      nonce: "AQIDBAUGBwgJCgsM",
+      version: 1 as const,
+    });
+    const harness = makeHarness({
+      scopes: ["messages:read"],
+      messagePage: {
+        accountKey: {
+          ciphertext: "AQI=",
+          keyVersion: 1,
+          kmsKeyId: "kms-content-root",
+          personalAccountId: "10000000-0000-4000-8000-000000000030",
+          version: 1,
+        },
+        connectionKey: {
+          accountKeyVersion: 1,
+          ciphertext: "AQI=",
+          connectionId: "20000000-0000-4000-8000-000000000030",
+          keyVersion: 1,
+          nonce: "AQIDBAUGBwgJCgsM",
+          personalAccountId: "10000000-0000-4000-8000-000000000030",
+          version: 1,
+        },
+        messages: [
+          {
+            publicId: "msg_444444444444444444444",
+            messageIdentity: `wi1_${"D".repeat(43)}`,
+            sentAt: "2026-07-31T11:59:00.000Z",
+            direction: "inbound",
+            conversationKind: "direct",
+            contentType: "image",
+            content: encrypted({ text: "caption", mediaSource: null }),
+            sender: null,
+            media: {
+              id: "30000000-0000-4000-8000-000000000044",
+              publicId: "med_444444444444444444444",
+              state: "ready",
+              plaintextSizeBytes: 1024,
+              metadata: encrypted({
+                fileName: "photo.jpg",
+                mimeType: "image/jpeg",
+              }),
+            },
+          },
+        ],
+        hasOlder: false,
+        sizeLimited: false,
+        historyStartsAt: "2026-07-01T00:00:00.000Z",
+        historyStartReason: "retention_policy",
+        gaps: [],
+      },
+    });
+
+    const body = (await (
+      await harness.handler(
+        jsonRpcRequest("tools/call", {
+          name: "read_messages",
+          arguments: {
+            connection_id: "con_123456789012345678901",
+            conversation_id: "cvs_123456789012345678901",
+            limit: 20,
+          },
+        }),
+        {},
+        executionContext,
+        authorization,
+      )
+    ).json()) as {
+      result: {
+        structuredContent: {
+          messages: Array<{
+            media: { file_name: string; mime_type: string } | null;
+            text: string | null;
+          }>;
+        };
+      };
+    };
+
+    expect(body.result.structuredContent.messages).toMatchObject([
+      {
+        text: "caption",
+        media: { file_name: "photo.jpg", mime_type: "image/jpeg" },
+      },
+    ]);
+    expect(
+      harness.observations.filter((value) => value === "decrypt-many"),
+    ).toHaveLength(1);
   });
 
   test("is discovered only with messages:read", async () => {
@@ -1612,6 +1860,7 @@ describe("read_messages MCP boundary", () => {
         nonce: "AQIDBAUGBwgJCgsM",
         version: 1 as const,
       },
+      sender: null,
     });
     const harness = makeHarness({
       scopes: ["messages:read"],
@@ -1721,6 +1970,7 @@ describe("read_messages MCP boundary", () => {
               nonce: "AQIDBAUGBwgJCgsM",
               version: 1,
             },
+            sender: null,
           },
         ],
         hasOlder: false,

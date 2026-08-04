@@ -182,6 +182,7 @@ const makeHarness = (
         }),
       createPersonalAccountKey: () => Effect.die("not used"),
       decrypt: () => Effect.die("not used"),
+      decryptMany: () => Effect.die("not used"),
       encrypt: ({ plaintext }) =>
         Effect.sync(() => {
           encryptedNumbers.push(new TextDecoder().decode(plaintext));

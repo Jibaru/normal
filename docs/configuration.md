@@ -155,8 +155,8 @@ Clerk User rejects a changed request before persistence.
 Approval also requires Clerk's standard first-factor verification-age (`fva`)
 claim to be less than five minutes old. The browser invokes Clerk's
 first-factor reverification flow when needed, clears its cached session token,
-and submits a newly minted short-lived token. The API independently verifies
-the signed `fva` value together with the token's signed issuance time; missing,
+and submits a newly minted session token. The API independently verifies the
+signed `fva` value together with the token's signed issuance time; missing,
 malformed, or stale values fail closed.
 
 Migration 0006 gives each existing WhatsApp Connection an ADR 0023 `con_`
@@ -271,7 +271,7 @@ The public OAuth clients are defined in `apps/api/src/oauth.ts`:
 
 ```text
 Claude: client_id=claude, redirect_uri=https://claude.ai/api/mcp/auth_callback
-ChatGPT: client_id=chatgpt, redirect_uri=https://chatgpt.com/connector_platform_oauth_redirect
+ChatGPT: client_id=chatgpt, redirect_uri=https://chatgpt.com/connector/oauth/djePJ1RTfjI5 or https://chatgpt.com/connector_platform_oauth_redirect
 ```
 
 Client IDs identify public PKCE clients and are not credentials. Treat every
@@ -312,6 +312,9 @@ Create the `whatsapp-api` custom JWT template with a 60-second lifetime and an
 role, email, name, or other profile claims: the API consumes only Clerk's
 standard `sub`, `iss`, `aud`, `azp`, `iat`, `nbf`, `exp`, `sts`, and `fva`
 claims.
+Set the Clerk session token's custom claims to the same `aud` value. Consent
+approval uses the session token because Clerk's signed `fva` claim is
+session-bound and is not present in a custom JWT template token.
 Configure the Clerk application to allow only the exact web origin represented
 by `CLERK_AUTHORIZED_PARTY`.
 

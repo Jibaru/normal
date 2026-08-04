@@ -76,6 +76,31 @@ describe("production OAuth boundary", () => {
     });
   });
 
+  test("publishes metadata behind an HTTPS-terminating development proxy", async () => {
+    const handler = createProductionHandler(validEnvironment());
+    const response = await handler(
+      new Request(
+        "http://api.example.test/.well-known/oauth-authorization-server",
+        { headers: { "x-forwarded-proto": "https" } },
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      issuer: "https://api.example.test",
+    });
+
+    const challenge = await handler(
+      new Request("http://api.example.test/mcp", {
+        headers: { "x-forwarded-proto": "https" },
+      }),
+    );
+    expect(challenge.status).toBe(401);
+    expect(challenge.headers.get("www-authenticate")).toContain(
+      'resource_metadata="https://api.example.test/.well-known/oauth-protected-resource/mcp"',
+    );
+  });
+
   test("publishes protected-resource metadata for the production MCP resource", async () => {
     const response = await createProductionHandler(validEnvironment())(
       new Request(
@@ -126,19 +151,25 @@ describe("production OAuth boundary", () => {
     );
   });
 
-  test("admits the source-defined ChatGPT public client", async () => {
-    const response = await createProductionHandler(validEnvironment())(
-      new Request(
-        authorizationUrl({
-          client_id: "chatgpt",
-          redirect_uri: "https://chatgpt.com/connector_platform_oauth_redirect",
-        }),
-        { redirect: "manual" },
-      ),
-    );
+  test.each([
+    "https://chatgpt.com/connector/oauth/djePJ1RTfjI5",
+    "https://chatgpt.com/connector_platform_oauth_redirect",
+  ])(
+    "admits the source-defined ChatGPT public client at %s",
+    async (redirectUri) => {
+      const response = await createProductionHandler(validEnvironment())(
+        new Request(
+          authorizationUrl({
+            client_id: "chatgpt",
+            redirect_uri: redirectUri,
+          }),
+          { redirect: "manual" },
+        ),
+      );
 
-    expect(response.status).toBe(302);
-  });
+      expect(response.status).toBe(302);
+    },
+  );
 
   test.each([
     ["malformed", { response_type: "" }],

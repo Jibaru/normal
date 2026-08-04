@@ -20,7 +20,8 @@ export interface BrowserClerkClient {
         readonly clearCache?: (() => void) | undefined;
         readonly factorVerificationAge?: [number, number] | null | undefined;
         readonly getToken: (options: {
-          readonly template: string;
+          readonly skipCache?: boolean;
+          readonly template?: string;
         }) => Promise<string | null>;
       }
     | null

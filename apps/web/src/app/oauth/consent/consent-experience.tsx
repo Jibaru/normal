@@ -28,6 +28,7 @@ interface Inspection {
   readonly connections: ReadonlyArray<{
     readonly connection_id: string;
     readonly label: string;
+    readonly number_suffix: string | null;
   }>;
   readonly presentation: string;
   readonly requested_scopes: ReadonlyArray<string>;
@@ -127,7 +128,9 @@ export function ConsentExperience({
       });
     }
     session.clearCache?.();
-    const token = await session.getToken({ template: clerkJwtTemplate });
+    const token = await session.getToken({
+      skipCache: true,
+    });
     if (!token) throw new Error("token unavailable");
     return token;
   };
@@ -227,7 +230,14 @@ export function ConsentExperience({
               <FieldLegend>WhatsApp Connections</FieldLegend>
               <FieldGroup>
                 {inspection.connections.map((connection) => (
-                  <FieldLabel key={connection.connection_id}>
+                  <FieldLabel
+                    aria-label={
+                      connection.number_suffix === null
+                        ? connection.label
+                        : `${connection.label}, ending in ${connection.number_suffix}`
+                    }
+                    key={connection.connection_id}
+                  >
                     <Field orientation="horizontal">
                       <Checkbox
                         checked={connections.includes(connection.connection_id)}
@@ -241,7 +251,12 @@ export function ConsentExperience({
                           )
                         }
                       />
-                      {connection.label}
+                      <span>{connection.label}</span>
+                      {connection.number_suffix === null ? null : (
+                        <span className="font-mono text-sm text-muted-foreground">
+                          ending in {connection.number_suffix}
+                        </span>
+                      )}
                     </Field>
                   </FieldLabel>
                 ))}

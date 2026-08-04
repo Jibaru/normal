@@ -198,6 +198,7 @@ const makeHarness = (options: {
         context.fieldOrObjectPurpose === "whatsapp-number"
           ? Effect.succeed(new TextEncoder().encode("+15550123456"))
           : Effect.die("unexpected decrypt"),
+      decryptMany: () => Effect.die("not used"),
       encrypt: ({ plaintext }) =>
         Effect.sync(() => {
           const value = new TextDecoder().decode(plaintext);

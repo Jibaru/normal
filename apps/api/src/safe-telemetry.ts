@@ -44,13 +44,21 @@ export const safeTelemetryFieldsByEvent = {
     "unjoinedCount",
   ],
   "http.request.completed": [...common, "method", "route", "status"],
-  "mcp.tool_call.completed": [...common, "outcome", "resultCount", "tool"],
+  "mcp.tool_call.completed": [
+    ...common,
+    "failureStage",
+    "outcome",
+    "resultCount",
+    "tool",
+  ],
   "mcp_authorization.management.completed": [...common, "operation", "outcome"],
   "message_retention.policy_update.completed": [...common, "outcome"],
   "message_retention.purge.completed": [...common, "purgedCount"],
   "oauth.authorization.decision.completed": [
     ...common,
     "clientClass",
+    "code",
+    "constraint",
     "outcome",
   ],
   "oauth.authorization.request.completed": [

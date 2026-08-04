@@ -69,6 +69,13 @@ export interface NormalizedMessageUpsert extends NormalizedItemBase {
   readonly recipient: RecipientLocator;
   readonly recipientKind?: "direct" | "group";
   readonly sender: ContactLocator | null;
+  readonly senderContact: {
+    readonly displayName: Redacted.Redacted<string> | null;
+    readonly identity: ContactLocator;
+    readonly itemIdentity: WebhookItemIdentity;
+    readonly phoneNumber: Redacted.Redacted<string> | null;
+    readonly recipient: ContactLocator;
+  } | null;
   readonly sentAt: UtcTimestamp;
 }
 
