@@ -4,7 +4,10 @@ import { withTransaction } from "../src/transaction";
 
 const recordingConnection = (
   failOn?: "BEGIN" | "COMMIT" | "ROLLBACK",
-): { readonly connection: QueryConnection; readonly queries: Array<string> } => {
+): {
+  readonly connection: QueryConnection;
+  readonly queries: Array<string>;
+} => {
   const queries: Array<string> = [];
   return {
     connection: {

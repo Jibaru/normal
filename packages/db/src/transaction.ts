@@ -1,9 +1,5 @@
 import { sql } from "drizzle-orm";
-import {
-  makeDatabase,
-  type Database,
-  type QueryConnection,
-} from "./database";
+import { type Database, makeDatabase, type QueryConnection } from "./database";
 
 export const withTransaction = async <Value>(
   connection: QueryConnection,
