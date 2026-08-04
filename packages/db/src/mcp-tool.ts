@@ -722,6 +722,7 @@ const contactReadMaterial = (
 const enterAuthorizationContext = async (
   connection: McpToolConnection,
   input: McpAccessAuthorization,
+  transactionLocal = false,
 ): Promise<string | null> => {
   const db = makeDatabase(connection);
   const result = await db.execute<{
@@ -735,7 +736,7 @@ const enterAuthorizationContext = async (
       SELECT set_config(
         'public.personal_account_id',
         COALESCE((SELECT personal_account_id::text FROM authorized), ''),
-        false
+        ${transactionLocal}
       )
     )
     SELECT authorized.personal_account_id
@@ -1309,7 +1310,7 @@ export const makeMcpToolRepository = (
     ),
   listChats: (input) =>
     provider.withConnection((connection) =>
-      (async () => {
+      withTransaction(connection, async () => {
         const db = makeDatabase(connection);
         if (
           !/^con_[A-Za-z0-9_-]{21}$/u.test(input.connectionPublicId) ||
@@ -1323,10 +1324,7 @@ export const makeMcpToolRepository = (
         ) {
           throw new Error("invalid MCP chat query");
         }
-        if (
-          input.authorizationContextEstablished !== true &&
-          (await enterAuthorizationContext(connection, input)) === null
-        )
+        if ((await enterAuthorizationContext(connection, input, true)) === null)
           return null;
         const result = await db.execute<Record<string, unknown>>(sql`
           WITH projection AS MATERIALIZED (
@@ -1564,7 +1562,7 @@ export const makeMcpToolRepository = (
             };
           }),
         };
-      })(),
+      }),
     ),
   readMessages: (input) =>
     provider.withConnection((connection) =>

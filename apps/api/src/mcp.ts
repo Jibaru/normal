@@ -1822,7 +1822,6 @@ const listChats = (
     const loaded = yield* persistence
       .listChats({
         ...authorization,
-        authorizationContextEstablished: true,
         connectionPublicId: input.connection_id,
         cursorActivityAt: activity,
         cursorPublicId: publicId,
