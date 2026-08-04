@@ -174,6 +174,11 @@ run "development_topology" {
   }
 
   assert {
+    condition     = cloudflare_worker_version.api.placement.region == "aws:us-east-1"
+    error_message = "The API Worker must run beside the regional database so sequential MCP queries remain low latency."
+  }
+
+  assert {
     condition = one([
       for item in vercel_project.web.environment :
       item.value if item.key == "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"

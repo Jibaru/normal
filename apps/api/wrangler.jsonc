@@ -1,6 +1,9 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "whatsapp-mcp-api",
+  "placement": {
+    "region": "aws:us-east-1"
+  },
   "main": "src/index.ts",
   "compatibility_date": "2026-07-30",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
@@ -130,6 +133,9 @@
   "env": {
     "development": {
       "name": "whatsapp-mcp-api-development",
+      "placement": {
+        "region": "aws:us-east-1"
+      },
       "triggers": {
         "crons": ["* * * * *", "*/5 * * * *", "0 * * * *"]
       },
@@ -248,6 +254,9 @@
     },
     "preview": {
       "name": "whatsapp-mcp-api-preview",
+      "placement": {
+        "region": "aws:us-east-1"
+      },
       "triggers": {
         "crons": ["* * * * *", "*/5 * * * *", "0 * * * *"]
       },
@@ -366,6 +375,9 @@
     },
     "production": {
       "name": "whatsapp-mcp-api",
+      "placement": {
+        "region": "aws:us-east-1"
+      },
       "triggers": {
         "crons": ["* * * * *", "*/5 * * * *", "0 * * * *"]
       },

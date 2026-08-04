@@ -414,6 +414,9 @@ resource "cloudflare_worker_version" "api" {
 
   compatibility_date  = "2026-07-30"
   compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
+  placement = {
+    region = "aws:us-east-1"
+  }
 
   modules = [
     {

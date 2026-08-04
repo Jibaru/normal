@@ -4,18 +4,13 @@ import type {
   McpAccessAuthorization,
   McpToolConnectionProvider,
 } from "./mcp-tool";
+import { withPgRequestConnection } from "./request-connection";
 import {
   directoryContactsInApp,
-  mcpAuthorizationConnectionsInApp,
-  mcpAuthorizationsInApp,
   pendingSendContentsInApp,
-  personalAccountsInApp,
-  sendIdempotencyBindingsInApp,
   sendOperationsInApp,
-  sendQuotaReservationsInApp,
   storedMessagesInApp,
   toolCallLogsInApp,
-  whatsappConnectionsInApp,
   whatsappConversationsInApp,
   whatsappGroupsInApp,
 } from "./schema";
@@ -168,16 +163,27 @@ export const makePgAtomicSendRepository = (
       await db.execute(sql`BEGIN`);
       try {
         const boot = await db.execute<{ personal_account_id: unknown }>(
-          sql`SELECT app_private.bootstrap_mcp_tool_call(${input.authorizationId},${input.oauthSubject},${input.clientId ?? null}) AS personal_account_id`,
+          sql`WITH authorized AS MATERIALIZED (
+                SELECT app_private.bootstrap_mcp_tool_call(
+                  ${input.authorizationId},
+                  ${input.oauthSubject},
+                  ${input.clientId ?? null}
+                ) AS personal_account_id
+              )
+              SELECT authorized.personal_account_id,
+                     set_config(
+                       'app.personal_account_id',
+                       authorized.personal_account_id::text,
+                       false
+                     ) AS configured_account_id
+              FROM authorized
+              WHERE authorized.personal_account_id IS NOT NULL`,
         );
         const accountId = boot[0]?.personal_account_id;
         if (typeof accountId !== "string") {
           await db.execute(sql`ROLLBACK`);
           return { outcome: "authorization_denied" as const };
         }
-        await db.execute(
-          sql`SELECT set_config('app.personal_account_id',${accountId},true)`,
-        );
         const finishAudit = async (
           outcome:
             | "authorization_denied"
@@ -205,103 +211,92 @@ export const makePgAtomicSendRepository = (
           });
           await db.execute(sql`COMMIT`);
         };
-        const lockedAccount = await db
-          .select({
-            message_retention_days: personalAccountsInApp.messageRetentionDays,
-          })
-          .from(personalAccountsInApp)
-          .where(eq(personalAccountsInApp.id, accountId))
-          .for("update");
-        await db
-          .select({ id: mcpAuthorizationsInApp.id })
-          .from(mcpAuthorizationsInApp)
-          .where(eq(mcpAuthorizationsInApp.id, input.authorizationId))
-          .for("update");
-        const retentionDays = integer(lockedAccount[0]?.message_retention_days);
-        const active = await db.execute<{ personal_account_id: unknown }>(
-          sql`SELECT app_private.bootstrap_active_mcp_tool_call(${input.authorizationId},${input.oauthSubject},${input.clientId ?? null},${input.observedAt}) AS personal_account_id`,
+        const authorized = await db.execute<Record<string, unknown>>(
+          sql`WITH locked_account AS MATERIALIZED (
+                SELECT account.id, account.message_retention_days
+                FROM app.personal_accounts AS account
+                WHERE account.id = ${accountId}
+                FOR UPDATE
+              ),
+              locked_authorization AS MATERIALIZED (
+                SELECT auth.id,
+                       auth.personal_account_id,
+                       auth.scopes
+                FROM app.mcp_authorizations AS auth
+                INNER JOIN locked_account
+                  ON locked_account.id = auth.personal_account_id
+                WHERE auth.id = ${input.authorizationId}
+                FOR UPDATE OF auth
+              ),
+              active AS MATERIALIZED (
+                SELECT app_private.bootstrap_active_mcp_tool_call(
+                  ${input.authorizationId},
+                  ${input.oauthSubject},
+                  ${input.clientId ?? null},
+                  ${input.observedAt}
+                ) AS personal_account_id
+              )
+              SELECT conn.id AS connection_id,
+                     conn.state AS connection_state,
+                     locked_account.message_retention_days,
+                     bound.id AS bound_id,
+                     bound.public_id AS bound_public_id,
+                     bound.status AS bound_status,
+                     bound.created_at AS bound_created_at,
+                     bound.status_changed_at AS bound_status_changed_at,
+                     bound.lease_expires_at AS bound_lease_expires_at,
+                     bound.request_fingerprint AS bound_request_fingerprint
+              FROM locked_account
+              INNER JOIN locked_authorization
+                ON locked_authorization.personal_account_id = locked_account.id
+              INNER JOIN active
+                ON active.personal_account_id = locked_authorization.personal_account_id
+              INNER JOIN app.mcp_authorization_connections AS selected
+                ON selected.personal_account_id = locked_authorization.personal_account_id
+               AND selected.mcp_authorization_id = locked_authorization.id
+              INNER JOIN app.whatsapp_connections AS conn
+                ON conn.personal_account_id = selected.personal_account_id
+               AND conn.id = selected.whatsapp_connection_id
+              LEFT JOIN LATERAL (
+                SELECT send.id,
+                       send.public_id,
+                       send.status,
+                       send.created_at,
+                       send.status_changed_at,
+                       send.lease_expires_at,
+                       binding.request_fingerprint
+                FROM app.send_idempotency_bindings AS binding
+                INNER JOIN app.send_operations AS send
+                  ON send.id = binding.send_operation_id
+                WHERE binding.mcp_authorization_id = ${input.authorizationId}
+                  AND binding.idempotency_key = ${input.idempotencyKey}
+                  AND binding.expires_at > ${input.observedAt}
+                FOR UPDATE OF binding, send
+              ) AS bound ON true
+              WHERE ${"messages:send"} = ANY(locked_authorization.scopes)
+                AND conn.public_id = ${input.connectionPublicId}
+              FOR UPDATE OF conn`,
         );
-        if (typeof active[0]?.personal_account_id !== "string") {
-          await finishAudit("authorization_denied", "authorization_denied");
-          return { outcome: "authorization_denied" as const };
-        }
-        const authorized = await db
-          .select({ connection_id: whatsappConnectionsInApp.id })
-          .from(mcpAuthorizationsInApp)
-          .innerJoin(
-            mcpAuthorizationConnectionsInApp,
-            and(
-              eq(
-                mcpAuthorizationConnectionsInApp.personalAccountId,
-                mcpAuthorizationsInApp.personalAccountId,
-              ),
-              eq(
-                mcpAuthorizationConnectionsInApp.mcpAuthorizationId,
-                mcpAuthorizationsInApp.id,
-              ),
-            ),
-          )
-          .innerJoin(
-            whatsappConnectionsInApp,
-            and(
-              eq(
-                whatsappConnectionsInApp.personalAccountId,
-                mcpAuthorizationConnectionsInApp.personalAccountId,
-              ),
-              eq(
-                whatsappConnectionsInApp.id,
-                mcpAuthorizationConnectionsInApp.whatsappConnectionId,
-              ),
-            ),
-          )
-          .where(
-            and(
-              eq(mcpAuthorizationsInApp.id, input.authorizationId),
-              sql`${"messages:send"} = ANY(${mcpAuthorizationsInApp.scopes})`,
-              eq(whatsappConnectionsInApp.publicId, input.connectionPublicId),
-            ),
-          );
-        if (authorized.length === 0) {
+        if (authorized[0] === undefined) {
           await finishAudit("authorization_denied", "authorization_denied");
           return { outcome: "authorization_denied" as const };
         }
         const connectionId = scalar(authorized[0], "connection_id");
-        const bound = await db
-          .select({
-            id: sendOperationsInApp.id,
-            public_id: sendOperationsInApp.publicId,
-            status: sendOperationsInApp.status,
-            created_at: sendOperationsInApp.createdAt,
-            status_changed_at: sendOperationsInApp.statusChangedAt,
-            lease_expires_at: sendOperationsInApp.leaseExpiresAt,
-            request_fingerprint:
-              sendIdempotencyBindingsInApp.requestFingerprint,
-          })
-          .from(sendIdempotencyBindingsInApp)
-          .innerJoin(
-            sendOperationsInApp,
-            eq(
-              sendOperationsInApp.id,
-              sendIdempotencyBindingsInApp.sendOperationId,
-            ),
-          )
-          .where(
-            and(
-              eq(
-                sendIdempotencyBindingsInApp.mcpAuthorizationId,
-                input.authorizationId,
-              ),
-              eq(
-                sendIdempotencyBindingsInApp.idempotencyKey,
-                input.idempotencyKey,
-              ),
-              gt(
-                sendIdempotencyBindingsInApp.expiresAt,
-                input.observedAt.toISOString(),
-              ),
-            ),
-          )
-          .for("update");
+        const retentionDays = integer(authorized[0].message_retention_days);
+        const bound: Record<string, unknown>[] =
+          authorized[0].bound_id === null
+            ? []
+            : [
+                {
+                  id: authorized[0].bound_id,
+                  public_id: authorized[0].bound_public_id,
+                  status: authorized[0].bound_status,
+                  created_at: authorized[0].bound_created_at,
+                  status_changed_at: authorized[0].bound_status_changed_at,
+                  lease_expires_at: authorized[0].bound_lease_expires_at,
+                  request_fingerprint: authorized[0].bound_request_fingerprint,
+                },
+              ];
         if (bound[0] !== undefined) {
           if (
             bound[0].status === "processing" &&
@@ -313,7 +308,7 @@ export const makePgAtomicSendRepository = (
                 status: "unknown",
                 statusChangedAt: input.observedAt.toISOString(),
               })
-              .where(eq(sendOperationsInApp.id, bound[0].id));
+              .where(eq(sendOperationsInApp.id, scalar(bound[0], "id")));
             bound[0].status = "unknown";
             bound[0].status_changed_at = input.observedAt.toISOString();
           }
@@ -328,12 +323,7 @@ export const makePgAtomicSendRepository = (
           );
           return result;
         }
-        const connectionState = await db
-          .select({ state: whatsappConnectionsInApp.state })
-          .from(whatsappConnectionsInApp)
-          .where(eq(whatsappConnectionsInApp.id, connectionId))
-          .for("update");
-        if (connectionState[0]?.state !== "connected") {
+        if (authorized[0].connection_state !== "connected") {
           await finishAudit("execution_error", "connection_unavailable");
           return { outcome: "connection_unavailable" as const };
         }
@@ -420,17 +410,23 @@ export const makePgAtomicSendRepository = (
           ),
         );
         const hourStart = new Date(input.observedAt.valueOf() - 3_600_000);
-        const quotas = await db.execute<Record<string, unknown>>(
-          sql`SELECT
+        const quotasAndMaterial = await db.execute<Record<string, unknown>>(
+          sql`SELECT material.*,
              (SELECT count(*)::int FROM app.tool_call_logs WHERE personal_account_id=${accountId} AND quota_reserved AND started_at>${minuteStart} AND started_at<=${input.observedAt}) AS request_minute,
              (SELECT (array_agg(started_at ORDER BY started_at DESC))[(${input.minuteRequestLimit}::int)] FROM app.tool_call_logs WHERE personal_account_id=${accountId} AND quota_reserved AND started_at>${minuteStart} AND started_at<=${input.observedAt}) AS request_minute_reset,
              (SELECT count(*)::int FROM app.tool_call_logs WHERE personal_account_id=${accountId} AND quota_reserved AND started_at>${hourStart} AND started_at<=${input.observedAt}) AS request_hour,
              (SELECT (array_agg(started_at ORDER BY started_at DESC))[(${input.hourRequestLimit}::int)] FROM app.tool_call_logs WHERE personal_account_id=${accountId} AND quota_reserved AND started_at>${hourStart} AND started_at<=${input.observedAt}) AS request_hour_reset,
              (SELECT count(*)::int FROM app.send_quota_reservations WHERE mcp_authorization_id=${input.authorizationId} AND reserved_at>${minuteStart} AND reserved_at<=${input.observedAt}) AS send_minute,
              (SELECT (array_agg(reserved_at ORDER BY reserved_at DESC))[(${input.sendPerMinuteLimit}::int)] FROM app.send_quota_reservations WHERE mcp_authorization_id=${input.authorizationId} AND reserved_at>${minuteStart} AND reserved_at<=${input.observedAt}) AS send_minute_reset,
-             (SELECT count(*)::int FROM app.send_quota_reservations WHERE personal_account_id=${accountId} AND reserved_at>=${dayStart} AND reserved_at<=${input.observedAt}) AS send_day`,
+             (SELECT count(*)::int FROM app.send_quota_reservations WHERE personal_account_id=${accountId} AND reserved_at>=${dayStart} AND reserved_at<=${input.observedAt}) AS send_day
+           FROM app_private.load_send_key_material(
+             ${accountId},
+             ${connectionId}
+           ) AS material`,
         );
-        const q = quotas[0] ?? {};
+        const row = quotasAndMaterial[0];
+        if (row === undefined) throw new Error("send key material unavailable");
+        const q = row;
         const limited =
           Number(q.request_minute) >= input.minuteRequestLimit ||
           Number(q.request_hour) >= input.hourRequestLimit ||
@@ -467,27 +463,6 @@ export const makePgAtomicSendRepository = (
             ),
           };
         }
-        await db.insert(toolCallLogsInApp).values({
-          id: input.auditLogId,
-          personalAccountId: accountId,
-          mcpAuthorizationId: input.authorizationId,
-          toolName: "send_text_message",
-          startedAt: input.observedAt.toISOString(),
-          completedAt: null,
-          outcome: "started",
-          errorCode: null,
-          resultCount: null,
-          latencyMs: null,
-          quotaReserved: true,
-          expiresAt: sql`${input.observedAt}::timestamptz + interval '90 days'`,
-          connectionPublicId: input.connectionPublicId,
-          sendPublicId: input.sendPublicId,
-        });
-        const materialRows = await db.execute<Record<string, unknown>>(
-          sql`SELECT * FROM app_private.load_send_key_material(${accountId},${connectionId})`,
-        );
-        const row = materialRows[0];
-        if (row === undefined) throw new Error("send key material unavailable");
         const encryptionMaterial: SendEncryptionMaterial = {
           accountKey: {
             ciphertext: bytes(row.account_key_ciphertext),
@@ -506,47 +481,74 @@ export const makePgAtomicSendRepository = (
         };
         const pending = await encrypt(encryptionMaterial);
         const observedAt = input.observedAt.toISOString();
-        await db.insert(sendOperationsInApp).values({
-          id: input.sendId,
-          publicId: input.sendPublicId,
-          personalAccountId: accountId,
-          mcpAuthorizationId: input.authorizationId,
-          toolCallLogId: input.auditLogId,
-          whatsappConnectionId: connectionId,
-          recipientType,
-          recipientPublicId: input.recipientPublicId,
-          status: "processing",
-          createdAt: observedAt,
-          statusChangedAt: observedAt,
-          attemptClaimedAt: observedAt,
-          leaseExpiresAt: sql`${input.observedAt}::timestamptz + interval '30 seconds'`,
-          expiresAt: sql`${input.observedAt}::timestamptz + interval '90 days'`,
-        });
-        await db.insert(sendIdempotencyBindingsInApp).values({
-          personalAccountId: accountId,
-          mcpAuthorizationId: input.authorizationId,
-          idempotencyKey: input.idempotencyKey,
-          sendOperationId: input.sendId,
-          requestFingerprint: input.fingerprint,
-          createdAt: observedAt,
-          expiresAt: sql`${input.observedAt}::timestamptz + interval '90 days'`,
-        });
-        await db.insert(pendingSendContentsInApp).values({
-          sendOperationId: input.sendId,
-          personalAccountId: accountId,
-          whatsappConnectionId: connectionId,
-          ciphertextVersion: 1,
-          keyVersion: pending.keyVersion,
-          nonce: pending.nonce,
-          ciphertext: pending.ciphertext,
-          expiresAt: pendingExpiresAt.toISOString(),
-        });
-        await db.insert(sendQuotaReservationsInApp).values({
-          sendOperationId: input.sendId,
-          personalAccountId: accountId,
-          mcpAuthorizationId: input.authorizationId,
-          reservedAt: observedAt,
-        });
+        await db.execute(
+          sql`WITH inserted_audit AS (
+                INSERT INTO app.tool_call_logs (
+                  id, personal_account_id, mcp_authorization_id, tool_name,
+                  started_at, completed_at, outcome, error_code, result_count,
+                  latency_ms, quota_reserved, expires_at,
+                  connection_public_id, send_public_id
+                ) VALUES (
+                  ${input.auditLogId}, ${accountId}, ${input.authorizationId},
+                  'send_text_message', ${observedAt}, NULL, 'started', NULL,
+                  NULL, NULL, true,
+                  ${input.observedAt}::timestamptz + interval '90 days',
+                  ${input.connectionPublicId}, ${input.sendPublicId}
+                )
+                RETURNING id, personal_account_id
+              ),
+              inserted_send AS (
+                INSERT INTO app.send_operations (
+                  id, public_id, personal_account_id, mcp_authorization_id,
+                  tool_call_log_id, whatsapp_connection_id, recipient_type,
+                  recipient_public_id, status, created_at, status_changed_at,
+                  attempt_claimed_at, lease_expires_at, expires_at
+                )
+                SELECT ${input.sendId}, ${input.sendPublicId},
+                       inserted_audit.personal_account_id,
+                       ${input.authorizationId}, inserted_audit.id,
+                       ${connectionId}, ${recipientType},
+                       ${input.recipientPublicId}, 'processing', ${observedAt},
+                       ${observedAt}, ${observedAt},
+                       ${input.observedAt}::timestamptz + interval '30 seconds',
+                       ${input.observedAt}::timestamptz + interval '90 days'
+                FROM inserted_audit
+                RETURNING id, personal_account_id
+              ),
+              inserted_binding AS (
+                INSERT INTO app.send_idempotency_bindings (
+                  personal_account_id, mcp_authorization_id, idempotency_key,
+                  send_operation_id, request_fingerprint, created_at, expires_at
+                )
+                SELECT inserted_send.personal_account_id,
+                       ${input.authorizationId}, ${input.idempotencyKey},
+                       inserted_send.id, ${input.fingerprint}, ${observedAt},
+                       ${input.observedAt}::timestamptz + interval '90 days'
+                FROM inserted_send
+                RETURNING send_operation_id, personal_account_id
+              ),
+              inserted_pending AS (
+                INSERT INTO app.pending_send_contents (
+                  send_operation_id, personal_account_id,
+                  whatsapp_connection_id, ciphertext_version, key_version,
+                  nonce, ciphertext, expires_at
+                )
+                SELECT inserted_binding.send_operation_id,
+                       inserted_binding.personal_account_id, ${connectionId},
+                       1, ${pending.keyVersion}, ${pending.nonce},
+                       ${pending.ciphertext}, ${pendingExpiresAt}
+                FROM inserted_binding
+                RETURNING send_operation_id, personal_account_id
+              )
+              INSERT INTO app.send_quota_reservations (
+                send_operation_id, personal_account_id,
+                mcp_authorization_id, reserved_at
+              )
+              SELECT inserted_pending.send_operation_id,
+                     inserted_pending.personal_account_id,
+                     ${input.authorizationId}, ${observedAt}
+              FROM inserted_pending`,
+        );
         await db.execute(sql`COMMIT`);
         const recipientRow = recipient[0];
         return {
@@ -608,18 +610,138 @@ export const makePgAtomicSendRepository = (
   recordProviderOutcome: (input) =>
     provider.withConnection(async (connection) => {
       const db = makeDatabase(connection);
+      if (input.storedMessage === undefined) {
+        const complete = () =>
+          db.execute<Record<string, unknown>>(
+            sql`WITH updated AS (
+                UPDATE app.send_operations AS send
+                SET status = ${input.status},
+                    status_changed_at = ${input.changedAt},
+                    message_identity = ${input.messageIdentity ?? null}
+                WHERE send.id = ${input.sendId}
+                  AND send.status = 'processing'
+                  AND send.lease_expires_at > ${input.changedAt}
+                RETURNING send.id,
+                          send.public_id,
+                          send.personal_account_id,
+                          send.whatsapp_connection_id,
+                          send.recipient_type,
+                          send.recipient_public_id,
+                          send.status,
+                          send.created_at,
+                          send.status_changed_at,
+                          send.lease_expires_at,
+                          send.tool_call_log_id
+              ),
+              expired AS (
+                UPDATE app.send_operations AS send
+                SET status = 'unknown',
+                    status_changed_at = send.lease_expires_at
+                WHERE send.id = ${input.sendId}
+                  AND send.status = 'processing'
+                  AND send.lease_expires_at <= ${input.changedAt}
+                  AND NOT EXISTS (SELECT 1 FROM updated)
+                RETURNING send.id,
+                          send.public_id,
+                          send.personal_account_id,
+                          send.whatsapp_connection_id,
+                          send.recipient_type,
+                          send.recipient_public_id,
+                          send.status,
+                          send.created_at,
+                          send.status_changed_at,
+                          send.lease_expires_at,
+                          send.tool_call_log_id
+              ),
+              existing AS MATERIALIZED (
+                SELECT send.id,
+                       send.public_id,
+                       send.personal_account_id,
+                       send.whatsapp_connection_id,
+                       send.recipient_type,
+                       send.recipient_public_id,
+                       send.status,
+                       send.created_at,
+                       send.status_changed_at,
+                       send.lease_expires_at,
+                       send.tool_call_log_id
+                FROM app.send_operations AS send
+                WHERE send.id = ${input.sendId}
+                  AND NOT EXISTS (SELECT 1 FROM updated)
+                  AND NOT EXISTS (SELECT 1 FROM expired)
+              ),
+              operation AS MATERIALIZED (
+                SELECT * FROM updated
+                UNION ALL
+                SELECT * FROM expired
+                UNION ALL
+                SELECT * FROM existing
+              ),
+              cleared_pending AS (
+                DELETE FROM app.pending_send_contents AS pending
+                USING updated
+                WHERE ${input.status} = 'failed'
+                  AND pending.send_operation_id = updated.id
+              ),
+              completed_audit AS (
+                UPDATE app.tool_call_logs AS audit
+                SET completed_at = ${input.changedAt},
+                    outcome = 'success',
+                    result_count = 1,
+                    latency_ms = greatest(
+                      0,
+                      floor(extract(epoch FROM (
+                        ${input.changedAt}::timestamptz - audit.started_at
+                      )) * 1000)::int
+                    )
+                FROM operation
+                WHERE audit.id = operation.tool_call_log_id
+              )
+              SELECT operation.*
+              FROM operation`,
+          );
+        let rows = await complete();
+        if (rows[0] === undefined) {
+          const context = await db.execute<{ personal_account_id: unknown }>(
+            sql`WITH send_context AS MATERIALIZED (
+                  SELECT app_private.bootstrap_send_operation(${input.sendId}) AS personal_account_id
+                )
+                SELECT send_context.personal_account_id,
+                       set_config(
+                         'app.personal_account_id',
+                         send_context.personal_account_id::text,
+                         false
+                       ) AS configured_account_id
+                FROM send_context
+                WHERE send_context.personal_account_id IS NOT NULL`,
+          );
+          if (typeof context[0]?.personal_account_id !== "string")
+            throw new Error("send operation unavailable");
+          rows = await complete();
+        }
+        if (rows[0] === undefined)
+          throw new Error("send operation unavailable");
+        return receipt(rows[0]);
+      }
       await db.execute(sql`BEGIN`);
       const context = await db.execute<{ personal_account_id: unknown }>(
-        sql`SELECT app_private.bootstrap_send_operation(${input.sendId}) AS personal_account_id`,
+        sql`WITH send_context AS MATERIALIZED (
+              SELECT app_private.bootstrap_send_operation(${input.sendId}) AS personal_account_id
+            )
+            SELECT send_context.personal_account_id,
+                   set_config(
+                     'app.personal_account_id',
+                     send_context.personal_account_id::text,
+                     true
+                   ) AS configured_account_id
+            FROM send_context
+            WHERE send_context.personal_account_id IS NOT NULL`,
       );
       const accountId = context[0]?.personal_account_id;
       if (typeof accountId !== "string") {
         await db.execute(sql`ROLLBACK`);
         throw new Error("send operation unavailable");
       }
-      await db.execute(
-        sql`SELECT set_config('app.personal_account_id',${accountId},true)`,
-      );
       const operationSelection = {
         id: sendOperationsInApp.id,
         public_id: sendOperationsInApp.publicId,
@@ -841,26 +963,43 @@ export const makePgAtomicSendRepository = (
       }
       await db.execute(sql`COMMIT`);
       try {
-        await db.execute(sql`BEGIN`);
         await db.execute(
-          sql`SELECT set_config('app.personal_account_id',${accountId},true)`,
+          sql`WITH send_context AS MATERIALIZED (
+                SELECT app_private.bootstrap_send_operation(${input.sendId}) AS personal_account_id
+              ),
+              configured AS MATERIALIZED (
+                SELECT send_context.personal_account_id,
+                       set_config(
+                         'app.personal_account_id',
+                         send_context.personal_account_id::text,
+                         false
+                       ) AS configured_account_id
+                FROM send_context
+                WHERE send_context.personal_account_id IS NOT NULL
+              ),
+              selected_send AS MATERIALIZED (
+                SELECT send.tool_call_log_id
+                FROM app.send_operations AS send
+                INNER JOIN configured
+                  ON configured.personal_account_id = send.personal_account_id
+                WHERE send.id = ${input.sendId}
+              )
+              UPDATE app.tool_call_logs AS audit
+              SET completed_at = ${input.changedAt},
+                  outcome = 'success',
+                  result_count = 1,
+                  latency_ms = greatest(
+                    0,
+                    floor(extract(epoch FROM (
+                      ${input.changedAt}::timestamptz - audit.started_at
+                    )) * 1000)::int
+                  )
+              FROM selected_send
+              WHERE audit.id = selected_send.tool_call_log_id`,
         );
-        const send = await db
-          .select({ toolCallLogId: sendOperationsInApp.toolCallLogId })
-          .from(sendOperationsInApp)
-          .where(eq(sendOperationsInApp.id, input.sendId));
-        await db
-          .update(toolCallLogsInApp)
-          .set({
-            completedAt: input.changedAt.toISOString(),
-            outcome: "success",
-            resultCount: 1,
-            latencyMs: sql`greatest(0,floor(extract(epoch FROM (${input.changedAt}::timestamptz-${toolCallLogsInApp.startedAt}))*1000)::int)`,
-          })
-          .where(eq(toolCallLogsInApp.id, scalar(send[0], "toolCallLogId")));
-        await db.execute(sql`COMMIT`);
       } catch {
-        await db.execute(sql`ROLLBACK`);
+        // Provider outcome persistence remains authoritative even if audit
+        // completion fails independently.
       }
       return receipt(operation);
     }),
@@ -870,14 +1009,8 @@ export const makePgAtomicSendRepositoryFromConnectionString = (
   connectionString: string,
 ): AtomicSendRepository =>
   makePgAtomicSendRepository({
-    withConnection: async (use) => {
-      const { Client } = await import("pg");
-      const client = new Client({ connectionString });
-      await client.connect();
-      try {
-        return await use(makeQueryConnection(client));
-      } finally {
-        await client.end();
-      }
-    },
+    withConnection: (use) =>
+      withPgRequestConnection(connectionString, (client) =>
+        use(makeQueryConnection(client)),
+      ),
   });

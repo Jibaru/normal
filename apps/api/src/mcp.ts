@@ -133,7 +133,10 @@ export interface McpToolPersistenceService {
     McpToolPersistenceError
   >;
   readonly listConnections: (
-    input: McpAccessAuthorization & { readonly observedAt: Date },
+    input: McpAccessAuthorization & {
+      readonly authorizationContextEstablished?: true;
+      readonly observedAt: Date;
+    },
   ) => Effect.Effect<
     ReadonlyArray<McpToolConnectionRecord> | null,
     McpToolPersistenceError
@@ -154,6 +157,7 @@ export interface McpToolPersistenceService {
   ) => Effect.Effect<McpToolGroupPage | null, McpToolPersistenceError>;
   readonly listChats?: (
     input: McpAccessAuthorization & {
+      readonly authorizationContextEstablished?: true;
       readonly connectionPublicId: string;
       readonly cursorActivityAt: string | null;
       readonly cursorPublicId: string | null;
@@ -165,6 +169,7 @@ export interface McpToolPersistenceService {
   readonly readMessages?: (
     input: McpAccessAuthorization & {
       readonly auditLogId: string;
+      readonly authorizationContextEstablished?: true;
       readonly connectionPublicId: string;
       readonly conversationPublicId: string;
       readonly cursorSentAt: string | null;
@@ -182,6 +187,7 @@ export interface McpToolPersistenceService {
   readonly completeMessageRead: (
     input: McpAccessAuthorization & {
       readonly auditLogId: string;
+      readonly authorizationContextEstablished?: true;
       readonly dailyRecordLimit: number;
       readonly observedAt: Date;
       readonly resultCount: number;
@@ -797,7 +803,11 @@ const listConnections = (
 
     const readAt = yield* clock.now;
     const loaded = yield* persistence
-      .listConnections({ ...authorization, observedAt: readAt })
+      .listConnections({
+        ...authorization,
+        authorizationContextEstablished: true,
+        observedAt: readAt,
+      })
       .pipe(Effect.either);
     if (loaded._tag === "Left") {
       const completedAt = yield* clock.now;
@@ -1812,6 +1822,7 @@ const listChats = (
     const loaded = yield* persistence
       .listChats({
         ...authorization,
+        authorizationContextEstablished: true,
         connectionPublicId: input.connection_id,
         cursorActivityAt: activity,
         cursorPublicId: publicId,
@@ -2158,6 +2169,7 @@ const readMessages = (
       .readMessages({
         ...authorization,
         auditLogId,
+        authorizationContextEstablished: true,
         connectionPublicId: input.connection_id,
         conversationPublicId: input.conversation_id,
         cursorSentAt: sentAt,
@@ -2473,6 +2485,7 @@ const readMessages = (
       .completeMessageRead({
         ...authorization,
         auditLogId,
+        authorizationContextEstablished: true,
         dailyRecordLimit,
         observedAt: yield* clock.now,
         resultCount: output.messages.length,

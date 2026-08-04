@@ -5,7 +5,6 @@ import type {
   PersonalAccountConnectionProvider,
 } from "./personal-account";
 import { withPgRequestConnection } from "./request-connection";
-import { withTransaction } from "./transaction";
 import {
   mcpAuthorizationConnectionsInApp,
   mcpAuthorizationsInApp,
@@ -13,6 +12,7 @@ import {
   personalAccountsInApp,
   whatsappConnectionsInApp,
 } from "./schema";
+import { withTransaction } from "./transaction";
 
 export const MCP_AUTHORIZATION_SCOPES = [
   "connections:read",
@@ -418,20 +418,25 @@ export const makeMcpAuthorizationRepository = (
           mcp_authorization_id: string;
           personal_account_id: string;
         }>(sql`
-          SELECT personal_account_id, mcp_authorization_id
-          FROM app_private.bootstrap_mcp_refresh_credential(
-            ${input.credentialHash}, ${input.oauthSubject}, ${input.clientId}
+          WITH refresh_context AS MATERIALIZED (
+            SELECT personal_account_id, mcp_authorization_id
+            FROM app_private.bootstrap_mcp_refresh_credential(
+              ${input.credentialHash}, ${input.oauthSubject}, ${input.clientId}
+            )
           )
+          SELECT refresh_context.personal_account_id,
+                 refresh_context.mcp_authorization_id,
+                 set_config(
+                   'app.personal_account_id',
+                   refresh_context.personal_account_id::text,
+                   true
+                 ) AS configured_account_id
+          FROM refresh_context
         `);
         const authorization = context[0];
         if (authorization === undefined) {
           return { outcome: "invalid" as const };
         }
-        await db.execute(
-          sql`SELECT set_config(
-            'app.personal_account_id', ${authorization.personal_account_id}, true
-          )`,
-        );
         const locked = await db
           .select({
             consumedAt: mcpRefreshCredentialsInApp.consumedAt,

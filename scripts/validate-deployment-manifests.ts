@@ -155,6 +155,14 @@ for (const deployable of deployables) {
       ),
     ] as const;
     for (const [configurationName, configuration] of configurations) {
+      const placement = configuration.placement as
+        | { readonly region?: unknown }
+        | undefined;
+      if (placement?.region !== "aws:us-east-1") {
+        throw new Error(
+          `API ${configurationName} configuration must run beside the regional database to keep MCP query round trips low latency.`,
+        );
+      }
       const requiredSecrets = (
         configuration.secrets as
           | { readonly required?: ReadonlyArray<string> }
