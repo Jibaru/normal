@@ -2,6 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import type { Client as PgClient } from "pg";
 import { type Database, makeDatabase, makeQueryConnection } from "./database";
 import { personalAccountsInApp } from "./schema";
+import { withTransaction } from "./transaction";
 
 export interface PersonalAccountConnection {
   readonly query: <
@@ -91,21 +92,6 @@ export interface PersonalAccountRepository {
     readonly state: "active" | "deleting";
   } | null>;
 }
-
-const withTransaction = async <Value>(
-  db: Database,
-  use: () => Promise<Value>,
-): Promise<Value> => {
-  await db.execute(sql`BEGIN`);
-  try {
-    const value = await use();
-    await db.execute(sql`COMMIT`);
-    return value;
-  } catch (error) {
-    await db.execute(sql`ROLLBACK`);
-    throw error;
-  }
-};
 
 const enterPersonalAccountContext = async (
   db: Database,
@@ -252,7 +238,7 @@ export const makePersonalAccountRepository = (
   create: (input) =>
     provider.withConnection((connection) => {
       const db = makeDatabase(connection);
-      return withTransaction(db, async () => {
+      return withTransaction(connection, async () => {
         const rows = await db.execute<AdmissionRow>(
           sql`SELECT * FROM app_private.admit_personal_account_for_clerk(
             ${input.clerkUserId}, ${input.personalAccountId},
@@ -285,7 +271,7 @@ export const makePersonalAccountRepository = (
   resolve: (clerkUserId) =>
     provider.withConnection((connection) => {
       const db = makeDatabase(connection);
-      return withTransaction(db, async () => {
+      return withTransaction(connection, async () => {
         const rows = await db.execute<AdmissionRow>(
           sql`SELECT * FROM app_private.resolve_personal_account_for_clerk(${clerkUserId})`,
         );

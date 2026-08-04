@@ -20,6 +20,7 @@ import {
   whatsappGroupDirectoryStatesInApp,
   whatsappGroupsInApp,
 } from "./schema";
+import { withTransaction } from "./transaction";
 
 export interface WebhookEventConnection {
   readonly query: <
@@ -301,22 +302,6 @@ export interface WebhookEventRepository {
   ) => Promise<WebhookItemProjectionOutcome>;
   readonly quarantine: (input: QuarantineWebhookItemInput) => Promise<void>;
 }
-
-const withTransaction = async <Value>(
-  connection: WebhookEventConnection,
-  use: (db: Database) => Promise<Value>,
-): Promise<Value> => {
-  const db = makeDatabase(connection);
-  await db.execute(sql`begin`);
-  try {
-    const value = await use(db);
-    await db.execute(sql`commit`);
-    return value;
-  } catch (error) {
-    await db.execute(sql`rollback`);
-    throw error;
-  }
-};
 
 const enterPersonalAccountContext = async (
   db: Database,

@@ -3,6 +3,7 @@ import { and, asc, isNotNull, ne, sql } from "drizzle-orm";
 import type { Client as PgClient } from "pg";
 import { type Database, makeDatabase, makeQueryConnection } from "./database";
 import { whatsappConnectionsInApp } from "./schema";
+import { withTransaction } from "./transaction";
 
 export interface WhatsAppConnectionConnection {
   readonly query: <
@@ -213,21 +214,6 @@ export interface WhatsAppConnectionRepository {
     readonly setupId: string;
   }) => Promise<ConnectionSetupActivation | null>;
 }
-
-const withTransaction = async <Value>(
-  db: Database,
-  use: () => Promise<Value>,
-): Promise<Value> => {
-  await db.execute(sql`BEGIN`);
-  try {
-    const value = await use();
-    await db.execute(sql`COMMIT`);
-    return value;
-  } catch (error) {
-    await db.execute(sql`ROLLBACK`);
-    throw error;
-  }
-};
 
 const enterPersonalAccountContext = async (
   db: Database,
@@ -625,7 +611,7 @@ export const makeWhatsAppConnectionRepository = (
   activate: (input) =>
     provider.withConnection((connection) => {
       const db = makeDatabase(connection);
-      return withTransaction(db, async () => {
+      return withTransaction(connection, async () => {
         await enterPersonalAccountContext(db, input.personalAccountId);
         const rows = await db.execute<ConnectionRow>(
           sql`SELECT * FROM app_private.activate_connection_setup(
@@ -798,7 +784,7 @@ export const makeWhatsAppConnectionRepository = (
   listForUser: (clerkUserId) =>
     provider.withConnection((connection) => {
       const db = makeDatabase(connection);
-      return withTransaction(db, async () => {
+      return withTransaction(connection, async () => {
         const loaded = await db.execute<{ personal_account_id: unknown }>(
           sql`SELECT app_private.load_whatsapp_connection_account(${clerkUserId})
               AS personal_account_id`,

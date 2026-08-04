@@ -6,6 +6,7 @@ import {
   personalAccountsInApp,
   whatsappNumberReservationsInApp,
 } from "./schema";
+import { withTransaction } from "./transaction";
 
 export interface ConnectionSetupConnection {
   readonly query: <
@@ -256,21 +257,6 @@ export interface ConnectionSetupRepository {
     input: StartConnectionSetupInput,
   ) => Promise<StartedConnectionSetup>;
 }
-
-const withTransaction = async <Value>(
-  db: Database,
-  use: () => Promise<Value>,
-): Promise<Value> => {
-  await db.execute(sql`BEGIN`);
-  try {
-    const value = await use();
-    await db.execute(sql`COMMIT`);
-    return value;
-  } catch (error) {
-    await db.execute(sql`ROLLBACK`);
-    throw error;
-  }
-};
 
 const enterPersonalAccountContext = async (
   db: Database,
@@ -674,7 +660,7 @@ export const makeConnectionSetupRepository = (
   prepare: (input) =>
     provider.withConnection((connection) => {
       const db = makeDatabase(connection);
-      return withTransaction(db, async () => {
+      return withTransaction(connection, async () => {
         const loaded = await db.execute<AccountRow>(
           sql`SELECT * FROM app_private.load_connection_setup_account(${input.clerkUserId})`,
         );
@@ -808,7 +794,7 @@ export const makeConnectionSetupRepository = (
   start: (input) =>
     provider.withConnection((connection) => {
       const db = makeDatabase(connection);
-      return withTransaction(db, async () => {
+      return withTransaction(connection, async () => {
         if (!(await enterPersonalAccountContext(db, input.personalAccountId))) {
           throw new Error("Personal Account unavailable");
         }

@@ -5,6 +5,7 @@ import {
   whatsappGroupDirectoryStatesInApp,
   whatsappGroupsInApp,
 } from "./schema";
+import { withTransaction } from "./transaction";
 
 export interface GroupCiphertextEnvelope {
   readonly ciphertext: string;
@@ -205,22 +206,6 @@ const reconciliationCandidate = (
       version: 1,
     },
   };
-};
-
-const withTransaction = async <Value>(
-  connection: GroupConnection,
-  use: () => Promise<Value>,
-): Promise<Value> => {
-  const db = makeDatabase(connection);
-  await db.execute(sql`BEGIN`);
-  try {
-    const value = await use();
-    await db.execute(sql`COMMIT`);
-    return value;
-  } catch (error) {
-    await db.execute(sql`ROLLBACK`);
-    throw error;
-  }
 };
 
 const validDate = (value: string): boolean => {
