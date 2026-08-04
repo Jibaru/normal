@@ -98,7 +98,7 @@ const enterPersonalAccountContext = async (
   personalAccountId: string,
 ): Promise<boolean> => {
   await db.execute(
-    sql`SELECT set_config('app.personal_account_id', ${personalAccountId}, true)`,
+    sql`SELECT set_config('public.personal_account_id', ${personalAccountId}, true)`,
   );
   const visible = await db
     .select({ id: personalAccountsInApp.id })
@@ -157,7 +157,7 @@ export const makePersonalAccountRepository = (
         deadline_risk: unknown;
         deletion_marker_id: unknown;
         requested_at: unknown;
-      }>(sql`SELECT * FROM app_private.list_personal_account_purge_candidates(
+      }>(sql`SELECT * FROM public.list_personal_account_purge_candidates(
         ${input.observedAt}, ${input.limit}
       )`);
       return rows.map((row) => {
@@ -179,7 +179,7 @@ export const makePersonalAccountRepository = (
   purgeDeletion: (input) =>
     provider.withConnection(async (connection) => {
       const rows = await makeDatabase(connection).execute<{ purged: unknown }>(
-        sql`SELECT app_private.purge_personal_account(
+        sql`SELECT public.purge_personal_account(
           ${input.deletionMarkerId}, ${input.completedAt}
         ) AS purged`,
       );
@@ -188,7 +188,7 @@ export const makePersonalAccountRepository = (
   purgeExpiredDeletionRecords: (limit) =>
     provider.withConnection(async (connection) => {
       const rows = await makeDatabase(connection).execute<{ purged: unknown }>(
-        sql`SELECT app_private.purge_expired_deletion_records(${limit}) AS purged`,
+        sql`SELECT public.purge_expired_deletion_records(${limit}) AS purged`,
       );
       const purged = Number(rows[0]?.purged);
       if (!Number.isSafeInteger(purged) || purged < 0)
@@ -200,7 +200,7 @@ export const makePersonalAccountRepository = (
       const rows = await makeDatabase(connection).execute<{
         finished: unknown;
       }>(
-        sql`SELECT app_private.finish_personal_account_deletion(
+        sql`SELECT public.finish_personal_account_deletion(
           ${input.clerkUserId}, ${input.deletionMarkerId}, ${input.requestedAt}
         ) AS finished`,
       );
@@ -213,7 +213,7 @@ export const makePersonalAccountRepository = (
         connection_public_id: unknown;
         personal_account_id: unknown;
         requested_at: unknown;
-      }>(sql`SELECT * FROM app_private.prepare_personal_account_deletion(
+      }>(sql`SELECT * FROM public.prepare_personal_account_deletion(
         ${input.clerkUserId}, ${input.observedAt}
       )`);
       const first = rows[0];
@@ -240,7 +240,7 @@ export const makePersonalAccountRepository = (
       const db = makeDatabase(connection);
       return withTransaction(connection, async () => {
         const rows = await db.execute<AdmissionRow>(
-          sql`SELECT * FROM app_private.admit_personal_account_for_clerk(
+          sql`SELECT * FROM public.admit_personal_account_for_clerk(
             ${input.clerkUserId}, ${input.personalAccountId},
             ${input.keyVersion}, ${input.kmsKeyId}, ${input.keyCiphertext},
             ${input.providerApprovedSessionCapacity}
@@ -273,7 +273,7 @@ export const makePersonalAccountRepository = (
       const db = makeDatabase(connection);
       return withTransaction(connection, async () => {
         const rows = await db.execute<AdmissionRow>(
-          sql`SELECT * FROM app_private.resolve_personal_account_for_clerk(${clerkUserId})`,
+          sql`SELECT * FROM public.resolve_personal_account_for_clerk(${clerkUserId})`,
         );
         const row = rows[0];
         if (admissionState(row) === "waitlisted") {

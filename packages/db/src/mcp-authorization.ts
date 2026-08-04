@@ -105,13 +105,13 @@ const enterClerkContext = async (
 ): Promise<string | null> => {
   const db = makeDatabase(connection);
   const result = await db.execute<{ personal_account_id: string | null }>(sql`
-    SELECT app_private.bootstrap_personal_account_for_clerk(${clerkUserId})
+    SELECT public.bootstrap_personal_account_for_clerk(${clerkUserId})
       AS personal_account_id
   `);
   const personalAccountId = result[0]?.personal_account_id;
   if (typeof personalAccountId !== "string") return null;
   await db.execute(
-    sql`SELECT set_config('app.personal_account_id', ${personalAccountId}, true)`,
+    sql`SELECT set_config('public.personal_account_id', ${personalAccountId}, true)`,
   );
   const account = await db
     .select({ id: personalAccountsInApp.id })
@@ -184,10 +184,10 @@ export const makeMcpAuthorizationRepository = (
           personal_account_id: string | null;
         }>(
           input.clientId === undefined
-            ? sql`SELECT app_private.bootstrap_mcp_access_authorization(
+            ? sql`SELECT public.bootstrap_mcp_access_authorization(
                 ${input.authorizationId}, ${input.oauthSubject}, ${input.observedAt}
               ) AS personal_account_id`
-            : sql`SELECT app_private.bootstrap_mcp_authorization(
+            : sql`SELECT public.bootstrap_mcp_authorization(
                 ${input.authorizationId}, ${input.oauthSubject},
                 ${input.clientId}, ${input.observedAt}
               ) AS personal_account_id`,
@@ -317,7 +317,7 @@ export const makeMcpAuthorizationRepository = (
           personal_account_id: string;
         }>(sql`
           SELECT personal_account_id, mcp_authorization_id
-          FROM app_private.bootstrap_mcp_refresh_authorization(
+          FROM public.bootstrap_mcp_refresh_authorization(
             ${input.oauthSubject}, ${input.clientId}, ${input.observedAt}
           )
         `);
@@ -325,7 +325,7 @@ export const makeMcpAuthorizationRepository = (
         if (authorization === undefined) return false;
         await db.execute(
           sql`SELECT set_config(
-            'app.personal_account_id', ${authorization.personal_account_id}, true
+            'public.personal_account_id', ${authorization.personal_account_id}, true
           )`,
         );
         const inserted = await db
@@ -420,14 +420,14 @@ export const makeMcpAuthorizationRepository = (
         }>(sql`
           WITH refresh_context AS MATERIALIZED (
             SELECT personal_account_id, mcp_authorization_id
-            FROM app_private.bootstrap_mcp_refresh_credential(
+            FROM public.bootstrap_mcp_refresh_credential(
               ${input.credentialHash}, ${input.oauthSubject}, ${input.clientId}
             )
           )
           SELECT refresh_context.personal_account_id,
                  refresh_context.mcp_authorization_id,
                  set_config(
-                   'app.personal_account_id',
+                   'public.personal_account_id',
                    refresh_context.personal_account_id::text,
                    true
                  ) AS configured_account_id
@@ -492,7 +492,7 @@ export const makeMcpAuthorizationRepository = (
         const current = await db.execute<{
           personal_account_id: string | null;
         }>(sql`
-          SELECT app_private.bootstrap_mcp_authorization(
+          SELECT public.bootstrap_mcp_authorization(
             ${authorization.mcp_authorization_id}, ${input.oauthSubject},
             ${input.clientId}, ${input.observedAt}
           ) AS personal_account_id

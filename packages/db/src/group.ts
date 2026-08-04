@@ -265,7 +265,7 @@ const enterContext = async (
 ): Promise<void> => {
   const db = makeDatabase(connection);
   const result = await db.execute<{ personal_account_id: unknown }>(sql`
-    SELECT app_private.bootstrap_whatsapp_group_projection(
+    SELECT public.bootstrap_whatsapp_group_projection(
       ${input.personalAccountId}, ${input.connectionId}
     ) AS personal_account_id
   `);
@@ -274,7 +274,7 @@ const enterContext = async (
   }
   await db.execute(
     sql`SELECT set_config(
-      'app.personal_account_id', ${input.personalAccountId}, true
+      'public.personal_account_id', ${input.personalAccountId}, true
     )`,
   );
 };
@@ -312,7 +312,7 @@ export const makeGroupRepository = (
         throw new Error("invalid group reconciliation claim");
       }
       const result = await makeDatabase(connection).execute(sql`
-        SELECT * FROM app_private.claim_whatsapp_group_reconciliation(
+        SELECT * FROM public.claim_whatsapp_group_reconciliation(
           ${input.claimedAt}, ${input.limit}
         )
       `);

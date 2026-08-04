@@ -4,9 +4,9 @@
   "version": "7",
   "dialect": "postgresql",
   "tables": {
-    "app_private.break_glass_approvals": {
+    "public.break_glass_approvals": {
       "name": "break_glass_approvals",
-      "schema": "app_private",
+      "schema": "public",
       "columns": {
         "request_id": {
           "name": "request_id",
@@ -34,7 +34,7 @@
           "name": "break_glass_approvals_request_id_fkey",
           "tableFrom": "break_glass_approvals",
           "tableTo": "break_glass_requests",
-          "schemaTo": "app_private",
+          "schemaTo": "public",
           "columnsFrom": ["request_id"],
           "columnsTo": ["id"],
           "onDelete": "no action",
@@ -57,9 +57,9 @@
       },
       "isRLSEnabled": false
     },
-    "app_private.break_glass_audit_events": {
+    "public.break_glass_audit_events": {
       "name": "break_glass_audit_events",
-      "schema": "app_private",
+      "schema": "public",
       "columns": {
         "id": {
           "name": "id",
@@ -68,8 +68,8 @@
           "notNull": true,
           "identity": {
             "type": "always",
-            "name": "app_private.break_glass_audit_events_id_seq",
-            "schema": "app_private",
+            "name": "public.break_glass_audit_events_id_seq",
+            "schema": "public",
             "increment": "1",
             "startWith": "1",
             "minValue": "1",
@@ -116,7 +116,7 @@
           "name": "break_glass_audit_events_request_id_fkey",
           "tableFrom": "break_glass_audit_events",
           "tableTo": "break_glass_requests",
-          "schemaTo": "app_private",
+          "schemaTo": "public",
           "columnsFrom": ["request_id"],
           "columnsTo": ["id"],
           "onDelete": "no action",
@@ -142,9 +142,9 @@
       },
       "isRLSEnabled": false
     },
-    "app_private.break_glass_requests": {
+    "public.break_glass_requests": {
       "name": "break_glass_requests",
-      "schema": "app_private",
+      "schema": "public",
       "columns": {
         "id": {
           "name": "id",
@@ -220,7 +220,7 @@
           "name": "break_glass_requests_personal_account_id_fkey",
           "tableFrom": "break_glass_requests",
           "tableTo": "personal_accounts",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id"],
           "columnsTo": ["id"],
           "onDelete": "no action",
@@ -266,9 +266,9 @@
       },
       "isRLSEnabled": false
     },
-    "app_private.break_glass_user_notifications": {
+    "public.break_glass_user_notifications": {
       "name": "break_glass_user_notifications",
-      "schema": "app_private",
+      "schema": "public",
       "columns": {
         "request_id": {
           "name": "request_id",
@@ -302,7 +302,7 @@
           "name": "break_glass_user_notifications_request_id_fkey",
           "tableFrom": "break_glass_user_notifications",
           "tableTo": "break_glass_requests",
-          "schemaTo": "app_private",
+          "schemaTo": "public",
           "columnsFrom": ["request_id"],
           "columnsTo": ["id"],
           "onDelete": "no action",
@@ -312,7 +312,7 @@
           "name": "break_glass_user_notifications_personal_account_id_fkey",
           "tableFrom": "break_glass_user_notifications",
           "tableTo": "personal_accounts",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id"],
           "columnsTo": ["id"],
           "onDelete": "no action",
@@ -330,9 +330,9 @@
       },
       "isRLSEnabled": false
     },
-    "app_private.clerk_identities": {
+    "public.clerk_identities": {
       "name": "clerk_identities",
-      "schema": "app_private",
+      "schema": "public",
       "columns": {
         "clerk_user_id": {
           "name": "clerk_user_id",
@@ -360,7 +360,7 @@
           "name": "clerk_identities_personal_account_id_fkey",
           "tableFrom": "clerk_identities",
           "tableTo": "personal_accounts",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id"],
           "columnsTo": ["id"],
           "onDelete": "cascade",
@@ -379,9 +379,9 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "app.connection_setup_key_envelopes": {
+    "public.connection_setup_key_envelopes": {
       "name": "connection_setup_key_envelopes",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "personal_account_id": {
           "name": "personal_account_id",
@@ -432,7 +432,7 @@
           "name": "connection_setup_key_envelope_personal_account_id_connecti_fkey",
           "tableFrom": "connection_setup_key_envelopes",
           "tableTo": "connection_setups",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id", "connection_setup_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "cascade",
@@ -452,8 +452,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -476,9 +476,9 @@
       },
       "isRLSEnabled": false
     },
-    "app.connection_setup_provider_sessions": {
+    "public.connection_setup_provider_sessions": {
       "name": "connection_setup_provider_sessions",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "personal_account_id": {
           "name": "personal_account_id",
@@ -559,7 +559,7 @@
           "name": "connection_setup_provider_ses_personal_account_id_connecti_fkey",
           "tableFrom": "connection_setup_provider_sessions",
           "tableTo": "connection_setups",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id", "connection_setup_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "cascade",
@@ -579,8 +579,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -623,9 +623,9 @@
       },
       "isRLSEnabled": false
     },
-    "app.connection_setups": {
+    "public.connection_setups": {
       "name": "connection_setups",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "id": {
           "name": "id",
@@ -812,7 +812,7 @@
           "name": "connection_setups_personal_account_id_fkey",
           "tableFrom": "connection_setups",
           "tableTo": "personal_accounts",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id"],
           "columnsTo": ["id"],
           "onDelete": "cascade",
@@ -848,8 +848,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -940,9 +940,9 @@
       },
       "isRLSEnabled": false
     },
-    "app_private.deleted_whatsapp_connection_handles": {
+    "public.deleted_whatsapp_connection_handles": {
       "name": "deleted_whatsapp_connection_handles",
-      "schema": "app_private",
+      "schema": "public",
       "columns": {
         "public_id": {
           "name": "public_id",
@@ -986,9 +986,9 @@
       },
       "isRLSEnabled": false
     },
-    "app.directory_contact_projections": {
+    "public.directory_contact_projections": {
       "name": "directory_contact_projections",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "personal_account_id": {
           "name": "personal_account_id",
@@ -1065,7 +1065,7 @@
           "name": "directory_contact_projections_personal_account_id_whatsapp_fkey",
           "tableFrom": "directory_contact_projections",
           "tableTo": "whatsapp_connections",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id", "whatsapp_connection_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "cascade",
@@ -1085,8 +1085,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -1097,9 +1097,9 @@
       },
       "isRLSEnabled": false
     },
-    "app.directory_contacts": {
+    "public.directory_contacts": {
       "name": "directory_contacts",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "personal_account_id": {
           "name": "personal_account_id",
@@ -1128,7 +1128,7 @@
         },
         "provider_identity_index": {
           "name": "provider_identity_index",
-          "type": "app.directory_blind_index",
+          "type": "public.directory_blind_index",
           "primaryKey": false,
           "notNull": true
         },
@@ -1212,14 +1212,14 @@
         },
         "name_prefix_indexes": {
           "name": "name_prefix_indexes",
-          "type": "app.directory_blind_index[]",
+          "type": "public.directory_blind_index[]",
           "primaryKey": false,
           "notNull": true,
           "default": "'{\"RAY\"}'"
         },
         "phone_index": {
           "name": "phone_index",
-          "type": "app.directory_blind_index",
+          "type": "public.directory_blind_index",
           "primaryKey": false,
           "notNull": false
         },
@@ -1373,7 +1373,7 @@
           "name": "directory_contacts_personal_account_id_whatsapp_connection_fkey",
           "tableFrom": "directory_contacts",
           "tableTo": "whatsapp_connections",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id", "whatsapp_connection_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "cascade",
@@ -1383,7 +1383,7 @@
           "name": "directory_contacts_personal_account_id_whatsapp_connectio_fkey1",
           "tableFrom": "directory_contacts",
           "tableTo": "webhook_events",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": [
             "personal_account_id",
             "whatsapp_connection_id",
@@ -1427,8 +1427,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -1466,7 +1466,7 @@
         },
         "directory_contacts_name_prefix_indexes_check": {
           "name": "directory_contacts_name_prefix_indexes_check",
-          "value": "array_position(name_prefix_indexes, (NULL::text)::app.directory_blind_index) IS NULL"
+          "value": "array_position(name_prefix_indexes, (NULL::text)::public.directory_blind_index) IS NULL"
         },
         "directory_contacts_check2": {
           "name": "directory_contacts_check2",
@@ -1483,9 +1483,9 @@
       },
       "isRLSEnabled": false
     },
-    "app.ingestion_gaps": {
+    "public.ingestion_gaps": {
       "name": "ingestion_gaps",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "personal_account_id": {
           "name": "personal_account_id",
@@ -1624,7 +1624,7 @@
           "name": "ingestion_gaps_personal_account_id_whatsapp_connection_id_fkey",
           "tableFrom": "ingestion_gaps",
           "tableTo": "whatsapp_connections",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id", "whatsapp_connection_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "cascade",
@@ -1634,7 +1634,7 @@
           "name": "ingestion_gaps_evidence_webhook_event",
           "tableFrom": "ingestion_gaps",
           "tableTo": "webhook_events",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": [
             "personal_account_id",
             "whatsapp_connection_id",
@@ -1669,8 +1669,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -1693,9 +1693,9 @@
       },
       "isRLSEnabled": false
     },
-    "app.mcp_authorization_connections": {
+    "public.mcp_authorization_connections": {
       "name": "mcp_authorization_connections",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "personal_account_id": {
           "name": "personal_account_id",
@@ -1729,7 +1729,7 @@
           "name": "mcp_authorization_connections_personal_account_id_mcp_auth_fkey",
           "tableFrom": "mcp_authorization_connections",
           "tableTo": "mcp_authorizations",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id", "mcp_authorization_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "cascade",
@@ -1739,7 +1739,7 @@
           "name": "mcp_authorization_connections_personal_account_id_whatsapp_fkey",
           "tableFrom": "mcp_authorization_connections",
           "tableTo": "whatsapp_connections",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id", "whatsapp_connection_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "cascade",
@@ -1759,16 +1759,16 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "app.mcp_authorizations": {
+    "public.mcp_authorizations": {
       "name": "mcp_authorizations",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "id": {
           "name": "id",
@@ -1871,7 +1871,7 @@
           "name": "mcp_authorizations_personal_account_id_fkey",
           "tableFrom": "mcp_authorizations",
           "tableTo": "personal_accounts",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id"],
           "columnsTo": ["id"],
           "onDelete": "cascade",
@@ -1907,8 +1907,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -1963,9 +1963,9 @@
       },
       "isRLSEnabled": false
     },
-    "app.mcp_refresh_credentials": {
+    "public.mcp_refresh_credentials": {
       "name": "mcp_refresh_credentials",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "credential_hash": {
           "name": "credential_hash",
@@ -2028,7 +2028,7 @@
           "name": "mcp_refresh_credentials_personal_account_id_mcp_authorizat_fkey",
           "tableFrom": "mcp_refresh_credentials",
           "tableTo": "mcp_authorizations",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id", "mcp_authorization_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "cascade",
@@ -2043,8 +2043,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -2063,9 +2063,9 @@
       },
       "isRLSEnabled": false
     },
-    "app.pending_send_contents": {
+    "public.pending_send_contents": {
       "name": "pending_send_contents",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "send_operation_id": {
           "name": "send_operation_id",
@@ -2122,7 +2122,7 @@
           "name": "pending_send_contents_personal_account_id_whatsapp_connect_fkey",
           "tableFrom": "pending_send_contents",
           "tableTo": "whatsapp_connections",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id", "whatsapp_connection_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "cascade",
@@ -2132,7 +2132,7 @@
           "name": "pending_send_contents_personal_account_id_send_operation_i_fkey",
           "tableFrom": "pending_send_contents",
           "tableTo": "send_operations",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["send_operation_id", "personal_account_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "cascade",
@@ -2147,8 +2147,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -2171,9 +2171,9 @@
       },
       "isRLSEnabled": false
     },
-    "app_private.personal_account_cleanup_audit": {
+    "public.personal_account_cleanup_audit": {
       "name": "personal_account_cleanup_audit",
-      "schema": "app_private",
+      "schema": "public",
       "columns": {
         "deletion_marker_id": {
           "name": "deletion_marker_id",
@@ -2228,9 +2228,9 @@
       },
       "isRLSEnabled": false
     },
-    "app.personal_account_key_envelopes": {
+    "public.personal_account_key_envelopes": {
       "name": "personal_account_key_envelopes",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "personal_account_id": {
           "name": "personal_account_id",
@@ -2276,7 +2276,7 @@
           "name": "personal_account_key_envelopes_personal_account_id_fkey",
           "tableFrom": "personal_account_key_envelopes",
           "tableTo": "personal_accounts",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id"],
           "columnsTo": ["id"],
           "onDelete": "cascade",
@@ -2291,8 +2291,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -2311,9 +2311,9 @@
       },
       "isRLSEnabled": false
     },
-    "app.personal_accounts": {
+    "public.personal_accounts": {
       "name": "personal_accounts",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "id": {
           "name": "id",
@@ -2392,8 +2392,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -2428,9 +2428,9 @@
       },
       "isRLSEnabled": false
     },
-    "app_private.private_beta_waitlist": {
+    "public.private_beta_waitlist": {
       "name": "private_beta_waitlist",
-      "schema": "app_private",
+      "schema": "public",
       "columns": {
         "clerk_user_id": {
           "name": "clerk_user_id",
@@ -2459,9 +2459,9 @@
       },
       "isRLSEnabled": false
     },
-    "app_private.restore_object_deletions": {
+    "public.restore_object_deletions": {
       "name": "restore_object_deletions",
-      "schema": "app_private",
+      "schema": "public",
       "columns": {
         "bucket": {
           "name": "bucket",
@@ -2504,9 +2504,9 @@
       },
       "isRLSEnabled": false
     },
-    "app_private.restore_readiness": {
+    "public.restore_readiness": {
       "name": "restore_readiness",
-      "schema": "app_private",
+      "schema": "public",
       "columns": {
         "singleton": {
           "name": "singleton",
@@ -2595,9 +2595,9 @@
       },
       "isRLSEnabled": false
     },
-    "app_private.restore_replay_audit": {
+    "public.restore_replay_audit": {
       "name": "restore_replay_audit",
-      "schema": "app_private",
+      "schema": "public",
       "columns": {
         "branch_id": {
           "name": "branch_id",
@@ -2655,9 +2655,9 @@
       },
       "isRLSEnabled": false
     },
-    "app_private.security_records": {
+    "public.security_records": {
       "name": "security_records",
-      "schema": "app_private",
+      "schema": "public",
       "columns": {
         "category": {
           "name": "category",
@@ -2758,9 +2758,9 @@
       },
       "isRLSEnabled": false
     },
-    "app.send_idempotency_bindings": {
+    "public.send_idempotency_bindings": {
       "name": "send_idempotency_bindings",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "personal_account_id": {
           "name": "personal_account_id",
@@ -2811,7 +2811,7 @@
           "name": "send_idempotency_bindings_personal_account_id_mcp_authoriz_fkey",
           "tableFrom": "send_idempotency_bindings",
           "tableTo": "mcp_authorizations",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id", "mcp_authorization_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "cascade",
@@ -2821,7 +2821,7 @@
           "name": "send_idempotency_bindings_personal_account_id_send_operati_fkey",
           "tableFrom": "send_idempotency_bindings",
           "tableTo": "send_operations",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id", "send_operation_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "cascade",
@@ -2847,8 +2847,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -2867,9 +2867,9 @@
       },
       "isRLSEnabled": false
     },
-    "app.send_operations": {
+    "public.send_operations": {
       "name": "send_operations",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "id": {
           "name": "id",
@@ -2993,7 +2993,7 @@
           "name": "send_operations_personal_account_id_mcp_authorization_id_fkey",
           "tableFrom": "send_operations",
           "tableTo": "mcp_authorizations",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id", "mcp_authorization_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "cascade",
@@ -3003,7 +3003,7 @@
           "name": "send_operations_personal_account_id_whatsapp_connection_id_fkey",
           "tableFrom": "send_operations",
           "tableTo": "whatsapp_connections",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id", "whatsapp_connection_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "cascade",
@@ -3013,7 +3013,7 @@
           "name": "send_operations_personal_account_id_tool_call_log_id_fkey",
           "tableFrom": "send_operations",
           "tableTo": "tool_call_logs",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id", "tool_call_log_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "cascade",
@@ -3044,8 +3044,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -3076,9 +3076,9 @@
       },
       "isRLSEnabled": false
     },
-    "app.send_quota_reservations": {
+    "public.send_quota_reservations": {
       "name": "send_quota_reservations",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "send_operation_id": {
           "name": "send_operation_id",
@@ -3158,7 +3158,7 @@
           "name": "send_quota_reservations_personal_account_id_fkey",
           "tableFrom": "send_quota_reservations",
           "tableTo": "personal_accounts",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id"],
           "columnsTo": ["id"],
           "onDelete": "cascade",
@@ -3168,7 +3168,7 @@
           "name": "send_quota_reservations_personal_account_id_mcp_authorizat_fkey",
           "tableFrom": "send_quota_reservations",
           "tableTo": "mcp_authorizations",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id", "mcp_authorization_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "cascade",
@@ -3178,7 +3178,7 @@
           "name": "send_quota_reservations_personal_account_id_send_operation_fkey",
           "tableFrom": "send_quota_reservations",
           "tableTo": "send_operations",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["send_operation_id", "personal_account_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "cascade",
@@ -3193,16 +3193,16 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "app.stored_media": {
+    "public.stored_media": {
       "name": "stored_media",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "id": {
           "name": "id",
@@ -3364,7 +3364,7 @@
           "name": "stored_media_personal_account_id_whatsapp_connection_id_st_fkey",
           "tableFrom": "stored_media",
           "tableTo": "stored_messages",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": [
             "personal_account_id",
             "whatsapp_connection_id",
@@ -3403,8 +3403,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -3463,9 +3463,9 @@
       },
       "isRLSEnabled": false
     },
-    "app.stored_media_object_deletions": {
+    "public.stored_media_object_deletions": {
       "name": "stored_media_object_deletions",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "personal_account_id": {
           "name": "personal_account_id",
@@ -3502,16 +3502,16 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "app.stored_messages": {
+    "public.stored_messages": {
       "name": "stored_messages",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "id": {
           "name": "id",
@@ -3705,7 +3705,7 @@
           "name": "stored_messages_personal_account_id_whatsapp_connection_id_fkey",
           "tableFrom": "stored_messages",
           "tableTo": "whatsapp_conversations",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": [
             "personal_account_id",
             "whatsapp_connection_id",
@@ -3719,7 +3719,7 @@
           "name": "stored_messages_personal_account_id_whatsapp_connection_i_fkey1",
           "tableFrom": "stored_messages",
           "tableTo": "webhook_events",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": [
             "personal_account_id",
             "whatsapp_connection_id",
@@ -3758,8 +3758,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -3810,9 +3810,9 @@
       },
       "isRLSEnabled": false
     },
-    "app.tool_call_logs": {
+    "public.tool_call_logs": {
       "name": "tool_call_logs",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "id": {
           "name": "id",
@@ -4035,7 +4035,7 @@
           "name": "tool_call_logs_personal_account_id_fkey",
           "tableFrom": "tool_call_logs",
           "tableTo": "personal_accounts",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id"],
           "columnsTo": ["id"],
           "onDelete": "cascade",
@@ -4045,7 +4045,7 @@
           "name": "tool_call_logs_personal_account_id_mcp_authorization_id_fkey",
           "tableFrom": "tool_call_logs",
           "tableTo": "mcp_authorizations",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id", "mcp_authorization_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "cascade",
@@ -4071,8 +4071,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -4131,9 +4131,9 @@
       },
       "isRLSEnabled": false
     },
-    "app.webhook_dead_letter_incidents": {
+    "public.webhook_dead_letter_incidents": {
       "name": "webhook_dead_letter_incidents",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "id": {
           "name": "id",
@@ -4186,7 +4186,7 @@
           "name": "webhook_dead_letter_incidents_personal_account_id_whatsapp_fkey",
           "tableFrom": "webhook_dead_letter_incidents",
           "tableTo": "whatsapp_connections",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id", "whatsapp_connection_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "cascade",
@@ -4196,7 +4196,7 @@
           "name": "webhook_dead_letter_incident_personal_account_id_whatsapp_fkey1",
           "tableFrom": "webhook_dead_letter_incidents",
           "tableTo": "webhook_events",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": [
             "personal_account_id",
             "whatsapp_connection_id",
@@ -4221,16 +4221,16 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "app.webhook_events": {
+    "public.webhook_events": {
       "name": "webhook_events",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "personal_account_id": {
           "name": "personal_account_id",
@@ -4307,7 +4307,7 @@
           "name": "webhook_events_personal_account_id_whatsapp_connection_id_fkey",
           "tableFrom": "webhook_events",
           "tableTo": "whatsapp_connections",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id", "whatsapp_connection_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "cascade",
@@ -4333,8 +4333,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -4361,9 +4361,9 @@
       },
       "isRLSEnabled": false
     },
-    "app.webhook_item_quarantines": {
+    "public.webhook_item_quarantines": {
       "name": "webhook_item_quarantines",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "personal_account_id": {
           "name": "personal_account_id",
@@ -4427,7 +4427,7 @@
           "name": "webhook_item_quarantines_personal_account_id_whatsapp_conn_fkey",
           "tableFrom": "webhook_item_quarantines",
           "tableTo": "webhook_events",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": [
             "personal_account_id",
             "whatsapp_connection_id",
@@ -4456,8 +4456,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -4480,9 +4480,9 @@
       },
       "isRLSEnabled": false
     },
-    "app.webhook_items": {
+    "public.webhook_items": {
       "name": "webhook_items",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "personal_account_id": {
           "name": "personal_account_id",
@@ -4558,7 +4558,7 @@
           "name": "webhook_items_first_event",
           "tableFrom": "webhook_items",
           "tableTo": "webhook_events",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": [
             "personal_account_id",
             "whatsapp_connection_id",
@@ -4586,8 +4586,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -4614,9 +4614,9 @@
       },
       "isRLSEnabled": false
     },
-    "app.webhook_replay_attempts": {
+    "public.webhook_replay_attempts": {
       "name": "webhook_replay_attempts",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "id": {
           "name": "id",
@@ -4723,7 +4723,7 @@
           "name": "webhook_replay_attempts_incident_id_fkey",
           "tableFrom": "webhook_replay_attempts",
           "tableTo": "webhook_dead_letter_incidents",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["incident_id"],
           "columnsTo": ["id"],
           "onDelete": "cascade",
@@ -4733,7 +4733,7 @@
           "name": "webhook_replay_attempts_personal_account_id_whatsapp_conne_fkey",
           "tableFrom": "webhook_replay_attempts",
           "tableTo": "whatsapp_connections",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id", "whatsapp_connection_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "cascade",
@@ -4748,8 +4748,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -4776,9 +4776,9 @@
       },
       "isRLSEnabled": false
     },
-    "app.whatsapp_connection_key_envelopes": {
+    "public.whatsapp_connection_key_envelopes": {
       "name": "whatsapp_connection_key_envelopes",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "personal_account_id": {
           "name": "personal_account_id",
@@ -4836,7 +4836,7 @@
           "name": "whatsapp_connection_key_envel_personal_account_id_whatsapp_fkey",
           "tableFrom": "whatsapp_connection_key_envelopes",
           "tableTo": "whatsapp_connections",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id", "whatsapp_connection_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "cascade",
@@ -4856,8 +4856,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -4876,9 +4876,9 @@
       },
       "isRLSEnabled": false
     },
-    "app.whatsapp_connection_provider_sessions": {
+    "public.whatsapp_connection_provider_sessions": {
       "name": "whatsapp_connection_provider_sessions",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "personal_account_id": {
           "name": "personal_account_id",
@@ -4959,7 +4959,7 @@
           "name": "whatsapp_connection_provider__personal_account_id_whatsapp_fkey",
           "tableFrom": "whatsapp_connection_provider_sessions",
           "tableTo": "whatsapp_connections",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id", "whatsapp_connection_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "cascade",
@@ -4979,8 +4979,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -5019,9 +5019,9 @@
       },
       "isRLSEnabled": false
     },
-    "app.whatsapp_connection_secrets": {
+    "public.whatsapp_connection_secrets": {
       "name": "whatsapp_connection_secrets",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "personal_account_id": {
           "name": "personal_account_id",
@@ -5080,7 +5080,7 @@
           "name": "whatsapp_connection_secrets_personal_account_id_whatsapp_c_fkey",
           "tableFrom": "whatsapp_connection_secrets",
           "tableTo": "whatsapp_connections",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id", "whatsapp_connection_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "cascade",
@@ -5100,8 +5100,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -5124,9 +5124,9 @@
       },
       "isRLSEnabled": false
     },
-    "app.whatsapp_connections": {
+    "public.whatsapp_connections": {
       "name": "whatsapp_connections",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "id": {
           "name": "id",
@@ -5318,7 +5318,7 @@
           "name": "whatsapp_connections_personal_account_id_fkey",
           "tableFrom": "whatsapp_connections",
           "tableTo": "personal_accounts",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id"],
           "columnsTo": ["id"],
           "onDelete": "cascade",
@@ -5328,7 +5328,7 @@
           "name": "whatsapp_connections_connection_setup_tenant_fk",
           "tableFrom": "whatsapp_connections",
           "tableTo": "connection_setups",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id", "connection_setup_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "restrict",
@@ -5338,7 +5338,7 @@
           "name": "whatsapp_connections_setup_ingress_foreign_key",
           "tableFrom": "whatsapp_connections",
           "tableTo": "connection_setups",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": [
             "personal_account_id",
             "webhook_ingress_id",
@@ -5378,8 +5378,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -5434,9 +5434,9 @@
       },
       "isRLSEnabled": false
     },
-    "app.whatsapp_conversations": {
+    "public.whatsapp_conversations": {
       "name": "whatsapp_conversations",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "id": {
           "name": "id",
@@ -5551,7 +5551,7 @@
           "name": "whatsapp_conversations_personal_account_id_whatsapp_connec_fkey",
           "tableFrom": "whatsapp_conversations",
           "tableTo": "whatsapp_connections",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id", "whatsapp_connection_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "cascade",
@@ -5586,8 +5586,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -5614,9 +5614,9 @@
       },
       "isRLSEnabled": false
     },
-    "app.whatsapp_group_directory_states": {
+    "public.whatsapp_group_directory_states": {
       "name": "whatsapp_group_directory_states",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "personal_account_id": {
           "name": "personal_account_id",
@@ -5686,7 +5686,7 @@
           "name": "whatsapp_group_directory_stat_personal_account_id_whatsapp_fkey",
           "tableFrom": "whatsapp_group_directory_states",
           "tableTo": "whatsapp_connections",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id", "whatsapp_connection_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "cascade",
@@ -5706,8 +5706,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -5718,9 +5718,9 @@
       },
       "isRLSEnabled": false
     },
-    "app.whatsapp_groups": {
+    "public.whatsapp_groups": {
       "name": "whatsapp_groups",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "id": {
           "name": "id",
@@ -5754,7 +5754,7 @@
         },
         "name_prefix_indexes": {
           "name": "name_prefix_indexes",
-          "type": "app.group_name_blind_index[]",
+          "type": "public.group_name_blind_index[]",
           "primaryKey": false,
           "notNull": true,
           "default": "'{\"RAY\"}'"
@@ -5886,7 +5886,7 @@
           "name": "whatsapp_groups_personal_account_id_whatsapp_connection_id_fkey",
           "tableFrom": "whatsapp_groups",
           "tableTo": "whatsapp_connections",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id", "whatsapp_connection_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "cascade",
@@ -5921,8 +5921,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -5972,7 +5972,7 @@
         },
         "whatsapp_groups_name_prefix_indexes_check": {
           "name": "whatsapp_groups_name_prefix_indexes_check",
-          "value": "array_position(name_prefix_indexes, (NULL::text)::app.group_name_blind_index) IS NULL"
+          "value": "array_position(name_prefix_indexes, (NULL::text)::public.group_name_blind_index) IS NULL"
         },
         "whatsapp_groups_check1": {
           "name": "whatsapp_groups_check1",
@@ -5981,9 +5981,9 @@
       },
       "isRLSEnabled": false
     },
-    "app.whatsapp_number_reservations": {
+    "public.whatsapp_number_reservations": {
       "name": "whatsapp_number_reservations",
-      "schema": "app",
+      "schema": "public",
       "columns": {
         "number_token": {
           "name": "number_token",
@@ -6040,7 +6040,7 @@
           "name": "whatsapp_number_reservations_personal_account_id_connectio_fkey",
           "tableFrom": "whatsapp_number_reservations",
           "tableTo": "connection_setups",
-          "schemaTo": "app",
+          "schemaTo": "public",
           "columnsFrom": ["personal_account_id", "connection_setup_id"],
           "columnsTo": ["id", "personal_account_id"],
           "onDelete": "restrict",
@@ -6060,8 +6060,8 @@
           "as": "PERMISSIVE",
           "for": "ALL",
           "to": ["public"],
-          "using": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)",
-          "withCheck": "(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)"
+          "using": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)",
+          "withCheck": "(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)"
         }
       },
       "checkConstraints": {
@@ -6078,10 +6078,7 @@
     }
   },
   "enums": {},
-  "schemas": {
-    "app": "app",
-    "app_private": "app_private"
-  },
+  "schemas": {},
   "sequences": {},
   "roles": {},
   "policies": {},

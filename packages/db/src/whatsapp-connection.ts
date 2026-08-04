@@ -220,7 +220,7 @@ const enterPersonalAccountContext = async (
   personalAccountId: string,
 ): Promise<void> => {
   await db.execute(
-    sql`SELECT set_config('app.personal_account_id', ${personalAccountId}, true)`,
+    sql`SELECT set_config('public.personal_account_id', ${personalAccountId}, true)`,
   );
 };
 
@@ -614,7 +614,7 @@ export const makeWhatsAppConnectionRepository = (
       return withTransaction(connection, async () => {
         await enterPersonalAccountContext(db, input.personalAccountId);
         const rows = await db.execute<ConnectionRow>(
-          sql`SELECT * FROM app_private.activate_connection_setup(
+          sql`SELECT * FROM public.activate_connection_setup(
             ${input.personalAccountId}, ${input.setupId}, ${input.connectionId},
             ${input.publicId}, ${input.webhookIngressId}, ${input.numberSuffix},
             ${input.connectedAt}, ${input.accountKeyVersion},
@@ -638,7 +638,7 @@ export const makeWhatsAppConnectionRepository = (
   claimLifecycle: (input) =>
     provider.withConnection(async (connection) => {
       const rows = await makeDatabase(connection).execute<LifecycleClaimRow>(
-        sql`SELECT * FROM app_private.claim_whatsapp_connection_lifecycle(
+        sql`SELECT * FROM public.claim_whatsapp_connection_lifecycle(
           ${input.clerkUserId}, ${input.publicId}, ${input.action},
           ${input.claimId}, ${input.requestedAt}
         )`,
@@ -648,7 +648,7 @@ export const makeWhatsAppConnectionRepository = (
   finishLifecycle: (input) =>
     provider.withConnection(async (connection) => {
       const rows = await makeDatabase(connection).execute<ConnectionRow>(
-        sql`SELECT * FROM app_private.finish_whatsapp_connection_lifecycle(
+        sql`SELECT * FROM public.finish_whatsapp_connection_lifecycle(
           ${input.clerkUserId}, ${input.publicId}, ${input.claimId},
           ${input.state}, ${input.observedAt}
         )`,
@@ -658,7 +658,7 @@ export const makeWhatsAppConnectionRepository = (
   prepareDeletion: (input) =>
     provider.withConnection(async (connection) => {
       const rows = await makeDatabase(connection).execute<DeletionRow>(
-        sql`SELECT * FROM app_private.prepare_whatsapp_connection_deletion(
+        sql`SELECT * FROM public.prepare_whatsapp_connection_deletion(
           ${input.clerkUserId}, ${input.publicId}
         )`,
       );
@@ -667,7 +667,7 @@ export const makeWhatsAppConnectionRepository = (
   finishDeletion: (input) =>
     provider.withConnection(async (connection) => {
       const rows = await makeDatabase(connection).execute<DeletionRow>(
-        sql`SELECT * FROM app_private.finish_whatsapp_connection_deletion(
+        sql`SELECT * FROM public.finish_whatsapp_connection_deletion(
           ${input.clerkUserId}, ${input.publicId}, ${input.deletionMarkerId},
           ${input.requestedAt}
         )`,
@@ -679,7 +679,7 @@ export const makeWhatsAppConnectionRepository = (
       const rows = await makeDatabase(connection).execute<{
         complete: unknown;
       }>(
-        sql`SELECT app_private.finish_whatsapp_connection_cleanup(
+        sql`SELECT public.finish_whatsapp_connection_cleanup(
           ${input.deletionMarkerId}, ${input.providerAbsenceConfirmedAt}
         ) AS complete`,
       );
@@ -693,7 +693,7 @@ export const makeWhatsAppConnectionRepository = (
       const rows = await makeDatabase(connection).execute<{
         confirmed: unknown;
       }>(
-        sql`SELECT app_private.confirm_whatsapp_connection_provider_absence(
+        sql`SELECT public.confirm_whatsapp_connection_provider_absence(
           ${input.deletionMarkerId}, ${input.confirmedAt}
         ) AS confirmed`,
       );
@@ -712,7 +712,7 @@ export const makeWhatsAppConnectionRepository = (
         throw new Error("invalid Connection Deletion candidate limit");
       }
       const rows = await makeDatabase(connection).execute<DeletionCandidateRow>(
-        sql`SELECT * FROM app_private.list_whatsapp_connection_deletion_candidates(
+        sql`SELECT * FROM public.list_whatsapp_connection_deletion_candidates(
           ${input.observedAt}, ${input.limit}
         )`,
       );
@@ -728,7 +728,7 @@ export const makeWhatsAppConnectionRepository = (
         throw new Error("invalid Connection Deletion purge limit");
       }
       const rows = await makeDatabase(connection).execute<DeletionCandidateRow>(
-        sql`SELECT * FROM app_private.list_whatsapp_connection_active_purge_candidates(
+        sql`SELECT * FROM public.list_whatsapp_connection_active_purge_candidates(
           ${input.observedAt}, ${input.limit}
         )`,
       );
@@ -744,7 +744,7 @@ export const makeWhatsAppConnectionRepository = (
         throw new Error("invalid Connection Deletion object limit");
       }
       const rows = await makeDatabase(connection).execute<DeletionObjectsRow>(
-        sql`SELECT * FROM app_private.prepare_whatsapp_connection_cleanup(
+        sql`SELECT * FROM public.prepare_whatsapp_connection_cleanup(
           ${input.deletionMarkerId}, ${input.requestedAt}, ${input.limit}
         )`,
       );
@@ -772,7 +772,7 @@ export const makeWhatsAppConnectionRepository = (
       const rows = await makeDatabase(connection).execute<{
         complete: unknown;
       }>(
-        sql`SELECT app_private.finish_whatsapp_connection_webhook_source_deletion(
+        sql`SELECT public.finish_whatsapp_connection_webhook_source_deletion(
           ${input.deletionMarkerId}, ${input.objectKey}
         ) AS complete`,
       );
@@ -786,7 +786,7 @@ export const makeWhatsAppConnectionRepository = (
       const db = makeDatabase(connection);
       return withTransaction(connection, async () => {
         const loaded = await db.execute<{ personal_account_id: unknown }>(
-          sql`SELECT app_private.load_whatsapp_connection_account(${clerkUserId})
+          sql`SELECT public.load_whatsapp_connection_account(${clerkUserId})
               AS personal_account_id`,
         );
         const personalAccountId = loaded[0]?.personal_account_id;
@@ -824,14 +824,14 @@ export const makeWhatsAppConnectionRepository = (
     provider.withConnection(async (connection) => {
       const db = makeDatabase(connection);
       const rows = await db.execute<ActivationRow>(
-        sql`SELECT * FROM app_private.load_connection_setup_for_activation(
+        sql`SELECT * FROM public.load_connection_setup_for_activation(
           ${input.clerkUserId}, ${input.setupId}, ${input.observedAt}
         )`,
       );
       let row = rows[0];
       if (row?.outcome === "provisioned") {
         const ingress = await db.execute<{ webhook_ingress_id: unknown }>(
-          sql`SELECT app_private.load_connection_setup_webhook_ingress_for_user(
+          sql`SELECT public.load_connection_setup_webhook_ingress_for_user(
             ${input.clerkUserId}, ${input.setupId}
           ) AS webhook_ingress_id`,
         );

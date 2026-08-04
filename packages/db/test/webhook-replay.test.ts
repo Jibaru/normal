@@ -41,12 +41,12 @@ describe("Webhook Event replay and source retention repository", () => {
     `);
     await runMigrations(database);
     await database.query(
-      `INSERT INTO app.personal_accounts (id, state)
+      `INSERT INTO public.personal_accounts (id, state)
        VALUES ($1, 'active')`,
       [accountId],
     );
     await database.query(
-      `INSERT INTO app.whatsapp_connections (
+      `INSERT INTO public.whatsapp_connections (
          id,
          personal_account_id,
          webhook_ingress_id,
@@ -139,8 +139,8 @@ describe("Webhook Event replay and source retention repository", () => {
          attempts.reason_code,
          attempts.status,
          incidents.id AS incident_reference
-       FROM app.webhook_replay_attempts AS attempts
-       JOIN app.webhook_dead_letter_incidents AS incidents
+       FROM public.webhook_replay_attempts AS attempts
+       JOIN public.webhook_dead_letter_incidents AS incidents
          ON incidents.id = attempts.incident_id`,
     );
     expect(beforeDispatch.rows).toEqual([
@@ -161,7 +161,7 @@ describe("Webhook Event replay and source retention repository", () => {
       outcome: "already_dispatched",
     });
     const dispatched = await database.query<{ dispatched_at: Date }>(
-      "SELECT dispatched_at FROM app.webhook_replay_attempts",
+      "SELECT dispatched_at FROM public.webhook_replay_attempts",
     );
     expect(dispatched.rows).toEqual([
       { dispatched_at: new Date("2026-08-01T12:10:01.000Z") },
@@ -195,7 +195,7 @@ describe("Webhook Event replay and source retention repository", () => {
     ).toEqual({ outcome: "source_unavailable" });
     const expiredPendingAttempt = await database.query<{ status: string }>(
       `SELECT status
-       FROM app.webhook_replay_attempts
+       FROM public.webhook_replay_attempts
        WHERE id = $1`,
       [requestId],
     );
@@ -214,7 +214,7 @@ describe("Webhook Event replay and source retention repository", () => {
       status: string;
     }>(
       `SELECT incident_id, status
-       FROM app.webhook_replay_attempts
+       FROM public.webhook_replay_attempts
        WHERE id = $1`,
       ["60000000-0000-4000-8000-000000000036"],
     );
@@ -236,7 +236,7 @@ describe("Webhook Event replay and source retention repository", () => {
 
     const beforeCompletion = await database.query<{ ends_at: Date | null }>(
       `SELECT ends_at
-       FROM app.ingestion_gaps
+       FROM public.ingestion_gaps
        WHERE evidence_webhook_event_id = $1`,
       [eventId],
     );
@@ -251,7 +251,7 @@ describe("Webhook Event replay and source retention repository", () => {
 
     const afterCompletion = await database.query<{ ends_at: Date | null }>(
       `SELECT ends_at
-       FROM app.ingestion_gaps
+       FROM public.ingestion_gaps
        WHERE evidence_webhook_event_id = $1`,
       [eventId],
     );
@@ -268,7 +268,7 @@ describe("Webhook Event replay and source retention repository", () => {
       deadLetteredAt: "2026-08-01T09:10:00.000Z",
     });
     await database.query(
-      `INSERT INTO app.webhook_items (
+      `INSERT INTO public.webhook_items (
          personal_account_id,
          whatsapp_connection_id,
          deduplication_identity,
@@ -282,7 +282,7 @@ describe("Webhook Event replay and source retention repository", () => {
       [accountId, connectionId, `wi1_${"x".repeat(43)}`, eventId, receivedAt],
     );
     await database.query(
-      `INSERT INTO app.webhook_item_quarantines (
+      `INSERT INTO public.webhook_item_quarantines (
          personal_account_id,
          whatsapp_connection_id,
          webhook_event_id,
@@ -296,7 +296,7 @@ describe("Webhook Event replay and source retention repository", () => {
       [accountId, connectionId, eventId, `wi1_${"x".repeat(43)}`, receivedAt],
     );
     await database.query(
-      `UPDATE app.whatsapp_connections
+      `UPDATE public.whatsapp_connections
        SET
          state_webhook_event_id = $3,
          state_webhook_item_identity = $4
@@ -333,15 +333,15 @@ describe("Webhook Event replay and source retention repository", () => {
       state_webhook_event_id: string | null;
     }>(
       `SELECT
-         (SELECT count(*)::integer FROM app.webhook_events) AS event_count,
-         (SELECT count(*)::integer FROM app.webhook_items) AS item_count,
-         (SELECT first_webhook_event_id FROM app.webhook_items LIMIT 1)
+         (SELECT count(*)::integer FROM public.webhook_events) AS event_count,
+         (SELECT count(*)::integer FROM public.webhook_items) AS item_count,
+         (SELECT first_webhook_event_id FROM public.webhook_items LIMIT 1)
            AS first_webhook_event_id,
-         (SELECT count(*)::integer FROM app.webhook_item_quarantines)
+         (SELECT count(*)::integer FROM public.webhook_item_quarantines)
            AS quarantine_count,
-         (SELECT state_webhook_event_id FROM app.whatsapp_connections
+         (SELECT state_webhook_event_id FROM public.whatsapp_connections
           WHERE id = $2) AS state_webhook_event_id,
-         (SELECT webhook_event_id FROM app.webhook_dead_letter_incidents
+         (SELECT webhook_event_id FROM public.webhook_dead_letter_incidents
           WHERE id = $1) AS incident_event_id`,
       [deadLetter.incidentReference, connectionId],
     );
@@ -369,7 +369,7 @@ describe("Webhook Event replay and source retention repository", () => {
     ).toEqual({ outcome: "source_unavailable" });
     const expiredReplay = await database.query<{ status: string }>(
       `SELECT status
-       FROM app.webhook_replay_attempts
+       FROM public.webhook_replay_attempts
        WHERE id = $1`,
       [expiredReplayId],
     );
@@ -380,11 +380,11 @@ describe("Webhook Event replay and source retention repository", () => {
     await database.exec("SET ROLE whatsapp_api_runtime");
     try {
       await expect(
-        database.query("SELECT id FROM app.webhook_replay_attempts"),
+        database.query("SELECT id FROM public.webhook_replay_attempts"),
       ).rejects.toThrow();
       await expect(
         database.query(
-          "SELECT * FROM app_private.list_expired_webhook_sources(now(), 100)",
+          "SELECT * FROM public.list_expired_webhook_sources(now(), 100)",
         ),
       ).rejects.toThrow();
     } finally {

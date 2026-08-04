@@ -230,7 +230,7 @@ export const makeDirectoryRepository = (
     provider.withConnection(async (connection) => {
       const db = makeDatabase(connection);
       const result = await db.execute<CandidateRow>(sql`
-        SELECT * FROM app_private.claim_contact_reconciliations(
+        SELECT * FROM public.claim_contact_reconciliations(
           ${input.claimedAt}, ${input.limit}
         )
       `);
@@ -240,7 +240,7 @@ export const makeDirectoryRepository = (
     provider.withConnection(async (connection) => {
       const db = makeDatabase(connection);
       const result = await db.execute<{ failed: unknown }>(sql`
-        SELECT app_private.fail_contact_reconciliation(
+        SELECT public.fail_contact_reconciliation(
           ${input.whatsappConnectionId}, ${input.claimId}, ${input.failedAt}
         ) AS failed
       `);
@@ -251,7 +251,7 @@ export const makeDirectoryRepository = (
       const db = makeDatabase(connection);
       const contacts = JSON.stringify(input.contacts.map(encodedContact));
       const result = await db.execute<{ finished: unknown }>(sql`
-        SELECT app_private.finish_contact_reconciliation(
+        SELECT public.finish_contact_reconciliation(
           ${input.whatsappConnectionId}, ${input.claimId}, ${input.observedAt},
           ${input.stale}, ${input.partial}, ${contacts}::jsonb
         ) AS finished

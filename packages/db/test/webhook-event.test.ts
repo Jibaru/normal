@@ -61,12 +61,12 @@ describe("Webhook Event repository", () => {
     `);
     await runMigrations(database);
     await database.query(
-      `INSERT INTO app.personal_accounts (id, state)
+      `INSERT INTO public.personal_accounts (id, state)
        VALUES ($1, 'active'), ($2, 'active')`,
       [accountId, otherAccountId],
     );
     await database.query(
-      `INSERT INTO app_private.clerk_identities (
+      `INSERT INTO public.clerk_identities (
          clerk_user_id,
          personal_account_id
        )
@@ -74,7 +74,7 @@ describe("Webhook Event repository", () => {
       [accountId],
     );
     await database.query(
-      `INSERT INTO app.whatsapp_connections (
+      `INSERT INTO public.whatsapp_connections (
          id,
          personal_account_id,
          webhook_ingress_id,
@@ -94,7 +94,7 @@ describe("Webhook Event repository", () => {
       ],
     );
     await database.query(
-      `INSERT INTO app.personal_account_key_envelopes (
+      `INSERT INTO public.personal_account_key_envelopes (
          personal_account_id,
          key_version,
          kms_key_id,
@@ -104,7 +104,7 @@ describe("Webhook Event repository", () => {
       [accountId],
     );
     await database.query(
-      `INSERT INTO app.whatsapp_connection_key_envelopes (
+      `INSERT INTO public.whatsapp_connection_key_envelopes (
          personal_account_id,
          whatsapp_connection_id,
          account_key_version,
@@ -120,7 +120,7 @@ describe("Webhook Event repository", () => {
       [accountId, connectionId],
     );
     await database.query(
-      `INSERT INTO app.whatsapp_connection_secrets (
+      `INSERT INTO public.whatsapp_connection_secrets (
          personal_account_id,
          whatsapp_connection_id,
          credential_ciphertext,
@@ -210,7 +210,7 @@ describe("Webhook Event repository", () => {
          count(*)::integer AS event_count,
          min(ciphertext_sha256) AS ciphertext_sha256,
          min(source_expires_at) AS source_expires_at
-       FROM app.webhook_events`,
+       FROM public.webhook_events`,
     );
     expect(events.rows[0]).toMatchObject({
       ciphertext_sha256: "a".repeat(64),
@@ -259,8 +259,8 @@ describe("Webhook Event repository", () => {
          gaps.evidence_webhook_event_id,
          count(*) OVER ()::integer AS gap_count,
          gaps.starts_at
-       FROM app.ingestion_gaps AS gaps
-       JOIN app.webhook_events AS events
+       FROM public.ingestion_gaps AS gaps
+       JOIN public.webhook_events AS events
          ON events.id = gaps.evidence_webhook_event_id`,
     );
     expect(recorded.rows).toEqual([
@@ -274,7 +274,7 @@ describe("Webhook Event repository", () => {
     ]);
 
     await database.query(
-      `INSERT INTO app.whatsapp_connections (
+      `INSERT INTO public.whatsapp_connections (
          id,
          personal_account_id,
          webhook_ingress_id,
@@ -293,7 +293,7 @@ describe("Webhook Event repository", () => {
       ],
     );
     await database.query(
-      `INSERT INTO app.webhook_events (
+      `INSERT INTO public.webhook_events (
          personal_account_id,
          whatsapp_connection_id,
          id,
@@ -313,7 +313,7 @@ describe("Webhook Event repository", () => {
     );
     await expect(
       database.query(
-        `INSERT INTO app.ingestion_gaps (
+        `INSERT INTO public.ingestion_gaps (
            personal_account_id,
            whatsapp_connection_id,
            cause,
@@ -328,12 +328,12 @@ describe("Webhook Event repository", () => {
       ),
     ).rejects.toThrow();
 
-    await database.query("DELETE FROM app.webhook_events WHERE id = $1", [
+    await database.query("DELETE FROM public.webhook_events WHERE id = $1", [
       firstEventId,
     ]);
     const retainedGap = await database.query<{
       evidence_webhook_event_id: string | null;
-    }>("SELECT evidence_webhook_event_id FROM app.ingestion_gaps");
+    }>("SELECT evidence_webhook_event_id FROM public.ingestion_gaps");
     expect(retainedGap.rows).toEqual([{ evidence_webhook_event_id: null }]);
   });
 
@@ -353,7 +353,7 @@ describe("Webhook Event repository", () => {
         deadLetteredAt: "2026-08-01T09:10:00.000Z",
       }),
     ).toEqual({ incidentReference: null, outcome: "already_completed" });
-    const gaps = await database.query("SELECT id FROM app.ingestion_gaps");
+    const gaps = await database.query("SELECT id FROM public.ingestion_gaps");
     expect(gaps.rows).toEqual([]);
   });
 
@@ -364,7 +364,7 @@ describe("Webhook Event repository", () => {
     await database.exec("SET ROLE whatsapp_webhook_runtime");
     try {
       const withoutContext = await database.query(
-        "SELECT id FROM app.webhook_events",
+        "SELECT id FROM public.webhook_events",
       );
       expect(withoutContext.rows).toEqual([]);
     } finally {
@@ -374,7 +374,7 @@ describe("Webhook Event repository", () => {
     await database.exec("SET ROLE whatsapp_api_runtime");
     try {
       await expect(
-        database.query("SELECT id FROM app.webhook_events"),
+        database.query("SELECT id FROM public.webhook_events"),
       ).rejects.toThrow();
     } finally {
       await database.exec("RESET ROLE");
@@ -388,21 +388,21 @@ describe("Webhook Event repository", () => {
     const sendId = "60000000-0000-4000-8000-000000000050";
     const messageIdentity = itemIdentity("send-message");
     await database.query(
-      `INSERT INTO app.mcp_authorizations (
+      `INSERT INTO public.mcp_authorizations (
          id, personal_account_id, oauth_subject, client_id, client_class,
          scopes, reverified_at, authorized_at, absolute_expires_at
        ) VALUES ($1,$2,$3,'send-status-client','approved',ARRAY['messages:send'],$4,$4,$4::timestamptz + interval '90 days')`,
       [authorizationId, accountId, "S".repeat(43), receivedAt],
     );
     await database.query(
-      `INSERT INTO app.tool_call_logs (
+      `INSERT INTO public.tool_call_logs (
          id, personal_account_id, mcp_authorization_id, tool_name, started_at,
          outcome, quota_reserved, expires_at
        ) VALUES ($1,$2,$3,'send_text_message',$4,'started',true,$4::timestamptz + interval '90 days')`,
       [auditLogId, accountId, authorizationId, receivedAt],
     );
     await database.query(
-      `INSERT INTO app.send_operations (
+      `INSERT INTO public.send_operations (
          id, public_id, personal_account_id, mcp_authorization_id,
          tool_call_log_id, whatsapp_connection_id, recipient_type,
          recipient_public_id, status, created_at, status_changed_at,
@@ -422,7 +422,7 @@ describe("Webhook Event repository", () => {
       ],
     );
     await database.query(
-      `INSERT INTO app.directory_contacts (
+      `INSERT INTO public.directory_contacts (
          personal_account_id,whatsapp_connection_id,id,public_id,
          provider_identity_index,provider_identity_ciphertext_version,
          provider_identity_key_version,provider_identity_nonce,
@@ -433,7 +433,7 @@ describe("Webhook Event repository", () => {
       [accountId, connectionId, `di1_${"C".repeat(43)}`, receivedAt],
     );
     await database.query(
-      `INSERT INTO app.pending_send_contents (
+      `INSERT INTO public.pending_send_contents (
          send_operation_id,personal_account_id,whatsapp_connection_id,
          ciphertext_version,key_version,nonce,ciphertext,expires_at
        ) VALUES ($1,$2,$3,1,2,decode(repeat('13',12),'hex'),
@@ -492,13 +492,13 @@ describe("Webhook Event repository", () => {
     await expect(project("read", 2)).resolves.toBe("applied");
     await expect(project("sent", 3)).resolves.toBe("superseded");
     await database.query(
-      "UPDATE app.send_operations SET status='unknown' WHERE id=$1",
+      "UPDATE public.send_operations SET status='unknown' WHERE id=$1",
       [sendId],
     );
     await expect(project("failed", 4)).resolves.toBe("applied");
     await expect(project("sent", 5)).resolves.toBe("applied");
     const persisted = await database.query<{ status: string }>(
-      "SELECT status FROM app.send_operations WHERE id=$1",
+      "SELECT status FROM public.send_operations WHERE id=$1",
       [sendId],
     );
     expect(persisted.rows).toEqual([{ status: "sent" }]);
@@ -509,10 +509,10 @@ describe("Webhook Event repository", () => {
       stored_count: number;
     }>(
       `SELECT messages.content_key_version,messages.direction,
-         (SELECT count(*)::int FROM app.pending_send_contents
+         (SELECT count(*)::int FROM public.pending_send_contents
           WHERE send_operation_id=$1) AS pending_count,
          count(*) OVER ()::int AS stored_count
-       FROM app.stored_messages messages
+       FROM public.stored_messages messages
        WHERE messages.personal_account_id=$2
          AND messages.whatsapp_connection_id=$3
          AND messages.message_identity=$4`,
@@ -533,17 +533,17 @@ describe("Webhook Event repository", () => {
       can_update_message_identity: boolean;
     }>(
       `SELECT has_table_privilege(
-         'whatsapp_webhook_runtime', 'app.pending_send_contents', 'DELETE'
+         'whatsapp_webhook_runtime', 'public.pending_send_contents', 'DELETE'
        ) AS can_delete_pending,
        has_column_privilege(
-         'whatsapp_webhook_runtime', 'app.pending_send_contents',
+         'whatsapp_webhook_runtime', 'public.pending_send_contents',
          'personal_account_id', 'SELECT'
        ) AND has_column_privilege(
-         'whatsapp_webhook_runtime', 'app.pending_send_contents',
+         'whatsapp_webhook_runtime', 'public.pending_send_contents',
          'send_operation_id', 'SELECT'
        ) AS can_select_pending_identity,
        has_column_privilege(
-         'whatsapp_webhook_runtime', 'app.send_operations',
+         'whatsapp_webhook_runtime', 'public.send_operations',
          'message_identity', 'UPDATE'
        ) AS can_update_message_identity`,
     );
@@ -649,7 +649,7 @@ describe("Webhook Event repository", () => {
       `SELECT
          count(*)::integer AS item_count,
          array_agg(outcome ORDER BY item_index) AS outcomes
-       FROM app.webhook_items`,
+       FROM public.webhook_items`,
     );
     expect(claims.rows).toEqual([
       {
@@ -732,7 +732,7 @@ describe("Webhook Event repository", () => {
     }>(
       `SELECT active, display_name_ciphertext, phone_ciphertext,
               provider_identity_ciphertext, public_id
-       FROM app.directory_contacts`,
+       FROM public.directory_contacts`,
     );
     expect(contacts.rows).toEqual([
       {
@@ -870,7 +870,7 @@ describe("Webhook Event repository", () => {
     );
     expect(
       await database.query(
-        `SELECT state,media_type,source_ciphertext IS NOT NULL AS protected FROM app.stored_media`,
+        `SELECT state,media_type,source_ciphertext IS NOT NULL AS protected FROM public.stored_media`,
       ),
     ).toMatchObject({
       rows: [{ state: "pending", media_type: "image", protected: true }],
@@ -950,7 +950,7 @@ describe("Webhook Event repository", () => {
       ),
     ).toBe("superseded");
     const row = await database.query<Record<string, unknown>>(
-      `SELECT content_ciphertext, edited_at, deleted_at FROM app.stored_messages WHERE message_identity=$1`,
+      `SELECT content_ciphertext, edited_at, deleted_at FROM public.stored_messages WHERE message_identity=$1`,
       [messageIdentity],
     );
     expect(row.rows[0]).toMatchObject({
@@ -1035,14 +1035,14 @@ describe("Webhook Event repository", () => {
          bool_and(NOT convert_from(display_name_ciphertext, 'UTF8') LIKE '%Family%')
            AS plaintext_matches,
          bool_and(joined) AS joined
-       FROM app.whatsapp_groups`,
+       FROM public.whatsapp_groups`,
     );
     expect(groups.rows).toEqual([
       { count: 1, index_count: 0, joined: false, plaintext_matches: true },
     ]);
     const items = await database.query<{ count: number }>(
       `SELECT count(*)::integer AS count
-       FROM app.webhook_items
+       FROM public.webhook_items
        WHERE item_kind = 'directory_group'`,
     );
     expect(items.rows).toEqual([{ count: 2 }]);
@@ -1092,7 +1092,7 @@ describe("Webhook Event repository", () => {
     const repository = makeWebhookEventRepository(webhookProvider);
     await repository.prepare(eventInput(firstEventId));
     await database.query(
-      `UPDATE app.whatsapp_connections
+      `UPDATE public.whatsapp_connections
        SET
          state = 'connected',
          state_changed_at = '2026-07-31T12:20:00.000Z',
@@ -1142,7 +1142,7 @@ describe("Webhook Event repository", () => {
     const repository = makeWebhookEventRepository(webhookProvider);
     await repository.prepare(eventInput(firstEventId));
     await database.query(
-      `UPDATE app.whatsapp_connections
+      `UPDATE public.whatsapp_connections
        SET
          state = 'connected',
          state_changed_at = '2026-07-31T12:20:00.000Z',
@@ -1214,11 +1214,11 @@ describe("Webhook Event repository", () => {
     }>(
       `SELECT
          events.processing_completed_at AS completed_at,
-         (SELECT count(*)::integer FROM app.webhook_item_quarantines)
+         (SELECT count(*)::integer FROM public.webhook_item_quarantines)
            AS quarantine_count,
          connections.state
-       FROM app.webhook_events AS events
-       JOIN app.whatsapp_connections AS connections
+       FROM public.webhook_events AS events
+       JOIN public.whatsapp_connections AS connections
          ON connections.personal_account_id = events.personal_account_id
         AND connections.id = events.whatsapp_connection_id
        WHERE events.id = $1`,

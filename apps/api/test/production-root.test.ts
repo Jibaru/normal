@@ -34,6 +34,7 @@ describe("API production root", () => {
     expect(checkDatabaseReadiness).toHaveBeenCalledWith(
       environment.HYPERDRIVE.connectionString,
       environment.NEON_BRANCH_ID,
+      false,
     );
   });
 

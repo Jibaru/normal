@@ -165,7 +165,7 @@ export const makeWebhookIngressRepository = (
     provider.withConnection(async (connection) => {
       const db = makeDatabase(connection);
       const result = await db.execute<IngressRow>(sql`
-        SELECT * FROM app_private.bootstrap_whatsapp_connection_for_ingress(
+        SELECT * FROM public.bootstrap_whatsapp_connection_for_ingress(
           ${webhookIngressId}
         )
       `);

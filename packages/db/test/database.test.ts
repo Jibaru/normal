@@ -28,7 +28,7 @@ test("Drizzle builds and maps application queries", async () => {
     { connectionId: "con_example", numberSuffix: "3456" },
   ]);
   expect(query).toHaveBeenCalledWith(
-    expect.stringContaining('from "app"."whatsapp_connections"'),
+    expect.stringContaining('from "whatsapp_connections"'),
     ["con_example"],
   );
 });

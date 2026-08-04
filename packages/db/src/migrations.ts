@@ -7,7 +7,7 @@ export { EXPECTED_SCHEMA_VERSION } from "./schema-version";
 
 const migrationConfig = {
   migrationsFolder: fileURLToPath(new URL("../drizzle", import.meta.url)),
-  migrationsSchema: "app_private",
+  migrationsSchema: "public",
   migrationsTable: "drizzle_migrations",
 } as const;
 

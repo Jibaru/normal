@@ -43,7 +43,7 @@ describe("WhatsApp group projection repository", () => {
     `);
     await runMigrations(database);
     await database.query(
-      `SELECT * FROM app_private.admit_personal_account_for_clerk(
+      `SELECT * FROM public.admit_personal_account_for_clerk(
         $1, $2, 1, $3, decode('0102', 'hex'), 6
       )`,
       [
@@ -53,7 +53,7 @@ describe("WhatsApp group projection repository", () => {
       ],
     );
     await database.query(
-      `INSERT INTO app.whatsapp_connections (
+      `INSERT INTO public.whatsapp_connections (
          id, personal_account_id, webhook_ingress_id,
          display_name_ciphertext, public_id, state, state_changed_at, created_at
        ) VALUES ($1, $2, gen_random_uuid(), NULL,
@@ -124,7 +124,7 @@ describe("WhatsApp group projection repository", () => {
            AS name_prefix_indexes,
          display_name_ciphertext,
          provider_identity_ciphertext
-       FROM app.whatsapp_groups`,
+       FROM public.whatsapp_groups`,
     );
     expect(projected.rows).toHaveLength(1);
     expect(projected.rows[0]).toMatchObject({
@@ -140,7 +140,7 @@ describe("WhatsApp group projection repository", () => {
     ).not.toContain("sealed-provider-group");
 
     await database.query(
-      `UPDATE app.whatsapp_groups
+      `UPDATE public.whatsapp_groups
        SET provider_occurred_at = $1,
            provider_version = 'stale-webhook-version',
            received_at = $1,
@@ -168,7 +168,7 @@ describe("WhatsApp group projection repository", () => {
     }>(
       `SELECT provider_occurred_at, provider_version, received_at,
          webhook_event_id, webhook_item_identity
-       FROM app.whatsapp_groups`,
+       FROM public.whatsapp_groups`,
     );
     expect(reconciledEvidence.rows).toEqual([
       {
@@ -198,7 +198,7 @@ describe("WhatsApp group projection repository", () => {
       `SELECT joined,
          ARRAY(SELECT value::text FROM unnest(name_prefix_indexes) AS value)
            AS name_prefix_indexes
-       FROM app.whatsapp_groups`,
+       FROM public.whatsapp_groups`,
     );
     expect(current.rows).toEqual([{ joined: false, name_prefix_indexes: [] }]);
   });
@@ -236,14 +236,14 @@ describe("WhatsApp group projection repository", () => {
       }),
     ).resolves.toEqual({ applied: 0, unjoined: 0 });
     const current = await database.query<{ joined: boolean }>(
-      "SELECT joined FROM app.whatsapp_groups",
+      "SELECT joined FROM public.whatsapp_groups",
     );
     expect(current.rows).toEqual([{ joined: true }]);
   });
 
   test("claims only connection-bound encrypted material and leases failures", async () => {
     await database.query(
-      `INSERT INTO app.whatsapp_connection_key_envelopes (
+      `INSERT INTO public.whatsapp_connection_key_envelopes (
          personal_account_id, whatsapp_connection_id, account_key_version,
          key_version, nonce, ciphertext
        ) VALUES ($1, $2, 1, 1, decode(repeat('01', 12), 'hex'),
@@ -251,7 +251,7 @@ describe("WhatsApp group projection repository", () => {
       [accountId, connectionId],
     );
     await database.query(
-      `INSERT INTO app.whatsapp_connection_provider_sessions (
+      `INSERT INTO public.whatsapp_connection_provider_sessions (
          personal_account_id, whatsapp_connection_id,
          locator_ciphertext_version, locator_key_version, locator_nonce,
          locator_ciphertext, authority_ciphertext_version,
@@ -264,7 +264,7 @@ describe("WhatsApp group projection repository", () => {
       [accountId, connectionId, observedAt],
     );
     await database.query(
-      `INSERT INTO app.whatsapp_connection_secrets (
+      `INSERT INTO public.whatsapp_connection_secrets (
          personal_account_id, whatsapp_connection_id, credential_ciphertext,
          credential_ciphertext_version, credential_key_version,
          credential_nonce
@@ -307,7 +307,7 @@ describe("WhatsApp group projection repository", () => {
     ).resolves.toEqual([]);
 
     await database.query(
-      `UPDATE app.whatsapp_group_directory_states
+      `UPDATE public.whatsapp_group_directory_states
        SET as_of = $3
        WHERE personal_account_id = $1
          AND whatsapp_connection_id = $2`,

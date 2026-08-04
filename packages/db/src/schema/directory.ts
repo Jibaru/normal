@@ -13,11 +13,16 @@ import {
   unique,
   uuid,
 } from "drizzle-orm/pg-core";
-import { app, bytea, directoryBlindIndex, groupNameBlindIndex } from "./common";
+import {
+  bytea,
+  directoryBlindIndex,
+  groupNameBlindIndex,
+  publicSchema,
+} from "./common";
 import { whatsappConnectionsInApp } from "./connections";
 import { webhookEventsInApp } from "./webhooks";
 
-export const whatsappGroupsInApp = app.table(
+export const whatsappGroupsInApp = publicSchema.table(
   "whatsapp_groups",
   {
     id: uuid().primaryKey().notNull(),
@@ -93,8 +98,8 @@ export const whatsappGroupsInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "whatsapp_groups_public_id_check",
@@ -142,7 +147,7 @@ export const whatsappGroupsInApp = app.table(
     ),
     check(
       "whatsapp_groups_name_prefix_indexes_check",
-      sql`array_position(name_prefix_indexes, (NULL::text)::app.group_name_blind_index) IS NULL`,
+      sql`array_position(name_prefix_indexes, (NULL::text)::public.group_name_blind_index) IS NULL`,
     ),
     check(
       "whatsapp_groups_check1",
@@ -151,7 +156,7 @@ export const whatsappGroupsInApp = app.table(
   ],
 );
 
-export const whatsappGroupDirectoryStatesInApp = app.table(
+export const whatsappGroupDirectoryStatesInApp = publicSchema.table(
   "whatsapp_group_directory_states",
   {
     personalAccountId: uuid("personal_account_id").notNull(),
@@ -191,8 +196,8 @@ export const whatsappGroupDirectoryStatesInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "whatsapp_group_directory_states_check",
@@ -201,7 +206,7 @@ export const whatsappGroupDirectoryStatesInApp = app.table(
   ],
 );
 
-export const directoryContactProjectionsInApp = app.table(
+export const directoryContactProjectionsInApp = publicSchema.table(
   "directory_contact_projections",
   {
     personalAccountId: uuid("personal_account_id").notNull(),
@@ -244,8 +249,8 @@ export const directoryContactProjectionsInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "directory_contact_projections_check",
@@ -254,7 +259,7 @@ export const directoryContactProjectionsInApp = app.table(
   ],
 );
 
-export const directoryContactsInApp = app.table(
+export const directoryContactsInApp = publicSchema.table(
   "directory_contacts",
   {
     personalAccountId: uuid("personal_account_id").notNull(),
@@ -368,8 +373,8 @@ export const directoryContactsInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "directory_contacts_public_id_check",
@@ -405,7 +410,7 @@ export const directoryContactsInApp = app.table(
     ),
     check(
       "directory_contacts_name_prefix_indexes_check",
-      sql`array_position(name_prefix_indexes, (NULL::text)::app.directory_blind_index) IS NULL`,
+      sql`array_position(name_prefix_indexes, (NULL::text)::public.directory_blind_index) IS NULL`,
     ),
     check(
       "directory_contacts_check2",

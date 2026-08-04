@@ -146,7 +146,7 @@ export const makeWebhookReplayRepository = (
     provider.withConnection(async (connection) => {
       const db = makeDatabase(connection);
       const result = await db.execute<{ completed: unknown }>(sql`
-        SELECT app_private.complete_webhook_replay(
+        SELECT public.complete_webhook_replay(
           ${input.requestId}, ${input.dispatchedAt}
         ) AS completed
       `);
@@ -159,7 +159,7 @@ export const makeWebhookReplayRepository = (
     provider.withConnection(async (connection) => {
       const db = makeDatabase(connection);
       const result = await db.execute<{ finalized: unknown }>(sql`
-        SELECT app_private.finalize_expired_webhook_source(
+        SELECT public.finalize_expired_webhook_source(
           ${input.eventId}, ${input.observedAt}
         ) AS finalized
       `);
@@ -174,7 +174,7 @@ export const makeWebhookReplayRepository = (
       const db = makeDatabase(connection);
       const result = await db.execute<{ event_id: unknown }>(sql`
         SELECT event_id
-        FROM app_private.list_expired_webhook_sources(
+        FROM public.list_expired_webhook_sources(
           ${input.observedAt}, ${input.limit}
         )
       `);
@@ -192,7 +192,7 @@ export const makeWebhookReplayRepository = (
       let result: Array<PrepareRow>;
       try {
         result = await db.execute<PrepareRow>(sql`
-          SELECT * FROM app_private.prepare_webhook_replay(
+          SELECT * FROM public.prepare_webhook_replay(
             ${input.requestId}, ${input.incidentReference},
             ${input.operatorReference}, ${input.reasonCode},
             ${input.requestedAt}, ${input.observedAt}

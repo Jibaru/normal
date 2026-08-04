@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+const apiPort = process.env.PLAYWRIGHT_API_PORT ?? "8787";
+
 // A failed journey must not retain the ephemeral QR response in a trace.
 test.use({ trace: "off" });
 
@@ -63,7 +65,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     const localUrl = new URL(original.url());
     localUrl.protocol = "http:";
     localUrl.hostname = "127.0.0.1";
-    localUrl.port = "8787";
+    localUrl.port = apiPort;
 
     const response = await request.fetch(localUrl.toString(), {
       data: original.postDataBuffer(),
@@ -191,18 +193,25 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     "connected",
   );
   const connection = page.getByTestId("whatsapp-connection");
-  await expect(page.getByLabel("Message Retention Policy")).toHaveValue("30");
-  await page.getByLabel("Message Retention Policy").selectOption("7");
+  const retentionPolicy = page.getByRole("combobox", {
+    name: "Message Retention Policy",
+  });
+  await expect(retentionPolicy).toContainText("30 days");
+  await retentionPolicy.click();
+  await page.getByRole("option", { name: "7 days" }).click();
   await page.getByRole("button", { name: "Save retention policy" }).click();
   await expect(connection).toContainText("Current policy: 7 days");
+  await retentionPolicy.click();
   await page
-    .getByLabel("Message Retention Policy")
-    .selectOption("until-deletion");
+    .getByRole("option", { name: "Retain until Connection Deletion" })
+    .click();
   await expect(
     page.getByRole("button", { name: "Save retention policy" }),
   ).toBeDisabled();
   await page
-    .getByLabel("I explicitly choose to retain message content for longer.")
+    .getByRole("checkbox", {
+      name: "I explicitly choose to retain message content for longer.",
+    })
     .check();
   await page.getByRole("button", { name: "Save retention policy" }).click();
   await expect(connection).toContainText("retain until Connection Deletion");
@@ -252,7 +261,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   expect(setupBodies[0]?.whatsapp_number).toBe("+1 (555) 012-3456");
   expect(setupBodies[0]?.idempotency_key).toMatch(/^[A-Za-z0-9_-]{21}$/);
   const providerObservations = await request.get(
-    "http://127.0.0.1:8787/test/provider-observations",
+    `http://127.0.0.1:${apiPort}/test/provider-observations`,
   );
   expect(await providerObservations.json()).toEqual([
     "reconcileSession",
@@ -277,7 +286,7 @@ test("waitlists a signed-in User when private-beta capacity is exhausted", async
     const localUrl = new URL(original.url());
     localUrl.protocol = "http:";
     localUrl.hostname = "127.0.0.1";
-    localUrl.port = "8787";
+    localUrl.port = apiPort;
 
     const response = await request.fetch(localUrl.toString(), {
       data: original.postDataBuffer(),
@@ -333,7 +342,7 @@ test("keeps the Personal Account usable when MCP Authorization listing is unavai
     const localUrl = new URL(original.url());
     localUrl.protocol = "http:";
     localUrl.hostname = "127.0.0.1";
-    localUrl.port = "8787";
+    localUrl.port = apiPort;
     const response = await request.fetch(localUrl.toString(), {
       data: original.postDataBuffer(),
       headers: original.headers(),

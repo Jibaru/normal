@@ -36,27 +36,25 @@ describe("production migrations", () => {
     const result = await database.query<{
       created_at: string;
       hash: string;
-    }>(
-      "SELECT created_at, hash FROM app_private.drizzle_migrations ORDER BY id",
-    );
+    }>("SELECT created_at, hash FROM public.drizzle_migrations ORDER BY id");
 
     expect(result.rows).toHaveLength(1);
     expect(Number(result.rows[0]?.created_at)).toBe(EXPECTED_SCHEMA_VERSION);
     expect(result.rows[0]?.hash).toBe(
-      "20063ae83cd8d6a8e5849c7f5e7956644aba347643d0608e16dd1711fc132e75",
+      "462580a6b9656b38650804c706bf9133a8c88df41185a6f2f08359122b8c5de8",
     );
   });
 
   test("coexists with the complete legacy migration ledger", async () => {
     await runMigrations(database);
     await database.exec(`
-      CREATE TABLE app_private.schema_migrations (
+      CREATE TABLE public.schema_migrations (
         version integer PRIMARY KEY,
         name text NOT NULL,
         checksum text NOT NULL,
         applied_at timestamptz NOT NULL DEFAULT transaction_timestamp()
       );
-      INSERT INTO app_private.schema_migrations (version, name, checksum)
+      INSERT INTO public.schema_migrations (version, name, checksum)
       SELECT version, 'legacy migration ' || version, repeat('a', 64)
       FROM generate_series(1, 40) AS version;
     `);
@@ -65,8 +63,8 @@ describe("production migrations", () => {
 
     const ledgers = await database.query<{ legacy: number; standard: number }>(`
       SELECT
-        (SELECT count(*)::int FROM app_private.schema_migrations) AS legacy,
-        (SELECT count(*)::int FROM app_private.drizzle_migrations) AS standard
+        (SELECT count(*)::int FROM public.schema_migrations) AS legacy,
+        (SELECT count(*)::int FROM public.drizzle_migrations) AS standard
     `);
     expect(ledgers.rows).toEqual([{ legacy: 40, standard: 1 }]);
   });
@@ -79,14 +77,14 @@ describe("production migrations", () => {
     const completeSnapshot = new Date("2026-07-31T12:02:00.000Z");
 
     await database.query(
-      `INSERT INTO app.directory_contact_projections (
+      `INSERT INTO public.directory_contact_projections (
          personal_account_id, whatsapp_connection_id, as_of,
          snapshot_observed_at, stale, partial, retention_limited, updated_at
        ) VALUES ($1, $2, $3, $3, false, true, true, $3)`,
       [accountA, connectionA, initialSnapshot],
     );
     await database.query(
-      `INSERT INTO app.whatsapp_group_directory_states (
+      `INSERT INTO public.whatsapp_group_directory_states (
          personal_account_id, whatsapp_connection_id, as_of,
          snapshot_observed_at, stale, partial, retention_limited, updated_at
        ) VALUES ($1, $2, $3, $3, false, true, true, $3)`,
@@ -98,14 +96,14 @@ describe("production migrations", () => {
       "whatsapp_group_directory_states",
     ]) {
       await database.query(
-        `UPDATE app.${table}
+        `UPDATE public.${table}
          SET as_of = $3, snapshot_observed_at = $3, updated_at = $3
          WHERE personal_account_id = $1
            AND whatsapp_connection_id = $2`,
         [accountA, connectionA, partialSnapshot],
       );
       const partial = await database.query<{ retention_limited: boolean }>(
-        `SELECT retention_limited FROM app.${table}
+        `SELECT retention_limited FROM public.${table}
          WHERE personal_account_id = $1
            AND whatsapp_connection_id = $2`,
         [accountA, connectionA],
@@ -113,7 +111,7 @@ describe("production migrations", () => {
       expect(partial.rows).toEqual([{ retention_limited: true }]);
 
       await database.query(
-        `UPDATE app.${table}
+        `UPDATE public.${table}
          SET as_of = $3, snapshot_observed_at = $3,
              partial = false, updated_at = $3
          WHERE personal_account_id = $1
@@ -121,7 +119,7 @@ describe("production migrations", () => {
         [accountA, connectionA, completeSnapshot],
       );
       const complete = await database.query<{ retention_limited: boolean }>(
-        `SELECT retention_limited FROM app.${table}
+        `SELECT retention_limited FROM public.${table}
          WHERE personal_account_id = $1
            AND whatsapp_connection_id = $2`,
         [accountA, connectionA],
@@ -139,9 +137,7 @@ describe("production migrations", () => {
         assertExpectedSchemaVersion(database),
       ).resolves.toBeUndefined();
       await expect(
-        database.query(
-          "DELETE FROM app_private.drizzle_migrations WHERE id = 1",
-        ),
+        database.query("DELETE FROM public.drizzle_migrations WHERE id = 1"),
       ).rejects.toThrow();
     } finally {
       await database.exec("RESET ROLE");
@@ -211,7 +207,7 @@ describe("production migrations", () => {
     const runtimeOwnedTables = await database.query<{ count: number }>(`
       SELECT count(*)::integer AS count
       FROM pg_catalog.pg_tables
-      WHERE schemaname IN ('app', 'app_private')
+      WHERE schemaname IN ('public', 'public')
         AND tableowner IN (
           'whatsapp_api_runtime',
           'whatsapp_webhook_runtime'
@@ -227,12 +223,12 @@ describe("production migrations", () => {
     await database.exec("SET ROLE whatsapp_api_runtime; BEGIN");
     try {
       const withoutContext = await database.query(
-        "SELECT id FROM app.whatsapp_connections",
+        "SELECT id FROM public.whatsapp_connections",
       );
       expect(withoutContext.rows).toEqual([]);
       await expect(
         database.query(
-          `INSERT INTO app.whatsapp_connections
+          `INSERT INTO public.whatsapp_connections
             (personal_account_id, id, webhook_ingress_id, display_name_ciphertext)
            VALUES ($1, $2, gen_random_uuid(), decode('01', 'hex'))`,
           [accountA, "20000000-0000-4000-8000-000000000003"],
@@ -241,17 +237,17 @@ describe("production migrations", () => {
       await database.exec("ROLLBACK; SET ROLE whatsapp_api_runtime; BEGIN");
 
       await database.query(
-        "SELECT set_config('app.personal_account_id', $1, true)",
+        "SELECT set_config('public.personal_account_id', $1, true)",
         [accountA],
       );
       const accountRows = await database.query<{ id: string }>(
-        "SELECT id FROM app.whatsapp_connections ORDER BY id",
+        "SELECT id FROM public.whatsapp_connections ORDER BY id",
       );
       expect(accountRows.rows).toEqual([{ id: connectionA }]);
 
       await expect(
         database.query(
-          `INSERT INTO app.whatsapp_connections
+          `INSERT INTO public.whatsapp_connections
             (personal_account_id, id, webhook_ingress_id, display_name_ciphertext)
            VALUES ($1, $2, gen_random_uuid(), decode('01', 'hex'))`,
           [accountB, "20000000-0000-4000-8000-000000000004"],
@@ -268,7 +264,7 @@ describe("production migrations", () => {
 
     await expect(
       database.query(
-        `INSERT INTO app.whatsapp_connection_secrets
+        `INSERT INTO public.whatsapp_connection_secrets
           (personal_account_id, whatsapp_connection_id, credential_ciphertext)
          VALUES ($1, $2, decode('01', 'hex'))`,
         [accountB, connectionA],
@@ -284,24 +280,24 @@ describe("production migrations", () => {
     await database.exec("SET ROLE whatsapp_api_runtime; BEGIN");
     try {
       await database.query(
-        "SELECT set_config('app.personal_account_id', $1, true)",
+        "SELECT set_config('public.personal_account_id', $1, true)",
         [accountA],
       );
       const first = await database.query<{ unavailable_at: Date }>(
-        `SELECT app_private.make_whatsapp_connection_key_unavailable(
+        `SELECT public.make_whatsapp_connection_key_unavailable(
           $1, $2, $3::timestamptz
         ) AS unavailable_at`,
         [accountA, connectionA, "2026-07-31T12:00:00.000Z"],
       );
       const replay = await database.query<{ unavailable_at: Date }>(
-        `SELECT app_private.make_whatsapp_connection_key_unavailable(
+        `SELECT public.make_whatsapp_connection_key_unavailable(
           $1, $2, $3::timestamptz
         ) AS unavailable_at`,
         [accountA, connectionA, "2026-07-31T13:00:00.000Z"],
       );
       const available = await database.query(
         `SELECT *
-         FROM app_private.load_available_whatsapp_connection_key($1, $2)`,
+         FROM public.load_available_whatsapp_connection_key($1, $2)`,
         [accountA, connectionA],
       );
 
@@ -312,7 +308,7 @@ describe("production migrations", () => {
       expect(available.rows).toEqual([]);
       await expect(
         database.query(
-          `UPDATE app.whatsapp_connection_key_envelopes
+          `UPDATE public.whatsapp_connection_key_envelopes
            SET ciphertext = decode('ff', 'hex'), unavailable_at = NULL
            WHERE personal_account_id = $1
              AND whatsapp_connection_id = $2`,
@@ -321,7 +317,7 @@ describe("production migrations", () => {
       ).rejects.toThrow();
       await expect(
         database.query(
-          `DELETE FROM app.whatsapp_connection_key_envelopes
+          `DELETE FROM public.whatsapp_connection_key_envelopes
            WHERE personal_account_id = $1
              AND whatsapp_connection_id = $2`,
           [accountA, connectionA],
@@ -340,22 +336,22 @@ describe("production migrations", () => {
     await database.exec("SET ROLE whatsapp_api_runtime; BEGIN");
     try {
       await database.query(
-        "SELECT set_config('app.personal_account_id', $1, true)",
+        "SELECT set_config('public.personal_account_id', $1, true)",
         [accountA],
       );
       await database.query(
-        `SELECT app_private.make_personal_account_key_unavailable(
+        `SELECT public.make_personal_account_key_unavailable(
           $1, $2::timestamptz
         )`,
         [accountA, "2026-07-31T12:00:00.000Z"],
       );
       const accountKey = await database.query(
-        "SELECT * FROM app_private.load_available_personal_account_key($1)",
+        "SELECT * FROM public.load_available_personal_account_key($1)",
         [accountA],
       );
       const connectionKey = await database.query(
         `SELECT *
-         FROM app_private.load_available_whatsapp_connection_key($1, $2)`,
+         FROM public.load_available_whatsapp_connection_key($1, $2)`,
         [accountA, connectionA],
       );
 
@@ -371,7 +367,7 @@ describe("production migrations", () => {
     await seedTenants(database);
     await seedKeyEnvelopes(database);
     await database.query(
-      `DELETE FROM app.whatsapp_connection_key_envelopes
+      `DELETE FROM public.whatsapp_connection_key_envelopes
        WHERE personal_account_id = $1
          AND whatsapp_connection_id = $2`,
       [accountA, connectionA],
@@ -380,11 +376,11 @@ describe("production migrations", () => {
     await database.exec("SET ROLE whatsapp_api_runtime; BEGIN");
     try {
       await database.query(
-        "SELECT set_config('app.personal_account_id', $1, true)",
+        "SELECT set_config('public.personal_account_id', $1, true)",
         [accountA],
       );
       const unavailable = await database.query<{ unavailable_at: Date }>(
-        `SELECT app_private.make_whatsapp_connection_key_unavailable(
+        `SELECT public.make_whatsapp_connection_key_unavailable(
           $1, $2, $3::timestamptz
         ) AS unavailable_at`,
         [accountA, connectionA, "2026-07-31T12:00:00.000Z"],
@@ -395,7 +391,7 @@ describe("production migrations", () => {
       );
       await expect(
         database.query(
-          `INSERT INTO app.whatsapp_connection_key_envelopes
+          `INSERT INTO public.whatsapp_connection_key_envelopes
             (
               personal_account_id,
               whatsapp_connection_id,
@@ -418,7 +414,7 @@ describe("production migrations", () => {
     await seedTenants(database);
     await seedKeyEnvelopes(database);
     await database.query(
-      `UPDATE app.whatsapp_connection_key_envelopes
+      `UPDATE public.whatsapp_connection_key_envelopes
        SET account_key_version = 2
        WHERE personal_account_id = $1
          AND whatsapp_connection_id = $2`,
@@ -428,12 +424,12 @@ describe("production migrations", () => {
     await database.exec("SET ROLE whatsapp_api_runtime; BEGIN");
     try {
       await database.query(
-        "SELECT set_config('app.personal_account_id', $1, true)",
+        "SELECT set_config('public.personal_account_id', $1, true)",
         [accountA],
       );
       const available = await database.query(
         `SELECT *
-         FROM app_private.load_available_whatsapp_connection_key($1, $2)`,
+         FROM public.load_available_whatsapp_connection_key($1, $2)`,
         [accountA, connectionA],
       );
 
@@ -451,12 +447,12 @@ describe("production migrations", () => {
     await database.exec("SET ROLE whatsapp_api_runtime; BEGIN");
     try {
       await database.query(
-        "SELECT set_config('app.personal_account_id', $1, true)",
+        "SELECT set_config('public.personal_account_id', $1, true)",
         [accountA],
       );
       await expect(
         database.query(
-          `SELECT app_private.make_whatsapp_connection_key_unavailable(
+          `SELECT public.make_whatsapp_connection_key_unavailable(
             $1, $2, transaction_timestamp()
           )`,
           [accountB, connectionB],
@@ -469,18 +465,18 @@ describe("production migrations", () => {
     await database.exec("SET ROLE whatsapp_webhook_runtime; BEGIN");
     try {
       await database.query(
-        "SELECT set_config('app.personal_account_id', $1, true)",
+        "SELECT set_config('public.personal_account_id', $1, true)",
         [accountA],
       );
       await expect(
         database.query(
-          "SELECT * FROM app_private.load_available_personal_account_key($1)",
+          "SELECT * FROM public.load_available_personal_account_key($1)",
           [accountA],
         ),
       ).rejects.toThrow();
       await expect(
         database.query(
-          `SELECT app_private.make_whatsapp_connection_key_unavailable(
+          `SELECT public.make_whatsapp_connection_key_unavailable(
             $1, $2, transaction_timestamp()
           )`,
           [accountA, connectionA],
@@ -504,7 +500,7 @@ describe("production migrations", () => {
       FROM pg_catalog.pg_proc
       JOIN pg_catalog.pg_namespace
         ON pg_namespace.oid = pg_proc.pronamespace
-      WHERE pg_namespace.nspname = 'app_private'
+      WHERE pg_namespace.nspname = 'public'
         AND proname IN (
           'bootstrap_personal_account_for_clerk',
           'bootstrap_whatsapp_connection_for_ingress',
@@ -599,7 +595,7 @@ describe("production migrations", () => {
     await database.exec("SET ROLE whatsapp_api_runtime");
     try {
       const clerkLookup = await database.query<{ account_id: string }>(
-        "SELECT app_private.bootstrap_personal_account_for_clerk($1) AS account_id",
+        "SELECT public.bootstrap_personal_account_for_clerk($1) AS account_id",
         ["clerk_user_a"],
       );
       expect(clerkLookup.rows[0]?.account_id).toBe(accountA);
@@ -607,7 +603,7 @@ describe("production migrations", () => {
         (
           await database.query(
             `SELECT *
-             FROM app_private.bootstrap_mcp_refresh_credential(
+             FROM public.bootstrap_mcp_refresh_credential(
                decode(repeat('00', 32), 'hex'), $1, $2
              )`,
             ["A".repeat(43), "approved-client"],
@@ -616,7 +612,7 @@ describe("production migrations", () => {
       ).toEqual([]);
       await expect(
         database.query(
-          "SELECT * FROM app_private.bootstrap_whatsapp_connection_for_ingress($1)",
+          "SELECT * FROM public.bootstrap_whatsapp_connection_for_ingress($1)",
           [ingressA],
         ),
       ).rejects.toThrow();
@@ -629,21 +625,20 @@ describe("production migrations", () => {
       const ingressLookup = await database.query<{
         personal_account_id: string;
         whatsapp_connection_id: string;
-      }>(
-        "SELECT * FROM app_private.bootstrap_whatsapp_connection_for_ingress($1)",
-        [ingressA],
-      );
+      }>("SELECT * FROM public.bootstrap_whatsapp_connection_for_ingress($1)", [
+        ingressA,
+      ]);
       expect(ingressLookup.rows).toEqual([]);
       await expect(
         database.query(
-          "SELECT app_private.bootstrap_personal_account_for_clerk($1)",
+          "SELECT public.bootstrap_personal_account_for_clerk($1)",
           ["clerk_user_a"],
         ),
       ).rejects.toThrow();
       await expect(
         database.query(
           `SELECT *
-           FROM app_private.bootstrap_mcp_refresh_credential(
+           FROM public.bootstrap_mcp_refresh_credential(
              decode(repeat('00', 32), 'hex'), $1, $2
            )`,
           ["A".repeat(43), "approved-client"],
@@ -651,12 +646,12 @@ describe("production migrations", () => {
       ).rejects.toThrow();
       await expect(
         database.query(
-          "SELECT credential_hash FROM app.mcp_refresh_credentials",
+          "SELECT credential_hash FROM public.mcp_refresh_credentials",
         ),
       ).rejects.toThrow();
       await expect(
         database.query(
-          `SELECT app_private.load_connection_setup_webhook_ingress_for_user(
+          `SELECT public.load_connection_setup_webhook_ingress_for_user(
             $1, $2
           )`,
           ["clerk_user_a", "cst_000000000000000000001"],
@@ -664,7 +659,7 @@ describe("production migrations", () => {
       ).rejects.toThrow();
       await expect(
         database.query(
-          `SELECT app_private.load_connection_setup_webhook_ingress_for_worker(
+          `SELECT public.load_connection_setup_webhook_ingress_for_worker(
             $1, $2
           )`,
           [
@@ -675,7 +670,7 @@ describe("production migrations", () => {
       ).rejects.toThrow();
       await expect(
         database.query(
-          `SELECT app_private.bootstrap_mcp_access_authorization(
+          `SELECT public.bootstrap_mcp_access_authorization(
             $1, $2, transaction_timestamp()
           )`,
           ["40000000-0000-4000-8000-000000000001", "A".repeat(43)],
@@ -683,7 +678,7 @@ describe("production migrations", () => {
       ).rejects.toThrow();
       await expect(
         database.query(
-          `SELECT app_private.bootstrap_mcp_authorization(
+          `SELECT public.bootstrap_mcp_authorization(
             $1, $2, $3, transaction_timestamp()
           )`,
           [
@@ -703,7 +698,7 @@ describe("production migrations", () => {
     await seedTenants(database);
     await seedKeyEnvelopes(database);
     await database.query(
-      `INSERT INTO app.whatsapp_connection_provider_sessions (
+      `INSERT INTO public.whatsapp_connection_provider_sessions (
         personal_account_id,
         whatsapp_connection_id,
         locator_ciphertext_version,
@@ -747,12 +742,12 @@ describe("production migrations", () => {
           encode(ingress.authority_nonce, 'hex') AS authority_nonce,
           encode(ingress.authority_ciphertext, 'hex')
             AS authority_ciphertext
-        FROM app_private.bootstrap_whatsapp_connection_for_ingress($1)
+        FROM public.bootstrap_whatsapp_connection_for_ingress($1)
           AS ingress`,
         [ingressA],
       );
       const unknown = await database.query(
-        "SELECT * FROM app_private.bootstrap_whatsapp_connection_for_ingress($1)",
+        "SELECT * FROM public.bootstrap_whatsapp_connection_for_ingress($1)",
         ["30000000-0000-4000-8000-000000000099"],
       );
 
@@ -776,12 +771,12 @@ describe("production migrations", () => {
       expect(unknown.rows).toEqual([]);
       await expect(
         database.query(
-          "SELECT authority_ciphertext FROM app.whatsapp_connection_provider_sessions",
+          "SELECT authority_ciphertext FROM public.whatsapp_connection_provider_sessions",
         ),
       ).rejects.toThrow();
       await expect(
         database.query(
-          "SELECT ciphertext FROM app.whatsapp_connection_key_envelopes",
+          "SELECT ciphertext FROM public.whatsapp_connection_key_envelopes",
         ),
       ).rejects.toThrow();
     } finally {
@@ -789,13 +784,13 @@ describe("production migrations", () => {
     }
 
     await database.query(
-      "UPDATE app.whatsapp_connections SET state = 'deleting' WHERE id = $1",
+      "UPDATE public.whatsapp_connections SET state = 'deleting' WHERE id = $1",
       [connectionA],
     );
     await database.exec("SET ROLE whatsapp_webhook_runtime");
     try {
       const deleting = await database.query(
-        "SELECT * FROM app_private.bootstrap_whatsapp_connection_for_ingress($1)",
+        "SELECT * FROM public.bootstrap_whatsapp_connection_for_ingress($1)",
         [ingressA],
       );
       expect(deleting.rows).toEqual([]);
@@ -819,7 +814,7 @@ describe("production migrations", () => {
             personal_account_id: string;
           }>(
             `SELECT *
-             FROM app_private.admit_personal_account_for_clerk(
+             FROM public.admit_personal_account_for_clerk(
                $1, $2, 1, $3, decode($4, 'hex'), 3
              )`,
             [
@@ -842,7 +837,7 @@ describe("production migrations", () => {
       ]);
 
       const lookup = await database.query<{ account_id: string }>(
-        "SELECT app_private.bootstrap_personal_account_for_clerk($1) AS account_id",
+        "SELECT public.bootstrap_personal_account_for_clerk($1) AS account_id",
         ["user_bootstrap123"],
       );
       expect(lookup.rows).toEqual([{ account_id: accountC }]);
@@ -862,37 +857,37 @@ describe("production migrations", () => {
       `SELECT
          (
            SELECT count(*)::integer
-           FROM app.personal_accounts
+           FROM public.personal_accounts
            WHERE id IN ($1, $2)
          ) AS account_count,
          (
            SELECT encode(ciphertext, 'hex')
-           FROM app.personal_account_key_envelopes
+           FROM public.personal_account_key_envelopes
            WHERE personal_account_id IN ($1, $2)
          ) AS ciphertext,
          (
            SELECT count(*)::integer
-           FROM app.personal_account_key_envelopes
+           FROM public.personal_account_key_envelopes
            WHERE personal_account_id IN ($1, $2)
          ) AS envelope_count,
          (
            SELECT count(*)::integer
-           FROM app_private.clerk_identities
+           FROM public.clerk_identities
            WHERE clerk_user_id = 'user_bootstrap123'
          ) AS identity_count,
          (
            SELECT message_retention_days
-           FROM app.personal_accounts
+           FROM public.personal_accounts
            WHERE id IN ($1, $2)
          ) AS message_retention_days,
          (
            SELECT stored_media_limit_bytes
-           FROM app.personal_accounts
+           FROM public.personal_accounts
            WHERE id IN ($1, $2)
          ) AS stored_media_limit_bytes,
          (
            SELECT whatsapp_connection_limit
-           FROM app.personal_accounts
+           FROM public.personal_accounts
            WHERE id IN ($1, $2)
          ) AS whatsapp_connection_limit`,
       [accountC, accountD],
@@ -920,7 +915,7 @@ describe("production migrations", () => {
         created: boolean;
       }>(
         `SELECT *
-         FROM app_private.admit_personal_account_for_clerk(
+         FROM public.admit_personal_account_for_clerk(
            'user_admitted', $1, 1, $2, decode('a1b2', 'hex'), 3
          )`,
         [accountC, "arn:aws:kms:us-east-1:111122223333:key/content-root"],
@@ -932,7 +927,7 @@ describe("production migrations", () => {
             personal_account_id: string | null;
           }>(
             `SELECT *
-             FROM app_private.admit_personal_account_for_clerk(
+             FROM public.admit_personal_account_for_clerk(
                'user_waitlisted', $1, 1, $2, decode('c3d4', 'hex'), 3
              )`,
             [accountId, "arn:aws:kms:us-east-1:111122223333:key/content-root"],
@@ -961,7 +956,7 @@ describe("production migrations", () => {
         personal_account_id: string;
       }>(
         `SELECT *
-         FROM app_private.admit_personal_account_for_clerk(
+         FROM public.admit_personal_account_for_clerk(
            'user_waitlisted', $1, 1, $2, decode('e5f6', 'hex'), 6
          )`,
         [accountD, "arn:aws:kms:us-east-1:111122223333:key/content-root"],
@@ -980,10 +975,10 @@ describe("production migrations", () => {
       waitlist_count: number;
     }>(`
       SELECT
-        (SELECT count(*)::integer FROM app.personal_accounts) AS account_count,
+        (SELECT count(*)::integer FROM public.personal_accounts) AS account_count,
         (
           SELECT count(*)::integer
-          FROM app_private.private_beta_waitlist
+          FROM public.private_beta_waitlist
           WHERE clerk_user_id = 'user_waitlisted'
         ) AS waitlist_count
     `);
@@ -999,19 +994,19 @@ describe("production migrations", () => {
     await runMigrations(database);
     await seedTenants(database);
     await database.query(
-      "UPDATE app.personal_accounts SET state = 'deleting' WHERE id = $1",
+      "UPDATE public.personal_accounts SET state = 'deleting' WHERE id = $1",
       [accountA],
     );
 
     await database.exec("SET ROLE whatsapp_api_runtime");
     try {
       const lookup = await database.query<{ account_id: string | null }>(
-        "SELECT app_private.bootstrap_personal_account_for_clerk($1) AS account_id",
+        "SELECT public.bootstrap_personal_account_for_clerk($1) AS account_id",
         ["clerk_user_a"],
       );
       const replacement = await database.query(
         `SELECT *
-         FROM app_private.admit_personal_account_for_clerk(
+         FROM public.admit_personal_account_for_clerk(
            $1, $2, 1, $3, decode('a1b2', 'hex'), 3
          )`,
         [
@@ -1028,7 +1023,7 @@ describe("production migrations", () => {
     }
 
     const candidate = await database.query(
-      "SELECT id FROM app.personal_accounts WHERE id = $1",
+      "SELECT id FROM public.personal_accounts WHERE id = $1",
       [accountC],
     );
     expect(candidate.rows).toEqual([]);
@@ -1042,7 +1037,7 @@ describe("production migrations", () => {
       await expect(
         database.query(
           `SELECT *
-           FROM app_private.admit_personal_account_for_clerk(
+           FROM public.admit_personal_account_for_clerk(
              $1, $2, 1, $3, decode('a1b2', 'hex'), 3
            )`,
           [
@@ -1053,7 +1048,7 @@ describe("production migrations", () => {
         ),
       ).rejects.toThrow();
       await expect(
-        database.query("SELECT * FROM app_private.private_beta_waitlist"),
+        database.query("SELECT * FROM public.private_beta_waitlist"),
       ).rejects.toThrow();
     } finally {
       await database.exec("RESET ROLE");
@@ -1065,7 +1060,7 @@ describe("production migrations", () => {
     await seedTenants(database);
     await seedKeyEnvelopes(database);
     await database.query(
-      `INSERT INTO app.stored_media_object_deletions
+      `INSERT INTO public.stored_media_object_deletions
         (personal_account_id, object_key, requested_at)
        VALUES ($1, 'expired/media-object', '2026-08-03T11:00:00Z')`,
       [accountA],
@@ -1074,12 +1069,12 @@ describe("production migrations", () => {
     await database.exec("SET ROLE whatsapp_api_runtime");
     try {
       const before = await database.query<{ ready: boolean }>(
-        "SELECT app_private.is_restore_ready('br-restored') AS ready",
+        "SELECT public.is_restore_ready('br-restored') AS ready",
       );
       expect(before.rows).toEqual([{ ready: false }]);
       await expect(
         database.query(
-          "SELECT * FROM app_private.begin_restore_replay('br-restored', statement_timestamp())",
+          "SELECT * FROM public.begin_restore_replay('br-restored', statement_timestamp())",
         ),
       ).rejects.toThrow();
     } finally {
@@ -1092,40 +1087,40 @@ describe("production migrations", () => {
         deletion_kind: string;
         opaque_entity_id: string;
       }>(
-        "SELECT * FROM app_private.begin_restore_replay('br-restored', '2026-08-03T12:00:00Z')",
+        "SELECT * FROM public.begin_restore_replay('br-restored', '2026-08-03T12:00:00Z')",
       );
       expect(candidates.rows).toContainEqual({
         deletion_kind: "personal_account",
         opaque_entity_id: accountA,
       });
       const replay = await database.query<{ replayed: boolean }>(
-        `SELECT app_private.replay_restore_deletion(
+        `SELECT public.replay_restore_deletion(
           'personal_account', $1, $2, '2026-08-03T12:00:00Z'
         ) AS replayed`,
         [accountA, "a".repeat(64)],
       );
       expect(replay.rows).toEqual([{ replayed: true }]);
       await database.query(
-        "SELECT app_private.purge_restore_expired('2026-08-03T12:00:00Z', 1000)",
+        "SELECT public.purge_restore_expired('2026-08-03T12:00:00Z', 1000)",
       );
       const objectDeletions = await database.query<{
         bucket: string;
         object_key: string;
-      }>("SELECT * FROM app_private.list_restore_object_deletions(1000)");
+      }>("SELECT * FROM public.list_restore_object_deletions(1000)");
       expect(objectDeletions.rows).toContainEqual({
         bucket: "stored_media",
         object_key: "expired/media-object",
       });
       await expect(
         database.query(
-          "SELECT app_private.complete_restore_replay('br-restored','2026-08-03T12:01:00Z',1,1,0)",
+          "SELECT public.complete_restore_replay('br-restored','2026-08-03T12:01:00Z',1,1,0)",
         ),
       ).rejects.toThrow("restore object deletions remain");
       await database.query(
-        "SELECT app_private.finish_restore_object_deletion('stored_media','expired/media-object')",
+        "SELECT public.finish_restore_object_deletion('stored_media','expired/media-object')",
       );
       await database.query(
-        "SELECT app_private.complete_restore_replay('br-restored','2026-08-03T12:01:00Z',1,1,0)",
+        "SELECT public.complete_restore_replay('br-restored','2026-08-03T12:01:00Z',1,1,0)",
       );
     } finally {
       await database.exec("RESET ROLE");
@@ -1137,10 +1132,10 @@ describe("production migrations", () => {
       object_deletion_count: number;
     }>(
       `SELECT
-        (SELECT count(*)::integer FROM app.personal_accounts WHERE id = $1) AS account_count,
+        (SELECT count(*)::integer FROM public.personal_accounts WHERE id = $1) AS account_count,
         (SELECT count(*)::integer FROM information_schema.columns
-          WHERE table_schema = 'app_private' AND table_name = 'restore_replay_audit') AS audit_columns,
-        (SELECT count(*)::integer FROM app.stored_media_object_deletions) AS object_deletion_count`,
+          WHERE table_schema = 'public' AND table_name = 'restore_replay_audit') AS audit_columns,
+        (SELECT count(*)::integer FROM public.stored_media_object_deletions) AS object_deletion_count`,
       [accountA],
     );
     expect(protectedState.rows).toEqual([
@@ -1151,18 +1146,18 @@ describe("production migrations", () => {
 
 const seedTenants = async (database: PGlite) => {
   await database.query(
-    `INSERT INTO app.personal_accounts (id, state)
+    `INSERT INTO public.personal_accounts (id, state)
      VALUES ($1, 'active'), ($2, 'active')`,
     [accountA, accountB],
   );
   await database.query(
-    `INSERT INTO app_private.clerk_identities
+    `INSERT INTO public.clerk_identities
       (clerk_user_id, personal_account_id)
      VALUES ('clerk_user_a', $1), ('clerk_user_b', $2)`,
     [accountA, accountB],
   );
   await database.query(
-    `INSERT INTO app.whatsapp_connections
+    `INSERT INTO public.whatsapp_connections
       (personal_account_id, id, webhook_ingress_id, display_name_ciphertext)
      VALUES
       ($1, $2, $3, decode('01', 'hex')),
@@ -1173,7 +1168,7 @@ const seedTenants = async (database: PGlite) => {
 
 const seedKeyEnvelopes = async (database: PGlite) => {
   await database.query(
-    `INSERT INTO app.personal_account_key_envelopes
+    `INSERT INTO public.personal_account_key_envelopes
       (personal_account_id, key_version, kms_key_id, ciphertext)
      VALUES
       ($1, 1, 'kms-content-root', decode('0102', 'hex')),
@@ -1181,7 +1176,7 @@ const seedKeyEnvelopes = async (database: PGlite) => {
     [accountA, accountB],
   );
   await database.query(
-    `INSERT INTO app.whatsapp_connection_key_envelopes
+    `INSERT INTO public.whatsapp_connection_key_envelopes
       (
         personal_account_id,
         whatsapp_connection_id,

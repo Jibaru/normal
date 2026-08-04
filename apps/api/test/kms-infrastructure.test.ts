@@ -32,16 +32,36 @@ type TemplateResource = {
 type DistinctAuthoritiesRule = {
   readonly Assertions: ReadonlyArray<{
     readonly Assert: {
-      readonly "Fn::Not": ReadonlyArray<{
-        readonly "Fn::Or": ReadonlyArray<{
-          readonly "Fn::Equals": readonly [
-            { readonly Ref: string },
-            { readonly Ref: string },
-          ];
-        }>;
-      }>;
+      readonly "Fn::Not": ReadonlyArray<unknown>;
     };
   }>;
+};
+
+const equalityPairs = (
+  value: unknown,
+): ReadonlyArray<readonly [string, string]> => {
+  if (typeof value !== "object" || value === null) return [];
+  if ("Fn::Equals" in value) {
+    const equals = value["Fn::Equals"];
+    if (
+      Array.isArray(equals) &&
+      equals.length === 2 &&
+      equals.every(
+        (item) =>
+          typeof item === "object" &&
+          item !== null &&
+          "Ref" in item &&
+          typeof item.Ref === "string",
+      )
+    ) {
+      return [[equals[0].Ref, equals[1].Ref]];
+    }
+    return [];
+  }
+  if ("Fn::Or" in value && Array.isArray(value["Fn::Or"])) {
+    return value["Fn::Or"].flatMap(equalityPairs);
+  }
+  return [];
 };
 
 const resources = template.Resources as Record<string, TemplateResource>;
@@ -266,12 +286,10 @@ describe("AWS KMS infrastructure", () => {
       .sort();
     const distinctRule =
       rules.AuthoritiesUseDistinctBootstrapPrincipals as DistinctAuthoritiesRule;
-    const comparisons =
-      distinctRule.Assertions[0]?.Assert["Fn::Not"][0]?.["Fn::Or"] ?? [];
-    const actualPairs = comparisons
-      .map(({ "Fn::Equals": [left, right] }) =>
-        [left.Ref, right.Ref].sort().join("|"),
-      )
+    const actualPairs = equalityPairs(
+      distinctRule.Assertions[0]?.Assert["Fn::Not"][0],
+    )
+      .map(([left, right]) => [left, right].sort().join("|"))
       .sort();
 
     expect(actualPairs).toEqual(expectedPairs);

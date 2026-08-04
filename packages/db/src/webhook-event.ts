@@ -308,7 +308,7 @@ const enterPersonalAccountContext = async (
   personalAccountId: string,
 ): Promise<void> => {
   await db.execute(
-    sql`select set_config('app.personal_account_id', ${personalAccountId}, true)`,
+    sql`select set_config('public.personal_account_id', ${personalAccountId}, true)`,
   );
 };
 
@@ -733,7 +733,7 @@ export const makeWebhookEventRepository = (
           throw new Error("Webhook Event completion target unavailable");
         }
         const resolved = await db.execute<{ resolved: unknown }>(
-          sql`select app_private.resolve_webhook_processing_gap(
+          sql`select public.resolve_webhook_processing_gap(
             ${input.personalAccountId}, ${input.whatsappConnectionId}, ${input.eventId}
           ) as resolved`,
         );
@@ -841,7 +841,7 @@ export const makeWebhookEventRepository = (
             ),
           );
         const recorded = await db.execute<{ recorded: unknown }>(
-          sql`select app_private.record_webhook_dead_letter_gap(
+          sql`select public.record_webhook_dead_letter_gap(
             ${input.personalAccountId}, ${input.whatsappConnectionId},
             ${input.eventId}, ${input.deadLetteredAt}
           ) as recorded`,
@@ -937,14 +937,14 @@ export const makeWebhookEventRepository = (
              pending.key_version,pending.nonce,pending.ciphertext,
              case operations.recipient_type when 'contact' then contacts.provider_identity_index
                else groups.provider_locator end as recipient_locator
-           from app.send_operations operations
-           left join app.pending_send_contents pending on pending.send_operation_id=operations.id
+           from public.send_operations operations
+           left join public.pending_send_contents pending on pending.send_operation_id=operations.id
              and pending.expires_at>${input.receivedAt}
-           left join app.directory_contacts contacts on operations.recipient_type='contact'
+           left join public.directory_contacts contacts on operations.recipient_type='contact'
              AND contacts.personal_account_id=operations.personal_account_id
              AND contacts.whatsapp_connection_id=operations.whatsapp_connection_id
              AND contacts.public_id=operations.recipient_public_id
-           left join app.whatsapp_groups groups on operations.recipient_type='group'
+           left join public.whatsapp_groups groups on operations.recipient_type='group'
              AND groups.personal_account_id=operations.personal_account_id
              AND groups.whatsapp_connection_id=operations.whatsapp_connection_id
              AND groups.public_id=operations.recipient_public_id
@@ -954,7 +954,7 @@ export const makeWebhookEventRepository = (
              and operations.expires_at>${input.receivedAt} for update of operations`,
         );
         const updated = await db.execute<{ id: unknown }>(
-          sql`update app.send_operations set status=${input.status},status_changed_at=${changedAt}
+          sql`update public.send_operations set status=${input.status},status_changed_at=${changedAt}
            where personal_account_id=${input.personalAccountId}
              and whatsapp_connection_id=${input.whatsappConnectionId}
              and message_identity=${input.messageIdentity} and expires_at>${input.receivedAt}
@@ -1057,8 +1057,8 @@ export const makeWebhookEventRepository = (
             });
           await db.execute(sql`with latest as (
                SELECT messages.conversation_id,messages.sent_at,messages.direction
-               FROM app.stored_messages messages
-               JOIN app.whatsapp_conversations conversations
+               FROM public.stored_messages messages
+               JOIN public.whatsapp_conversations conversations
                  ON conversations.id=messages.conversation_id
                WHERE messages.personal_account_id=${input.personalAccountId}
                  AND messages.whatsapp_connection_id=${input.whatsappConnectionId}
@@ -1066,7 +1066,7 @@ export const makeWebhookEventRepository = (
                  AND messages.content_expired_at IS NULL
                ORDER BY messages.sent_at DESC,messages.public_id DESC LIMIT 1
              )
-             UPDATE app.whatsapp_conversations conversations SET
+             UPDATE public.whatsapp_conversations conversations SET
                last_activity_at=latest.sent_at,last_activity_direction=latest.direction,
                updated_at=transaction_timestamp()
              FROM latest WHERE conversations.id=latest.conversation_id`);
@@ -1121,7 +1121,7 @@ export const makeWebhookEventRepository = (
         connection,
       ).execute<RecoveryCandidateRow>(
         sql`select candidate_index, status
-          from app_private.classify_webhook_recovery_candidates(
+          from public.classify_webhook_recovery_candidates(
             ${JSON.stringify(candidates)}::jsonb
           )`,
       );
@@ -1154,7 +1154,7 @@ export const makeWebhookEventRepository = (
     provider.withConnection((connection) =>
       withTransaction(connection, async (db) => {
         const loaded = await db.execute<MaterialRow>(
-          sql`select * from app_private.load_webhook_event_processing_material(
+          sql`select * from public.load_webhook_event_processing_material(
             ${input.personalAccountId}, ${input.whatsappConnectionId}
           )`,
         );
@@ -1827,7 +1827,7 @@ export const makeWebhookEventRepository = (
         if (typeof conversationId !== "string")
           throw new Error("invalid WhatsApp Conversation");
         await db.execute(sql`with removed as (
-             DELETE FROM app.stored_media media USING app.stored_messages messages
+             DELETE FROM public.stored_media media USING public.stored_messages messages
              WHERE messages.personal_account_id=${input.personalAccountId}
                AND messages.whatsapp_connection_id=${input.whatsappConnectionId}
                AND messages.message_identity=${input.messageIdentity}
@@ -1835,10 +1835,10 @@ export const makeWebhookEventRepository = (
                AND media.whatsapp_connection_id=messages.whatsapp_connection_id AND media.stored_message_id=messages.id
              RETURNING media.object_key,media.plaintext_size_bytes,media.state
            ), queued AS (
-             INSERT INTO app.stored_media_object_deletions(personal_account_id,object_key)
+             INSERT INTO public.stored_media_object_deletions(personal_account_id,object_key)
              SELECT ${input.personalAccountId},object_key FROM removed WHERE object_key IS NOT NULL ON CONFLICT DO NOTHING
            )
-           UPDATE app.personal_accounts SET stored_media_used_bytes=stored_media_used_bytes-
+           UPDATE public.personal_accounts SET stored_media_used_bytes=stored_media_used_bytes-
              coalesce((SELECT sum(plaintext_size_bytes) FROM removed WHERE state='ready'),0)
            WHERE id=${input.personalAccountId}`);
         const messageValues = {
@@ -1929,9 +1929,9 @@ export const makeWebhookEventRepository = (
               ],
             });
         }
-        await db.execute(sql`update app.whatsapp_conversations as conversations set
+        await db.execute(sql`update public.whatsapp_conversations as conversations set
              last_activity_at=latest.sent_at,last_activity_direction=latest.direction,updated_at=transaction_timestamp()
-           FROM (SELECT sent_at,direction FROM app.stored_messages
+           FROM (SELECT sent_at,direction FROM public.stored_messages
              WHERE personal_account_id=${input.personalAccountId}
              AND whatsapp_connection_id=${input.whatsappConnectionId}
              AND conversation_id=${conversationId} AND content_expired_at IS NULL

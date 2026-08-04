@@ -12,10 +12,10 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import { app } from "./common";
+import { publicSchema } from "./common";
 import { whatsappConnectionsInApp } from "./connections";
 
-export const webhookEventsInApp = app.table(
+export const webhookEventsInApp = publicSchema.table(
   "webhook_events",
   {
     personalAccountId: uuid("personal_account_id").notNull(),
@@ -64,8 +64,8 @@ export const webhookEventsInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "webhook_events_ciphertext_sha256_check",
@@ -90,7 +90,7 @@ export const webhookEventsInApp = app.table(
   ],
 );
 
-export const webhookItemsInApp = app.table(
+export const webhookItemsInApp = publicSchema.table(
   "webhook_items",
   {
     personalAccountId: uuid("personal_account_id").notNull(),
@@ -139,8 +139,8 @@ export const webhookItemsInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "webhook_items_deduplication_identity_check",
@@ -162,7 +162,7 @@ export const webhookItemsInApp = app.table(
   ],
 );
 
-export const webhookItemQuarantinesInApp = app.table(
+export const webhookItemQuarantinesInApp = publicSchema.table(
   "webhook_item_quarantines",
   {
     personalAccountId: uuid("personal_account_id").notNull(),
@@ -207,8 +207,8 @@ export const webhookItemQuarantinesInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "webhook_item_quarantines_item_index_check",
@@ -229,7 +229,7 @@ export const webhookItemQuarantinesInApp = app.table(
   ],
 );
 
-export const webhookDeadLetterIncidentsInApp = app.table(
+export const webhookDeadLetterIncidentsInApp = publicSchema.table(
   "webhook_dead_letter_incidents",
   {
     id: uuid().defaultRandom().primaryKey().notNull(),
@@ -277,13 +277,13 @@ export const webhookDeadLetterIncidentsInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
   ],
 );
 
-export const webhookReplayAttemptsInApp = app.table(
+export const webhookReplayAttemptsInApp = publicSchema.table(
   "webhook_replay_attempts",
   {
     id: uuid().primaryKey().notNull(),
@@ -333,8 +333,8 @@ export const webhookReplayAttemptsInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "webhook_replay_attempts_operator_reference_check",
@@ -359,7 +359,7 @@ export const webhookReplayAttemptsInApp = app.table(
   ],
 );
 
-export const ingestionGapsInApp = app.table(
+export const ingestionGapsInApp = publicSchema.table(
   "ingestion_gaps",
   {
     personalAccountId: uuid("personal_account_id").notNull(),
@@ -434,8 +434,8 @@ export const ingestionGapsInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "ingestion_gaps_cause_check",

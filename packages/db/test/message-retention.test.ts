@@ -26,13 +26,13 @@ describe("Message Retention Policy persistence", () => {
     `);
     await runMigrations(database);
     await database.query(
-      `SELECT * FROM app_private.admit_personal_account_for_clerk(
+      `SELECT * FROM public.admit_personal_account_for_clerk(
         'user_retention52',$1,1,'arn:aws:kms:us-east-1:111122223333:key/content',decode('0102','hex'),3
       )`,
       [accountId],
     );
     await database.query(
-      `INSERT INTO app.whatsapp_connections(id,personal_account_id,webhook_ingress_id,public_id,
+      `INSERT INTO public.whatsapp_connections(id,personal_account_id,webhook_ingress_id,public_id,
         number_suffix,state,state_changed_at,created_at)
        VALUES($1,$2,'30000000-0000-4000-8000-000000000052',$3,'0052','connected',
         '2026-06-01T00:00:00Z','2026-06-01T00:00:00Z')`,
@@ -83,14 +83,14 @@ describe("Message Retention Policy persistence", () => {
     ).toMatchObject({ days: 7 });
 
     await database.query(
-      `INSERT INTO app.whatsapp_conversations(id,personal_account_id,whatsapp_connection_id,
+      `INSERT INTO public.whatsapp_conversations(id,personal_account_id,whatsapp_connection_id,
       public_id,kind,recipient_locator,recipient_public_id,last_activity_at,last_activity_direction)
       VALUES('40000000-0000-4000-8000-000000000052',$1,$2,'cvs_000000000000000000052','direct',
       $3,'ctc_000000000000000000052','2026-07-01T00:00:00Z','inbound')`,
       [accountId, connectionId, recipientLocator],
     );
     await database.query(
-      `INSERT INTO app.stored_messages(id,personal_account_id,whatsapp_connection_id,conversation_id,
+      `INSERT INTO public.stored_messages(id,personal_account_id,whatsapp_connection_id,conversation_id,
       public_id,message_identity,direction,sent_at,content_type,content_ciphertext_version,content_key_version,
       content_nonce,content_ciphertext,received_at,webhook_item_identity)
       VALUES('50000000-0000-4000-8000-000000000052',$1,$2,'40000000-0000-4000-8000-000000000052',
@@ -99,11 +99,11 @@ describe("Message Retention Policy persistence", () => {
       [accountId, connectionId, messageIdentity, itemIdentity],
     );
     await database.query(
-      "UPDATE app.personal_accounts SET stored_media_used_bytes=100 WHERE id=$1",
+      "UPDATE public.personal_accounts SET stored_media_used_bytes=100 WHERE id=$1",
       [accountId],
     );
     await database.query(
-      `INSERT INTO app.stored_media(id,personal_account_id,whatsapp_connection_id,stored_message_id,
+      `INSERT INTO public.stored_media(id,personal_account_id,whatsapp_connection_id,stored_message_id,
       public_id,state,media_type,object_key,plaintext_size_bytes,sha256,metadata_ciphertext_version,metadata_key_version,
       metadata_nonce,metadata_ciphertext)
       VALUES('60000000-0000-4000-8000-000000000052',$1,$2,'50000000-0000-4000-8000-000000000052',
@@ -121,22 +121,22 @@ describe("Message Retention Policy persistence", () => {
       stored_media_used_bytes: number;
     }>(
       `SELECT messages.content_expired_at,media.state,accounts.stored_media_used_bytes
-       FROM app.stored_messages messages JOIN app.stored_media media ON media.stored_message_id=messages.id
-       JOIN app.personal_accounts accounts ON accounts.id=messages.personal_account_id`,
+       FROM public.stored_messages messages JOIN public.stored_media media ON media.stored_message_id=messages.id
+       JOIN public.personal_accounts accounts ON accounts.id=messages.personal_account_id`,
     );
     expect(unavailable.rows[0]).toMatchObject({
       state: "purging",
       stored_media_used_bytes: 100,
     });
     await database.query(
-      `UPDATE app.stored_messages SET content_type='text',content_ciphertext_version=1,
+      `UPDATE public.stored_messages SET content_type='text',content_ciphertext_version=1,
        content_key_version=1,content_nonce=decode(repeat('05',12),'hex'),
        content_ciphertext=decode(repeat('06',17),'hex') WHERE id='50000000-0000-4000-8000-000000000052'`,
     );
     const terminal = await database.query<{
       content_ciphertext: Uint8Array | null;
     }>(
-      "SELECT content_ciphertext FROM app.stored_messages WHERE id='50000000-0000-4000-8000-000000000052'",
+      "SELECT content_ciphertext FROM public.stored_messages WHERE id='50000000-0000-4000-8000-000000000052'",
     );
     expect(terminal.rows).toEqual([{ content_ciphertext: null }]);
 
@@ -149,8 +149,8 @@ describe("Message Retention Policy persistence", () => {
       media_count: number;
       stored_media_used_bytes: number;
     }>(
-      `SELECT (SELECT count(*)::int FROM app.stored_media) media_count,stored_media_used_bytes
-       FROM app.personal_accounts WHERE id=$1`,
+      `SELECT (SELECT count(*)::int FROM public.stored_media) media_count,stored_media_used_bytes
+       FROM public.personal_accounts WHERE id=$1`,
       [accountId],
     );
     expect(released.rows).toEqual([
@@ -174,7 +174,7 @@ describe("Message Retention Policy persistence", () => {
       }),
     ).toBe(false);
     const lateMedia = await database.query<{ media_count: number }>(
-      "SELECT count(*)::int AS media_count FROM app.stored_media",
+      "SELECT count(*)::int AS media_count FROM public.stored_media",
     );
     expect(lateMedia.rows).toEqual([{ media_count: 0 }]);
   });

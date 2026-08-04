@@ -40,7 +40,7 @@ describe("MCP tool repository", () => {
     `);
     await runMigrations(database);
     await database.query(
-      `SELECT * FROM app_private.admit_personal_account_for_clerk(
+      `SELECT * FROM public.admit_personal_account_for_clerk(
         $1, $2, 1, $3, decode('0102', 'hex'), 6
       )`,
       [
@@ -50,7 +50,7 @@ describe("MCP tool repository", () => {
       ],
     );
     await database.query(
-      `INSERT INTO app.whatsapp_connections (
+      `INSERT INTO public.whatsapp_connections (
          id, personal_account_id, webhook_ingress_id,
          display_name_ciphertext, public_id, number_suffix, state,
          state_changed_at
@@ -77,7 +77,7 @@ describe("MCP tool repository", () => {
       ],
     );
     await database.query(
-      `INSERT INTO app.whatsapp_connection_key_envelopes (
+      `INSERT INTO public.whatsapp_connection_key_envelopes (
          personal_account_id, whatsapp_connection_id, account_key_version,
          key_version, nonce, ciphertext
        ) VALUES (
@@ -87,7 +87,7 @@ describe("MCP tool repository", () => {
       [accountId],
     );
     await database.query(
-      `INSERT INTO app.whatsapp_connection_secrets (
+      `INSERT INTO public.whatsapp_connection_secrets (
          personal_account_id, whatsapp_connection_id, credential_ciphertext,
          credential_ciphertext_version, credential_key_version, credential_nonce
        ) VALUES (
@@ -98,7 +98,7 @@ describe("MCP tool repository", () => {
       [accountId],
     );
     await database.query(
-      `INSERT INTO app.whatsapp_connection_provider_sessions (
+      `INSERT INTO public.whatsapp_connection_provider_sessions (
          personal_account_id, whatsapp_connection_id,
          locator_ciphertext_version, locator_key_version,
          locator_nonce, locator_ciphertext,
@@ -222,7 +222,7 @@ describe("MCP tool repository", () => {
       tool_name: string;
     }>(
       `SELECT tool_name, outcome, error_code, result_count, quota_reserved
-       FROM app.tool_call_logs`,
+       FROM public.tool_call_logs`,
     );
     expect(persisted.rows).toEqual([
       {
@@ -237,13 +237,13 @@ describe("MCP tool repository", () => {
 
   test("atomically binds, leases, quotas, audits, and encrypts one send before replay", async () => {
     await database.query(
-      `INSERT INTO app.directory_contact_projections (
+      `INSERT INTO public.directory_contact_projections (
          personal_account_id, whatsapp_connection_id, as_of, stale, partial
        ) VALUES ($1, '20000000-0000-4000-8000-000000000030', $2, false, false)`,
       [accountId, observedAt],
     );
     await database.query(
-      `INSERT INTO app.directory_contacts (
+      `INSERT INTO public.directory_contacts (
          personal_account_id, whatsapp_connection_id, public_id,
          provider_identity_index, provider_identity_ciphertext_version,
          provider_identity_key_version, provider_identity_nonce,
@@ -292,16 +292,16 @@ describe("MCP tool repository", () => {
     expect(encrypted).toBe(1);
 
     await database.query(
-      `UPDATE app.whatsapp_connections SET state='degraded'
+      `UPDATE public.whatsapp_connections SET state='degraded'
        WHERE public_id=$1`,
       [connectionA],
     );
     await database.query(
-      `UPDATE app.directory_contacts SET active=false
+      `UPDATE public.directory_contacts SET active=false
        WHERE public_id='ctc_123456789012345678930'`,
     );
     await database.query(
-      `UPDATE app.directory_contact_projections SET stale=true
+      `UPDATE public.directory_contact_projections SET stale=true
        WHERE whatsapp_connection_id='20000000-0000-4000-8000-000000000030'`,
     );
 
@@ -316,7 +316,7 @@ describe("MCP tool repository", () => {
     expect(encrypted).toBe(1);
 
     await database.query(
-      `UPDATE app.whatsapp_connections SET state='disconnected'
+      `UPDATE public.whatsapp_connections SET state='disconnected'
        WHERE public_id=$1`,
       [connectionA],
     );
@@ -378,7 +378,7 @@ describe("MCP tool repository", () => {
     expect(concurrentConflict).toEqual({ outcome: "idempotency_conflict" });
 
     const rows = await database.query<{ count: number }>(
-      `SELECT count(*)::int AS count FROM app.send_operations
+      `SELECT count(*)::int AS count FROM public.send_operations
        WHERE id='60000000-0000-4000-8000-000000000099'`,
     );
     expect(rows.rows[0]?.count).toBe(1);
@@ -387,9 +387,9 @@ describe("MCP tool repository", () => {
       quota_count: number;
     }>(
       `SELECT
-         (SELECT count(*)::int FROM app.tool_call_logs
+         (SELECT count(*)::int FROM public.tool_call_logs
           WHERE tool_name='send_text_message') AS audit_count,
-         (SELECT count(*)::int FROM app.send_quota_reservations) AS quota_count`,
+         (SELECT count(*)::int FROM public.send_quota_reservations) AS quota_count`,
     );
     expect(auditAndQuota.rows[0]).toEqual({
       audit_count: 8,
@@ -401,7 +401,7 @@ describe("MCP tool repository", () => {
       quota_reserved: boolean;
     }>(
       `SELECT error_code, outcome, quota_reserved
-       FROM app.tool_call_logs
+       FROM public.tool_call_logs
        WHERE id <> '50000000-0000-4000-8000-000000000099'
          AND tool_name='send_text_message'
        ORDER BY id`,
@@ -468,8 +468,8 @@ describe("MCP tool repository", () => {
       stored_count: number;
     }>(
       `SELECT
-        (SELECT count(*)::int FROM app.pending_send_contents WHERE send_operation_id=$1) AS pending_count,
-        (SELECT count(*)::int FROM app.stored_messages WHERE message_identity=$2 AND direction='outbound') AS stored_count`,
+        (SELECT count(*)::int FROM public.pending_send_contents WHERE send_operation_id=$1) AS pending_count,
+        (SELECT count(*)::int FROM public.stored_messages WHERE message_identity=$2 AND direction='outbound') AS stored_count`,
       [input.sendId, `wi1_${"M".repeat(43)}`],
     );
     expect(projected.rows).toEqual([{ pending_count: 0, stored_count: 1 }]);
@@ -485,12 +485,12 @@ describe("MCP tool repository", () => {
 
   test("atomically expires unresolved leases and rejects late direct responses", async () => {
     await database.query(
-      `INSERT INTO app.tool_call_logs (id,personal_account_id,mcp_authorization_id,tool_name,started_at,outcome,quota_reserved,expires_at)
+      `INSERT INTO public.tool_call_logs (id,personal_account_id,mcp_authorization_id,tool_name,started_at,outcome,quota_reserved,expires_at)
        VALUES ('50000000-0000-4000-8000-000000000089',$1,$2,'send_text_message',$3,'started',true,$3::timestamptz+interval '90 days')`,
       [accountId, authorizationId, observedAt],
     );
     await database.query(
-      `INSERT INTO app.send_operations (id,public_id,personal_account_id,mcp_authorization_id,tool_call_log_id,whatsapp_connection_id,recipient_type,recipient_public_id,status,created_at,status_changed_at,attempt_claimed_at,lease_expires_at,expires_at)
+      `INSERT INTO public.send_operations (id,public_id,personal_account_id,mcp_authorization_id,tool_call_log_id,whatsapp_connection_id,recipient_type,recipient_public_id,status,created_at,status_changed_at,attempt_claimed_at,lease_expires_at,expires_at)
        VALUES ('60000000-0000-4000-8000-000000000089','snd_123456789012345678929',$1,$2,'50000000-0000-4000-8000-000000000089','20000000-0000-4000-8000-000000000030','contact','ctc_123456789012345678930','processing',$3,$3,$3,$3::timestamptz+interval '30 seconds',$3::timestamptz+interval '90 days')`,
       [accountId, authorizationId, observedAt],
     );
@@ -551,7 +551,7 @@ describe("MCP tool repository", () => {
       quota_reserved: boolean;
     }>(
       `SELECT outcome, quota_reserved
-       FROM app.tool_call_logs
+       FROM public.tool_call_logs
        WHERE id = '50000000-0000-4000-8000-000000000032'`,
     );
     expect(persisted.rows).toEqual([
@@ -578,7 +578,7 @@ describe("MCP tool repository", () => {
       quota_reserved: boolean;
     }>(
       `SELECT connection_public_id, outcome, error_code, quota_reserved
-       FROM app.tool_call_logs
+       FROM public.tool_call_logs
        WHERE id = '50000000-0000-4000-8000-000000000033'`,
     );
     expect(persisted.rows).toEqual([
@@ -611,7 +611,7 @@ describe("MCP tool repository", () => {
       send_public_id: string | null;
     }>(
       `SELECT connection_public_id, send_public_id
-       FROM app.tool_call_logs
+       FROM public.tool_call_logs
        WHERE id = '50000000-0000-4000-8000-000000000034'`,
     );
     expect(persisted.rows).toEqual([
@@ -624,7 +624,7 @@ describe("MCP tool repository", () => {
 
   test("loads encrypted contact material only for the selected authorized Connection", async () => {
     await database.query(
-      `INSERT INTO app.directory_contact_projections (
+      `INSERT INTO public.directory_contact_projections (
          personal_account_id, whatsapp_connection_id, as_of, stale, partial,
          snapshot_observed_at
        ) VALUES (
@@ -633,7 +633,7 @@ describe("MCP tool repository", () => {
       [accountId, observedAt],
     );
     await database.query(
-      `INSERT INTO app.directory_contacts (
+      `INSERT INTO public.directory_contacts (
          personal_account_id, whatsapp_connection_id, public_id,
          provider_identity_index, provider_identity_ciphertext_version,
          provider_identity_key_version, provider_identity_nonce,
@@ -649,7 +649,7 @@ describe("MCP tool repository", () => {
          1, 1, decode(repeat('09', 12), 'hex'), decode(repeat('0a', 32), 'hex'),
          'ada',
          1, 1, decode(repeat('0b', 12), 'hex'), decode(repeat('0c', 32), 'hex'),
-         ARRAY[$3::app.directory_blind_index], $4, true, $5
+         ARRAY[$3::public.directory_blind_index], $4, true, $5
        )`,
       [
         accountId,
@@ -855,7 +855,7 @@ describe("MCP tool repository", () => {
       display_name_ciphertext: Uint8Array | null;
       phone_ciphertext: Uint8Array | null;
     }>(
-      "SELECT active, display_name_ciphertext, phone_ciphertext FROM app.directory_contacts",
+      "SELECT active, display_name_ciphertext, phone_ciphertext FROM public.directory_contacts",
     );
     expect(persisted.rows).toEqual([
       {
@@ -1070,10 +1070,10 @@ describe("MCP tool repository", () => {
       provider_identity_index: string;
     }>(
       `SELECT provider_identity_index, display_name_sort
-       FROM app.directory_contacts
+       FROM public.directory_contacts
        WHERE provider_identity_index IN (
-         $1::app.directory_blind_index,
-         $2::app.directory_blind_index
+         $1::public.directory_blind_index,
+         $2::public.directory_blind_index
        )
        ORDER BY provider_identity_index`,
       [firstContact.providerIdentityIndex, secondContact.providerIdentityIndex],
@@ -1179,7 +1179,7 @@ describe("MCP tool repository", () => {
 
     const converged = await database.query<{ display_name_sort: string }>(
       `SELECT display_name_sort
-       FROM app.directory_contacts
+       FROM public.directory_contacts
        WHERE provider_identity_index = $1`,
       [firstContact.providerIdentityIndex],
     );
@@ -1188,7 +1188,7 @@ describe("MCP tool repository", () => {
 
   test("rechecks scope and revocation at audit and protected-read boundaries", async () => {
     await database.query(
-      `UPDATE app.mcp_authorizations
+      `UPDATE public.mcp_authorizations
        SET scopes = ARRAY['messages:send']::text[]
        WHERE id = $1`,
       [authorizationId],
@@ -1205,7 +1205,7 @@ describe("MCP tool repository", () => {
     ).resolves.toMatchObject({ outcome: "authorization_denied" });
 
     await database.query(
-      `UPDATE app.mcp_authorizations
+      `UPDATE public.mcp_authorizations
        SET scopes = ARRAY['connections:read']::text[]
        WHERE id = $1`,
       [authorizationId],
@@ -1221,7 +1221,7 @@ describe("MCP tool repository", () => {
       }),
     ).resolves.toMatchObject({ outcome: "started" });
     await database.query(
-      `UPDATE app.mcp_authorizations
+      `UPDATE public.mcp_authorizations
        SET state = 'revoked', revoked_at = $2
        WHERE id = $1`,
       [authorizationId, observedAt],
@@ -1236,7 +1236,7 @@ describe("MCP tool repository", () => {
 
   test("returns an empty list after every selected Connection is purged", async () => {
     await database.query(
-      `DELETE FROM app.whatsapp_connections
+      `DELETE FROM public.whatsapp_connections
        WHERE personal_account_id = $1
          AND public_id IN ($2, $3, $4)`,
       [accountId, connectionA, connectionB, connectionWithoutSuffix],
@@ -1277,11 +1277,11 @@ describe("MCP tool repository", () => {
     const conversationId = "70000000-0000-4000-8000-000000000042";
     const conversationPublicId = "cvs_123456789012345678942";
     await database.query(
-      "UPDATE app.whatsapp_connections SET created_at=$2 WHERE personal_account_id=$1 AND public_id=$3",
+      "UPDATE public.whatsapp_connections SET created_at=$2 WHERE personal_account_id=$1 AND public_id=$3",
       [accountId, observedAt, connectionA],
     );
     await database.query(
-      `INSERT INTO app.whatsapp_conversations (id, personal_account_id, whatsapp_connection_id, public_id, kind, recipient_locator, recipient_public_id, last_activity_at, last_activity_direction)
+      `INSERT INTO public.whatsapp_conversations (id, personal_account_id, whatsapp_connection_id, public_id, kind, recipient_locator, recipient_public_id, last_activity_at, last_activity_direction)
        VALUES ($1,$2,'20000000-0000-4000-8000-000000000030',$3,'direct',$4,'ctc_123456789012345678942',$5,'inbound')`,
       [
         conversationId,
@@ -1292,7 +1292,7 @@ describe("MCP tool repository", () => {
       ],
     );
     await database.query(
-      `INSERT INTO app.directory_contacts (
+      `INSERT INTO public.directory_contacts (
          personal_account_id, whatsapp_connection_id, public_id,
          provider_identity_index, provider_identity_ciphertext_version,
          provider_identity_key_version, provider_identity_nonce,
@@ -1316,7 +1316,7 @@ describe("MCP tool repository", () => {
       ["3", "2026-07-31T12:03:00Z"],
     ] as const) {
       await database.query(
-        `INSERT INTO app.stored_messages (id, personal_account_id, whatsapp_connection_id, conversation_id, public_id, message_identity, direction, sent_at, content_type, content_ciphertext_version, content_key_version, content_nonce, content_ciphertext, received_at, webhook_item_identity)
+        `INSERT INTO public.stored_messages (id, personal_account_id, whatsapp_connection_id, conversation_id, public_id, message_identity, direction, sent_at, content_type, content_ciphertext_version, content_key_version, content_nonce, content_ciphertext, received_at, webhook_item_identity)
          VALUES ($1,$2,'20000000-0000-4000-8000-000000000030',$3,$4,$5,'inbound',$6,'text',1,1,decode(repeat('11',12),'hex'),decode(repeat('12',32),'hex'),$6,$7)`,
         [
           `71000000-0000-4000-8000-00000000004${suffix}`,
@@ -1332,7 +1332,7 @@ describe("MCP tool repository", () => {
     const readAt = new Date("2026-08-01T12:00:00Z");
     const auditLogId = "50000000-0000-4000-8000-000000000042";
     await database.query(
-      "UPDATE app.mcp_authorizations SET scopes=ARRAY['messages:read']::text[] WHERE id=$1",
+      "UPDATE public.mcp_authorizations SET scopes=ARRAY['messages:read']::text[] WHERE id=$1",
       [authorizationId],
     );
     await expect(
@@ -1390,7 +1390,7 @@ describe("MCP tool repository", () => {
       }),
     ).resolves.toEqual({ outcome: "success" });
     const log = await database.query(
-      `SELECT outcome, result_count FROM app.tool_call_logs WHERE id=$1`,
+      `SELECT outcome, result_count FROM public.tool_call_logs WHERE id=$1`,
       [auditLogId],
     );
     expect(log.rows).toEqual([{ outcome: "success", result_count: 1 }]);
@@ -1428,7 +1428,7 @@ describe("MCP tool repository", () => {
     ]);
     const concurrentLogs = await database.query(
       `SELECT outcome, result_count
-         FROM app.tool_call_logs
+         FROM public.tool_call_logs
         WHERE id = ANY($1::uuid[])
         ORDER BY outcome`,
       [concurrentAuditLogIds],
@@ -1443,11 +1443,11 @@ describe("MCP tool repository", () => {
     const conversationId = "70000000-0000-4000-8000-000000000047";
     const conversationPublicId = "cvs_123456789012345678947";
     await database.query(
-      `UPDATE app.mcp_authorizations SET scopes=ARRAY['messages:read']::text[] WHERE id=$1`,
+      `UPDATE public.mcp_authorizations SET scopes=ARRAY['messages:read']::text[] WHERE id=$1`,
       [authorizationId],
     );
     await database.query(
-      `INSERT INTO app.whatsapp_conversations (
+      `INSERT INTO public.whatsapp_conversations (
          id, personal_account_id, whatsapp_connection_id, public_id, kind,
          recipient_locator, recipient_public_id, last_activity_at,
          last_activity_direction
@@ -1464,7 +1464,7 @@ describe("MCP tool repository", () => {
       ],
     );
     await database.query(
-      `INSERT INTO app.stored_messages (
+      `INSERT INTO public.stored_messages (
          id, personal_account_id, whatsapp_connection_id, conversation_id,
          public_id, message_identity, direction, sent_at, content_type,
          content_ciphertext_version, content_key_version, content_nonce,
@@ -1478,7 +1478,7 @@ describe("MCP tool repository", () => {
       [accountId, conversationId, `wi1_${"E".repeat(43)}`, observedAt],
     );
     await database.query(
-      `INSERT INTO app.directory_contacts (
+      `INSERT INTO public.directory_contacts (
          personal_account_id, whatsapp_connection_id, public_id,
          provider_identity_index, provider_identity_ciphertext_version,
          provider_identity_key_version, provider_identity_nonce,
@@ -1529,16 +1529,16 @@ describe("MCP tool repository", () => {
     const conversationId = "70000000-0000-4000-8000-000000000046";
     const messageId = "71000000-0000-4000-8000-000000000046";
     await database.query(
-      `UPDATE app.mcp_authorizations SET scopes=ARRAY['messages:read']::text[] WHERE id=$1`,
+      `UPDATE public.mcp_authorizations SET scopes=ARRAY['messages:read']::text[] WHERE id=$1`,
       [authorizationId],
     );
     await database.query(
-      `INSERT INTO app.whatsapp_conversations (id,personal_account_id,whatsapp_connection_id,public_id,kind,recipient_locator,recipient_public_id,last_activity_at,last_activity_direction)
+      `INSERT INTO public.whatsapp_conversations (id,personal_account_id,whatsapp_connection_id,public_id,kind,recipient_locator,recipient_public_id,last_activity_at,last_activity_direction)
        VALUES ($1,$2,'20000000-0000-4000-8000-000000000030','cvs_123456789012345678946','direct',$3,'ctc_123456789012345678946',$4,'inbound')`,
       [conversationId, accountId, `di1_${"D".repeat(43)}`, observedAt],
     );
     await database.query(
-      `INSERT INTO app.stored_messages (id,personal_account_id,whatsapp_connection_id,conversation_id,public_id,message_identity,direction,sent_at,content_type,content_ciphertext_version,content_key_version,content_nonce,content_ciphertext,received_at,webhook_item_identity)
+      `INSERT INTO public.stored_messages (id,personal_account_id,whatsapp_connection_id,conversation_id,public_id,message_identity,direction,sent_at,content_type,content_ciphertext_version,content_key_version,content_nonce,content_ciphertext,received_at,webhook_item_identity)
        VALUES ($1,$2,'20000000-0000-4000-8000-000000000030',$3,'msg_123456789012345678946',$4,'inbound',$5,'image',1,1,decode(repeat('11',12),'hex'),decode(repeat('12',32),'hex'),$5,$4)`,
       [
         messageId,
@@ -1549,7 +1549,7 @@ describe("MCP tool repository", () => {
       ],
     );
     await database.query(
-      `INSERT INTO app.stored_media (id,personal_account_id,whatsapp_connection_id,stored_message_id,public_id,state,media_type,object_key,plaintext_size_bytes,sha256,metadata_ciphertext_version,metadata_key_version,metadata_nonce,metadata_ciphertext)
+      `INSERT INTO public.stored_media (id,personal_account_id,whatsapp_connection_id,stored_message_id,public_id,state,media_type,object_key,plaintext_size_bytes,sha256,metadata_ciphertext_version,metadata_key_version,metadata_nonce,metadata_ciphertext)
        VALUES ('72000000-0000-4000-8000-000000000046',$1,'20000000-0000-4000-8000-000000000030',$2,'med_123456789012345678946','ready','image','opaque-object',15,repeat('a',64),1,1,decode(repeat('13',12),'hex'),decode(repeat('14',32),'hex'))`,
       [accountId, messageId],
     );
@@ -1569,7 +1569,7 @@ describe("MCP tool repository", () => {
       plaintextSizeBytes: 15,
     });
     const log = await database.query(
-      `SELECT outcome,media_bytes_reserved FROM app.tool_call_logs WHERE id=$1`,
+      `SELECT outcome,media_bytes_reserved FROM public.tool_call_logs WHERE id=$1`,
       [auditLogId],
     );
     expect(log.rows).toEqual([
@@ -1581,7 +1581,7 @@ describe("MCP tool repository", () => {
       errorCode: "resource_unavailable",
     });
     const failedLog = await database.query(
-      `SELECT outcome,error_code,result_count,media_bytes_reserved FROM app.tool_call_logs WHERE id=$1`,
+      `SELECT outcome,error_code,result_count,media_bytes_reserved FROM public.tool_call_logs WHERE id=$1`,
       [auditLogId],
     );
     expect(failedLog.rows).toEqual([
@@ -1607,19 +1607,19 @@ describe("MCP tool repository", () => {
 
   test("rechecks directory scope, selected connection, and joined state for encrypted groups", async () => {
     await database.query(
-      `UPDATE app.mcp_authorizations
+      `UPDATE public.mcp_authorizations
        SET scopes = ARRAY['directory:read']::text[]
        WHERE id = $1`,
       [authorizationId],
     );
     await database.query(
-      `DELETE FROM app.whatsapp_connection_secrets
+      `DELETE FROM public.whatsapp_connection_secrets
        WHERE personal_account_id = $1
          AND whatsapp_connection_id = '20000000-0000-4000-8000-000000000030'`,
       [accountId],
     );
     await database.query(
-      `INSERT INTO app.whatsapp_group_directory_states (
+      `INSERT INTO public.whatsapp_group_directory_states (
          personal_account_id, whatsapp_connection_id, as_of, snapshot_observed_at,
          stale, partial, updated_at
        ) VALUES ($1, '20000000-0000-4000-8000-000000000030', $2, $2,
@@ -1627,7 +1627,7 @@ describe("MCP tool repository", () => {
       [accountId, observedAt],
     );
     await database.query(
-      `UPDATE app.whatsapp_connections
+      `UPDATE public.whatsapp_connections
        SET health_last_confirmed_at = $2
        WHERE personal_account_id = $1
          AND id = '20000000-0000-4000-8000-000000000030'`,
@@ -1649,7 +1649,7 @@ describe("MCP tool repository", () => {
       }),
     ).resolves.toBeNull();
     await database.query(
-      `INSERT INTO app.whatsapp_connection_secrets (
+      `INSERT INTO public.whatsapp_connection_secrets (
          personal_account_id, whatsapp_connection_id, credential_ciphertext,
          credential_ciphertext_version, credential_key_version,
          credential_nonce
@@ -1659,7 +1659,7 @@ describe("MCP tool repository", () => {
       [accountId],
     );
     await database.query(
-      `INSERT INTO app.whatsapp_groups (
+      `INSERT INTO public.whatsapp_groups (
          id, personal_account_id, whatsapp_connection_id, public_id,
          provider_locator, display_name_ciphertext_version,
          display_name_key_version, display_name_nonce,
@@ -1674,7 +1674,7 @@ describe("MCP tool repository", () => {
          decode(repeat('03', 12), 'hex'), decode(repeat('04', 20), 'hex'),
          1, 1, decode(repeat('05', 12), 'hex'),
          decode(repeat('06', 20), 'hex'),
-         ARRAY[$4::app.group_name_blind_index], true, $3, $3, $3
+         ARRAY[$4::public.group_name_blind_index], true, $3, $3, $3
        )`,
       [accountId, `wi1_${"A".repeat(43)}`, observedAt, `gi1_${"A".repeat(43)}`],
     );
@@ -1726,7 +1726,7 @@ describe("MCP tool repository", () => {
     expect(page?.groups[0]?.displayName?.ciphertext).not.toContain("Family");
 
     await database.query(
-      `INSERT INTO app.ingestion_gaps (
+      `INSERT INTO public.ingestion_gaps (
          personal_account_id, whatsapp_connection_id, cause,
          history_window_started_at, starts_at, detected_at, updated_at
        ) VALUES (
@@ -1744,14 +1744,14 @@ describe("MCP tool repository", () => {
       }),
     ).resolves.toMatchObject({ partial: true, stale: false });
     await database.query(
-      `UPDATE app.ingestion_gaps
+      `UPDATE public.ingestion_gaps
        SET ends_at = $2, updated_at = $2
        WHERE personal_account_id = $1
          AND whatsapp_connection_id = '20000000-0000-4000-8000-000000000030'`,
       [accountId, new Date(observedAt.valueOf() + 3_000)],
     );
     await database.query(
-      `UPDATE app.whatsapp_group_directory_states
+      `UPDATE public.whatsapp_group_directory_states
        SET retention_limited = true
        WHERE personal_account_id = $1
          AND whatsapp_connection_id = '20000000-0000-4000-8000-000000000030'`,
@@ -1767,9 +1767,9 @@ describe("MCP tool repository", () => {
     ).resolves.toMatchObject({ partial: true, stale: false });
 
     await database.query(
-      `UPDATE app.whatsapp_groups
+      `UPDATE public.whatsapp_groups
        SET joined = false,
-           name_prefix_indexes = ARRAY[]::app.group_name_blind_index[]
+           name_prefix_indexes = ARRAY[]::public.group_name_blind_index[]
        WHERE public_id = 'grp_123456789012345678939'`,
     );
     await expect(
@@ -1790,11 +1790,11 @@ describe("MCP tool repository", () => {
     ).resolves.toBeNull();
 
     await database.query(
-      `UPDATE app.whatsapp_groups SET joined = true
+      `UPDATE public.whatsapp_groups SET joined = true
        WHERE public_id = 'grp_123456789012345678939'`,
     );
     await database.query(
-      `UPDATE app.mcp_authorizations
+      `UPDATE public.mcp_authorizations
        SET state = 'revoked', revoked_at = $2
        WHERE id = $1`,
       [authorizationId, observedAt],
@@ -1810,11 +1810,11 @@ describe("MCP tool repository", () => {
     await database.exec("SET ROLE whatsapp_api_runtime; BEGIN");
     try {
       await database.query(
-        "SELECT set_config('app.personal_account_id', $1, true)",
+        "SELECT set_config('public.personal_account_id', $1, true)",
         [accountId],
       );
       const protectedBoundary = await database.query(
-        `SELECT * FROM app_private.load_mcp_group_projection_material(
+        `SELECT * FROM public.load_mcp_group_projection_material(
           $1, $2, $3, $4, $5
         )`,
         [

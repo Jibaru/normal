@@ -13,10 +13,10 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { personalAccountsInApp } from "./accounts";
-import { app } from "./common";
+import { publicSchema } from "./common";
 import { mcpAuthorizationsInApp } from "./mcp-authorizations";
 
-export const toolCallLogsInApp = app.table(
+export const toolCallLogsInApp = publicSchema.table(
   "tool_call_logs",
   {
     id: uuid().primaryKey().notNull(),
@@ -102,8 +102,8 @@ export const toolCallLogsInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "tool_call_logs_tool_name_check",

@@ -48,7 +48,7 @@ export const makeMessageRetentionRepository = (
     provider.withConnection(async (connection) => {
       const db = makeDatabase(connection);
       const result = await db.execute(sql`
-        SELECT * FROM app_private.get_message_retention_policy(
+        SELECT * FROM public.get_message_retention_policy(
           ${input.clerkUserId}, ${input.connectionPublicId}
         )
       `);
@@ -64,7 +64,7 @@ export const makeMessageRetentionRepository = (
     provider.withConnection(async (connection) => {
       const db = makeDatabase(connection);
       const result = await db.execute(sql`
-        SELECT * FROM app_private.update_message_retention_policy(
+        SELECT * FROM public.update_message_retention_policy(
           ${input.clerkUserId}, ${input.connectionPublicId},
           ${input.expectedDays}, ${input.days}, ${input.updatedAt}
         )
@@ -75,7 +75,7 @@ export const makeMessageRetentionRepository = (
     provider.withConnection(async (connection) => {
       const db = makeDatabase(connection);
       const result = await db.execute<{ purged_count: unknown }>(sql`
-        SELECT app_private.purge_expired_message_content(
+        SELECT public.purge_expired_message_content(
           ${observedAt}, ${limit}
         ) AS purged_count
       `);

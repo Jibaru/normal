@@ -106,7 +106,7 @@ export const makeConnectionHealthRepository = (
     provider.withConnection(async (connection) => {
       const db = makeDatabase(connection);
       const result = await db.execute<CandidateRow>(sql`
-        SELECT * FROM app_private.claim_whatsapp_connection_health(
+        SELECT * FROM public.claim_whatsapp_connection_health(
           ${input.claimedAt}, ${input.limit}
         )
       `);
@@ -116,7 +116,7 @@ export const makeConnectionHealthRepository = (
     provider.withConnection(async (connection) => {
       const db = makeDatabase(connection);
       const result = await db.execute<{ finished: unknown }>(sql`
-        SELECT app_private.finish_whatsapp_connection_health(
+        SELECT public.finish_whatsapp_connection_health(
           ${input.connectionId}, ${input.claimId}, ${input.state},
           ${input.gapEvidence}, ${input.webhookConfigurationHealthy},
           ${input.startedAt}, ${input.checkedAt}
@@ -128,7 +128,7 @@ export const makeConnectionHealthRepository = (
     provider.withConnection(async (connection) => {
       const db = makeDatabase(connection);
       const result = await db.execute<{ recorded: unknown }>(sql`
-        SELECT app_private.record_ingestion_gap_evidence(
+        SELECT public.record_ingestion_gap_evidence(
           ${input.connectionId}, ${input.cause}, ${input.active},
           ${input.observedAt}
         ) AS recorded

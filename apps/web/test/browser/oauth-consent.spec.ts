@@ -1,5 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 
+const webPort = process.env.PLAYWRIGHT_WEB_PORT ?? "3000";
 const handoff = "R".repeat(43);
 const connectionId = "con_123456789012345678901";
 
@@ -86,7 +87,7 @@ test("approves only explicit authority after recent Clerk reverification", async
     await route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
-        redirect_to: "http://127.0.0.1:3000/?oauth=approved",
+        redirect_to: `http://127.0.0.1:${webPort}/?oauth=approved`,
       }),
     });
   });
@@ -95,15 +96,21 @@ test("approves only explicit authority after recent Clerk reverification", async
   await expect(
     page.getByRole("heading", { name: "Approved MCP Client" }),
   ).toBeVisible();
-  await expect(page.getByLabel("Share selected read data")).not.toBeChecked();
-  await expect(page.getByLabel("Allow outbound sends")).not.toBeChecked();
+  await expect(
+    page.getByRole("checkbox", { name: "Share selected read data" }),
+  ).not.toBeChecked();
+  await expect(
+    page.getByRole("checkbox", { name: "Allow outbound sends" }),
+  ).not.toBeChecked();
   await expect(
     page.getByLabel("Personal WhatsApp, ending in 3456"),
   ).not.toBeChecked();
 
-  await page.getByLabel("Personal WhatsApp, ending in 3456").check();
-  await page.getByLabel("Send messages").check();
-  await page.getByLabel("Allow outbound sends").check();
+  await page
+    .getByRole("checkbox", { name: "Personal WhatsApp, ending in 3456" })
+    .check();
+  await page.getByRole("checkbox", { name: "Send messages" }).check();
+  await page.getByRole("checkbox", { name: "Allow outbound sends" }).check();
   await page.getByRole("button", { name: "Approve" }).click();
 
   await expect
@@ -148,8 +155,7 @@ test("denies without selecting a Connection or scope", async ({ page }) => {
     await route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
-        redirect_to:
-          "http://127.0.0.1:3000/?error=access_denied&state=client-state",
+        redirect_to: `http://127.0.0.1:${webPort}/?error=access_denied&state=client-state`,
       }),
     });
   });

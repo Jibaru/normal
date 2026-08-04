@@ -14,9 +14,9 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { personalAccountsInApp } from "./accounts";
-import { app, bytea } from "./common";
+import { bytea, publicSchema } from "./common";
 
-export const connectionSetupsInApp = app.table(
+export const connectionSetupsInApp = publicSchema.table(
   "connection_setups",
   {
     id: text().primaryKey().notNull(),
@@ -98,8 +98,8 @@ export const connectionSetupsInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "connection_setups_id_check",
@@ -185,7 +185,7 @@ export const connectionSetupsInApp = app.table(
   ],
 );
 
-export const whatsappNumberReservationsInApp = app.table(
+export const whatsappNumberReservationsInApp = publicSchema.table(
   "whatsapp_number_reservations",
   {
     numberToken: bytea("number_token").notNull(),
@@ -220,8 +220,8 @@ export const whatsappNumberReservationsInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "whatsapp_number_reservation_token_length",
@@ -234,7 +234,7 @@ export const whatsappNumberReservationsInApp = app.table(
   ],
 );
 
-export const connectionSetupKeyEnvelopesInApp = app.table(
+export const connectionSetupKeyEnvelopesInApp = publicSchema.table(
   "connection_setup_key_envelopes",
   {
     personalAccountId: uuid("personal_account_id").notNull(),
@@ -265,8 +265,8 @@ export const connectionSetupKeyEnvelopesInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "connection_setup_key_envelopes_account_key_version_check",
@@ -287,7 +287,7 @@ export const connectionSetupKeyEnvelopesInApp = app.table(
   ],
 );
 
-export const connectionSetupProviderSessionsInApp = app.table(
+export const connectionSetupProviderSessionsInApp = publicSchema.table(
   "connection_setup_provider_sessions",
   {
     personalAccountId: uuid("personal_account_id").notNull(),
@@ -329,8 +329,8 @@ export const connectionSetupProviderSessionsInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "connection_setup_provider_sessions_ordinal_check",

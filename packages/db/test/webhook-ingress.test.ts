@@ -25,26 +25,26 @@ describe("Webhook Event ingress repository", () => {
     `);
     await runMigrations(database);
     await database.query(
-      `INSERT INTO app.personal_accounts (id, state)
+      `INSERT INTO public.personal_accounts (id, state)
        VALUES ($1, 'active')`,
       [accountId],
     );
     await database.query(
-      `INSERT INTO app.whatsapp_connections (
+      `INSERT INTO public.whatsapp_connections (
         id, personal_account_id, webhook_ingress_id, display_name_ciphertext
       )
       VALUES ($1, $2, $3, decode('01', 'hex'))`,
       [connectionId, accountId, ingressId],
     );
     await database.query(
-      `INSERT INTO app.personal_account_key_envelopes (
+      `INSERT INTO public.personal_account_key_envelopes (
         personal_account_id, key_version, kms_key_id, ciphertext
       )
       VALUES ($1, 1, 'kms-content-root', decode('0102', 'hex'))`,
       [accountId],
     );
     await database.query(
-      `INSERT INTO app.whatsapp_connection_key_envelopes (
+      `INSERT INTO public.whatsapp_connection_key_envelopes (
         personal_account_id,
         whatsapp_connection_id,
         account_key_version,
@@ -60,7 +60,7 @@ describe("Webhook Event ingress repository", () => {
       [accountId, connectionId],
     );
     await database.query(
-      `INSERT INTO app.whatsapp_connection_provider_sessions (
+      `INSERT INTO public.whatsapp_connection_provider_sessions (
         personal_account_id,
         whatsapp_connection_id,
         locator_ciphertext_version,
@@ -140,7 +140,7 @@ describe("Webhook Event ingress repository", () => {
     const repository = makeWebhookIngressRepository(provider);
 
     await database.query(
-      `UPDATE app.personal_account_key_envelopes
+      `UPDATE public.personal_account_key_envelopes
        SET key_version = 2
        WHERE personal_account_id = $1`,
       [accountId],
@@ -148,13 +148,13 @@ describe("Webhook Event ingress repository", () => {
     expect(await repository.resolve(ingressId)).toBeNull();
 
     await database.query(
-      `UPDATE app.personal_account_key_envelopes
+      `UPDATE public.personal_account_key_envelopes
        SET key_version = 1
        WHERE personal_account_id = $1`,
       [accountId],
     );
     await database.query(
-      `UPDATE app.whatsapp_connection_provider_sessions
+      `UPDATE public.whatsapp_connection_provider_sessions
        SET authority_key_version = 3
        WHERE personal_account_id = $1
          AND whatsapp_connection_id = $2`,

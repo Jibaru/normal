@@ -13,11 +13,11 @@ import {
   unique,
   uuid,
 } from "drizzle-orm/pg-core";
-import { app, bytea } from "./common";
+import { bytea, publicSchema } from "./common";
 import { whatsappConnectionsInApp } from "./connections";
 import { webhookEventsInApp } from "./webhooks";
 
-export const whatsappConversationsInApp = app.table(
+export const whatsappConversationsInApp = publicSchema.table(
   "whatsapp_conversations",
   {
     id: uuid().primaryKey().notNull(),
@@ -70,8 +70,8 @@ export const whatsappConversationsInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "whatsapp_conversations_public_id_check",
@@ -96,7 +96,7 @@ export const whatsappConversationsInApp = app.table(
   ],
 );
 
-export const storedMessagesInApp = app.table(
+export const storedMessagesInApp = publicSchema.table(
   "stored_messages",
   {
     id: uuid().primaryKey().notNull(),
@@ -191,8 +191,8 @@ export const storedMessagesInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "stored_messages_public_id_check",
@@ -241,7 +241,7 @@ export const storedMessagesInApp = app.table(
   ],
 );
 
-export const storedMediaInApp = app.table(
+export const storedMediaInApp = publicSchema.table(
   "stored_media",
   {
     id: uuid().primaryKey().notNull(),
@@ -305,8 +305,8 @@ export const storedMediaInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "stored_media_metadata_ciphertext_version_check",
@@ -357,7 +357,7 @@ export const storedMediaInApp = app.table(
   ],
 );
 
-export const storedMediaObjectDeletionsInApp = app.table(
+export const storedMediaObjectDeletionsInApp = publicSchema.table(
   "stored_media_object_deletions",
   {
     personalAccountId: uuid("personal_account_id").notNull(),
@@ -378,8 +378,8 @@ export const storedMediaObjectDeletionsInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
   ],
 );

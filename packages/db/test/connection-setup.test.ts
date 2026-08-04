@@ -137,7 +137,7 @@ describe("Connection Setup repository", () => {
       SELECT
         count(*)::integer AS setup_count,
         max(expires_at) AS expires_at
-      FROM app.connection_setups
+      FROM public.connection_setups
     `);
     expect(persisted.rows[0]?.setup_count).toBe(1);
     expect(persisted.rows[0]?.expires_at).toEqual(
@@ -222,11 +222,11 @@ describe("Connection Setup repository", () => {
     await database.exec("SET ROLE whatsapp_api_runtime; BEGIN");
     try {
       await database.query(
-        "SELECT set_config('app.personal_account_id', $1, true)",
+        "SELECT set_config('public.personal_account_id', $1, true)",
         [accountA],
       );
       const visible = await database.query<{ id: string }>(
-        "SELECT id FROM app.connection_setups ORDER BY id",
+        "SELECT id FROM public.connection_setups ORDER BY id",
       );
       expect(visible.rows).toEqual([{ id: "cst_000000000000000000001" }]);
     } finally {
@@ -312,8 +312,8 @@ describe("Connection Setup repository", () => {
       SELECT
         setups.state,
         count(provider_sessions.ordinal)::integer AS provider_session_count
-      FROM app.connection_setups AS setups
-      LEFT JOIN app.connection_setup_provider_sessions AS provider_sessions
+      FROM public.connection_setups AS setups
+      LEFT JOIN public.connection_setup_provider_sessions AS provider_sessions
         ON provider_sessions.personal_account_id = setups.personal_account_id
        AND provider_sessions.connection_setup_id = setups.id
       WHERE setups.id = 'cst_000000000000000000001'
@@ -338,21 +338,21 @@ describe("Connection Setup repository", () => {
     await database.exec("SET ROLE whatsapp_api_runtime; BEGIN");
     try {
       await database.query(
-        "SELECT set_config('app.personal_account_id', $1, true)",
+        "SELECT set_config('public.personal_account_id', $1, true)",
         [accountB],
       );
       const crossTenant = await database.query(
-        "SELECT ordinal FROM app.connection_setup_provider_sessions",
+        "SELECT ordinal FROM public.connection_setup_provider_sessions",
       );
       expect(crossTenant.rows).toEqual([]);
       await database.exec("ROLLBACK; SET ROLE whatsapp_api_runtime; BEGIN");
       await database.query(
-        "SELECT set_config('app.personal_account_id', $1, true)",
+        "SELECT set_config('public.personal_account_id', $1, true)",
         [accountA],
       );
       const owningTenant = await database.query<{ ordinal: number }>(
         `SELECT ordinal
-         FROM app.connection_setup_provider_sessions
+         FROM public.connection_setup_provider_sessions
          ORDER BY ordinal`,
       );
       expect(owningTenant.rows).toEqual([{ ordinal: 0 }, { ordinal: 1 }]);
@@ -578,15 +578,15 @@ describe("Connection Setup repository", () => {
          reservations.released_at,
          (
            SELECT count(*)::integer
-           FROM app.connection_setup_key_envelopes
+           FROM public.connection_setup_key_envelopes
            WHERE connection_setup_id = $1
          ) AS key_count,
          (
            SELECT count(*)::integer
-           FROM app.connection_setup_provider_sessions
+           FROM public.connection_setup_provider_sessions
            WHERE connection_setup_id = $1
          ) AS provider_session_count
-       FROM app.whatsapp_number_reservations AS reservations
+       FROM public.whatsapp_number_reservations AS reservations
        WHERE reservations.connection_setup_id = $1`,
       [setupId],
     );
@@ -637,7 +637,7 @@ describe("Connection Setup repository", () => {
       state: string;
     }>(
       `SELECT state, cleanup_state
-       FROM app.connection_setups
+       FROM public.connection_setups
        WHERE id = $1`,
       [setupId],
     );

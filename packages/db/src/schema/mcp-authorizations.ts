@@ -11,10 +11,10 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { personalAccountsInApp } from "./accounts";
-import { app, bytea } from "./common";
+import { bytea, publicSchema } from "./common";
 import { whatsappConnectionsInApp } from "./connections";
 
-export const mcpAuthorizationsInApp = app.table(
+export const mcpAuthorizationsInApp = publicSchema.table(
   "mcp_authorizations",
   {
     id: uuid().primaryKey().notNull(),
@@ -72,8 +72,8 @@ export const mcpAuthorizationsInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "mcp_authorizations_oauth_subject_check",
@@ -126,7 +126,7 @@ export const mcpAuthorizationsInApp = app.table(
   ],
 );
 
-export const mcpRefreshCredentialsInApp = app.table(
+export const mcpRefreshCredentialsInApp = publicSchema.table(
   "mcp_refresh_credentials",
   {
     credentialHash: bytea("credential_hash").primaryKey().notNull(),
@@ -161,8 +161,8 @@ export const mcpRefreshCredentialsInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "mcp_refresh_credentials_credential_hash_check",
@@ -179,7 +179,7 @@ export const mcpRefreshCredentialsInApp = app.table(
   ],
 );
 
-export const mcpAuthorizationConnectionsInApp = app.table(
+export const mcpAuthorizationConnectionsInApp = publicSchema.table(
   "mcp_authorization_connections",
   {
     personalAccountId: uuid("personal_account_id").notNull(),
@@ -214,8 +214,8 @@ export const mcpAuthorizationConnectionsInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
   ],
 );

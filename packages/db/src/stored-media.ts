@@ -202,7 +202,7 @@ const transaction = async <Value>(
 
 const enterAccount = (connection: StoredMediaConnection, accountId: string) =>
   makeDatabase(connection).execute(
-    sql`SELECT pg_catalog.set_config('app.personal_account_id', ${accountId}, true)`,
+    sql`SELECT pg_catalog.set_config('public.personal_account_id', ${accountId}, true)`,
   );
 
 export const makeStoredMediaRepository = (
@@ -226,7 +226,7 @@ export const makeStoredMediaRepository = (
       transaction(connection, async () => {
         await enterAccount(connection, input.personalAccountId);
         await makeDatabase(connection).execute(
-          sql`SELECT app_private.finish_stored_media_object_deletion(
+          sql`SELECT public.finish_stored_media_object_deletion(
             ${input.personalAccountId}, ${input.objectKey}
           )`,
         );
@@ -239,7 +239,7 @@ export const makeStoredMediaRepository = (
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
         throw new Error("invalid Stored Media deletion limit");
       const result = await makeDatabase(connection).execute(sql`
-        SELECT * FROM app_private.list_stored_media_object_deletions(${limit})
+        SELECT * FROM public.list_stored_media_object_deletions(${limit})
       `);
       return result.map((row) => {
         if (
@@ -260,7 +260,7 @@ export const makeStoredMediaRepository = (
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
         throw new Error("invalid pending Stored Media limit");
       const result = await makeDatabase(connection).execute(sql`
-        SELECT * FROM app_private.list_pending_stored_media(${limit})
+        SELECT * FROM public.list_pending_stored_media(${limit})
       `);
       return result.map(pendingCandidate);
     }),

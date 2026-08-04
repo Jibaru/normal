@@ -82,7 +82,7 @@ describe("connection health and Ingestion Gap repository", () => {
       setupId,
     });
     await database.query(
-      `UPDATE app.connection_setups
+      `UPDATE public.connection_setups
        SET webhook_ingress_id = $1
        WHERE id = $2`,
       [webhookIngressId, setupId],
@@ -212,7 +212,7 @@ describe("connection health and Ingestion Gap repository", () => {
       starts_at: Date;
     }>(
       `SELECT cause, starts_at, ends_at, history_window_started_at
-       FROM app.ingestion_gaps
+       FROM public.ingestion_gaps
        WHERE whatsapp_connection_id = $1`,
       [connectionId],
     );
@@ -296,7 +296,7 @@ describe("connection health and Ingestion Gap repository", () => {
       starts_at: Date;
     }>(
       `SELECT cause, starts_at, ends_at
-       FROM app.ingestion_gaps
+       FROM public.ingestion_gaps
        WHERE whatsapp_connection_id = $1
        ORDER BY cause`,
       [connectionId],
@@ -358,7 +358,7 @@ describe("connection health and Ingestion Gap repository", () => {
     });
     const open = await database.query<{ ends_at: Date | null }>(
       `SELECT ends_at
-       FROM app.ingestion_gaps
+       FROM public.ingestion_gaps
        WHERE whatsapp_connection_id = $1
          AND cause = 'webhook_configuration'`,
       [connectionId],
@@ -381,7 +381,7 @@ describe("connection health and Ingestion Gap repository", () => {
     await expect(
       database.query<{ ends_at: Date | null }>(
         `SELECT ends_at
-         FROM app.ingestion_gaps
+         FROM public.ingestion_gaps
          WHERE whatsapp_connection_id = $1
            AND cause = 'webhook_configuration'`,
         [connectionId],
@@ -403,7 +403,7 @@ describe("connection health and Ingestion Gap repository", () => {
     });
     const closed = await database.query<{ ends_at: Date | null }>(
       `SELECT ends_at
-       FROM app.ingestion_gaps
+       FROM public.ingestion_gaps
        WHERE whatsapp_connection_id = $1
          AND cause = 'webhook_configuration'`,
       [connectionId],
@@ -456,7 +456,7 @@ describe("connection health and Ingestion Gap repository", () => {
       limit: 1,
     });
     await database.query(
-      `UPDATE app.whatsapp_connections
+      `UPDATE public.whatsapp_connections
        SET
          state = 'disconnected',
          state_changed_at = '2026-07-31T12:05:00.000Z',
@@ -482,7 +482,7 @@ describe("connection health and Ingestion Gap repository", () => {
       state: string;
     }>(
       `SELECT state, health_last_checked_at
-       FROM app.whatsapp_connections
+       FROM public.whatsapp_connections
        WHERE id = $1`,
       [connectionId],
     );
@@ -498,7 +498,7 @@ describe("connection health and Ingestion Gap repository", () => {
     await database.exec("SET ROLE whatsapp_api_runtime");
     try {
       await expect(
-        database.query("SELECT * FROM app.ingestion_gaps"),
+        database.query("SELECT * FROM public.ingestion_gaps"),
       ).rejects.toThrow();
     } finally {
       await database.exec("RESET ROLE");

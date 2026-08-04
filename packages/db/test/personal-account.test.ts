@@ -195,8 +195,8 @@ describe("Personal Account repository", () => {
       state: string;
     }>(
       `SELECT accounts.state, accounts.deletion_marker_id, keys.ciphertext
-       FROM app.personal_accounts accounts
-       JOIN app.personal_account_key_envelopes keys ON keys.personal_account_id = accounts.id
+       FROM public.personal_accounts accounts
+       JOIN public.personal_account_key_envelopes keys ON keys.personal_account_id = accounts.id
        WHERE accounts.id = $1`,
       [accountId],
     );
@@ -231,7 +231,7 @@ describe("Personal Account repository", () => {
 
     await database.exec("RESET ROLE");
     await database.query(
-      `INSERT INTO app.mcp_authorizations (
+      `INSERT INTO public.mcp_authorizations (
          id, personal_account_id, oauth_subject, client_id, client_class,
          scopes, state, reverified_at, authorized_at, absolute_expires_at,
          revoked_at, refresh_family_state, refresh_family_revoked_at
@@ -245,7 +245,7 @@ describe("Personal Account repository", () => {
       [accountId, "s".repeat(43)],
     );
     await database.query(
-      `INSERT INTO app.tool_call_logs (
+      `INSERT INTO public.tool_call_logs (
          id, personal_account_id, mcp_authorization_id, tool_name, started_at,
          completed_at, outcome, result_count, latency_ms, quota_reserved,
          expires_at, public_id
@@ -283,12 +283,12 @@ describe("Personal Account repository", () => {
     expect(
       (
         await database.query(
-          "SELECT count(*)::integer AS count FROM app.personal_accounts",
+          "SELECT count(*)::integer AS count FROM public.personal_accounts",
         )
       ).rows,
     ).toEqual([{ count: 0 }]);
     expect(
-      (await database.query("SELECT * FROM app_private.security_records")).rows,
+      (await database.query("SELECT * FROM public.security_records")).rows,
     ).toEqual([
       {
         category: "tool_call",
@@ -304,7 +304,7 @@ describe("Personal Account repository", () => {
     expect(
       (
         await database.query(
-          "SELECT * FROM app_private.personal_account_cleanup_audit",
+          "SELECT * FROM public.personal_account_cleanup_audit",
         )
       ).rows,
     ).toEqual([
@@ -320,7 +320,7 @@ describe("Personal Account repository", () => {
     const repository = makePersonalAccountRepository(provider);
     await database.exec("RESET ROLE");
     await database.query(`
-      INSERT INTO app_private.security_records (
+      INSERT INTO public.security_records (
         category, client_class, outcome, result_count, started_at,
         completed_at, latency_ms, expires_at
       )
@@ -333,7 +333,7 @@ describe("Personal Account repository", () => {
       FROM generate_series(0, 500) AS value
     `);
     await database.query(`
-      INSERT INTO app_private.personal_account_cleanup_audit (
+      INSERT INTO public.personal_account_cleanup_audit (
         deletion_marker_id, completed_at, expires_at
       )
       SELECT
@@ -352,8 +352,8 @@ describe("Personal Account repository", () => {
       (
         await database.query(`
           SELECT
-            (SELECT count(*)::integer FROM app_private.security_records) +
-            (SELECT count(*)::integer FROM app_private.personal_account_cleanup_audit)
+            (SELECT count(*)::integer FROM public.security_records) +
+            (SELECT count(*)::integer FROM public.personal_account_cleanup_audit)
               AS count
         `)
       ).rows,
@@ -396,7 +396,7 @@ describe("Personal Account repository", () => {
 
     const persisted = await database.query<{ count: number }>(
       `SELECT count(*)::integer AS count
-       FROM app_private.private_beta_waitlist
+       FROM public.private_beta_waitlist
        WHERE clerk_user_id = 'user_waitlisted'`,
     );
     expect(persisted.rows).toEqual([{ count: 1 }]);

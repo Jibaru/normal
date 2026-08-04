@@ -1,7 +1,17 @@
 import { defineConfig } from "@playwright/test";
 
-const webOrigin = "http://127.0.0.1:3000";
-const apiOrigin = "http://127.0.0.1:8787";
+const port = (name: string, fallback: string): string => {
+  const value = process.env[name] ?? fallback;
+  if (!/^[1-9][0-9]{0,4}$/u.test(value) || Number(value) > 65_535) {
+    throw new Error(`${name} must be a valid TCP port`);
+  }
+  return value;
+};
+
+const webPort = port("PLAYWRIGHT_WEB_PORT", "3000");
+const apiPort = port("PLAYWRIGHT_API_PORT", "8787");
+const webOrigin = `http://127.0.0.1:${webPort}`;
+const apiOrigin = `http://127.0.0.1:${apiPort}`;
 
 export default defineConfig({
   forbidOnly: Boolean(process.env.CI),
@@ -15,16 +25,14 @@ export default defineConfig({
   },
   webServer: [
     {
-      command:
-        "bun x wrangler dev --config test/wrangler.browser.jsonc --ip 127.0.0.1 --port 8787",
+      command: `bun x wrangler dev --config test/wrangler.browser.jsonc --ip 127.0.0.1 --port ${apiPort}`,
       cwd: "../api",
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
       url: `${apiOrigin}/test/ready`,
     },
     {
-      command:
-        "DEPLOYMENT_ENVIRONMENT=development NEXT_PUBLIC_API_ORIGIN=https://api.example.test NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_Y2xlcmsuZXhhbXBsZS50ZXN0JA bun run build && bun run start --hostname 127.0.0.1 --port 3000",
+      command: `DEPLOYMENT_ENVIRONMENT=development NEXT_PUBLIC_API_ORIGIN=https://api.example.test NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_Y2xlcmsuZXhhbXBsZS50ZXN0JA bun run build && bun run start --hostname 127.0.0.1 --port ${webPort}`,
       reuseExistingServer: !process.env.CI,
       timeout: 180_000,
       url: webOrigin,

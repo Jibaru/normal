@@ -85,7 +85,7 @@ describe("WhatsApp Connection repository", () => {
       setupId,
     });
     await database.query(
-      `UPDATE app.connection_setups
+      `UPDATE public.connection_setups
        SET webhook_ingress_id = $1
        WHERE id = $2`,
       ["30000000-0000-4000-8000-000000000031", setupId],
@@ -202,7 +202,7 @@ describe("WhatsApp Connection repository", () => {
 
     const counts = await database.query<{ connection_count: number }>(`
       SELECT count(*)::integer AS connection_count
-      FROM app.whatsapp_connections
+      FROM public.whatsapp_connections
     `);
     expect(counts.rows).toEqual([{ connection_count: 0 }]);
   });
@@ -235,15 +235,15 @@ describe("WhatsApp Connection repository", () => {
       webhook_secret_count: number;
     }>(`
       SELECT
-        (SELECT count(*)::integer FROM app.whatsapp_connections)
+        (SELECT count(*)::integer FROM public.whatsapp_connections)
           AS connection_count,
-        (SELECT count(*)::integer FROM app.whatsapp_connection_key_envelopes)
+        (SELECT count(*)::integer FROM public.whatsapp_connection_key_envelopes)
           AS connection_key_count,
-        (SELECT count(*)::integer FROM app.whatsapp_connection_provider_sessions)
+        (SELECT count(*)::integer FROM public.whatsapp_connection_provider_sessions)
           AS provider_session_count,
-        (SELECT state FROM app.connection_setups WHERE id = '${setupId}')
+        (SELECT state FROM public.connection_setups WHERE id = '${setupId}')
           AS setup_state,
-        (SELECT count(*)::integer FROM app.whatsapp_connection_secrets)
+        (SELECT count(*)::integer FROM public.whatsapp_connection_secrets)
           AS webhook_secret_count
     `);
     expect(counts.rows).toEqual([
@@ -269,7 +269,7 @@ describe("WhatsApp Connection repository", () => {
 
     const counts = await database.query<{ connection_count: number }>(`
       SELECT count(*)::integer AS connection_count
-      FROM app.whatsapp_connections
+      FROM public.whatsapp_connections
     `);
     expect(counts.rows).toEqual([{ connection_count: 0 }]);
   });
@@ -294,7 +294,7 @@ describe("WhatsApp Connection repository", () => {
     const qrColumns = await database.query<{ count: number }>(`
       SELECT count(*)::integer AS count
       FROM information_schema.columns
-      WHERE table_schema IN ('app', 'app_private')
+      WHERE table_schema IN ('public', 'public')
         AND column_name ILIKE '%qr%'
     `);
     expect(qrColumns.rows).toEqual([{ count: 0 }]);
@@ -346,10 +346,10 @@ describe("WhatsApp Connection repository", () => {
     }>(`SELECT connections.state,
           keys.ciphertext AS key_ciphertext,
           keys.unavailable_at AS key_unavailable_at,
-          (SELECT count(*)::integer FROM app.mcp_authorization_connections
+          (SELECT count(*)::integer FROM public.mcp_authorization_connections
            WHERE whatsapp_connection_id = connections.id) AS grant_count
-        FROM app.whatsapp_connections connections
-        JOIN app.whatsapp_connection_key_envelopes keys
+        FROM public.whatsapp_connections connections
+        JOIN public.whatsapp_connection_key_envelopes keys
           ON keys.whatsapp_connection_id = connections.id
         WHERE connections.id = '${connectionId}'`);
     expect(state.rows[0]).toMatchObject({
@@ -382,14 +382,14 @@ describe("WhatsApp Connection repository", () => {
     await database.exec("SET ROLE whatsapp_deletion_runtime");
     try {
       await expect(
-        database.query("SELECT * FROM app.whatsapp_connections"),
+        database.query("SELECT * FROM public.whatsapp_connections"),
       ).rejects.toThrow();
     } finally {
       await database.exec("RESET ROLE");
     }
     const webhookEventId = "50000000-0000-4000-8000-000000000031";
     await database.query(
-      `INSERT INTO app.webhook_events(
+      `INSERT INTO public.webhook_events(
          personal_account_id,whatsapp_connection_id,id,ciphertext_sha256,
          payload_bytes,received_at,source_expires_at
        ) VALUES ($1,$2,$3,$4,1,$5::timestamptz,$5::timestamptz + interval '7 days')`,
@@ -479,9 +479,9 @@ describe("WhatsApp Connection repository", () => {
       reservation_count: number;
       tombstone_count: number;
     }>(`SELECT
-      (SELECT count(*)::integer FROM app.whatsapp_connections) AS connection_count,
-      (SELECT count(*)::integer FROM app.whatsapp_number_reservations) AS reservation_count,
-      (SELECT count(*)::integer FROM app_private.deleted_whatsapp_connection_handles) AS tombstone_count`);
+      (SELECT count(*)::integer FROM public.whatsapp_connections) AS connection_count,
+      (SELECT count(*)::integer FROM public.whatsapp_number_reservations) AS reservation_count,
+      (SELECT count(*)::integer FROM public.deleted_whatsapp_connection_handles) AS tombstone_count`);
     expect(counts.rows).toEqual([
       { connection_count: 0, reservation_count: 0, tombstone_count: 1 },
     ]);
@@ -605,11 +605,11 @@ describe("WhatsApp Connection repository", () => {
       setup_count: number;
     }>(`
       SELECT
-        (SELECT count(*)::integer FROM app.whatsapp_connections)
+        (SELECT count(*)::integer FROM public.whatsapp_connections)
           AS connection_count,
-        (SELECT count(*)::integer FROM app.whatsapp_number_reservations)
+        (SELECT count(*)::integer FROM public.whatsapp_number_reservations)
           AS reservation_count,
-        (SELECT count(*)::integer FROM app.connection_setups)
+        (SELECT count(*)::integer FROM public.connection_setups)
           AS setup_count
     `);
     expect(retained.rows).toEqual([

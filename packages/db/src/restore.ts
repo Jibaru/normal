@@ -70,7 +70,7 @@ export const makePgRestoreRepository = (
         deletion_kind: RestoreCandidate["deletionKind"];
         opaque_entity_id: string;
       }>(sql`
-        SELECT * FROM app_private.begin_restore_replay(${branchId}, ${observedAt})
+        SELECT * FROM public.begin_restore_replay(${branchId}, ${observedAt})
       `);
       return result.map((row) => ({
         deletionKind: row.deletion_kind,
@@ -81,7 +81,7 @@ export const makePgRestoreRepository = (
     withClient(connectionString, async (client) => {
       const db = makeDatabase(client);
       const result = await db.execute<{ replayed: boolean }>(sql`
-        SELECT app_private.replay_restore_deletion(
+        SELECT public.replay_restore_deletion(
           ${input.deletionKind}, ${input.opaqueEntityId}, ${input.markerId},
           ${input.observedAt}
         ) AS replayed
@@ -92,7 +92,7 @@ export const makePgRestoreRepository = (
     withClient(connectionString, async (client) => {
       const db = makeDatabase(client);
       const result = await db.execute<{ purged: number }>(sql`
-        SELECT app_private.purge_restore_expired(${observedAt}, ${limit}) AS purged
+        SELECT public.purge_restore_expired(${observedAt}, ${limit}) AS purged
       `);
       return result[0]?.purged ?? 0;
     }),
@@ -103,7 +103,7 @@ export const makePgRestoreRepository = (
         bucket: RestoreObjectDeletion["bucket"];
         object_key: string;
       }>(sql`
-        SELECT * FROM app_private.list_restore_object_deletions(${limit})
+        SELECT * FROM public.list_restore_object_deletions(${limit})
       `);
       return result.map((row) => ({
         bucket: row.bucket,
@@ -114,7 +114,7 @@ export const makePgRestoreRepository = (
     withClient(connectionString, async (client) => {
       const db = makeDatabase(client);
       await db.execute(sql`
-        SELECT app_private.finish_restore_object_deletion(
+        SELECT public.finish_restore_object_deletion(
           ${deletion.bucket}, ${deletion.objectKey}
         )
       `);
@@ -123,7 +123,7 @@ export const makePgRestoreRepository = (
     withClient(connectionString, async (client) => {
       const db = makeDatabase(client);
       await db.execute(sql`
-        SELECT app_private.complete_restore_replay(
+        SELECT public.complete_restore_replay(
           ${input.branchId}, ${input.completedAt}, ${input.markerCount},
           ${input.deletedEntityCount}, ${input.expiredRecordCount}
         )

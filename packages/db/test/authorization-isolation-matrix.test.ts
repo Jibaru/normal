@@ -25,7 +25,7 @@ describe("production authorization and isolation matrix", () => {
       ["user_isolation60", accountB],
     ] as const) {
       await database.query(
-        `SELECT * FROM app_private.admit_personal_account_for_clerk(
+        `SELECT * FROM public.admit_personal_account_for_clerk(
           $1, $2, 1, 'arn:aws:kms:us-east-1:111122223333:key/content-root-key',
           decode('0102', 'hex'), 6
         )`,
@@ -33,7 +33,7 @@ describe("production authorization and isolation matrix", () => {
       );
     }
     await database.query(
-      `INSERT INTO app.whatsapp_connections (
+      `INSERT INTO public.whatsapp_connections (
         id, personal_account_id, webhook_ingress_id, display_name_ciphertext,
         public_id, number_suffix, state, state_changed_at
       ) VALUES
@@ -85,11 +85,11 @@ describe("production authorization and isolation matrix", () => {
       await database.exec(`SET ROLE ${role}; BEGIN`);
       try {
         await database.query(
-          "SELECT set_config('app.personal_account_id', $1, true)",
+          "SELECT set_config('public.personal_account_id', $1, true)",
           [accountA],
         );
         const visible = await database.query<{ personal_account_id: string }>(
-          "SELECT personal_account_id FROM app.whatsapp_connections",
+          "SELECT personal_account_id FROM public.whatsapp_connections",
         );
         expect(visible.rows).toEqual([{ personal_account_id: accountA }]);
       } finally {
@@ -106,7 +106,7 @@ describe("production authorization and isolation matrix", () => {
       await database.exec(`SET ROLE ${role}`);
       try {
         await expect(
-          database.query("SELECT * FROM app.whatsapp_connections"),
+          database.query("SELECT * FROM public.whatsapp_connections"),
         ).rejects.toThrow();
       } finally {
         await database.exec("RESET ROLE");
@@ -117,7 +117,7 @@ describe("production authorization and isolation matrix", () => {
   test("rejects cross-account composite relationships inside an API tenant transaction", async () => {
     const authorizationId = "40000000-0000-4000-8000-000000000059";
     await database.query(
-      `INSERT INTO app.mcp_authorizations (
+      `INSERT INTO public.mcp_authorizations (
         id, personal_account_id, oauth_subject, client_id, client_class, scopes,
         reverified_at, authorized_at, absolute_expires_at
       ) VALUES ($1, $2, $3, 'approved-client', 'approved',
@@ -128,12 +128,12 @@ describe("production authorization and isolation matrix", () => {
     await database.exec("SET ROLE whatsapp_api_runtime; BEGIN");
     try {
       await database.query(
-        "SELECT set_config('app.personal_account_id', $1, true)",
+        "SELECT set_config('public.personal_account_id', $1, true)",
         [accountA],
       );
       await expect(
         database.query(
-          `INSERT INTO app.mcp_authorization_connections (
+          `INSERT INTO public.mcp_authorization_connections (
             personal_account_id, mcp_authorization_id, whatsapp_connection_id
           ) VALUES ($1, $2, $3)`,
           [accountA, authorizationId, connectionB],

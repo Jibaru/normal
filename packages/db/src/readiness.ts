@@ -42,7 +42,7 @@ export const assertExpectedSchemaVersion = async (
   try {
     const result = await db.execute<{ version: number | string }>(sql`
       SELECT COALESCE(max(created_at), 0)::bigint AS version
-      FROM app_private.drizzle_migrations
+      FROM public.drizzle_migrations
     `);
     actual = Number(result[0]?.version ?? 0);
   } catch (error) {
@@ -59,7 +59,7 @@ export const assertExpectedSchemaVersion = async (
         count(*)::integer AS count,
         COALESCE(max(hash), '') AS hash,
         COALESCE(max(created_at), 0)::bigint AS version
-      FROM app_private.schema_migrations
+      FROM public.schema_migrations
     `);
     const ledger = legacy[0];
     if (
@@ -78,7 +78,7 @@ export const assertExpectedSchemaVersion = async (
 
   if (branchId !== undefined) {
     const readiness = await db.execute<{ ready: boolean }>(sql`
-      SELECT app_private.is_restore_ready(${branchId}) AS ready
+      SELECT public.is_restore_ready(${branchId}) AS ready
     `);
     if (readiness[0]?.ready !== true) throw new RestoreReplayRequired();
   }

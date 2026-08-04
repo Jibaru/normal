@@ -11,6 +11,7 @@
     "build": "turbo run build --cache-dir=.turbo/cache && bun run inspect:bundles",
     "db:check": "bun run --cwd packages/db db:check",
     "db:migrate": "bun run --cwd packages/db db:migrate",
+    "db:migrate-public-data": "bun run --cwd packages/db db:migrate-public-data",
     "db:record-gap": "bun run --cwd packages/db db:record-gap",
     "dev": "turbo run dev --filter=@whatsapp-mcp/api --filter=@whatsapp-mcp/web --cache-dir=.turbo/cache",
     "dev:tunnel": "cloudflared tunnel run dev",

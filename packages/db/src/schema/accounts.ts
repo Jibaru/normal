@@ -11,9 +11,9 @@ import {
   unique,
   uuid,
 } from "drizzle-orm/pg-core";
-import { app, appPrivate, bytea } from "./common";
+import { bytea, publicSchema } from "./common";
 
-export const personalAccountsInApp = app.table(
+export const personalAccountsInApp = publicSchema.table(
   "personal_accounts",
   {
     id: uuid().primaryKey().notNull(),
@@ -51,8 +51,8 @@ export const personalAccountsInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "personal_accounts_state_check",
@@ -85,7 +85,7 @@ export const personalAccountsInApp = app.table(
   ],
 );
 
-export const clerkIdentitiesInAppPrivate = appPrivate.table(
+export const clerkIdentitiesInAppPrivate = publicSchema.table(
   "clerk_identities",
   {
     clerkUserId: text("clerk_user_id").primaryKey().notNull(),
@@ -106,7 +106,7 @@ export const clerkIdentitiesInAppPrivate = appPrivate.table(
   ],
 );
 
-export const personalAccountKeyEnvelopesInApp = app.table(
+export const personalAccountKeyEnvelopesInApp = publicSchema.table(
   "personal_account_key_envelopes",
   {
     personalAccountId: uuid("personal_account_id").primaryKey().notNull(),
@@ -131,8 +131,8 @@ export const personalAccountKeyEnvelopesInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "personal_account_key_envelopes_key_version_check",
@@ -149,7 +149,7 @@ export const personalAccountKeyEnvelopesInApp = app.table(
   ],
 );
 
-export const privateBetaWaitlistInAppPrivate = appPrivate.table(
+export const privateBetaWaitlistInAppPrivate = publicSchema.table(
   "private_beta_waitlist",
   {
     clerkUserId: text("clerk_user_id").primaryKey().notNull(),

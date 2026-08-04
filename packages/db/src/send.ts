@@ -164,7 +164,7 @@ export const makePgAtomicSendRepository = (
       try {
         const boot = await db.execute<{ personal_account_id: unknown }>(
           sql`WITH authorized AS MATERIALIZED (
-                SELECT app_private.bootstrap_mcp_tool_call(
+                SELECT public.bootstrap_mcp_tool_call(
                   ${input.authorizationId},
                   ${input.oauthSubject},
                   ${input.clientId ?? null}
@@ -172,7 +172,7 @@ export const makePgAtomicSendRepository = (
               )
               SELECT authorized.personal_account_id,
                      set_config(
-                       'app.personal_account_id',
+                       'public.personal_account_id',
                        authorized.personal_account_id::text,
                        false
                      ) AS configured_account_id
@@ -214,7 +214,7 @@ export const makePgAtomicSendRepository = (
         const authorized = await db.execute<Record<string, unknown>>(
           sql`WITH locked_account AS MATERIALIZED (
                 SELECT account.id, account.message_retention_days
-                FROM app.personal_accounts AS account
+                FROM public.personal_accounts AS account
                 WHERE account.id = ${accountId}
                 FOR UPDATE
               ),
@@ -222,14 +222,14 @@ export const makePgAtomicSendRepository = (
                 SELECT auth.id,
                        auth.personal_account_id,
                        auth.scopes
-                FROM app.mcp_authorizations AS auth
+                FROM public.mcp_authorizations AS auth
                 INNER JOIN locked_account
                   ON locked_account.id = auth.personal_account_id
                 WHERE auth.id = ${input.authorizationId}
                 FOR UPDATE OF auth
               ),
               active AS MATERIALIZED (
-                SELECT app_private.bootstrap_active_mcp_tool_call(
+                SELECT public.bootstrap_active_mcp_tool_call(
                   ${input.authorizationId},
                   ${input.oauthSubject},
                   ${input.clientId ?? null},
@@ -251,10 +251,10 @@ export const makePgAtomicSendRepository = (
                 ON locked_authorization.personal_account_id = locked_account.id
               INNER JOIN active
                 ON active.personal_account_id = locked_authorization.personal_account_id
-              INNER JOIN app.mcp_authorization_connections AS selected
+              INNER JOIN public.mcp_authorization_connections AS selected
                 ON selected.personal_account_id = locked_authorization.personal_account_id
                AND selected.mcp_authorization_id = locked_authorization.id
-              INNER JOIN app.whatsapp_connections AS conn
+              INNER JOIN public.whatsapp_connections AS conn
                 ON conn.personal_account_id = selected.personal_account_id
                AND conn.id = selected.whatsapp_connection_id
               LEFT JOIN LATERAL (
@@ -265,8 +265,8 @@ export const makePgAtomicSendRepository = (
                        send.status_changed_at,
                        send.lease_expires_at,
                        binding.request_fingerprint
-                FROM app.send_idempotency_bindings AS binding
-                INNER JOIN app.send_operations AS send
+                FROM public.send_idempotency_bindings AS binding
+                INNER JOIN public.send_operations AS send
                   ON send.id = binding.send_operation_id
                 WHERE binding.mcp_authorization_id = ${input.authorizationId}
                   AND binding.idempotency_key = ${input.idempotencyKey}
@@ -412,14 +412,14 @@ export const makePgAtomicSendRepository = (
         const hourStart = new Date(input.observedAt.valueOf() - 3_600_000);
         const quotasAndMaterial = await db.execute<Record<string, unknown>>(
           sql`SELECT material.*,
-             (SELECT count(*)::int FROM app.tool_call_logs WHERE personal_account_id=${accountId} AND quota_reserved AND started_at>${minuteStart} AND started_at<=${input.observedAt}) AS request_minute,
-             (SELECT (array_agg(started_at ORDER BY started_at DESC))[(${input.minuteRequestLimit}::int)] FROM app.tool_call_logs WHERE personal_account_id=${accountId} AND quota_reserved AND started_at>${minuteStart} AND started_at<=${input.observedAt}) AS request_minute_reset,
-             (SELECT count(*)::int FROM app.tool_call_logs WHERE personal_account_id=${accountId} AND quota_reserved AND started_at>${hourStart} AND started_at<=${input.observedAt}) AS request_hour,
-             (SELECT (array_agg(started_at ORDER BY started_at DESC))[(${input.hourRequestLimit}::int)] FROM app.tool_call_logs WHERE personal_account_id=${accountId} AND quota_reserved AND started_at>${hourStart} AND started_at<=${input.observedAt}) AS request_hour_reset,
-             (SELECT count(*)::int FROM app.send_quota_reservations WHERE mcp_authorization_id=${input.authorizationId} AND reserved_at>${minuteStart} AND reserved_at<=${input.observedAt}) AS send_minute,
-             (SELECT (array_agg(reserved_at ORDER BY reserved_at DESC))[(${input.sendPerMinuteLimit}::int)] FROM app.send_quota_reservations WHERE mcp_authorization_id=${input.authorizationId} AND reserved_at>${minuteStart} AND reserved_at<=${input.observedAt}) AS send_minute_reset,
-             (SELECT count(*)::int FROM app.send_quota_reservations WHERE personal_account_id=${accountId} AND reserved_at>=${dayStart} AND reserved_at<=${input.observedAt}) AS send_day
-           FROM app_private.load_send_key_material(
+             (SELECT count(*)::int FROM public.tool_call_logs WHERE personal_account_id=${accountId} AND quota_reserved AND started_at>${minuteStart} AND started_at<=${input.observedAt}) AS request_minute,
+             (SELECT (array_agg(started_at ORDER BY started_at DESC))[(${input.minuteRequestLimit}::int)] FROM public.tool_call_logs WHERE personal_account_id=${accountId} AND quota_reserved AND started_at>${minuteStart} AND started_at<=${input.observedAt}) AS request_minute_reset,
+             (SELECT count(*)::int FROM public.tool_call_logs WHERE personal_account_id=${accountId} AND quota_reserved AND started_at>${hourStart} AND started_at<=${input.observedAt}) AS request_hour,
+             (SELECT (array_agg(started_at ORDER BY started_at DESC))[(${input.hourRequestLimit}::int)] FROM public.tool_call_logs WHERE personal_account_id=${accountId} AND quota_reserved AND started_at>${hourStart} AND started_at<=${input.observedAt}) AS request_hour_reset,
+             (SELECT count(*)::int FROM public.send_quota_reservations WHERE mcp_authorization_id=${input.authorizationId} AND reserved_at>${minuteStart} AND reserved_at<=${input.observedAt}) AS send_minute,
+             (SELECT (array_agg(reserved_at ORDER BY reserved_at DESC))[(${input.sendPerMinuteLimit}::int)] FROM public.send_quota_reservations WHERE mcp_authorization_id=${input.authorizationId} AND reserved_at>${minuteStart} AND reserved_at<=${input.observedAt}) AS send_minute_reset,
+             (SELECT count(*)::int FROM public.send_quota_reservations WHERE personal_account_id=${accountId} AND reserved_at>=${dayStart} AND reserved_at<=${input.observedAt}) AS send_day
+           FROM public.load_send_key_material(
              ${accountId},
              ${connectionId}
            ) AS material`,
@@ -483,7 +483,7 @@ export const makePgAtomicSendRepository = (
         const observedAt = input.observedAt.toISOString();
         await db.execute(
           sql`WITH inserted_audit AS (
-                INSERT INTO app.tool_call_logs (
+                INSERT INTO public.tool_call_logs (
                   id, personal_account_id, mcp_authorization_id, tool_name,
                   started_at, completed_at, outcome, error_code, result_count,
                   latency_ms, quota_reserved, expires_at,
@@ -498,7 +498,7 @@ export const makePgAtomicSendRepository = (
                 RETURNING id, personal_account_id
               ),
               inserted_send AS (
-                INSERT INTO app.send_operations (
+                INSERT INTO public.send_operations (
                   id, public_id, personal_account_id, mcp_authorization_id,
                   tool_call_log_id, whatsapp_connection_id, recipient_type,
                   recipient_public_id, status, created_at, status_changed_at,
@@ -516,7 +516,7 @@ export const makePgAtomicSendRepository = (
                 RETURNING id, personal_account_id
               ),
               inserted_binding AS (
-                INSERT INTO app.send_idempotency_bindings (
+                INSERT INTO public.send_idempotency_bindings (
                   personal_account_id, mcp_authorization_id, idempotency_key,
                   send_operation_id, request_fingerprint, created_at, expires_at
                 )
@@ -528,7 +528,7 @@ export const makePgAtomicSendRepository = (
                 RETURNING send_operation_id, personal_account_id
               ),
               inserted_pending AS (
-                INSERT INTO app.pending_send_contents (
+                INSERT INTO public.pending_send_contents (
                   send_operation_id, personal_account_id,
                   whatsapp_connection_id, ciphertext_version, key_version,
                   nonce, ciphertext, expires_at
@@ -540,7 +540,7 @@ export const makePgAtomicSendRepository = (
                 FROM inserted_binding
                 RETURNING send_operation_id, personal_account_id
               )
-              INSERT INTO app.send_quota_reservations (
+              INSERT INTO public.send_quota_reservations (
                 send_operation_id, personal_account_id,
                 mcp_authorization_id, reserved_at
               )
@@ -599,7 +599,7 @@ export const makePgAtomicSendRepository = (
   expireLeases: (observedAt) =>
     provider.withConnection(async (connection) => {
       const result = await connection.query<{ expired_count: unknown }>(
-        "SELECT app_private.expire_send_dispatch_leases($1) AS expired_count",
+        "SELECT public.expire_send_dispatch_leases($1) AS expired_count",
         [observedAt],
       );
       const count = Number(result.rows[0]?.expired_count);
@@ -614,7 +614,7 @@ export const makePgAtomicSendRepository = (
         const complete = () =>
           db.execute<Record<string, unknown>>(
             sql`WITH updated AS (
-                UPDATE app.send_operations AS send
+                UPDATE public.send_operations AS send
                 SET status = ${input.status},
                     status_changed_at = ${input.changedAt},
                     message_identity = ${input.messageIdentity ?? null}
@@ -634,7 +634,7 @@ export const makePgAtomicSendRepository = (
                           send.tool_call_log_id
               ),
               expired AS (
-                UPDATE app.send_operations AS send
+                UPDATE public.send_operations AS send
                 SET status = 'unknown',
                     status_changed_at = send.lease_expires_at
                 WHERE send.id = ${input.sendId}
@@ -665,7 +665,7 @@ export const makePgAtomicSendRepository = (
                        send.status_changed_at,
                        send.lease_expires_at,
                        send.tool_call_log_id
-                FROM app.send_operations AS send
+                FROM public.send_operations AS send
                 WHERE send.id = ${input.sendId}
                   AND NOT EXISTS (SELECT 1 FROM updated)
                   AND NOT EXISTS (SELECT 1 FROM expired)
@@ -678,13 +678,13 @@ export const makePgAtomicSendRepository = (
                 SELECT * FROM existing
               ),
               cleared_pending AS (
-                DELETE FROM app.pending_send_contents AS pending
+                DELETE FROM public.pending_send_contents AS pending
                 USING updated
                 WHERE ${input.status} = 'failed'
                   AND pending.send_operation_id = updated.id
               ),
               completed_audit AS (
-                UPDATE app.tool_call_logs AS audit
+                UPDATE public.tool_call_logs AS audit
                 SET completed_at = ${input.changedAt},
                     outcome = 'success',
                     result_count = 1,
@@ -704,11 +704,11 @@ export const makePgAtomicSendRepository = (
         if (rows[0] === undefined) {
           const context = await db.execute<{ personal_account_id: unknown }>(
             sql`WITH send_context AS MATERIALIZED (
-                  SELECT app_private.bootstrap_send_operation(${input.sendId}) AS personal_account_id
+                  SELECT public.bootstrap_send_operation(${input.sendId}) AS personal_account_id
                 )
                 SELECT send_context.personal_account_id,
                        set_config(
-                         'app.personal_account_id',
+                         'public.personal_account_id',
                          send_context.personal_account_id::text,
                          false
                        ) AS configured_account_id
@@ -726,11 +726,11 @@ export const makePgAtomicSendRepository = (
       await db.execute(sql`BEGIN`);
       const context = await db.execute<{ personal_account_id: unknown }>(
         sql`WITH send_context AS MATERIALIZED (
-              SELECT app_private.bootstrap_send_operation(${input.sendId}) AS personal_account_id
+              SELECT public.bootstrap_send_operation(${input.sendId}) AS personal_account_id
             )
             SELECT send_context.personal_account_id,
                    set_config(
-                     'app.personal_account_id',
+                     'public.personal_account_id',
                      send_context.personal_account_id::text,
                      true
                    ) AS configured_account_id
@@ -965,12 +965,12 @@ export const makePgAtomicSendRepository = (
       try {
         await db.execute(
           sql`WITH send_context AS MATERIALIZED (
-                SELECT app_private.bootstrap_send_operation(${input.sendId}) AS personal_account_id
+                SELECT public.bootstrap_send_operation(${input.sendId}) AS personal_account_id
               ),
               configured AS MATERIALIZED (
                 SELECT send_context.personal_account_id,
                        set_config(
-                         'app.personal_account_id',
+                         'public.personal_account_id',
                          send_context.personal_account_id::text,
                          false
                        ) AS configured_account_id
@@ -979,12 +979,12 @@ export const makePgAtomicSendRepository = (
               ),
               selected_send AS MATERIALIZED (
                 SELECT send.tool_call_log_id
-                FROM app.send_operations AS send
+                FROM public.send_operations AS send
                 INNER JOIN configured
                   ON configured.personal_account_id = send.personal_account_id
                 WHERE send.id = ${input.sendId}
               )
-              UPDATE app.tool_call_logs AS audit
+              UPDATE public.tool_call_logs AS audit
               SET completed_at = ${input.changedAt},
                   outcome = 'success',
                   result_count = 1,

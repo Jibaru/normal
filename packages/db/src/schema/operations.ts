@@ -12,9 +12,9 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { personalAccountsInApp } from "./accounts";
-import { appPrivate } from "./common";
+import { publicSchema } from "./common";
 
-export const breakGlassRequestsInAppPrivate = appPrivate.table(
+export const breakGlassRequestsInAppPrivate = publicSchema.table(
   "break_glass_requests",
   {
     id: uuid().primaryKey().notNull(),
@@ -81,12 +81,12 @@ export const breakGlassRequestsInAppPrivate = appPrivate.table(
   ],
 );
 
-export const breakGlassAuditEventsInAppPrivate = appPrivate.table(
+export const breakGlassAuditEventsInAppPrivate = publicSchema.table(
   "break_glass_audit_events",
   {
     // You can use { mode: "bigint" } if numbers are exceeding js number limitations
     id: bigint({ mode: "number" }).primaryKey().generatedAlwaysAsIdentity({
-      name: "app_private.break_glass_audit_events_id_seq",
+      name: "public.break_glass_audit_events_id_seq",
       startWith: 1,
       increment: 1,
       minValue: 1,
@@ -122,7 +122,7 @@ export const breakGlassAuditEventsInAppPrivate = appPrivate.table(
   ],
 );
 
-export const breakGlassUserNotificationsInAppPrivate = appPrivate.table(
+export const breakGlassUserNotificationsInAppPrivate = publicSchema.table(
   "break_glass_user_notifications",
   {
     requestId: uuid("request_id").primaryKey().notNull(),
@@ -153,7 +153,7 @@ export const breakGlassUserNotificationsInAppPrivate = appPrivate.table(
   ],
 );
 
-export const breakGlassApprovalsInAppPrivate = appPrivate.table(
+export const breakGlassApprovalsInAppPrivate = publicSchema.table(
   "break_glass_approvals",
   {
     requestId: uuid("request_id").notNull(),
@@ -179,7 +179,7 @@ export const breakGlassApprovalsInAppPrivate = appPrivate.table(
   ],
 );
 
-export const restoreReplayAuditInAppPrivate = appPrivate.table(
+export const restoreReplayAuditInAppPrivate = publicSchema.table(
   "restore_replay_audit",
   {
     branchId: text("branch_id").primaryKey().notNull(),
@@ -208,7 +208,7 @@ export const restoreReplayAuditInAppPrivate = appPrivate.table(
   ],
 );
 
-export const restoreReadinessInAppPrivate = appPrivate.table(
+export const restoreReadinessInAppPrivate = publicSchema.table(
   "restore_readiness",
   {
     singleton: boolean().default(true).primaryKey().notNull(),
@@ -255,7 +255,7 @@ export const restoreReadinessInAppPrivate = appPrivate.table(
   ],
 );
 
-export const restoreObjectDeletionsInAppPrivate = appPrivate.table(
+export const restoreObjectDeletionsInAppPrivate = publicSchema.table(
   "restore_object_deletions",
   {
     bucket: text().notNull(),
@@ -278,7 +278,7 @@ export const restoreObjectDeletionsInAppPrivate = appPrivate.table(
   ],
 );
 
-export const securityRecordsInAppPrivate = appPrivate.table(
+export const securityRecordsInAppPrivate = publicSchema.table(
   "security_records",
   {
     category: text().notNull(),
@@ -331,7 +331,7 @@ export const securityRecordsInAppPrivate = appPrivate.table(
   ],
 );
 
-export const personalAccountCleanupAuditInAppPrivate = appPrivate.table(
+export const personalAccountCleanupAuditInAppPrivate = publicSchema.table(
   "personal_account_cleanup_audit",
   {
     deletionMarkerId: text("deletion_marker_id").primaryKey().notNull(),

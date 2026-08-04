@@ -12,10 +12,10 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { personalAccountsInApp } from "./accounts";
-import { app, appPrivate, bytea } from "./common";
+import { bytea, publicSchema } from "./common";
 import { connectionSetupsInApp } from "./connection-setups";
 
-export const whatsappConnectionsInApp = app.table(
+export const whatsappConnectionsInApp = publicSchema.table(
   "whatsapp_connections",
   {
     id: uuid().primaryKey().notNull(),
@@ -137,8 +137,8 @@ export const whatsappConnectionsInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "whatsapp_connections_public_id_format",
@@ -191,7 +191,7 @@ export const whatsappConnectionsInApp = app.table(
   ],
 );
 
-export const whatsappConnectionKeyEnvelopesInApp = app.table(
+export const whatsappConnectionKeyEnvelopesInApp = publicSchema.table(
   "whatsapp_connection_key_envelopes",
   {
     personalAccountId: uuid("personal_account_id").notNull(),
@@ -225,8 +225,8 @@ export const whatsappConnectionKeyEnvelopesInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "whatsapp_connection_key_envelopes_account_key_version_check",
@@ -243,7 +243,7 @@ export const whatsappConnectionKeyEnvelopesInApp = app.table(
   ],
 );
 
-export const whatsappConnectionSecretsInApp = app.table(
+export const whatsappConnectionSecretsInApp = publicSchema.table(
   "whatsapp_connection_secrets",
   {
     personalAccountId: uuid("personal_account_id").notNull(),
@@ -276,8 +276,8 @@ export const whatsappConnectionSecretsInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "whatsapp_connection_secrets_credential_ciphertext_version_check",
@@ -298,7 +298,7 @@ export const whatsappConnectionSecretsInApp = app.table(
   ],
 );
 
-export const whatsappConnectionProviderSessionsInApp = app.table(
+export const whatsappConnectionProviderSessionsInApp = publicSchema.table(
   "whatsapp_connection_provider_sessions",
   {
     personalAccountId: uuid("personal_account_id").notNull(),
@@ -339,8 +339,8 @@ export const whatsappConnectionProviderSessionsInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "whatsapp_connection_provider_s_locator_ciphertext_version_check",
@@ -377,7 +377,7 @@ export const whatsappConnectionProviderSessionsInApp = app.table(
   ],
 );
 
-export const deletedWhatsappConnectionHandlesInAppPrivate = appPrivate.table(
+export const deletedWhatsappConnectionHandlesInAppPrivate = publicSchema.table(
   "deleted_whatsapp_connection_handles",
   {
     publicId: text("public_id").primaryKey().notNull(),

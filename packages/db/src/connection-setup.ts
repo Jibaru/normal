@@ -263,7 +263,7 @@ const enterPersonalAccountContext = async (
   personalAccountId: string,
 ): Promise<boolean> => {
   await db.execute(
-    sql`SELECT set_config('app.personal_account_id', ${personalAccountId}, true)`,
+    sql`SELECT set_config('public.personal_account_id', ${personalAccountId}, true)`,
   );
   const visible = await db
     .select({ id: personalAccountsInApp.id })
@@ -534,7 +534,7 @@ export const makeConnectionSetupRepository = (
       const rows = await makeDatabase(
         connection,
       ).execute<CancelConnectionSetupRow>(
-        sql`SELECT * FROM app_private.cancel_connection_setup(
+        sql`SELECT * FROM public.cancel_connection_setup(
           ${input.clerkUserId}, ${input.setupId}, ${input.cancelledAt}
         )`,
       );
@@ -543,7 +543,7 @@ export const makeConnectionSetupRepository = (
   claimCleanup: (input) =>
     provider.withConnection(async (connection) => {
       const rows = await makeDatabase(connection).execute<{ outcome: unknown }>(
-        sql`SELECT app_private.claim_connection_setup_cleanup(
+        sql`SELECT public.claim_connection_setup_cleanup(
           ${input.setupId}, ${input.workerId}, ${input.claimedAt}
         ) AS outcome`,
       );
@@ -562,14 +562,14 @@ export const makeConnectionSetupRepository = (
     provider.withConnection(async (connection) => {
       const db = makeDatabase(connection);
       const rows = await db.execute<ProvisioningClaimRow>(
-        sql`SELECT * FROM app_private.claim_connection_setup_provisioning(
+        sql`SELECT * FROM public.claim_connection_setup_provisioning(
           ${input.setupId}, ${input.workerId}, ${input.claimedAt}
         )`,
       );
       let row = rows[0];
       if (row?.outcome === "claimed") {
         const ingress = await db.execute<{ webhook_ingress_id: unknown }>(
-          sql`SELECT app_private.load_connection_setup_webhook_ingress_for_worker(
+          sql`SELECT public.load_connection_setup_webhook_ingress_for_worker(
             ${input.setupId}, ${input.workerId}
           ) AS webhook_ingress_id`,
         );
@@ -585,7 +585,7 @@ export const makeConnectionSetupRepository = (
       const rows = await makeDatabase(connection).execute<{
         setup_id: unknown;
       }>(
-        sql`SELECT setup_id FROM app_private.expire_connection_setups(
+        sql`SELECT setup_id FROM public.expire_connection_setups(
           ${input.observedAt}, ${input.limit}
         )`,
       );
@@ -596,7 +596,7 @@ export const makeConnectionSetupRepository = (
       const rows = await makeDatabase(connection).execute<{
         finished: unknown;
       }>(
-        sql`SELECT app_private.finish_connection_setup_cleanup(
+        sql`SELECT public.finish_connection_setup_cleanup(
           ${input.setupId}, ${input.workerId}, ${input.observedAt}
         ) AS finished`,
       );
@@ -610,7 +610,7 @@ export const makeConnectionSetupRepository = (
       const rows = await makeDatabase(connection).execute<{
         finished: unknown;
       }>(
-        sql`SELECT app_private.finish_connection_setup_provisioning(
+        sql`SELECT public.finish_connection_setup_provisioning(
           ${input.setupId}, ${input.workerId}, ${input.observedAt},
           ${input.outcome}, ${serializedProviderSessions(input.sessions)}::jsonb
         ) AS finished`,
@@ -623,7 +623,7 @@ export const makeConnectionSetupRepository = (
   failProvisioning: (input) =>
     provider.withConnection(async (connection) => {
       const rows = await makeDatabase(connection).execute<{ failed: unknown }>(
-        sql`SELECT app_private.fail_connection_setup_provisioning(
+        sql`SELECT public.fail_connection_setup_provisioning(
           ${input.setupId}, ${input.workerId}, ${input.observedAt},
           ${input.failureCode}
         ) AS failed`,
@@ -639,7 +639,7 @@ export const makeConnectionSetupRepository = (
         setup_id: unknown;
       }>(
         sql`SELECT setup_id
-            FROM app_private.list_connection_setup_provisioning_candidates(
+            FROM public.list_connection_setup_provisioning_candidates(
               ${input.observedAt}, ${input.limit}
             )`,
       );
@@ -651,7 +651,7 @@ export const makeConnectionSetupRepository = (
         setup_id: unknown;
       }>(
         sql`SELECT setup_id
-            FROM app_private.list_connection_setup_cleanup_candidates(
+            FROM public.list_connection_setup_cleanup_candidates(
               ${input.observedAt}, ${input.limit}
             )`,
       );
@@ -662,7 +662,7 @@ export const makeConnectionSetupRepository = (
       const db = makeDatabase(connection);
       return withTransaction(connection, async () => {
         const loaded = await db.execute<AccountRow>(
-          sql`SELECT * FROM app_private.load_connection_setup_account(${input.clerkUserId})`,
+          sql`SELECT * FROM public.load_connection_setup_account(${input.clerkUserId})`,
         );
         const row = loaded[0];
         const accountKeyCiphertext = bytes(row?.account_key_ciphertext);
@@ -742,7 +742,7 @@ export const makeConnectionSetupRepository = (
       const rows = await makeDatabase(connection).execute<{
         released: unknown;
       }>(
-        sql`SELECT app_private.release_connection_setup_provisioning_lease(
+        sql`SELECT public.release_connection_setup_provisioning_lease(
           ${input.setupId}, ${input.workerId}, ${input.observedAt},
           ${input.failureCode}
         ) AS released`,
@@ -757,7 +757,7 @@ export const makeConnectionSetupRepository = (
       const rows = await makeDatabase(connection).execute<{
         released: unknown;
       }>(
-        sql`SELECT app_private.release_connection_setup_cleanup_lease(
+        sql`SELECT public.release_connection_setup_cleanup_lease(
           ${input.setupId}, ${input.workerId}, ${input.observedAt},
           ${input.failureCode}
         ) AS released`,
@@ -770,7 +770,7 @@ export const makeConnectionSetupRepository = (
   renewProvisioningLease: (input) =>
     provider.withConnection(async (connection) => {
       const rows = await makeDatabase(connection).execute<{ renewed: unknown }>(
-        sql`SELECT app_private.renew_connection_setup_provisioning_lease(
+        sql`SELECT public.renew_connection_setup_provisioning_lease(
           ${input.setupId}, ${input.workerId}, ${input.observedAt}
         ) AS renewed`,
       );
@@ -782,7 +782,7 @@ export const makeConnectionSetupRepository = (
   renewCleanupLease: (input) =>
     provider.withConnection(async (connection) => {
       const rows = await makeDatabase(connection).execute<{ renewed: unknown }>(
-        sql`SELECT app_private.renew_connection_setup_cleanup_lease(
+        sql`SELECT public.renew_connection_setup_cleanup_lease(
           ${input.setupId}, ${input.workerId}, ${input.observedAt}
         ) AS renewed`,
       );
@@ -799,7 +799,7 @@ export const makeConnectionSetupRepository = (
           throw new Error("Personal Account unavailable");
         }
         const rows = await db.execute<StartRow>(
-          sql`SELECT * FROM app_private.start_connection_setup(
+          sql`SELECT * FROM public.start_connection_setup(
             ${input.personalAccountId}, ${input.setupId}, ${input.idempotencyKey},
             ${input.numberToken}, ${input.numberCiphertextVersion},
             ${input.numberKeyVersion}, ${input.numberCiphertextNonce},

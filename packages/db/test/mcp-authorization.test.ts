@@ -30,7 +30,7 @@ describe("MCP Authorization repository", () => {
     `);
     await runMigrations(database);
     await database.query(
-      `SELECT * FROM app_private.admit_personal_account_for_clerk(
+      `SELECT * FROM public.admit_personal_account_for_clerk(
         $1, $2, 1, $3, decode('0102', 'hex'), 6
       )`,
       [
@@ -40,7 +40,7 @@ describe("MCP Authorization repository", () => {
       ],
     );
     await database.query(
-      `INSERT INTO app.whatsapp_connections (
+      `INSERT INTO public.whatsapp_connections (
           id, personal_account_id, webhook_ingress_id,
           display_name_ciphertext, public_id, number_suffix
         ) VALUES
@@ -90,10 +90,10 @@ describe("MCP Authorization repository", () => {
       scopes: string[];
     }>(
       `SELECT connections.public_id, authorizations.scopes
-       FROM app.mcp_authorizations AS authorizations
-       JOIN app.mcp_authorization_connections AS selected
+       FROM public.mcp_authorizations AS authorizations
+       JOIN public.mcp_authorization_connections AS selected
          ON selected.mcp_authorization_id = authorizations.id
-       JOIN app.whatsapp_connections AS connections
+       JOIN public.whatsapp_connections AS connections
          ON connections.id = selected.whatsapp_connection_id`,
     );
     expect(persisted.rows).toEqual([
@@ -101,7 +101,7 @@ describe("MCP Authorization repository", () => {
     ]);
 
     await database.query(
-      `INSERT INTO app.whatsapp_connections (
+      `INSERT INTO public.whatsapp_connections (
          id, personal_account_id, webhook_ingress_id,
          display_name_ciphertext, public_id
        ) VALUES (
@@ -115,8 +115,8 @@ describe("MCP Authorization repository", () => {
       public_id: string;
     }>(
       `SELECT connections.public_id
-       FROM app.mcp_authorization_connections AS selected
-       JOIN app.whatsapp_connections AS connections
+       FROM public.mcp_authorization_connections AS selected
+       JOIN public.whatsapp_connections AS connections
          ON connections.id = selected.whatsapp_connection_id
        WHERE selected.mcp_authorization_id = $1`,
       [authorizationId],
@@ -229,7 +229,7 @@ describe("MCP Authorization repository", () => {
     });
 
     await database.query(
-      `SELECT * FROM app_private.admit_personal_account_for_clerk(
+      `SELECT * FROM public.admit_personal_account_for_clerk(
         $1, $2, 1, $3, decode('0304', 'hex'), 6
       )`,
       [
@@ -399,7 +399,7 @@ describe("MCP Authorization repository", () => {
       credential_hash: Uint8Array;
     }>(
       `SELECT credential_hash, consumed_at
-       FROM app.mcp_refresh_credentials
+       FROM public.mcp_refresh_credentials
        WHERE mcp_authorization_id = $1
        ORDER BY issued_at`,
       [authorizationId],
@@ -475,7 +475,7 @@ describe("MCP Authorization repository", () => {
     expect(inactive).toEqual({ outcome: "invalid" });
 
     await database.query(
-      "DELETE FROM app_private.clerk_identities WHERE personal_account_id = $1",
+      "DELETE FROM public.clerk_identities WHERE personal_account_id = $1",
       [accountId],
     );
     const missingUser = await repository.rotateRefreshCredential(
@@ -496,13 +496,13 @@ describe("MCP Authorization repository", () => {
     expect(missingUser).toEqual({ outcome: "invalid" });
 
     await database.query(
-      `INSERT INTO app_private.clerk_identities (
+      `INSERT INTO public.clerk_identities (
          clerk_user_id, personal_account_id
        ) VALUES ($1, $2)`,
       ["user_authorization27", accountId],
     );
     await database.query(
-      "UPDATE app.personal_accounts SET state = 'deleting' WHERE id = $1",
+      "UPDATE public.personal_accounts SET state = 'deleting' WHERE id = $1",
       [accountId],
     );
     expect(
@@ -524,11 +524,11 @@ describe("MCP Authorization repository", () => {
     ).toEqual({ outcome: "invalid" });
 
     await database.query(
-      "UPDATE app.personal_accounts SET state = 'active' WHERE id = $1",
+      "UPDATE public.personal_accounts SET state = 'active' WHERE id = $1",
       [accountId],
     );
     await database.query(
-      `UPDATE app.mcp_authorizations
+      `UPDATE public.mcp_authorizations
        SET state = 'revoked', revoked_at = $2
        WHERE id = $1`,
       [authorizationId, new Date("2026-08-01T11:00:00.000Z")],
@@ -552,13 +552,13 @@ describe("MCP Authorization repository", () => {
     ).toEqual({ outcome: "invalid" });
 
     await database.query(
-      `UPDATE app.mcp_authorizations
+      `UPDATE public.mcp_authorizations
        SET state = 'active', revoked_at = NULL
        WHERE id = $1`,
       [authorizationId],
     );
     await database.query(
-      `DELETE FROM app.mcp_authorization_connections
+      `DELETE FROM public.mcp_authorization_connections
        WHERE mcp_authorization_id = $1`,
       [authorizationId],
     );
@@ -607,7 +607,7 @@ describe("MCP Authorization repository", () => {
 
     const persisted = await database.query<{ inactive_expires_at: Date }>(
       `SELECT inactive_expires_at
-       FROM app.mcp_refresh_credentials
+       FROM public.mcp_refresh_credentials
        WHERE mcp_authorization_id = $1`,
       [authorizationId],
     );

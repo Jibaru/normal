@@ -63,13 +63,13 @@ export const makeToolCallLogRepository = (
         const context = await db.execute<{
           personal_account_id: string | null;
         }>(sql`
-          SELECT app_private.bootstrap_personal_account_for_clerk(${clerkUserId})
+          SELECT public.bootstrap_personal_account_for_clerk(${clerkUserId})
             AS personal_account_id
         `);
         const personalAccountId = context[0]?.personal_account_id;
         if (typeof personalAccountId !== "string") return null;
         await db.execute(
-          sql`SELECT set_config('app.personal_account_id', ${personalAccountId}, true)`,
+          sql`SELECT set_config('public.personal_account_id', ${personalAccountId}, true)`,
         );
         const account = await db
           .select({ id: personalAccountsInApp.id })
@@ -216,7 +216,7 @@ export const makeToolCallLogRepository = (
   purgeExpired: (limit) =>
     provider.withConnection(async (connection) => {
       const result = await makeDatabase(connection).execute<{ purged: number }>(
-        sql`SELECT app_private.purge_expired_tool_call_logs(${limit}) AS purged`,
+        sql`SELECT public.purge_expired_tool_call_logs(${limit}) AS purged`,
       );
       return Number(result[0]?.purged ?? 0);
     }),

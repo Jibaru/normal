@@ -14,10 +14,10 @@ export default defineConfig({
     url: directNeonMigrationConnectionString(migrationDatabaseUrl),
   },
   migrations: {
-    schema: "app_private",
+    schema: "public",
     table: "drizzle_migrations",
   },
-  schemaFilter: ["app", "app_private"],
+  schemaFilter: ["public"],
   strict: true,
   verbose: true,
 });

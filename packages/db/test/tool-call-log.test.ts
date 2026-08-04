@@ -33,7 +33,7 @@ describe("Tool Call Log repository", () => {
     `);
     await runMigrations(database);
     await database.query(
-      `SELECT * FROM app_private.admit_personal_account_for_clerk(
+      `SELECT * FROM public.admit_personal_account_for_clerk(
         $1, $2, 1, $3, decode('0102', 'hex'), 6
       )`,
       [
@@ -43,7 +43,7 @@ describe("Tool Call Log repository", () => {
       ],
     );
     await database.query(
-      `INSERT INTO app.whatsapp_connections (
+      `INSERT INTO public.whatsapp_connections (
          id, personal_account_id, webhook_ingress_id,
          display_name_ciphertext, public_id
        ) VALUES ($1, $2, $3, decode('01', 'hex'), $4)`,
@@ -80,7 +80,7 @@ describe("Tool Call Log repository", () => {
       scopes: ["connections:read", "messages:send"],
     });
     await database.query(
-      `SELECT * FROM app_private.admit_personal_account_for_clerk(
+      `SELECT * FROM public.admit_personal_account_for_clerk(
         $1, $2, 2, $3, decode('0304', 'hex'), 6
       )`,
       [
@@ -90,7 +90,7 @@ describe("Tool Call Log repository", () => {
       ],
     );
     await database.query(
-      `INSERT INTO app.whatsapp_connections (
+      `INSERT INTO public.whatsapp_connections (
          id, personal_account_id, webhook_ingress_id,
          display_name_ciphertext, public_id
        ) VALUES ($1, $2, $3, decode('01', 'hex'), $4)`,
@@ -123,7 +123,7 @@ describe("Tool Call Log repository", () => {
 
   test("lists only safe metadata for the owning active Personal Account", async () => {
     await database.query(
-      `INSERT INTO app.tool_call_logs (
+      `INSERT INTO public.tool_call_logs (
          id, personal_account_id, mcp_authorization_id, tool_name,
          started_at, completed_at, outcome, error_code, result_count,
          latency_ms, quota_reserved, media_bytes_reserved, expires_at,
@@ -147,7 +147,7 @@ describe("Tool Call Log repository", () => {
       ],
     );
     await database.query(
-      `INSERT INTO app.tool_call_logs (
+      `INSERT INTO public.tool_call_logs (
          id, personal_account_id, mcp_authorization_id, tool_name,
          started_at, completed_at, outcome, result_count, latency_ms,
          quota_reserved, expires_at
@@ -204,7 +204,7 @@ describe("Tool Call Log repository", () => {
 
   test("paginates a stable tenant-scoped 90-day history", async () => {
     await database.query(
-      `INSERT INTO app.tool_call_logs (
+      `INSERT INTO public.tool_call_logs (
          id, personal_account_id, mcp_authorization_id, tool_name,
          started_at, completed_at, outcome, result_count, latency_ms,
          quota_reserved, expires_at
@@ -243,7 +243,7 @@ describe("Tool Call Log repository", () => {
 
   test("purges expired rows through the bounded restricted-role function", async () => {
     await database.query(
-      `INSERT INTO app.tool_call_logs (
+      `INSERT INTO public.tool_call_logs (
          id, personal_account_id, mcp_authorization_id, tool_name,
          started_at, completed_at, outcome, result_count, latency_ms,
          quota_reserved, expires_at
@@ -255,14 +255,14 @@ describe("Tool Call Log repository", () => {
     );
 
     await expect(
-      database.query(
-        "SELECT app_private.purge_expired_tool_call_logs($1, $2)",
-        [new Date("2099-01-01T00:00:00.000Z"), 500],
-      ),
+      database.query("SELECT public.purge_expired_tool_call_logs($1, $2)", [
+        new Date("2099-01-01T00:00:00.000Z"),
+        500,
+      ]),
     ).rejects.toThrow();
     expect(await repository.purgeExpired(500)).toBe(1);
     expect(
-      (await database.query("SELECT id FROM app.tool_call_logs")).rows,
+      (await database.query("SELECT id FROM public.tool_call_logs")).rows,
     ).toEqual([]);
   });
 });

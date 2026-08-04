@@ -14,12 +14,12 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { personalAccountsInApp } from "./accounts";
-import { app, bytea } from "./common";
+import { bytea, publicSchema } from "./common";
 import { whatsappConnectionsInApp } from "./connections";
 import { mcpAuthorizationsInApp } from "./mcp-authorizations";
 import { toolCallLogsInApp } from "./tool-calls";
 
-export const sendOperationsInApp = app.table(
+export const sendOperationsInApp = publicSchema.table(
   "send_operations",
   {
     id: uuid().primaryKey().notNull(),
@@ -95,8 +95,8 @@ export const sendOperationsInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "send_operations_public_id_check",
@@ -125,7 +125,7 @@ export const sendOperationsInApp = app.table(
   ],
 );
 
-export const sendQuotaReservationsInApp = app.table(
+export const sendQuotaReservationsInApp = publicSchema.table(
   "send_quota_reservations",
   {
     sendOperationId: uuid("send_operation_id").primaryKey().notNull(),
@@ -172,13 +172,13 @@ export const sendQuotaReservationsInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
   ],
 );
 
-export const pendingSendContentsInApp = app.table(
+export const pendingSendContentsInApp = publicSchema.table(
   "pending_send_contents",
   {
     sendOperationId: uuid("send_operation_id").primaryKey().notNull(),
@@ -214,8 +214,8 @@ export const pendingSendContentsInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "pending_send_contents_ciphertext_version_check",
@@ -230,7 +230,7 @@ export const pendingSendContentsInApp = app.table(
   ],
 );
 
-export const sendIdempotencyBindingsInApp = app.table(
+export const sendIdempotencyBindingsInApp = publicSchema.table(
   "send_idempotency_bindings",
   {
     personalAccountId: uuid("personal_account_id").notNull(),
@@ -275,8 +275,8 @@ export const sendIdempotencyBindingsInApp = app.table(
       as: "permissive",
       for: "all",
       to: ["public"],
-      using: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
-      withCheck: sql`(personal_account_id = (NULLIF(current_setting('app.personal_account_id'::text, true), ''::text))::uuid)`,
+      using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
+      withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
     check(
       "send_idempotency_bindings_idempotency_key_check",
