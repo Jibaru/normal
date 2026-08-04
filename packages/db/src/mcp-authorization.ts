@@ -5,6 +5,7 @@ import type {
   PersonalAccountConnectionProvider,
 } from "./personal-account";
 import { withPgRequestConnection } from "./request-connection";
+import { withTransaction } from "./transaction";
 import {
   mcpAuthorizationConnectionsInApp,
   mcpAuthorizationsInApp,
@@ -97,22 +98,6 @@ export interface RefreshCredentialInput {
 export type RefreshCredentialRotationResult<Value> =
   | { readonly outcome: "invalid" | "reuse" }
   | { readonly outcome: "rotated"; readonly value: Value };
-
-const withTransaction = async <Value>(
-  connection: PersonalAccountConnection,
-  use: () => Promise<Value>,
-): Promise<Value> => {
-  const db = makeDatabase(connection);
-  await db.execute(sql`BEGIN`);
-  try {
-    const value = await use();
-    await db.execute(sql`COMMIT`);
-    return value;
-  } catch (error) {
-    await db.execute(sql`ROLLBACK`);
-    throw error;
-  }
-};
 
 const enterClerkContext = async (
   connection: PersonalAccountConnection,

@@ -12,6 +12,7 @@ import {
   toolCallLogsInApp,
   whatsappConnectionsInApp,
 } from "./schema";
+import { withTransaction } from "./transaction";
 
 export interface ToolCallLogSummary {
   readonly authorizationId: string;
@@ -48,22 +49,6 @@ export interface ToolCallLogRepository {
   ) => Promise<ToolCallLogPage | null>;
   readonly purgeExpired: (limit: number) => Promise<number>;
 }
-
-const withTransaction = async <Value>(
-  connection: PersonalAccountConnection,
-  use: () => Promise<Value>,
-): Promise<Value> => {
-  const db = makeDatabase(connection);
-  await db.execute(sql`BEGIN`);
-  try {
-    const value = await use();
-    await db.execute(sql`COMMIT`);
-    return value;
-  } catch (error) {
-    await db.execute(sql`ROLLBACK`);
-    throw error;
-  }
-};
 
 export const makeToolCallLogRepository = (
   provider: PersonalAccountConnectionProvider,
