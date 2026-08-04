@@ -1581,10 +1581,7 @@ export const makeMcpToolRepository = (
             !/^msg_[A-Za-z0-9_-]{21}$/u.test(input.cursorPublicId))
         )
           throw new Error("invalid MCP message query");
-        if (
-          input.authorizationContextEstablished !== true &&
-          (await enterAuthorizationContext(connection, input)) === null
-        )
+        if ((await enterAuthorizationContext(connection, input, true)) === null)
           return null;
         const materialResult = await db.execute<Record<string, unknown>>(sql`
           SELECT * FROM public.load_mcp_message_read_material(
@@ -1919,7 +1916,7 @@ export const makeMcpToolRepository = (
     ),
   completeMessageRead: (input) =>
     provider.withConnection((connection) =>
-      (async () => {
+      withTransaction(connection, async () => {
         const db = makeDatabase(connection);
         if (
           !Number.isSafeInteger(input.dailyRecordLimit) ||
@@ -1929,10 +1926,7 @@ export const makeMcpToolRepository = (
           input.resultCount > 50
         )
           throw new Error("invalid MCP message completion");
-        if (
-          input.authorizationContextEstablished !== true &&
-          (await enterAuthorizationContext(connection, input)) === null
-        )
+        if ((await enterAuthorizationContext(connection, input, true)) === null)
           throw new Error("authorization unavailable");
         const accountContext = sql`nullif(
           current_setting('public.personal_account_id', true), ''
@@ -2001,7 +1995,7 @@ export const makeMcpToolRepository = (
         if (completion[0]?.completed !== true)
           throw new Error("Tool Call Log completion unavailable");
         return { outcome: "success" as const };
-      })(),
+      }),
     ),
   listGroups: (input) =>
     provider.withConnection((connection) =>

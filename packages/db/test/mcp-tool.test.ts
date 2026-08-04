@@ -1348,6 +1348,7 @@ describe("MCP tool repository", () => {
     const result = await repository.readMessages({
       ...authorization,
       auditLogId,
+      authorizationContextEstablished: true,
       connectionPublicId: connectionA,
       conversationPublicId,
       cursorSentAt: null,
@@ -1384,6 +1385,7 @@ describe("MCP tool repository", () => {
       repository.completeMessageRead({
         ...authorization,
         auditLogId,
+        authorizationContextEstablished: true,
         dailyRecordLimit: 2,
         observedAt: readAt,
         resultCount: 1,

@@ -2168,7 +2168,6 @@ const readMessages = (
       .readMessages({
         ...authorization,
         auditLogId,
-        authorizationContextEstablished: true,
         connectionPublicId: input.connection_id,
         conversationPublicId: input.conversation_id,
         cursorSentAt: sentAt,
@@ -2484,7 +2483,6 @@ const readMessages = (
       .completeMessageRead({
         ...authorization,
         auditLogId,
-        authorizationContextEstablished: true,
         dailyRecordLimit,
         observedAt: yield* clock.now,
         resultCount: output.messages.length,
