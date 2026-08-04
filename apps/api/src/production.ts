@@ -45,9 +45,6 @@ import {
   type PendingStoredMediaCandidate,
 } from "@whatsapp-mcp/db/stored-media";
 import { makePgToolCallLogRepository } from "@whatsapp-mcp/db/tool-call-log";
-import { makePgWebhookEventRepository } from "@whatsapp-mcp/db/webhook-event";
-import { makePgWebhookIngressRepository } from "@whatsapp-mcp/db/webhook-ingress";
-import { makePgWebhookReplayRepository } from "@whatsapp-mcp/db/webhook-replay";
 import { makePgWhatsAppConnectionRepository } from "@whatsapp-mcp/db/whatsapp-connection";
 import type { SessionAuthority } from "@whatsapp-mcp/wasender/control";
 import { makeWasenderMediaRetrievalLayer } from "@whatsapp-mcp/wasender/media";
@@ -221,47 +218,21 @@ import {
 import {
   handleWebhookDeadLetterBatch,
   handleWebhookEventBatch,
-  jitteredWebhookRetryDelaySeconds,
-  WebhookEventClock,
-  WebhookEventIdentifiers,
-  WebhookEventObjectStore,
-  WebhookEventObjectStoreError,
-  WebhookEventPersistence,
-  WebhookEventPersistenceError,
-  WebhookEventRetrySchedule,
-  wasenderWebhookEventNormalizationLayer,
 } from "./webhook-event";
 import {
   createWebhookIngressHandler,
   isWebhookIngressRequest,
-  WebhookIngressClock,
-  WebhookIngressIdentifiers,
-  WebhookIngressObjectStore,
-  WebhookIngressObjectStoreError,
-  WebhookIngressPersistence,
-  WebhookIngressPersistenceError,
-  WebhookIngressQueue,
-  WebhookIngressQueueError,
 } from "./webhook-ingress";
 import {
-  handleWebhookIngressSweep,
-  WebhookRecoveryCheckpoint,
-  WebhookRecoveryCheckpointError,
-  WebhookRecoveryObjectStore,
-  WebhookRecoveryObjectStoreError,
-  WebhookRecoveryPersistence,
-  WebhookRecoveryPersistenceError,
-} from "./webhook-recovery";
+  makeWebhookEventProductionLayer,
+  makeWebhookIngressProductionLayer,
+  makeWebhookRecoveryProductionLayer,
+  makeWebhookReplayProductionLayer,
+} from "./webhook-production";
+import { handleWebhookIngressSweep } from "./webhook-recovery";
 import {
   handleWebhookReplayBatch,
   handleWebhookSourceRetention,
-  WebhookReplayClock,
-  WebhookReplayPersistence,
-  WebhookReplayPersistenceError,
-  WebhookReplayQueue,
-  WebhookReplayQueueError,
-  WebhookSourceObjectStore,
-  WebhookSourceObjectStoreError,
 } from "./webhook-replay";
 import {
   createWhatsAppConnectionHandler,
@@ -1260,492 +1231,6 @@ const retentionDayOptions = (
   return options;
 };
 
-const webhookIngressPersistenceLayer = (environment: ApiEnvironment) =>
-  Layer.succeed(WebhookIngressPersistence, {
-    resolve: (webhookIngressId) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString =
-            environment.WEBHOOK_HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string") {
-            throw new Error("Webhook Hyperdrive unavailable");
-          }
-          return makePgWebhookIngressRepository(connectionString).resolve(
-            webhookIngressId,
-          );
-        },
-        catch: () => new WebhookIngressPersistenceError(),
-      }),
-  });
-
-const webhookIngressCloudflareLayer = (environment: ApiEnvironment) =>
-  Layer.mergeAll(
-    Layer.succeed(WebhookIngressObjectStore, {
-      put: (object) =>
-        Effect.tryPromise({
-          try: async () => {
-            const bucket = environment.WEBHOOK_INGRESS;
-            if (!hasMethods(bucket, ["put"])) {
-              throw new Error("Webhook ingress bucket unavailable");
-            }
-            const stored = await (bucket as Pick<R2Bucket, "put">).put(
-              object.objectKey,
-              object.body,
-              {
-                customMetadata: { ...object.customMetadata },
-                httpMetadata: {
-                  contentType:
-                    "application/vnd.whatsapp-mcp.webhook-ciphertext+json",
-                },
-                onlyIf: { etagDoesNotMatch: "*" },
-              },
-            );
-            if (stored === null) {
-              throw new Error("Webhook Event object already exists");
-            }
-          },
-          catch: () => new WebhookIngressObjectStoreError(),
-        }),
-    }),
-    Layer.succeed(WebhookIngressQueue, {
-      publish: (message) =>
-        Effect.tryPromise({
-          try: async () => {
-            const queue = environment.INGESTION_QUEUE;
-            if (!hasMethods(queue, ["send"])) {
-              throw new Error("ingestion Queue unavailable");
-            }
-            await (queue as Pick<Queue, "send">).send(message, {
-              contentType: "json",
-            });
-          },
-          catch: () => new WebhookIngressQueueError(),
-        }),
-    }),
-    Layer.succeed(WebhookIngressClock, {
-      now: Effect.sync(() => new Date().toISOString()),
-    }),
-    Layer.succeed(WebhookIngressIdentifiers, {
-      nextObjectId: Effect.sync(() => crypto.randomUUID()),
-    }),
-  );
-
-const webhookEventPersistenceLayer = (environment: ApiEnvironment) =>
-  Layer.succeed(WebhookEventPersistence, {
-    complete: (input) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString =
-            environment.WEBHOOK_HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string") {
-            throw new Error("Webhook Hyperdrive unavailable");
-          }
-          return makePgWebhookEventRepository(connectionString).complete(input);
-        },
-        catch: () => new WebhookEventPersistenceError(),
-      }),
-    deadLetter: (input) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString =
-            environment.WEBHOOK_HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string") {
-            throw new Error("Webhook Hyperdrive unavailable");
-          }
-          return makePgWebhookEventRepository(connectionString).deadLetter(
-            input,
-          );
-        },
-        catch: () => new WebhookEventPersistenceError(),
-      }),
-    prepare: (input) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString =
-            environment.WEBHOOK_HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string") {
-            throw new Error("Webhook Hyperdrive unavailable");
-          }
-          return makePgWebhookEventRepository(connectionString).prepare(input);
-        },
-        catch: () => new WebhookEventPersistenceError(),
-      }),
-    projectConnectionState: (input, compareVersions) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString =
-            environment.WEBHOOK_HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string") {
-            throw new Error("Webhook Hyperdrive unavailable");
-          }
-          return makePgWebhookEventRepository(
-            connectionString,
-          ).projectConnectionState(input, compareVersions);
-        },
-        catch: () => new WebhookEventPersistenceError(),
-      }),
-    projectGroup: (input, protect, compareVersions) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString =
-            environment.WEBHOOK_HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string") {
-            throw new Error("database unavailable");
-          }
-          return makePgWebhookEventRepository(connectionString).projectGroup(
-            input,
-            protect,
-            compareVersions,
-          );
-        },
-        catch: () => new WebhookEventPersistenceError(),
-      }),
-    projectDirectoryContact: (input, compareVersions) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString =
-            environment.WEBHOOK_HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string") {
-            throw new Error("Webhook Hyperdrive unavailable");
-          }
-          return makePgWebhookEventRepository(
-            connectionString,
-          ).projectDirectoryContact(input, compareVersions);
-        },
-        catch: () => new WebhookEventPersistenceError(),
-      }),
-    projectStoredMessage: (input, compareVersions) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString =
-            environment.WEBHOOK_HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string")
-            throw new Error("Webhook Hyperdrive unavailable");
-          return makePgWebhookEventRepository(
-            connectionString,
-          ).projectStoredMessage(input, compareVersions);
-        },
-        catch: () => new WebhookEventPersistenceError(),
-      }),
-    projectSendEvidence: (input, materialize) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString =
-            environment.WEBHOOK_HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string")
-            throw new Error("Webhook Hyperdrive unavailable");
-          return makePgWebhookEventRepository(
-            connectionString,
-          ).projectSendEvidence(input, materialize);
-        },
-        catch: () => new WebhookEventPersistenceError(),
-      }),
-    projectStoredMessageEdit: (input, compareVersions) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString =
-            environment.WEBHOOK_HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string")
-            throw new Error("Webhook Hyperdrive unavailable");
-          return makePgWebhookEventRepository(
-            connectionString,
-          ).projectStoredMessageEdit(input, compareVersions);
-        },
-        catch: () => new WebhookEventPersistenceError(),
-      }),
-    projectStoredMessageDeletion: (input) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString =
-            environment.WEBHOOK_HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string")
-            throw new Error("Webhook Hyperdrive unavailable");
-          return makePgWebhookEventRepository(
-            connectionString,
-          ).projectStoredMessageDeletion(input);
-        },
-        catch: () => new WebhookEventPersistenceError(),
-      }),
-    quarantine: (input) =>
-      Effect.tryPromise({
-        try: () => {
-          const connectionString =
-            environment.WEBHOOK_HYPERDRIVE?.connectionString;
-          if (typeof connectionString !== "string") {
-            throw new Error("Webhook Hyperdrive unavailable");
-          }
-          return makePgWebhookEventRepository(connectionString).quarantine(
-            input,
-          );
-        },
-        catch: () => new WebhookEventPersistenceError(),
-      }),
-  });
-
-const webhookEventRuntimeLayer = (environment: ApiEnvironment) =>
-  Layer.mergeAll(
-    webhookEventPersistenceLayer(environment),
-    wasenderWebhookEventNormalizationLayer,
-    Layer.succeed(WebhookEventClock, {
-      now: Effect.sync(() => new Date().toISOString()),
-    }),
-    Layer.succeed(WebhookEventIdentifiers, {
-      nextContactId: Effect.sync(() => makeContactId()),
-      nextConversationId: Effect.sync(() => makeConversationId()),
-      nextMessageId: Effect.sync(() => makeMessageId()),
-    }),
-    Layer.succeed(WebhookEventRetrySchedule, {
-      delaySeconds: () =>
-        Effect.sync(() => {
-          const random = new Uint32Array(1);
-          crypto.getRandomValues(random);
-          return jitteredWebhookRetryDelaySeconds(
-            (random[0] ?? 0) / 4_294_967_296,
-          );
-        }),
-    }),
-    Layer.succeed(WebhookEventObjectStore, {
-      load: (objectId) =>
-        Effect.tryPromise({
-          try: async () => {
-            const bucket = environment.WEBHOOK_INGRESS;
-            if (!hasMethods(bucket, ["get"])) {
-              throw new Error("Webhook ingress bucket unavailable");
-            }
-            const object = await (bucket as Pick<R2Bucket, "get">).get(
-              `webhook-events/${objectId}`,
-            );
-            if (object === null) return null;
-            if (object.size > 1_400_000) {
-              throw new Error("Webhook Event ciphertext exceeds its bound");
-            }
-            return {
-              body: new Uint8Array(await object.arrayBuffer()),
-              customMetadata: { ...(object.customMetadata ?? {}) },
-            };
-          },
-          catch: () => new WebhookEventObjectStoreError(),
-        }),
-    }),
-  );
-
-const webhookRecoveryRuntimeLayer = (environment: ApiEnvironment) =>
-  Layer.mergeAll(
-    Layer.succeed(WebhookRecoveryCheckpoint, {
-      load: Effect.tryPromise({
-        try: async () => {
-          const namespace = environment.OAUTH_KV;
-          if (!hasMethods(namespace, ["get"])) {
-            throw new Error("Webhook recovery checkpoint unavailable");
-          }
-          return await (namespace as Pick<KVNamespace, "get">).get(
-            "maintenance:webhook-recovery-cursor",
-          );
-        },
-        catch: () => new WebhookRecoveryCheckpointError(),
-      }),
-      save: (cursor) =>
-        Effect.tryPromise({
-          try: async () => {
-            const namespace = environment.OAUTH_KV;
-            if (!hasMethods(namespace, ["delete", "put"])) {
-              throw new Error("Webhook recovery checkpoint unavailable");
-            }
-            if (cursor === null) {
-              await (namespace as Pick<KVNamespace, "delete">).delete(
-                "maintenance:webhook-recovery-cursor",
-              );
-            } else {
-              await (namespace as Pick<KVNamespace, "put">).put(
-                "maintenance:webhook-recovery-cursor",
-                cursor,
-              );
-            }
-          },
-          catch: () => new WebhookRecoveryCheckpointError(),
-        }),
-    }),
-    Layer.succeed(WebhookRecoveryObjectStore, {
-      list: (cursor) =>
-        Effect.tryPromise({
-          try: async () => {
-            const bucket = environment.WEBHOOK_INGRESS;
-            if (!hasMethods(bucket, ["list"])) {
-              throw new Error("Webhook ingress bucket unavailable");
-            }
-            const listPage = (pageCursor: string | null) =>
-              (bucket as Pick<R2Bucket, "list">).list({
-                ...(pageCursor === null ? {} : { cursor: pageCursor }),
-                include: ["customMetadata"],
-                limit: 100,
-                prefix: "webhook-events/",
-              });
-            let listed: R2Objects;
-            try {
-              listed = await listPage(cursor);
-            } catch (error) {
-              if (cursor === null) throw error;
-              listed = await listPage(null);
-            }
-            if (listed.truncated && listed.cursor === undefined) {
-              throw new Error("Webhook ingress listing cursor unavailable");
-            }
-            return {
-              cursor: listed.truncated ? (listed.cursor ?? null) : null,
-              objects: listed.objects.map((object) => ({
-                customMetadata: { ...(object.customMetadata ?? {}) },
-                objectKey: object.key,
-                uploadedAt: object.uploaded.toISOString(),
-              })),
-            };
-          },
-          catch: () => new WebhookRecoveryObjectStoreError(),
-        }),
-    }),
-    Layer.succeed(WebhookRecoveryPersistence, {
-      filterUnclaimed: (messages) =>
-        Effect.tryPromise({
-          try: async () => {
-            const connectionString =
-              environment.WEBHOOK_HYPERDRIVE?.connectionString;
-            if (typeof connectionString !== "string") {
-              throw new Error("Webhook Hyperdrive unavailable");
-            }
-            const candidates = messages.map((message) => ({
-              ciphertextSha256: message.ciphertext_sha256,
-              eventId: message.object_id,
-              message,
-              payloadBytes: message.payload_bytes,
-              personalAccountId: message.personal_account_id,
-              receivedAt: message.received_at,
-              whatsappConnectionId: message.whatsapp_connection_id,
-            }));
-            const unclaimed =
-              await makePgWebhookEventRepository(
-                connectionString,
-              ).filterUnclaimed(candidates);
-            return unclaimed.map(({ message }) => message);
-          },
-          catch: () => new WebhookRecoveryPersistenceError(),
-        }),
-    }),
-    Layer.succeed(WebhookIngressQueue, {
-      publish: (message) =>
-        Effect.tryPromise({
-          try: async () => {
-            const queue = environment.INGESTION_QUEUE;
-            if (!hasMethods(queue, ["send"])) {
-              throw new Error("ingestion Queue unavailable");
-            }
-            await (queue as Pick<Queue, "send">).send(message, {
-              contentType: "json",
-            });
-          },
-          catch: () => new WebhookIngressQueueError(),
-        }),
-    }),
-  );
-
-const webhookReplayRuntimeLayer = (environment: ApiEnvironment) =>
-  Layer.mergeAll(
-    Layer.succeed(WebhookReplayClock, {
-      now: Effect.sync(() => new Date().toISOString()),
-    }),
-    Layer.succeed(WebhookReplayPersistence, {
-      complete: (input) =>
-        Effect.tryPromise({
-          try: async () => {
-            const connectionString =
-              environment.WEBHOOK_HYPERDRIVE?.connectionString;
-            if (typeof connectionString !== "string") {
-              throw new Error("Webhook Hyperdrive unavailable");
-            }
-            await makePgWebhookReplayRepository(connectionString).complete(
-              input,
-            );
-          },
-          catch: () => new WebhookReplayPersistenceError(),
-        }),
-      finalizeExpiredSource: (input) =>
-        Effect.tryPromise({
-          try: async () => {
-            const connectionString =
-              environment.WEBHOOK_HYPERDRIVE?.connectionString;
-            if (typeof connectionString !== "string") {
-              throw new Error("Webhook Hyperdrive unavailable");
-            }
-            return makePgWebhookReplayRepository(
-              connectionString,
-            ).finalizeExpiredSource(input);
-          },
-          catch: () => new WebhookReplayPersistenceError(),
-        }),
-      listExpiredSources: (input) =>
-        Effect.tryPromise({
-          try: async () => {
-            const connectionString =
-              environment.WEBHOOK_HYPERDRIVE?.connectionString;
-            if (typeof connectionString !== "string") {
-              throw new Error("Webhook Hyperdrive unavailable");
-            }
-            return makePgWebhookReplayRepository(
-              connectionString,
-            ).listExpiredSources(input);
-          },
-          catch: () => new WebhookReplayPersistenceError(),
-        }),
-      prepare: ({ observedAt, request: input }) =>
-        Effect.tryPromise({
-          try: async () => {
-            const connectionString =
-              environment.WEBHOOK_HYPERDRIVE?.connectionString;
-            if (typeof connectionString !== "string") {
-              throw new Error("Webhook Hyperdrive unavailable");
-            }
-            return makePgWebhookReplayRepository(connectionString).prepare({
-              incidentReference: input.incident_reference,
-              observedAt,
-              operatorReference: input.operator_reference,
-              reasonCode: input.reason_code,
-              requestId: input.request_id,
-              requestedAt: input.requested_at,
-            });
-          },
-          catch: () => new WebhookReplayPersistenceError(),
-        }),
-    }),
-    Layer.succeed(WebhookReplayQueue, {
-      publish: (message) =>
-        Effect.tryPromise({
-          try: async () => {
-            const queue = environment.INGESTION_QUEUE;
-            if (!hasMethods(queue, ["send"])) {
-              throw new Error("ingestion Queue unavailable");
-            }
-            await (queue as Pick<Queue, "send">).send(message, {
-              contentType: "json",
-            });
-          },
-          catch: () => new WebhookReplayQueueError(),
-        }),
-    }),
-    Layer.succeed(WebhookSourceObjectStore, {
-      delete: (eventId) =>
-        Effect.tryPromise({
-          try: async () => {
-            const bucket = environment.WEBHOOK_INGRESS;
-            if (!hasMethods(bucket, ["delete"])) {
-              throw new Error("Webhook ingress bucket unavailable");
-            }
-            await (bucket as Pick<R2Bucket, "delete">).delete(
-              `webhook-events/${eventId}`,
-            );
-          },
-          catch: () => new WebhookSourceObjectStoreError(),
-        }),
-    }),
-  );
-
 const connectionSetupProvisioningQueueLayer = (environment: ApiEnvironment) =>
   Layer.succeed(ConnectionSetupProvisioningQueue, {
     enqueue: (setupId) =>
@@ -2478,8 +1963,7 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     mcpAuthorizationPersistenceLayer(environment),
     mcpAuthorizationRuntimeLayer,
     messageRetentionLayer(environment),
-    webhookIngressPersistenceLayer(environment),
-    webhookIngressCloudflareLayer(environment),
+    makeWebhookIngressProductionLayer(environment),
     mcpToolPersistenceLayer(environment),
     mcpToolRuntimeLayer(environment),
     toolCallLogLayer(environment),
@@ -2764,7 +2248,7 @@ export const createProductionQueueHandler =
     if (batch.queue === replayQueueName(environment)) {
       const layer = Layer.mergeAll(
         telemetryLayer,
-        webhookReplayRuntimeLayer(environment),
+        makeWebhookReplayProductionLayer(environment),
       );
       await handleWebhookReplayBatch(batch, layer);
       return;
@@ -2773,7 +2257,7 @@ export const createProductionQueueHandler =
       const layer = Layer.mergeAll(
         encryptionLayer(environment),
         telemetryLayer,
-        webhookEventRuntimeLayer(environment),
+        makeWebhookEventProductionLayer(environment),
       );
       await handleWebhookDeadLetterBatch(batch, layer);
       return;
@@ -2787,7 +2271,7 @@ export const createProductionQueueHandler =
       const layer = Layer.mergeAll(
         encryptionLayer(environment),
         telemetryLayer,
-        webhookEventRuntimeLayer(environment),
+        makeWebhookEventProductionLayer(environment),
       );
       await handleWebhookEventBatch(ingestionBatch, layer);
       return;
@@ -3130,7 +2614,7 @@ export const createProductionScheduledHandler =
             value,
             Layer.mergeAll(
               telemetryLayer,
-              webhookReplayRuntimeLayer(environment),
+              makeWebhookReplayProductionLayer(environment),
             ),
           ))
       )(observedAt);
@@ -3429,7 +2913,7 @@ export const createProductionScheduledHandler =
             value,
             Layer.mergeAll(
               telemetryLayer,
-              webhookRecoveryRuntimeLayer(environment),
+              makeWebhookRecoveryProductionLayer(environment),
             ),
           ))
       )(observedAt);
