@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import type { ReactNode } from "react";
 import { getPersonalAccountConfiguration } from "../personal-account-configuration";
 import { DashboardShell } from "./dashboard-shell";
@@ -9,6 +10,7 @@ export default async function DashboardLayout({
 }: {
   readonly children: ReactNode;
 }) {
+  await connection();
   const canonicalWebOrigin = process.env.NEXT_PUBLIC_WEB_ORIGIN;
   if (process.env.NODE_ENV === "development" && canonicalWebOrigin) {
     const requestHeaders = await headers();
