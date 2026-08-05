@@ -75,10 +75,7 @@ for (const deployable of deployables) {
       "KMS_DELETION_COORDINATOR_KEY_ARN",
     ].sort();
     for (const [name, configuration] of configurations) {
-      if (
-        JSON.stringify(requiredSecrets(configuration)) !==
-        JSON.stringify(required)
-      ) {
+      if (!hasSameStrings(requiredSecrets(configuration), required)) {
         throw new Error(
           `Deletion coordinator ${name} must require its isolated KMS and database credentials.`,
         );
