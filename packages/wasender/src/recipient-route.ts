@@ -1,4 +1,4 @@
-import { encodeBase64Url } from "./base64-url";
+import { decodeBase64Url, encodeBase64Url } from "./base64-url";
 
 const textEncoder = new TextEncoder();
 
@@ -10,22 +10,6 @@ export interface RecipientRouteKeys {
 }
 
 type RecipientRouteVersion = "v1" | "v2";
-
-const decodeBase64Url = (value: string): Uint8Array | null => {
-  if (!/^[A-Za-z0-9_-]+$/u.test(value)) return null;
-  const padding = "=".repeat((4 - (value.length % 4)) % 4);
-  try {
-    const binary = atob(
-      `${value.replaceAll("-", "+").replaceAll("_", "/")}${padding}`,
-    );
-    const bytes = Uint8Array.from(binary, (character) =>
-      character.charCodeAt(0),
-    );
-    return encodeBase64Url(bytes) === value ? bytes : null;
-  } catch {
-    return null;
-  }
-};
 
 export const deriveRecipientRouteKeys = async (
   authority: string,
