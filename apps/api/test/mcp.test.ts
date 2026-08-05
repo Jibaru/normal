@@ -1430,6 +1430,36 @@ describe("stateless MCP list_groups boundary", () => {
     ]);
   });
 
+  test("distinguishes group recipient handles from conversation handles in discovery", async () => {
+    const harness = makeHarness({
+      scopes: ["directory:read", "messages:read"],
+    });
+    const response = await harness.handler(
+      jsonRpcRequest("tools/list"),
+      {},
+      executionContext,
+      authorization,
+    );
+    const body = (await response.json()) as {
+      result: {
+        tools: Array<{ description?: string; name: string }>;
+      };
+    };
+    const descriptions = Object.fromEntries(
+      body.result.tools.map(({ description, name }) => [name, description]),
+    );
+
+    expect(descriptions.list_groups).toContain(
+      "group_id cannot be used as read_messages.conversation_id",
+    );
+    expect(descriptions.list_chats).toContain(
+      "Use its conversation_id with read_messages",
+    );
+    expect(descriptions.read_messages).toContain(
+      "Get conversation_id from list_chats, not list_groups",
+    );
+  });
+
   test("audits before decrypting and returns normalized prefix results without provider data", async () => {
     const harness = makeHarness({ scopes: ["directory:read"] });
     const response = await harness.handler(

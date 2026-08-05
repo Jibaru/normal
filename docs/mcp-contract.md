@@ -124,6 +124,8 @@ Input fields:
 
 Results include only groups marked current and joined in the latest Directory projection and sort by normalized display name and then `group_id`. The page's `stale` and `partial` fields qualify that projected membership because the provider is authoritative. Group descriptions, profile URLs, and rosters are never returned.
 
+`group_id` names a WhatsApp Recipient for Directory lookup and sending. It is not a WhatsApp Conversation handle and cannot be passed as `read_messages.conversation_id`. To read observed group history, call `list_chats` with `kind: "group"`, match the returned `recipient_id` to the `group_id` when needed, and pass that result's `conversation_id` to `read_messages`. A joined group may have no WhatsApp Conversation yet when the platform has not observed a Stored Message for it.
+
 ## `list_chats`
 
 Requires `messages:read`. It lists only WhatsApp Conversations with observed Stored Message activity; Wasender has no authoritative chat-list or history endpoint.
@@ -160,6 +162,8 @@ Input fields:
 ```
 
 `recipient_id` is the current Directory `ctc_` handle for a direct conversation or `grp_` handle for a group. Direct-chat `display_name`, normalized E.164 `phone`, and `phone_last_four` are nullable when the provider Directory lacks that metadata; group phone fields are always `null`. Conversations are reconciled to Directory entries by their connection-scoped identity index rather than an early placeholder handle. `last_activity_direction` is `inbound` or `outbound`. Results sort by `last_activity_at` descending and then `conversation_id`. No body, snippet, unread state, provider identifier, or roster is returned.
+
+Use the returned `conversation_id` with `read_messages`. Do not pass `recipient_id` from this tool or `group_id` from `list_groups` as a conversation handle.
 
 ## `read_messages`
 

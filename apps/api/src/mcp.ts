@@ -514,6 +514,12 @@ const ListConnectionsOutputSchema = z
   .strict();
 
 const codePointLength = (value: string): number => Array.from(value).length;
+const listGroupsDescription =
+  "List currently joined WhatsApp Recipients in one selected WhatsApp Connection without roster or provider metadata. Returns group_id handles for directory lookup and sending; group_id cannot be used as read_messages.conversation_id. Use list_chats to find observed group conversations.";
+const listChatsDescription =
+  "List WhatsApp Conversations with observed Stored Message activity, including the current contact or group name and direct-chat phone number when available, without message snippets or unread state. Use its conversation_id with read_messages.";
+const readMessagesDescription =
+  "Read a chronological page of observed Stored Messages and traverse toward older retained history with honest history-window and Ingestion Gap metadata. Get conversation_id from list_chats, not list_groups.";
 const ListGroupsInput = z
   .object({
     connection_id: z.string().regex(/^con_[A-Za-z0-9_-]{21}$/u),
@@ -2835,8 +2841,7 @@ export const createMcpRequestHandler =
       server.registerTool(
         "list_chats",
         {
-          description:
-            "List WhatsApp Conversations with observed Stored Message activity, including the current contact or group name and direct-chat phone number when available, without message snippets or unread state.",
+          description: listChatsDescription,
           inputSchema: ListChatsInput,
           outputSchema: ListChatsOutputSchema,
           title: "List WhatsApp Chats",
@@ -2859,8 +2864,7 @@ export const createMcpRequestHandler =
       server.registerTool(
         "read_messages",
         {
-          description:
-            "Read a chronological page of observed Stored Messages and traverse toward older retained history with honest history-window and Ingestion Gap metadata.",
+          description: readMessagesDescription,
           inputSchema: ReadMessagesInput,
           outputSchema: ReadMessagesOutputSchema,
           title: "Read WhatsApp Messages",
@@ -2884,8 +2888,7 @@ export const createMcpRequestHandler =
       server.registerTool(
         "list_groups",
         {
-          description:
-            "List currently joined groups in one selected WhatsApp Connection without roster or provider metadata.",
+          description: listGroupsDescription,
           inputSchema: ListGroupsInput,
           outputSchema: ListGroupsOutputSchema,
           title: "List WhatsApp Groups",
@@ -2952,8 +2955,7 @@ export const createMcpRequestHandler =
         }
         if (hasDirectoryRead) {
           tools.push({
-            description:
-              "List currently joined groups in one selected WhatsApp Connection without roster or provider metadata.",
+            description: listGroupsDescription,
             inputSchema: z.toJSONSchema(ListGroupsInput, {
               target: "draft-2020-12",
             }),
@@ -3012,8 +3014,7 @@ export const createMcpRequestHandler =
         }
         if (hasMessagesRead) {
           tools.push({
-            description:
-              "List WhatsApp Conversations with observed Stored Message activity, including the current contact or group name and direct-chat phone number when available, without message snippets or unread state.",
+            description: listChatsDescription,
             inputSchema: z.toJSONSchema(ListChatsInput, {
               target: "draft-2020-12",
             }),
@@ -3024,8 +3025,7 @@ export const createMcpRequestHandler =
             title: "List WhatsApp Chats",
           });
           tools.push({
-            description:
-              "Read a chronological page of observed Stored Messages and traverse toward older retained history with honest history-window and Ingestion Gap metadata.",
+            description: readMessagesDescription,
             inputSchema: z.toJSONSchema(ReadMessagesInput, {
               target: "draft-2020-12",
             }),
