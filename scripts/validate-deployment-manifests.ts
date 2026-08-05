@@ -92,13 +92,9 @@ for (const deployable of deployables) {
       "RESTORE_DATABASE_URL",
     ].sort();
     for (const [name, configuration] of configurations) {
-      const secrets = (
-        configuration.secrets as
-          | { readonly required?: ReadonlyArray<string> }
-          | undefined
-      )?.required;
       if (
-        JSON.stringify([...(secrets ?? [])].sort()) !== JSON.stringify(required)
+        JSON.stringify(requiredSecrets(configuration)) !==
+        JSON.stringify(required)
       ) {
         throw new Error(
           `Restore coordinator ${name} must require only its marker and restricted database credentials.`,
