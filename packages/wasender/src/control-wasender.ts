@@ -1,5 +1,6 @@
 import { Effect, Layer, Redacted } from "effect";
 import { renderSVG } from "uqr";
+import { encodeBase64Url } from "./base64-url";
 import {
   type AdapterFailureCode,
   makeBoundedRetryAfterMs,
@@ -237,15 +238,6 @@ const decodeHex = (value: string): Uint8Array => {
     bytes[index] = Number.parseInt(value.slice(index * 2, index * 2 + 2), 16);
   }
   return bytes;
-};
-
-const base64Url = (bytes: Uint8Array): string => {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary)
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/u, "");
 };
 
 const isProviderApiCredential = (value: string) =>
@@ -575,7 +567,7 @@ export const makeWasenderSessionLifecycle = (
       await keyPromise,
       new TextEncoder().encode(`${referenceDomain}${id}`),
     );
-    return `wsl_${base64Url(new Uint8Array(signature))}` as LifecycleSessionLocator;
+    return `wsl_${encodeBase64Url(new Uint8Array(signature))}` as LifecycleSessionLocator;
   };
 
   const loadProviderSessions = async (): Promise<
