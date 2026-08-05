@@ -1,4 +1,4 @@
-import { describe, expect, expectTypeOf, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { Effect, Layer, Redacted, Stream } from "effect";
 import {
   type LifecycleSession,
@@ -366,21 +366,30 @@ describe("provider-neutral capability seam", () => {
     expect(Number(makeBoundedRetryAfterMs(25_000))).toBe(5_000);
     expect(() => makeBoundedRetryAfterMs(-1)).toThrow(RangeError);
   });
-
-  test("couples failure decisions to operation classes", () => {
-    type LifecycleFailure = Extract<
-      ProviderNeutralFailure,
-      { readonly operation: "lifecycle-write" }
-    >;
-    type TextSendFailure = Extract<
-      ProviderNeutralFailure,
-      { readonly operation: "text-send" }
-    >;
-
-    expectTypeOf<LifecycleFailure["retryDecision"]>().toEqualTypeOf<
-      "do_not_retry" | "reconcile_before_repeat"
-    >();
-    expectTypeOf<LifecycleFailure["retryAfterMs"]>().toEqualTypeOf<null>();
-    expectTypeOf<TextSendFailure>().toEqualTypeOf<never>();
-  });
 });
+
+type Exact<Actual, Expected> = (<Value>() => Value extends Actual
+  ? 1
+  : 2) extends <Value>() => Value extends Expected ? 1 : 2
+  ? true
+  : false;
+type Assert<Condition extends true> = Condition;
+type LifecycleFailure = Extract<
+  ProviderNeutralFailure,
+  { readonly operation: "lifecycle-write" }
+>;
+type TextSendFailure = Extract<
+  ProviderNeutralFailure,
+  { readonly operation: "text-send" }
+>;
+
+export type LifecycleRetryDecisionContract = Assert<
+  Exact<
+    LifecycleFailure["retryDecision"],
+    "do_not_retry" | "reconcile_before_repeat"
+  >
+>;
+export type LifecycleRetryDelayContract = Assert<
+  Exact<LifecycleFailure["retryAfterMs"], null>
+>;
+export type TextSendFailureContract = Assert<Exact<TextSendFailure, never>>;
