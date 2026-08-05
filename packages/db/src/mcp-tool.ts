@@ -1070,7 +1070,7 @@ export const makeMcpToolRepository = (
         const hourStarts = recent.map(({ started_at }) =>
           timestamp(started_at),
         );
-        if (hourStarts.some((value) => value === null)) {
+        if (hourStarts.includes(null)) {
           throw new Error("invalid Tool Call Log timestamp");
         }
         const starts = hourStarts as Array<Date>;
