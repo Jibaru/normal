@@ -11,6 +11,26 @@ export interface RecipientRouteKeys {
 
 type RecipientRouteVersion = "v1" | "v2";
 
+const importRecipientRouteKeys = async (
+  encryptionSeed: ArrayBuffer,
+  nonceSeed: ArrayBuffer,
+): Promise<RecipientRouteKeys> => ({
+  encryption: await crypto.subtle.importKey(
+    "raw",
+    encryptionSeed,
+    { name: "AES-GCM" },
+    false,
+    ["encrypt", "decrypt"],
+  ),
+  nonce: await crypto.subtle.importKey(
+    "raw",
+    nonceSeed,
+    { hash: "SHA-256", name: "HMAC" },
+    false,
+    ["sign"],
+  ),
+});
+
 export const deriveRecipientRouteKeys = async (
   authority: string,
 ): Promise<RecipientRouteKeys> => {
@@ -24,22 +44,7 @@ export const deriveRecipientRouteKeys = async (
       textEncoder.encode(`directory-locator-nonce-v1\0${authority}`),
     ),
   ]);
-  return {
-    encryption: await crypto.subtle.importKey(
-      "raw",
-      encryptionSeed,
-      { name: "AES-GCM" },
-      false,
-      ["encrypt", "decrypt"],
-    ),
-    nonce: await crypto.subtle.importKey(
-      "raw",
-      nonceSeed,
-      { hash: "SHA-256", name: "HMAC" },
-      false,
-      ["sign"],
-    ),
-  };
+  return importRecipientRouteKeys(encryptionSeed, nonceSeed);
 };
 
 export const deriveIdentityRecipientRouteKeys = async (
@@ -55,22 +60,7 @@ export const deriveIdentityRecipientRouteKeys = async (
     derive("encryption"),
     derive("nonce"),
   ]);
-  return {
-    encryption: await crypto.subtle.importKey(
-      "raw",
-      encryptionSeed,
-      { name: "AES-GCM" },
-      false,
-      ["encrypt", "decrypt"],
-    ),
-    nonce: await crypto.subtle.importKey(
-      "raw",
-      nonceSeed,
-      { hash: "SHA-256", name: "HMAC" },
-      false,
-      ["sign"],
-    ),
-  };
+  return importRecipientRouteKeys(encryptionSeed, nonceSeed);
 };
 
 const sealRoute = async (
