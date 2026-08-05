@@ -1,5 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
-import { makeDatabase, makeQueryConnection } from "./database";
+import { makeDatabase, withPgQueryConnection } from "./database";
 import {
   personalAccountsInApp,
   storedMediaInApp,
@@ -488,22 +488,7 @@ export const makeStoredMediaRepository = (
 const makePgConnectionProvider = (
   connectionString: string,
 ): StoredMediaConnectionProvider => ({
-  withConnection: async <Value>(
-    use: (connection: StoredMediaConnection) => Promise<Value>,
-  ) => {
-    const { Client } = await import("pg");
-    const client = new Client({
-      connectionString,
-      connectionTimeoutMillis: 5_000,
-      query_timeout: 70_000,
-    });
-    await client.connect();
-    try {
-      return await use(makeQueryConnection(client));
-    } finally {
-      await client.end();
-    }
-  },
+  withConnection: (use) => withPgQueryConnection(connectionString, use, 70_000),
 });
 
 export const makePgStoredMediaRepository = (connectionString: string) =>
