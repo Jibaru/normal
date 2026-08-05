@@ -160,6 +160,7 @@ export const makePgAtomicSendRepository = (
   commit: (input, encrypt) =>
     provider.withConnection(async (connection) => {
       const db = makeDatabase(connection);
+      let transactionCommitted = false;
       await db.execute(sql`BEGIN`);
       try {
         const boot = await db.execute<{ personal_account_id: unknown }>(
@@ -365,31 +366,22 @@ export const makePgAtomicSendRepository = (
                     eq(directoryContactsInApp.active, true),
                   ),
                 )
-            : await db
-                .select({
-                  phone_ciphertext_version: sql<null>`NULL`,
-                  phone_key_version: sql<null>`NULL`,
-                  phone_nonce: sql<null>`NULL`,
-                  phone_ciphertext: sql<null>`NULL`,
-                  recipient_record_id: whatsappGroupsInApp.id,
-                  provider_identity_ciphertext_version:
-                    whatsappGroupsInApp.providerIdentityCiphertextVersion,
-                  provider_identity_key_version:
-                    whatsappGroupsInApp.providerIdentityKeyVersion,
-                  provider_identity_nonce:
-                    whatsappGroupsInApp.providerIdentityNonce,
-                  provider_identity_ciphertext:
-                    whatsappGroupsInApp.providerIdentityCiphertext,
-                })
-                .from(whatsappGroupsInApp)
-                .where(
-                  and(
-                    eq(whatsappGroupsInApp.personalAccountId, accountId),
-                    eq(whatsappGroupsInApp.whatsappConnectionId, connectionId),
-                    eq(whatsappGroupsInApp.publicId, input.recipientPublicId),
-                    eq(whatsappGroupsInApp.joined, true),
-                  ),
-                );
+            : await db.execute<Record<string, unknown>>(
+                sql`SELECT NULL AS phone_ciphertext_version,
+                           NULL AS phone_key_version,
+                           NULL AS phone_nonce,
+                           NULL AS phone_ciphertext,
+                           groups.id AS recipient_record_id,
+                           groups.provider_identity_ciphertext_version,
+                           groups.provider_identity_key_version,
+                           groups.provider_identity_nonce,
+                           groups.provider_identity_ciphertext
+                    FROM public.whatsapp_groups AS groups
+                    WHERE groups.personal_account_id = ${accountId}
+                      AND groups.whatsapp_connection_id = ${connectionId}
+                      AND groups.public_id = ${input.recipientPublicId}
+                      AND groups.joined = true`,
+              );
         if (recipient[0] === undefined) {
           await finishAudit("execution_error", "recipient_not_found");
           return { outcome: "recipient_not_found" as const };
@@ -550,6 +542,7 @@ export const makePgAtomicSendRepository = (
               FROM inserted_pending`,
         );
         await db.execute(sql`COMMIT`);
+        transactionCommitted = true;
         const recipientRow = recipient[0];
         return {
           outcome: "created" as const,
@@ -592,7 +585,7 @@ export const makePgAtomicSendRepository = (
           },
         };
       } catch (error) {
-        await db.execute(sql`ROLLBACK`);
+        if (!transactionCommitted) await db.execute(sql`ROLLBACK`);
         throw error;
       }
     }),

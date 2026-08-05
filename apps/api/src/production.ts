@@ -1694,7 +1694,12 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
               readMessageDailyRecordLimit: requestQuota.dailyRecordLimit,
               storedMediaDailyByteLimit: requestQuota.dailyMediaByteLimit,
               resourceUrl: configuration.resource,
-            })(nextRequest, nextEnvironment, nextContext, authorization),
+            })(
+              nextRequest,
+              nextEnvironment,
+              context ?? nextContext,
+              authorization,
+            ),
           );
         }
         if (

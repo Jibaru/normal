@@ -2219,6 +2219,36 @@ describe("atomic send_text_message MCP boundary", () => {
     });
   });
 
+  test("extends the request lifetime before the send service completes", async () => {
+    const deferredOperations: Array<Promise<unknown>> = [];
+    const context = {
+      passThroughOnException: () => undefined,
+      waitUntil: (operation: Promise<unknown>) => {
+        deferredOperations.push(operation);
+      },
+    } as unknown as ExecutionContext;
+    const harness = makeHarness({ scopes: ["messages:send"] });
+
+    const response = await harness.handler(
+      jsonRpcRequest("tools/call", {
+        name: "send_text_message",
+        arguments: {
+          connection_id: "con_123456789012345678901",
+          recipient_id: "grp_123456789012345678901",
+          text: "slow group",
+          idempotency_key: "123456789012345678901",
+        },
+      }),
+      {},
+      context,
+      authorization,
+    );
+
+    expect(response.status).toBe(200);
+    expect(deferredOperations).toHaveLength(1);
+    await expect(deferredOperations[0]).resolves.toBeUndefined();
+  });
+
   test("reads a locally converged status and shares one not-found boundary", async () => {
     const harness = makeHarness({ scopes: ["messages:send"] });
     const call = (sendStatusNotFound = false) =>

@@ -2771,11 +2771,13 @@ export const createMcpRequestHandler =
           _meta: { "anthropic/requiresUserInteraction": true },
         },
         async (input) => {
-          const result = await Effect.runPromise(
+          const operation = Effect.runPromise(
             sendTextMessage(authorization, input, (attempt) =>
               context.waitUntil(attempt),
             ).pipe(Effect.provide(options.layer)),
           );
+          context.waitUntil(operation.then(() => undefined));
+          const result = await operation;
           return {
             ...result,
             content: result.content.map((block) => ({ ...block })),
