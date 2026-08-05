@@ -1,0 +1,24 @@
+---
+title: WhatsApp MCP permissions explained
+description: Understand connection metadata, WhatsApp Directory, Stored Message, and send permissions in a Normal MCP Authorization.
+eyebrow: Access control
+promise: Give each MCP Client only the access it actually needs.
+order: 4
+---
+
+Normal separates capabilities so access stays understandable. Each MCP Authorization also names the exact WhatsApp Connections it covers.
+
+## The four permission areas
+
+* **Connection metadata** lets an MCP Client see approved connection details.
+* **WhatsApp Directory** access exposes the connection scoped projection of active contacts and joined groups.
+* **Stored Message read** access allows observed conversation content to be retrieved.
+* **Send** access allows outbound attempts to eligible WhatsApp Recipients.
+
+## Read and send stay independent
+
+Send permission never implies Stored Message read permission. Different MCP Clients can receive different access, and connections created later remain outside existing grants.
+
+## About Client Confirmation
+
+Every outbound tool invocation requires Client Confirmation. It is an interaction presented by the MCP Client, not a separate server verified security boundary.

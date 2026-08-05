@@ -1,0 +1,21 @@
+---
+title: How WhatsApp message retention works in Normal
+description: Understand the Message History Window, Message Retention Policy, deletion behavior, and known Ingestion Gaps.
+eyebrow: Data lifecycle
+promise: Know which WhatsApp context exists and when it goes away.
+order: 5
+---
+
+Normal stores supported messages observed after a WhatsApp Connection becomes active. The default Message Retention Policy is 30 days. A User can choose a shorter period or explicitly retain messages until deletion.
+
+## The Message History Window
+
+The Message History Window begins no earlier than Connection Setup and is bounded by the Message Retention Policy. It never implies that earlier WhatsApp history did not exist.
+
+## Ingestion Gaps
+
+When evidence shows that one or more provider deliveries may be missing, Normal records an Ingestion Gap. Reads disclose known gaps that intersect the requested history. The absence of a known gap does not prove complete delivery.
+
+## What deletion changes
+
+Connection Deletion stops access and key use immediately. Active data is purged within 24 hours, and encrypted backup remnants expire within 30 days. Deletion is permanent and distinct from disconnecting a WhatsApp Connection.

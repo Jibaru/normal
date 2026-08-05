@@ -1,0 +1,21 @@
+---
+title: WhatsApp MCP privacy and control
+description: See how Normal limits MCP Client access, protects private communications, and keeps authorization reversible.
+eyebrow: Privacy
+promise: Useful WhatsApp context with explicit, reversible access.
+order: 6
+---
+
+Private communication needs more than a single allow button. Normal binds each MCP Authorization to selected WhatsApp Connections and separate capabilities.
+
+## Access is specific
+
+Review the MCP Client name, select only the connections it needs, and grant only the requested capabilities that match the intended use. A connection created later does not silently join an existing authorization.
+
+## Operational records avoid message content
+
+Tool Call Logs show operational metadata and opaque references. They do not copy message content, media, credentials, full phone numbers, or provider payloads. The platform architecture also prohibits routine operator access to private conversation content.
+
+## You can revoke access
+
+Revoking an MCP Authorization ends the MCP Client’s access without deleting the WhatsApp Connection. Disconnecting is also distinct from Connection Deletion and can retain historical data under the Message Retention Policy.

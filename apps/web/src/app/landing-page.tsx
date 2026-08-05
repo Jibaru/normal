@@ -1,16 +1,20 @@
 import {
   ArrowDown,
   ArrowRight,
+  CalendarCheck2,
   Check,
-  Contact,
-  MessageCircle,
+  ListTodo,
+  MessagesSquare,
+  Reply,
   Search,
+  SearchCheck,
   Send,
   ShieldCheck,
   Sparkles,
-  Users,
+  UserRoundCheck,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { FaqAccordion } from "@/components/faq-accordion";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import {
@@ -21,43 +25,42 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { cn } from "@/lib/utils";
 
 const contactUrl = "https://cal.com/cuevaio/whatsapp-mcp";
 
 const useCases = [
   {
-    icon: Sparkles,
+    icon: ListTodo,
     prompt: "What do I need to follow up on today?",
     text: "Turn recent conversations into a short brief of open questions, promises, and decisions.",
     title: "Start the day informed",
   },
   {
-    icon: Search,
+    icon: SearchCheck,
     prompt: "What hotel did Valeria recommend for Cusco?",
     text: "Find an address, deadline, recommendation, or decision without searching chat by chat.",
     title: "Find details instantly",
   },
   {
-    icon: MessageCircle,
+    icon: CalendarCheck2,
     prompt: "Summarize everything related to the launch meeting.",
     text: "Bring the right WhatsApp context into a meeting before the conversation starts.",
     title: "Prepare with context",
   },
   {
-    icon: Send,
+    icon: Reply,
     prompt: "Draft a follow up to Marco about the proposal.",
     text: "Turn conversation context into a thoughtful reply, then confirm it before anything is sent.",
     title: "Follow up naturally",
   },
   {
-    icon: Users,
+    icon: MessagesSquare,
     prompt: "What did the group decide about Saturday?",
     text: "Collect decisions and unresolved questions from busy group conversations.",
     title: "Coordinate groups",
   },
   {
-    icon: Contact,
+    icon: UserRoundCheck,
     prompt: "Who was I supposed to introduce Camila to?",
     text: "Remember introductions and personal context that would otherwise get lost.",
     title: "Keep relationships moving",
@@ -73,13 +76,10 @@ function ContactButton({
 }) {
   return (
     <a
-      className={cn(
-        buttonVariants({
-          size: "lg",
-          variant: inverse ? "secondary" : "default",
-        }),
-        "rounded-full",
-      )}
+      className={buttonVariants({
+        size: "lg",
+        variant: inverse ? "secondary" : "default",
+      })}
       href={contactUrl}
       rel="noreferrer"
       target="_blank"
@@ -104,14 +104,15 @@ export function LandingPage({ account }: { readonly account: ReactNode }) {
       <nav aria-label="Main navigation" className="landing-nav landing-shell">
         <Wordmark />
         <div className="landing-nav-links">
-          <a href="#use-cases">Use cases</a>
+          <a href="/use-cases">Use cases</a>
+          <a href="/guides">Guides</a>
           <a href="#how-it-works">How it works</a>
           <a href="#control">Control</a>
         </div>
         <ContactButton />
       </nav>
 
-      <section className="hero landing-grid">
+      <section className="hero">
         <div className="hero-copy landing-shell">
           <Badge className="eyebrow" variant="outline">
             WhatsApp MCP for your AI
@@ -165,9 +166,10 @@ export function LandingPage({ account }: { readonly account: ReactNode }) {
           <div className="benefit-grid">
             <Card size="sm">
               <CardHeader>
-                <span>01</span>
-                <Search aria-hidden="true" />
-                <CardTitle>Find what matters</CardTitle>
+                <div className="card-title-row">
+                  <Search aria-hidden="true" />
+                  <CardTitle>Find what matters</CardTitle>
+                </div>
               </CardHeader>
               <CardContent>
                 <CardDescription>
@@ -178,9 +180,10 @@ export function LandingPage({ account }: { readonly account: ReactNode }) {
             </Card>
             <Card size="sm">
               <CardHeader>
-                <span>02</span>
-                <Sparkles aria-hidden="true" />
-                <CardTitle>Understand the conversation</CardTitle>
+                <div className="card-title-row">
+                  <Sparkles aria-hidden="true" />
+                  <CardTitle>Understand the conversation</CardTitle>
+                </div>
               </CardHeader>
               <CardContent>
                 <CardDescription>
@@ -191,9 +194,10 @@ export function LandingPage({ account }: { readonly account: ReactNode }) {
             </Card>
             <Card size="sm">
               <CardHeader>
-                <span>03</span>
-                <Send aria-hidden="true" />
-                <CardTitle>Act when you are ready</CardTitle>
+                <div className="card-title-row">
+                  <Send aria-hidden="true" />
+                  <CardTitle>Act when you are ready</CardTitle>
+                </div>
               </CardHeader>
               <CardContent>
                 <CardDescription>
@@ -224,10 +228,12 @@ export function LandingPage({ account }: { readonly account: ReactNode }) {
         </div>
         <div className="use-case-grid">
           {useCases.map((item) => (
-            <Card key={item.title}>
+            <Card key={item.title} size="sm">
               <CardHeader>
-                <item.icon aria-hidden="true" />
-                <CardTitle>{item.title}</CardTitle>
+                <div className="card-title-row">
+                  <item.icon aria-hidden="true" />
+                  <CardTitle>{item.title}</CardTitle>
+                </div>
                 <CardDescription>{item.text}</CardDescription>
               </CardHeader>
               <CardFooter>
@@ -333,38 +339,7 @@ export function LandingPage({ account }: { readonly account: ReactNode }) {
           <p className="section-kicker">Questions, answered</p>
           <h2 id="faq-title">The important details.</h2>
         </div>
-        <div className="faq-list">
-          {[
-            [
-              "What is WhatsApp MCP?",
-              "MCP is a standard that lets compatible AI applications use external tools and context. Normal provides those tools for your connected WhatsApp account.",
-            ],
-            [
-              "Can an MCP Client send messages without me?",
-              "Every outbound messaging tool invocation requires Client Confirmation in the MCP Client.",
-            ],
-            [
-              "Can I allow reading without sending?",
-              "Yes. Connection metadata, the WhatsApp Directory, Stored Messages, and sending use separate permissions.",
-            ],
-            [
-              "Does Normal import my entire WhatsApp history?",
-              "Normal observes supported messages after your WhatsApp Connection becomes active. It does not claim access to conversations from before Connection Setup.",
-            ],
-            [
-              "Can I revoke access?",
-              "Yes. You can revoke an MCP Authorization whenever you want.",
-            ],
-          ].map(([question, answer], index) => (
-            <details key={question} open={index === 0}>
-              <summary>
-                {question}
-                <span aria-hidden="true">+</span>
-              </summary>
-              <p>{answer}</p>
-            </details>
-          ))}
-        </div>
+        <FaqAccordion />
       </section>
 
       <section className="account-section landing-shell" id="account">
@@ -392,9 +367,32 @@ export function LandingPage({ account }: { readonly account: ReactNode }) {
       </section>
 
       <footer className="landing-footer landing-shell">
-        <Wordmark />
-        <p className="footer-tagline">WhatsApp MCP, on your terms.</p>
-        <a href={contactUrl} rel="noreferrer" target="_blank">
+        <div className="landing-footer-brand">
+          <Wordmark />
+          <p>WhatsApp MCP, on your terms.</p>
+        </div>
+        <nav aria-label="Use case links" className="landing-footer-links">
+          <strong>Use cases</strong>
+          <a href="/use-cases">All use cases</a>
+          <a href="/use-cases/search-whatsapp-conversations">
+            Search conversations
+          </a>
+          <a href="/use-cases/summarize-whatsapp-groups">Summarize groups</a>
+          <a href="/use-cases/draft-whatsapp-replies">Draft replies</a>
+        </nav>
+        <nav aria-label="Guide links" className="landing-footer-links">
+          <strong>Guides</strong>
+          <a href="/guides">All guides</a>
+          <a href="/guides/what-is-whatsapp-mcp">What is WhatsApp MCP?</a>
+          <a href="/guides/connect-whatsapp-to-claude">Connect to Claude</a>
+          <a href="/guides/whatsapp-mcp-privacy">Privacy and control</a>
+        </nav>
+        <a
+          className="landing-footer-contact"
+          href={contactUrl}
+          rel="noreferrer"
+          target="_blank"
+        >
           Contact now <ArrowRight aria-hidden="true" />
         </a>
       </footer>

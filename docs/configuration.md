@@ -18,6 +18,7 @@ Secret examples never contain usable key material.
 | --- | --- | --- | --- |
 | `DEPLOYMENT_ENVIRONMENT` | Non-secret | Web, API, provider-control | Set to the deployed environment. Change only as part of a deployment. |
 | `NEXT_PUBLIC_API_ORIGIN` | Non-secret | Web browser bundle and web startup validation | OpenTofu sets the same-environment API Worker's bare HTTPS origin. It is frozen into the browser bundle at build time. |
+| `NEXT_PUBLIC_WEB_ORIGIN` | Non-secret | Web metadata, robots, XML sitemap, and web startup validation | OpenTofu sets the same-environment Vercel custom origin. It is frozen into the web build and must be a bare HTTPS origin. |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Public identifier | Web browser bundle and web startup validation | Copy the publishable key from the same-environment Clerk instance. OpenTofu freezes it into that environment's browser bundle. |
 | `CLERK_API_AUDIENCE` | Non-secret | API | Exact bare HTTPS API origin. OpenTofu derives it from `api_hostname`; the custom JWT template's `aud` claim must match it exactly. |
 | `CLERK_AUTHORIZED_PARTY` | Non-secret | API | Exact bare HTTPS web origin allowed by both the token `azp` claim and request `Origin`. OpenTofu derives it from `web_hostname`. |
@@ -299,10 +300,11 @@ the new value, verify that no old locator remains, deploy the new secret, and
 resume provisioning. A direct replacement without reconciliation makes existing
 provider sessions unresolvable and therefore fails closed.
 
-The web production root requires `NEXT_PUBLIC_API_ORIGIN` to be a bare HTTPS
-origin with no credentials, path, query, or fragment. The Vercel manifest has
-no rewrite or proxy to the API. Browser data-plane requests therefore go
-directly to the API Worker.
+The web production root requires `NEXT_PUBLIC_API_ORIGIN` and
+`NEXT_PUBLIC_WEB_ORIGIN` to be bare HTTPS origins with no credentials, path,
+query, or fragment. The web origin supplies canonical metadata, robots, and
+the XML sitemap. The Vercel manifest has no rewrite or proxy to the API.
+Browser data-plane requests therefore go directly to the API Worker.
 
 ## Clerk human identity and Personal Account bootstrap
 

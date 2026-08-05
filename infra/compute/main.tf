@@ -752,6 +752,12 @@ resource "vercel_project" "web" {
       sensitive = false
     },
     {
+      key       = "NEXT_PUBLIC_WEB_ORIGIN"
+      value     = "https://${var.web_hostname}"
+      target    = ["production"]
+      sensitive = false
+    },
+    {
       key       = "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"
       value     = var.clerk_publishable_key
       target    = ["production"]

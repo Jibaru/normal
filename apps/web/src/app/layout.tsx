@@ -15,6 +15,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_WEB_ORIGIN ?? "http://localhost:3000",
+  ),
   title: "Normal | WhatsApp MCP for your AI",
   description:
     "Connect WhatsApp to the MCP Clients you choose. Find conversations, understand context, and send messages with your confirmation.",

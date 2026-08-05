@@ -1,0 +1,26 @@
+---
+title: How to connect WhatsApp to ChatGPT with MCP
+description: Add Normal’s WhatsApp MCP server to ChatGPT, authorize selected connections, and keep sending under confirmation.
+eyebrow: ChatGPT setup
+promise: Use WhatsApp context from ChatGPT without handing over blanket access.
+order: 3
+---
+
+A ChatGPT environment that supports custom MCP servers can connect to Normal through OAuth. You choose the WhatsApp Connections and capabilities ChatGPT may use.
+
+## Connect ChatGPT
+
+1. Enable the ChatGPT setting required for custom MCP servers.
+2. Add your Normal MCP server URL with OAuth enabled.
+3. Sign in to Normal and select each allowed WhatsApp Connection and capability.
+4. Start a new chat, enable the tools, and test with a read request.
+
+## Try asking
+
+> Find the address Mateo sent last week.
+
+> What decisions came out of the project group today?
+
+## Can ChatGPT send after receiving read access?
+
+No. Stored Message read permission and send permission are separate. Every outbound messaging tool invocation also requires Client Confirmation in the MCP Client.

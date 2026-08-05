@@ -12,6 +12,7 @@ export interface WebEnvironment {
   readonly DEPLOYMENT_ENVIRONMENT?: string | undefined;
   readonly NEXT_PUBLIC_API_ORIGIN?: string | undefined;
   readonly NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?: string | undefined;
+  readonly NEXT_PUBLIC_WEB_ORIGIN?: string | undefined;
 }
 
 const productionConfig = Config.all({
@@ -27,6 +28,7 @@ const productionConfig = Config.all({
     "preview",
     "production",
   )("DEPLOYMENT_ENVIRONMENT"),
+  webOrigin: Config.string("NEXT_PUBLIC_WEB_ORIGIN"),
 });
 
 class InvalidApiOrigin extends Data.TaggedError("InvalidApiOrigin") {}
@@ -44,16 +46,20 @@ const configLayer = (environment: WebEnvironment) =>
   Layer.effect(
     ApplicationConfig,
     productionConfig.pipe(
-      Effect.flatMap(({ apiOrigin, clerkPublishableKey, environment }) =>
-        validatedApiOrigin(apiOrigin).pipe(
-          Effect.map((validatedApiOrigin) => ({
-            apiOrigin: validatedApiOrigin,
-            clerkJwtTemplate: CLERK_JWT_TEMPLATE,
-            clerkPublishableKey,
-            environment,
-            service: "web" as const,
-          })),
-        ),
+      Effect.flatMap(
+        ({ apiOrigin, clerkPublishableKey, environment, webOrigin }) =>
+          Effect.all([
+            validatedApiOrigin(apiOrigin),
+            validatedApiOrigin(webOrigin),
+          ]).pipe(
+            Effect.map(([validatedApiOrigin]) => ({
+              apiOrigin: validatedApiOrigin,
+              clerkJwtTemplate: CLERK_JWT_TEMPLATE,
+              clerkPublishableKey,
+              environment,
+              service: "web" as const,
+            })),
+          ),
       ),
       Effect.withConfigProvider(
         ConfigProvider.fromMap(

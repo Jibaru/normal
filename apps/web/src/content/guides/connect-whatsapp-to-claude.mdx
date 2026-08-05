@@ -1,0 +1,26 @@
+---
+title: How to connect WhatsApp to Claude with MCP
+description: Connect Normal’s WhatsApp MCP server to Claude, choose exact permissions, and start using approved WhatsApp context.
+eyebrow: Claude setup
+promise: Bring approved WhatsApp context into Claude in a few clear steps.
+order: 2
+---
+
+Claude supports custom MCP connectors. After your WhatsApp Connection is active, add Normal as a connector, complete OAuth, and choose the exact connections and permissions Claude can use.
+
+## Connect Claude
+
+1. In Claude, open Settings, then Connectors.
+2. Add a custom connector using your Normal MCP server URL.
+3. Complete sign in and explicitly select the WhatsApp Connections and requested permissions.
+4. Enable the WhatsApp MCP tools in a new chat.
+
+Begin with a bounded read request such as:
+
+> Summarize today’s messages from the launch group.
+
+## Does Claude receive every connection automatically?
+
+No. Only the WhatsApp Connections explicitly selected during MCP Authorization are included. A WhatsApp Connection added later remains outside the grant.
+
+You can revoke the MCP Authorization whenever you no longer want Claude to have access.

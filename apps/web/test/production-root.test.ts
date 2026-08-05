@@ -10,6 +10,7 @@ describe("web production root", () => {
     DEPLOYMENT_ENVIRONMENT: "production",
     NEXT_PUBLIC_API_ORIGIN: "https://api.example.com",
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_Y2xlcmsuZXhhbXBsZS50ZXN0JA",
+    NEXT_PUBLIC_WEB_ORIGIN: "https://app.example.com",
   } as const;
 
   test("fails closed when deployment configuration is absent", async () => {
@@ -49,6 +50,14 @@ describe("web production root", () => {
 
   test("fails closed when the Clerk publishable key is absent", async () => {
     const name = "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" as const;
+    const { [name]: _missing, ...environment } = validEnvironment;
+    const response = await createProductionHealthRoute(environment)();
+
+    expect(response.status).toBe(503);
+  });
+
+  test("fails closed when the canonical web origin is absent", async () => {
+    const name = "NEXT_PUBLIC_WEB_ORIGIN" as const;
     const { [name]: _missing, ...environment } = validEnvironment;
     const response = await createProductionHealthRoute(environment)();
 

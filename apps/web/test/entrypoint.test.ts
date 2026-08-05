@@ -4,12 +4,14 @@ const originalEnvironment = process.env.DEPLOYMENT_ENVIRONMENT;
 const originalApiOrigin = process.env.NEXT_PUBLIC_API_ORIGIN;
 const originalClerkPublishableKey =
   process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+const originalWebOrigin = process.env.NEXT_PUBLIC_WEB_ORIGIN;
 
 beforeAll(() => {
   process.env.DEPLOYMENT_ENVIRONMENT = "production";
   process.env.NEXT_PUBLIC_API_ORIGIN = "https://api.example.com";
   process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY =
     "pk_test_Y2xlcmsuZXhhbXBsZS50ZXN0JA";
+  process.env.NEXT_PUBLIC_WEB_ORIGIN = "https://app.example.com";
 });
 
 afterAll(() => {
@@ -29,6 +31,12 @@ afterAll(() => {
     delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
   } else {
     process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = originalClerkPublishableKey;
+  }
+
+  if (originalWebOrigin === undefined) {
+    delete process.env.NEXT_PUBLIC_WEB_ORIGIN;
+  } else {
+    process.env.NEXT_PUBLIC_WEB_ORIGIN = originalWebOrigin;
   }
 });
 
