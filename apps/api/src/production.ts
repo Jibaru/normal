@@ -56,6 +56,7 @@ import {
 import { Config, ConfigProvider, Data, Effect, Layer, Redacted } from "effect";
 import { makeClerkHumanIdentity } from "./auth/clerk";
 import { HumanIdentity } from "./auth/human-identity";
+import { encodeBase64Url } from "./base64-url";
 import { createCanaryHandler } from "./canary";
 import {
   ConnectionHealthClock,
@@ -1353,10 +1354,7 @@ const mcpCursorSigningLayer = (environment: ApiEnvironment) =>
 const randomBase64Url = (): string => {
   const value = new Uint8Array(32);
   crypto.getRandomValues(value);
-  return btoa(String.fromCharCode(...value))
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/u, "");
+  return encodeBase64Url(value);
 };
 
 const connectionSetupProvisioningRuntimeLayer = (environment: ApiEnvironment) =>

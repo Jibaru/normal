@@ -15,6 +15,7 @@ import {
   type WasenderRecipientRoute,
 } from "@whatsapp-mcp/wasender/session";
 import { Effect, Redacted } from "effect";
+import { encodeBase64Url } from "./base64-url";
 import type {
   EnvelopeEncryption,
   VersionedCiphertext,
@@ -68,8 +69,6 @@ const keys = (material: SendEncryptionMaterial) => ({
     version: 1 as const,
   },
 });
-const base64Url = (value: Uint8Array): string =>
-  base64(value).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
 const fingerprint = async (
   key: CryptoKey,
   input: {
@@ -96,7 +95,7 @@ const fingerprint = async (
     offset += part.byteLength;
   }
   const signed = await crypto.subtle.sign("HMAC", key, framed);
-  return `sf1_${base64Url(new Uint8Array(signed))}`;
+  return `sf1_${encodeBase64Url(new Uint8Array(signed))}`;
 };
 const receipt = (
   value: {

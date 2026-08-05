@@ -6,6 +6,7 @@ import {
   OAuthProvider,
 } from "@cloudflare/workers-oauth-provider";
 import { Config, ConfigProvider, Data, Effect, Redacted } from "effect";
+import { encodeBase64Url } from "./base64-url";
 import type {
   OAuthAuthorizationRequestCompletedEvent,
   OAuthProtocolRequestFailedEvent,
@@ -221,12 +222,6 @@ const jsonError = (): Response =>
     status: 400,
   });
 
-const bytesToBase64Url = (value: Uint8Array): string =>
-  btoa(String.fromCharCode(...value))
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/u, "");
-
 const hexToBytes = (value: string): Uint8Array =>
   Uint8Array.from(value.match(/.{2}/gu) ?? [], (byte) =>
     Number.parseInt(byte, 16),
@@ -235,7 +230,7 @@ const hexToBytes = (value: string): Uint8Array =>
 const randomSecret = (): string => {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
-  return bytesToBase64Url(bytes);
+  return encodeBase64Url(bytes);
 };
 
 const hashLookup = async (secret: string): Promise<string> => {
@@ -243,7 +238,7 @@ const hashLookup = async (secret: string): Promise<string> => {
     "SHA-256",
     new TextEncoder().encode(secret),
   );
-  return bytesToBase64Url(new Uint8Array(hash));
+  return encodeBase64Url(new Uint8Array(hash));
 };
 
 const hashCredential = async (secret: string): Promise<Uint8Array> =>
@@ -291,8 +286,8 @@ export const sealAuthorizationRequest = async (
   await kv.put(
     `oauth:authorization-request:${keyHash}`,
     JSON.stringify({
-      ciphertext: bytesToBase64Url(new Uint8Array(ciphertext)),
-      iv: bytesToBase64Url(iv),
+      ciphertext: encodeBase64Url(new Uint8Array(ciphertext)),
+      iv: encodeBase64Url(iv),
       version: 1,
     }),
     { expirationTtl: AUTHORIZATION_REQUEST_TTL_SECONDS },

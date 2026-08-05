@@ -8,6 +8,7 @@ import {
   HumanIdentity,
   type HumanIdentityService,
 } from "./auth/human-identity";
+import { encodeBase64Url } from "./base64-url";
 import {
   OAUTH_SCOPES,
   type OAuthConfiguration,
@@ -218,10 +219,7 @@ const presentationFor = async (
       })}`,
     ),
   );
-  return btoa(String.fromCharCode(...new Uint8Array(digest)))
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/u, "");
+  return encodeBase64Url(new Uint8Array(digest));
 };
 
 const inspect = async (
