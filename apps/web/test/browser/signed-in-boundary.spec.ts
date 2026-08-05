@@ -105,6 +105,17 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
       "Normal securely connects your WhatsApp to the MCP Clients you choose. Find conversations, understand context, and send messages with your confirmation.",
     ),
   ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Signed-in API boundary" }),
+  ).toHaveCount(0);
+
+  await page.goto("/dashboard");
+  await expect(
+    page.getByRole("heading", { name: "Dashboard", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Dashboard navigation" }),
+  ).toBeVisible();
 
   await page
     .getByRole("button", { name: "Continue to Personal Account" })
@@ -303,7 +314,7 @@ test("waitlists a signed-in User when private-beta capacity is exhausted", async
     signedIn: true,
     token: "signed-waitlisted-user",
   });
-  await page.goto("/");
+  await page.goto("/dashboard");
 
   await page
     .getByRole("button", { name: "Continue to Personal Account" })
@@ -353,7 +364,7 @@ test("keeps the Personal Account usable when MCP Authorization listing is unavai
     });
   });
   await installClerkBrowser(page, { signedIn: true });
-  await page.goto("/");
+  await page.goto("/dashboard");
 
   await page
     .getByRole("button", { name: "Continue to Personal Account" })
@@ -375,7 +386,7 @@ test("recovers when the external identity token lookup fails", async ({
     signedIn: true,
     tokenError: "identity unavailable",
   });
-  await page.goto("/");
+  await page.goto("/dashboard");
 
   const button = page.getByRole("button", {
     name: "Continue to Personal Account",
@@ -388,37 +399,19 @@ test("recovers when the external identity token lookup fails", async ({
   await expect(button).toBeEnabled();
 });
 
-test("opens Clerk waitlist and sign-in flows when no browser session exists", async ({
+test("keeps the dashboard behind Clerk sign in when no browser session exists", async ({
   page,
 }) => {
   await installClerkBrowser(page);
-  await page.goto("/");
+  await page.goto("/dashboard");
 
-  await expect(
-    page.getByRole("button", { name: "Join the waitlist" }),
-  ).toBeVisible();
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Continue to Personal Account" }),
   ).toHaveCount(0);
-  await page.getByRole("button", { name: "Join the waitlist" }).click();
-
-  expect(
-    await page.evaluate(
-      () =>
-        (
-          window as unknown as {
-            readonly __openedClerkWaitlist?: boolean;
-          }
-        ).__openedClerkWaitlist,
-    ),
-  ).toBe(true);
 
   await page.getByRole("button", { name: "Sign in" }).click();
 
-  await expect(page.getByTestId("api-boundary-status")).toHaveText(
-    "Join the private-beta waitlist, or sign in if you’re approved.",
-  );
   expect(
     await page.evaluate(
       () =>
@@ -437,7 +430,7 @@ test("reveals the Personal Account action after Clerk signs in", async ({
   await installClerkBrowser(page, {
     signInToken: "signed-test-user",
   });
-  await page.goto("/");
+  await page.goto("/dashboard");
 
   await page.getByRole("button", { name: "Sign in" }).click();
 

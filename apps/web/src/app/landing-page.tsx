@@ -98,7 +98,7 @@ function Wordmark() {
   );
 }
 
-export function LandingPage({ account }: { readonly account: ReactNode }) {
+export function LandingPage() {
   return (
     <main className="landing" id="top">
       <nav aria-label="Main navigation" className="landing-nav landing-shell">
@@ -340,18 +340,6 @@ export function LandingPage({ account }: { readonly account: ReactNode }) {
           <h2 id="faq-title">The important details.</h2>
         </div>
         <FaqAccordion />
-      </section>
-
-      <section className="account-section landing-shell" id="account">
-        <div className="account-heading">
-          <p className="section-kicker">Private beta</p>
-          <h2>Connect your WhatsApp to Normal.</h2>
-          <p>
-            Join the waitlist, or continue to your Personal Account if you
-            already have access.
-          </p>
-        </div>
-        <div className="account-boundary">{account}</div>
       </section>
 
       <section className="final-cta">
