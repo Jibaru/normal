@@ -108,17 +108,18 @@ for (const deployable of deployables) {
           `Restore coordinator ${name} must require only its marker and restricted database credentials.`,
         );
       }
-      for (const forbidden of [
-        "d1_databases",
-        "durable_objects",
-        "hyperdrive",
-        "kv_namespaces",
-        "queues",
-        "services",
-      ]) {
-        if (forbidden in configuration)
-          throw new Error(`Restore coordinator must not declare ${forbidden}.`);
-      }
+      assertAbsent(
+        configuration,
+        [
+          "d1_databases",
+          "durable_objects",
+          "hyperdrive",
+          "kv_namespaces",
+          "queues",
+          "services",
+        ],
+        (key) => `Restore coordinator must not declare ${key}.`,
+      );
     }
   } else {
     const requiredSecretNames = [
