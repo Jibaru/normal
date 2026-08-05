@@ -118,13 +118,11 @@ const sealRoute = async (
   return `loc_${version}_${kind === "contact" ? "c" : "g"}_${encodeBase64Url(sealed)}`;
 };
 
-export const sealRecipientRoute = async (
+export const sealRecipientRoute = (
   keys: RecipientRouteKeys,
   kind: RecipientRouteKind,
   providerIdentifier: string,
-): Promise<string> => {
-  return sealRoute(keys, "v1", kind, providerIdentifier);
-};
+): Promise<string> => sealRoute(keys, "v1", kind, providerIdentifier);
 
 export const sealIdentityRecipientRoute = (
   keys: RecipientRouteKeys,
