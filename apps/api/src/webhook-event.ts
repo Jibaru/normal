@@ -29,6 +29,7 @@ import {
   type WebhookNormalization,
 } from "@whatsapp-mcp/wasender/webhook";
 import { Context, Data, Effect, Layer, Redacted } from "effect";
+import { encodeBase64 } from "./base64-url";
 import {
   contactProviderIdentityIndex,
   protectDirectoryContact,
@@ -903,9 +904,9 @@ const processItems = (
                 accountKey: material.accountKey,
                 connectionKey: material.connectionKey,
                 ciphertext: {
-                  ciphertext: btoa(String.fromCharCode(...pending.ciphertext)),
+                  ciphertext: encodeBase64(pending.ciphertext),
                   keyVersion: pending.keyVersion,
-                  nonce: btoa(String.fromCharCode(...pending.nonce)),
+                  nonce: encodeBase64(pending.nonce),
                   version: 1,
                 },
                 context: {
