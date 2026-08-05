@@ -3,6 +3,7 @@ import type {
   WebhookReplayReasonCode,
 } from "@whatsapp-mcp/db/webhook-replay";
 import { Context, Data, Effect, type Layer } from "effect";
+import { hasExactKeys } from "./record";
 import {
   SafeTelemetry,
   type SafeTelemetry as SafeTelemetryService,
@@ -41,7 +42,14 @@ export const isWebhookReplayRequest = (
   }
   const request = value as Record<string, unknown>;
   return (
-    Object.keys(request).length === 6 &&
+    hasExactKeys(request, [
+      "incident_reference",
+      "operator_reference",
+      "reason_code",
+      "request_id",
+      "requested_at",
+      "version",
+    ]) &&
     request.version === 1 &&
     typeof request.request_id === "string" &&
     uuidPattern.test(request.request_id) &&
