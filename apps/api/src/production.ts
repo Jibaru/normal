@@ -56,7 +56,7 @@ import {
 import { Config, ConfigProvider, Data, Effect, Layer, Redacted } from "effect";
 import { makeClerkHumanIdentity } from "./auth/clerk";
 import { HumanIdentity } from "./auth/human-identity";
-import { encodeBase64Url } from "./base64-url";
+import { decodeBase64, encodeBase64Url } from "./base64-url";
 import { createCanaryHandler } from "./canary";
 import {
   ConnectionHealthClock,
@@ -426,9 +426,7 @@ const validateClerkJwtKey = (
       ) {
         throw new Error("invalid Clerk public key");
       }
-      const decoded = Uint8Array.from(atob(encoded), (character) =>
-        character.charCodeAt(0),
-      );
+      const decoded = decodeBase64(encoded);
       const key = await crypto.subtle.importKey(
         "spki",
         decoded,
