@@ -25,6 +25,7 @@ import {
   type EnvelopeEncryption,
   EnvelopeEncryptionService,
 } from "./encryption/envelope";
+import { hasFailureTag } from "./failure-tag";
 import {
   SafeTelemetry,
   type SafeTelemetry as SafeTelemetryService,
@@ -442,11 +443,11 @@ export const createConnectionSetupHandler =
           Effect.provide(layer),
           Effect.match({
             onFailure: (failure: unknown) =>
-              typeof failure === "object" &&
-              failure !== null &&
-              "_tag" in failure &&
-              (failure._tag === "InvalidHumanIdentity" ||
-                failure._tag === "ConnectionSetupNotAccessible")
+              hasFailureTag(
+                failure,
+                "InvalidHumanIdentity",
+                "ConnectionSetupNotAccessible",
+              )
                 ? notFound(browserOrigin)
                 : jsonResponse({ error: "unavailable" }, 503, browserOrigin),
             onSuccess: (result) => cancellationResponse(result, browserOrigin),
@@ -483,11 +484,11 @@ export const createConnectionSetupHandler =
         Effect.provide(layer),
         Effect.match({
           onFailure: (failure: unknown) =>
-            typeof failure === "object" &&
-            failure !== null &&
-            "_tag" in failure &&
-            (failure._tag === "InvalidHumanIdentity" ||
-              failure._tag === "ConnectionSetupNotAccessible")
+            hasFailureTag(
+              failure,
+              "InvalidHumanIdentity",
+              "ConnectionSetupNotAccessible",
+            )
               ? notFound(browserOrigin)
               : jsonResponse({ error: "unavailable" }, 503, browserOrigin),
           onSuccess: (result) => {
