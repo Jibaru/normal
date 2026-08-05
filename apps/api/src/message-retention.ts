@@ -5,6 +5,7 @@ import {
   type HumanIdentityService,
 } from "./auth/human-identity";
 import { hasFailureTag } from "./failure-tag";
+import { noStoreJsonResponse } from "./http-response";
 import {
   SafeTelemetry,
   type SafeTelemetry as SafeTelemetryService,
@@ -56,16 +57,14 @@ type Requirements =
   | MessageRetentionPersistenceService
   | SafeTelemetryService;
 
-const headers = (origin: string): HeadersInit => ({
+const headers = (origin: string) => ({
   "access-control-allow-headers": "authorization,content-type",
   "access-control-allow-methods": "GET,OPTIONS,PUT",
   "access-control-allow-origin": origin,
-  "cache-control": "no-store",
-  "content-type": "application/json; charset=utf-8",
   vary: "Origin",
 });
 const json = (body: unknown, status: number, origin: string) =>
-  new Response(JSON.stringify(body), { headers: headers(origin), status });
+  noStoreJsonResponse(body, status, headers(origin));
 const policyJson = (policy: MessageRetentionPolicy) => ({
   days: policy.days,
   updated_at: policy.updatedAt,
