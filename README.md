@@ -135,6 +135,7 @@ Treat migration changes as security sensitive. Preserve tenant foreign keys, run
 Start with these documents:
 
 * [`CONTEXT.md`](CONTEXT.md) defines the product language and invariants.
+* [`docs/architecture.md`](docs/architecture.md) maps the production boundaries and primary data flows.
 * [`docs/mcp-contract.md`](docs/mcp-contract.md) defines MCP tools, resources, authorization, errors, and pagination.
 * [`docs/configuration.md`](docs/configuration.md) lists runtime configuration and secret ownership.
 * [`docs/testing.md`](docs/testing.md) explains the public boundary test strategy.

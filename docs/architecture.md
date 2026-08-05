@@ -1,0 +1,82 @@
+# Architecture
+
+This diagram shows the production boundaries and primary data flows. It is a
+map of responsibilities, not a substitute for the detailed contracts, ADRs,
+and runbooks.
+
+```mermaid
+flowchart LR
+    user[User]
+    mcp[MCP Client]
+    clerk[Clerk]
+    whatsapp[WhatsApp]
+    wasender[Wasender]
+
+    subgraph vercel[Vercel]
+        web[Next.js product UI]
+    end
+
+    subgraph cloudflare[Cloudflare]
+        api[API Worker<br/>Public data plane]
+        provider[provider control Worker<br/>Private provider boundary]
+        deletion[deletion coordinator Worker]
+        restore[restore coordinator Worker]
+        oauth[(OAuth KV<br/>Protocol state only)]
+        queues[(Queues<br/>Provisioning and ingestion)]
+        webhook[(Private R2<br/>Encrypted Webhook Events)]
+        media[(Private R2<br/>Encrypted Stored Media)]
+        lifecycle[(Private R2<br/>Deletion Capsules and markers)]
+        hyperdrive[Hyperdrive]
+    end
+
+    subgraph data[Authoritative data and keys]
+        neon[(Neon Postgres<br/>Authoritative application state)]
+        kms[AWS KMS<br/>Purpose specific root keys]
+    end
+
+    user -->|sign in and manage| web
+    web -->|Clerk JWT over HTTPS| api
+    mcp -->|OAuth and MCP over HTTPS| api
+    web --> clerk
+    api -->|OAuth protocol artifacts| oauth
+
+    api -->|tenant scoped access| hyperdrive
+    hyperdrive -->|restricted runtime roles and RLS| neon
+    api -->|durable work| queues
+    queues -->|consume and reconcile| api
+    wasender -->|authenticated webhooks| api
+    api -->|encrypted ingress| webhook
+    api -->|encrypted media| media
+    api -->|envelope key operations| kms
+
+    api -->|private service binding| provider
+    deletion -->|private service binding| provider
+    provider -->|provision and control| wasender
+    wasender -->|linked account traffic| whatsapp
+
+    api -->|durable deletion evidence| lifecycle
+    deletion -->|read capsules and write markers| lifecycle
+    deletion -->|capsule key operations| kms
+    restore -->|verify deletion markers| lifecycle
+    restore -->|reapply terminal deletion state| neon
+```
+
+## Boundary notes
+
+* The API Worker is the only public data plane. Browser requests go directly to
+  its configured origin.
+* `provider-control` is private. Provider API Credentials and provider specific
+  behavior do not cross its boundary or the `packages/wasender` seam.
+* Neon is authoritative for identity mappings, tenant data, authorization,
+  quota reservations, audit records, and lifecycle state. KV, R2, and Queues do
+  not become alternate authorities.
+* Stored Messages and Stored Media use application layer envelope encryption.
+  KMS keys are purpose specific, and the deletion coordinator cannot decrypt
+  tenant content.
+* Connection Deletion revokes access and key use immediately. The deletion and
+  restore coordinators preserve that terminal state through provider cleanup
+  and database restore.
+
+For exact behavior, read [`CONTEXT.md`](../CONTEXT.md), the
+[MCP contract](mcp-contract.md), the [configuration reference](configuration.md),
+the [Wasender seam](wasender-seam.md), and the [ADRs](adr).
