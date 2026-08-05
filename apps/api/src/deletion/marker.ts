@@ -1,6 +1,7 @@
 import type { DeploymentEnvironment } from "@whatsapp-mcp/domain/deployment";
 import { Data, Effect, Redacted } from "effect";
 import { hasExactKeys } from "../record";
+import { isCanonicalTimestamp } from "../timestamp";
 
 const markerKeyDomain = "whatsapp-mcp/deletion-marker-key/v1";
 const markerPrefix = "markers/v1/";
@@ -82,11 +83,6 @@ const operationError = (operation: DeletionOperation) =>
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-
-const isCanonicalTimestamp = (value: unknown): value is string =>
-  typeof value === "string" &&
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value) &&
-  new Date(value).toISOString() === value;
 
 const isDeletionKind = (value: unknown): value is DeletionKind =>
   value === "personal_account" || value === "whatsapp_connection";
