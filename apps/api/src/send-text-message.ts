@@ -15,7 +15,7 @@ import {
   type WasenderRecipientRoute,
 } from "@whatsapp-mcp/wasender/session";
 import { Effect, Redacted } from "effect";
-import { encodeBase64Url } from "./base64-url";
+import { encodeBase64, encodeBase64Url } from "./base64-url";
 import type {
   EnvelopeEncryption,
   VersionedCiphertext,
@@ -23,19 +23,14 @@ import type {
 import type { SendTextMessageResult, SendTextMessageService } from "./mcp";
 
 const encoder = new TextEncoder();
-const base64 = (value: Uint8Array): string => {
-  let binary = "";
-  for (const byte of value) binary += String.fromCharCode(byte);
-  return btoa(binary);
-};
 const envelope = (value: {
   readonly ciphertext: Uint8Array;
   readonly keyVersion: number;
   readonly nonce: Uint8Array;
 }): VersionedCiphertext => ({
-  ciphertext: base64(value.ciphertext),
+  ciphertext: encodeBase64(value.ciphertext),
   keyVersion: value.keyVersion,
-  nonce: base64(value.nonce),
+  nonce: encodeBase64(value.nonce),
   version: 1,
 });
 const sessionCredential = (authority: string): string => {
@@ -53,7 +48,7 @@ const sessionCredential = (authority: string): string => {
 };
 const keys = (material: SendEncryptionMaterial) => ({
   accountKey: {
-    ciphertext: base64(material.accountKey.ciphertext),
+    ciphertext: encodeBase64(material.accountKey.ciphertext),
     keyVersion: material.accountKey.keyVersion,
     kmsKeyId: material.accountKey.kmsKeyId,
     personalAccountId: material.accountKey.personalAccountId,
@@ -61,10 +56,10 @@ const keys = (material: SendEncryptionMaterial) => ({
   },
   connectionKey: {
     accountKeyVersion: material.connectionKey.accountKeyVersion,
-    ciphertext: base64(material.connectionKey.ciphertext),
+    ciphertext: encodeBase64(material.connectionKey.ciphertext),
     connectionId: material.connectionKey.connectionId,
     keyVersion: material.connectionKey.keyVersion,
-    nonce: base64(material.connectionKey.nonce),
+    nonce: encodeBase64(material.connectionKey.nonce),
     personalAccountId: material.connectionKey.personalAccountId,
     version: 1 as const,
   },
