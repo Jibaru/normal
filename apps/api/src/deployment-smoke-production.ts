@@ -5,6 +5,7 @@ import {
 } from "@aws-sdk/client-kms";
 import type { ProviderControlService } from "@whatsapp-mcp/contracts/provider-control";
 import { checkRestrictedDatabaseAccess } from "@whatsapp-mcp/db/connectivity";
+import { decodeBase64, encodeBase64 } from "./base64-url";
 import type {
   DeploymentSmokeOptions,
   DeploymentSmokeState,
@@ -43,10 +44,6 @@ export const partitionDeploymentSmokeMessages = (batch: MessageBatch) => {
     smoke,
   };
 };
-
-const base64 = (value: Uint8Array) => btoa(String.fromCharCode(...value));
-const unbase64 = (value: string) =>
-  Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
 
 const kms = (environment: ApiEnvironment) =>
   new KMSClient({
@@ -114,9 +111,9 @@ export const makeProductionDeploymentSmoke = (
       await (environment.STORED_MEDIA as R2Bucket).put(
         objectKey(canaryId),
         JSON.stringify({
-          ciphertext: base64(ciphertext),
-          iv: base64(iv),
-          wrapped_key: base64(generated.CiphertextBlob),
+          ciphertext: encodeBase64(ciphertext),
+          iv: encodeBase64(iv),
+          wrapped_key: encodeBase64(generated.CiphertextBlob),
         }),
       );
       await (environment.OAUTH_KV as KVNamespace).put(
@@ -171,7 +168,7 @@ export const handleDeploymentSmokeMessages = async (
       };
       const decrypted = await kms(environment).send(
         new DecryptCommand({
-          CiphertextBlob: unbase64(value.wrapped_key),
+          CiphertextBlob: decodeBase64(value.wrapped_key),
           EncryptionContext: context(environment, canaryId),
           KeyId: environment.KMS_CONTENT_ROOT_KEY_ARN,
         }),
@@ -189,11 +186,11 @@ export const handleDeploymentSmokeMessages = async (
         plaintext = await crypto.subtle.decrypt(
           {
             name: "AES-GCM",
-            iv: unbase64(value.iv),
+            iv: decodeBase64(value.iv),
             additionalData: encoder.encode(canaryId),
           },
           key,
-          unbase64(value.ciphertext),
+          decodeBase64(value.ciphertext),
         );
       } finally {
         decrypted.Plaintext.fill(0);
