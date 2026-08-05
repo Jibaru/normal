@@ -47,6 +47,7 @@ import {
   SafeTelemetry,
   type SafeTelemetry as SafeTelemetryService,
 } from "./services";
+import { isCanonicalTimestamp } from "./timestamp";
 import type { WebhookIngressQueueMessage } from "./webhook-ingress";
 
 export type WebhookEventQueueMessage = WebhookIngressQueueMessage;
@@ -264,12 +265,6 @@ const uuid = (value: unknown): value is string =>
     value,
   );
 
-const utcTimestamp = (value: unknown): value is string => {
-  if (typeof value !== "string") return false;
-  const date = new Date(value);
-  return Number.isFinite(date.valueOf()) && date.toISOString() === value;
-};
-
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -287,7 +282,7 @@ export const isWebhookEventQueueMessage = (
   Number.isSafeInteger(value.payload_bytes) &&
   value.payload_bytes >= 1 &&
   value.payload_bytes <= 1_048_576 &&
-  utcTimestamp(value.received_at) &&
+  isCanonicalTimestamp(value.received_at) &&
   hasExactKeys(value, [
     "ciphertext_sha256",
     "object_id",
