@@ -14,6 +14,7 @@ import {
   type EnvelopeEncryption,
   EnvelopeEncryptionService,
 } from "./encryption/envelope";
+import { handleQueueBatch } from "./queue-batch";
 import { hasExactKeys } from "./record";
 import {
   SafeTelemetry,
@@ -469,28 +470,18 @@ export const provisionConnectionSetup = (
     return yield* reconcileClaimedSetup(claim.setup, workerId);
   });
 
-export const handleConnectionSetupProvisioningBatch = async (
+export const handleConnectionSetupProvisioningBatch = (
   batch: MessageBatch,
   layer: Layer.Layer<ConnectionSetupProvisioningRequirements, unknown>,
 ): Promise<void> => {
-  for (const message of batch.messages) {
-    if (!isConnectionSetupProvisioningMessage(message.body)) {
-      message.ack();
-      continue;
-    }
-    try {
-      const result = await Effect.runPromise(
-        provisionConnectionSetup(message.body.setup_id).pipe(
-          Effect.provide(layer),
-        ),
-      );
-      if (result.outcome === "retry") {
-        message.retry({ delaySeconds: result.delaySeconds });
-      } else {
-        message.ack();
-      }
-    } catch {
-      message.retry({ delaySeconds: RETRY_DELAY_SECONDS });
-    }
-  }
+  return handleQueueBatch(
+    batch,
+    isConnectionSetupProvisioningMessage,
+    (message) =>
+      Effect.runPromise(
+        provisionConnectionSetup(message.setup_id).pipe(Effect.provide(layer)),
+      ),
+    (result) => (result.outcome === "retry" ? result.delaySeconds : null),
+    RETRY_DELAY_SECONDS,
+  );
 };
