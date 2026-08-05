@@ -21,6 +21,13 @@ const requiredSecrets = (configuration: Record<string, unknown>) =>
       ?.required ?? []),
   ].sort();
 
+const hasSameStrings = (
+  actual: ReadonlyArray<string>,
+  expected: ReadonlyArray<string>,
+) =>
+  actual.length === expected.length &&
+  actual.every((value, index) => value === expected[index]);
+
 for (const deployable of deployables) {
   const manifestPath = `${repositoryRoot}/apps/${deployable}/wrangler.jsonc`;
   const manifest = Bun.JSONC.parse(
@@ -51,8 +58,7 @@ for (const deployable of deployables) {
         }
       }
       if (
-        JSON.stringify(requiredSecrets(configuration)) !==
-        JSON.stringify(requiredSecretNames)
+        !hasSameStrings(requiredSecrets(configuration), requiredSecretNames)
       ) {
         throw new Error(
           `Provider-control ${configurationName} configuration must require both lifecycle secrets.`,
