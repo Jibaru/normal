@@ -14,6 +14,7 @@ import {
   type EnvelopeEncryption,
   EnvelopeEncryptionService,
 } from "./encryption/envelope";
+import { hasExactKeys } from "./record";
 import {
   SafeTelemetry,
   type SafeTelemetry as SafeTelemetryService,
@@ -171,7 +172,7 @@ export const isConnectionSetupProvisioningMessage = (
     typeof value !== "object" ||
     value === null ||
     Array.isArray(value) ||
-    Object.keys(value).length !== 3
+    !hasExactKeys(value, ["kind", "setup_id", "version"])
   ) {
     return false;
   }
