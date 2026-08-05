@@ -1,9 +1,8 @@
 import { sql } from "drizzle-orm";
-import type { Client as PgClient } from "pg";
 import {
   makeDatabase,
-  makeQueryConnection,
   type QueryConnection,
+  withPgQueryConnection,
 } from "./database";
 
 export interface WebhookIngressConnection extends QueryConnection {}
@@ -176,22 +175,7 @@ export const makeWebhookIngressRepository = (
 const makePgConnectionProvider = (
   connectionString: string,
 ): WebhookIngressConnectionProvider => ({
-  withConnection: async <Value>(
-    use: (connection: WebhookIngressConnection) => Promise<Value>,
-  ): Promise<Value> => {
-    const { Client } = await import("pg");
-    const client: PgClient = new Client({
-      connectionString,
-      connectionTimeoutMillis: 5_000,
-      query_timeout: 5_000,
-    });
-    await client.connect();
-    try {
-      return await use(makeQueryConnection(client));
-    } finally {
-      await client.end();
-    }
-  },
+  withConnection: (use) => withPgQueryConnection(connectionString, use),
 });
 
 export const makePgWebhookIngressRepository = (
