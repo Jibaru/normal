@@ -41,7 +41,7 @@ describe("production migrations", () => {
     expect(result.rows).toHaveLength(1);
     expect(Number(result.rows[0]?.created_at)).toBe(EXPECTED_SCHEMA_VERSION);
     expect(result.rows[0]?.hash).toBe(
-      "462580a6b9656b38650804c706bf9133a8c88df41185a6f2f08359122b8c5de8",
+      "3154967c1dd4f561c13d6cc1646b138217ff8184e2d9483714b03fdae9574624",
     );
   });
 

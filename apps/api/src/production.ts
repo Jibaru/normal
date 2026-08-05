@@ -1774,9 +1774,12 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
             waitUntil: () => undefined,
           } as unknown as ExecutionContext),
       );
-    } catch {
+    } catch (error) {
       console.error(
         JSON.stringify({
+          errorMessage:
+            error instanceof Error ? error.message.slice(0, 500) : "unknown",
+          errorName: error instanceof Error ? error.name : typeof error,
           event: "request.unavailable",
           service: "api",
         }),

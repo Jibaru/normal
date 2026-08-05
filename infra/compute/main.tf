@@ -14,7 +14,7 @@ locals {
   dead_letter_queue_name                   = "whatsapp-mcp-ingestion-dlq${local.environment_suffix}"
   replay_queue_name                        = "whatsapp-mcp-ingestion-replay${local.environment_suffix}"
   connection_setup_provisioning_queue_name = "whatsapp-mcp-connection-setup-provisioning${local.environment_suffix}"
-  api_bundle_path                          = abspath("${path.root}/../../apps/api/dist/index.js")
+  api_bundle_path                          = abspath("${path.root}/../../apps/api/.wrangler/dist/index.js")
   provider_control_bundle_path             = abspath("${path.root}/../../apps/provider-control/dist/index.js")
   deletion_coordinator_bundle_path         = abspath("${path.root}/../../apps/deletion-coordinator/dist/index.js")
   restore_coordinator_bundle_path          = abspath("${path.root}/../../apps/restore-coordinator/dist/index.js")
@@ -146,7 +146,7 @@ resource "cloudflare_queue" "ingestion" {
   settings = {
     delivery_delay           = 0
     delivery_paused          = false
-    message_retention_period = 604800
+    message_retention_period = 86400
   }
 }
 
@@ -157,7 +157,7 @@ resource "cloudflare_queue" "dead_letter" {
   settings = {
     delivery_delay           = 0
     delivery_paused          = false
-    message_retention_period = 345600
+    message_retention_period = 86400
   }
 }
 
@@ -168,7 +168,7 @@ resource "cloudflare_queue" "ingestion_replay" {
   settings = {
     delivery_delay           = 0
     delivery_paused          = false
-    message_retention_period = 604800
+    message_retention_period = 86400
   }
 }
 
@@ -179,7 +179,7 @@ resource "cloudflare_queue" "connection_setup_provisioning" {
   settings = {
     delivery_delay           = 0
     delivery_paused          = false
-    message_retention_period = 604800
+    message_retention_period = 86400
   }
 }
 
@@ -476,6 +476,11 @@ resource "cloudflare_worker_version" "api" {
       type = "inherit"
     },
     {
+      name = "AWS_KMS_REGION"
+      text = "us-east-1"
+      type = "plain_text"
+    },
+    {
       name = "KMS_CONTENT_ROOT_KEY_ARN"
       type = "inherit"
     },
@@ -638,11 +643,10 @@ resource "cloudflare_queue_consumer" "ingestion" {
   dead_letter_queue = cloudflare_queue.dead_letter.queue_name
 
   settings = {
-    batch_size            = 10
-    max_retries           = 7
-    max_wait_time_ms      = 5000
-    retry_delay           = 10800
-    visibility_timeout_ms = 900000
+    batch_size       = 10
+    max_retries      = 7
+    max_wait_time_ms = 5000
+    retry_delay      = 10800
   }
 
   depends_on = [cloudflare_workers_deployment.api]
@@ -655,11 +659,10 @@ resource "cloudflare_queue_consumer" "connection_setup_provisioning" {
   type        = "worker"
 
   settings = {
-    batch_size            = 1
-    max_retries           = 10
-    max_wait_time_ms      = 1000
-    retry_delay           = 30
-    visibility_timeout_ms = 180000
+    batch_size       = 1
+    max_retries      = 10
+    max_wait_time_ms = 1000
+    retry_delay      = 30
   }
 
   depends_on = [cloudflare_workers_deployment.api]
@@ -672,11 +675,10 @@ resource "cloudflare_queue_consumer" "dead_letter" {
   type        = "worker"
 
   settings = {
-    batch_size            = 10
-    max_retries           = 100
-    max_wait_time_ms      = 5000
-    retry_delay           = 300
-    visibility_timeout_ms = 900000
+    batch_size       = 10
+    max_retries      = 100
+    max_wait_time_ms = 5000
+    retry_delay      = 300
   }
 
   depends_on = [cloudflare_workers_deployment.api]
@@ -689,11 +691,10 @@ resource "cloudflare_queue_consumer" "ingestion_replay" {
   type        = "worker"
 
   settings = {
-    batch_size            = 10
-    max_retries           = 100
-    max_wait_time_ms      = 5000
-    retry_delay           = 300
-    visibility_timeout_ms = 900000
+    batch_size       = 10
+    max_retries      = 100
+    max_wait_time_ms = 5000
+    retry_delay      = 300
   }
 
   depends_on = [cloudflare_workers_deployment.api]

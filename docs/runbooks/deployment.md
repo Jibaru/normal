@@ -6,7 +6,7 @@
 - OpenTofu 1.12.5
 - An authenticated Vercel CLI
 - A Cloudflare account and zone with Workers enabled for each authority scope
-- A Neon organization with a plan that supports a 30-day history window
+- A Neon organization with a plan that supports a seven-day history window
 - An AWS account with permission to manage OpenTofu state, CloudFormation, KMS,
   and named IAM roles in `us-east-1`
 - A Vercel team for each authority scope
@@ -316,7 +316,7 @@ tofu -chdir=infra/production apply /secure/path/production.tfplan
 ```
 
 The plan creates one protected Neon project in `aws-us-east-1`, configures
-2,592,000 seconds (30 days) of history, creates separate API and webhook
+604,800 seconds (seven days) of history, creates separate API and webhook
 runtime roles, and creates non-caching TLS Hyperdrive configurations. Neon
 control-plane roles initially inherit `neon_superuser`; migration 0001 revokes
 that membership and enforces `NOSUPERUSER`, `NOBYPASSRLS`, and the remaining
@@ -1170,7 +1170,7 @@ created. Do not open the binding manually from an individual check.
 The monthly and quarterly schedules in
 `.github/workflows/recovery-drills.yml` call the production recovery automation
 boundary and retain its validated, metadata-only evidence. The monthly restore
-must use a random point from the preceding 30 days and a non-serving branch.
+must use a random point from the preceding seven days and a non-serving branch.
 The quarterly game day covers endpoint rotation, OAuth KV reconstruction,
 immutable Queue replay, KMS/R2 access, permanent Stored Media loss, alert
 delivery, and deletion-gate bypass denial. Configure

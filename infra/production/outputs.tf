@@ -16,7 +16,7 @@ output "neon_branch_id" {
 
 output "restore_database_url" {
   description = "Direct TLS URL for the restore-only runtime role."
-  value       = "postgresql://${neon_role.restore_runtime.name}:${urlencode(neon_role.restore_runtime.password)}@${neon_project.private_beta.database_host}/${local.database_name}?sslmode=require"
+  value       = "postgresql://${postgresql_role.restore_runtime.name}:${urlencode(random_password.database_roles[local.restore_runtime_role].result)}@${neon_project.private_beta.database_host}/${local.database_name}?sslmode=require"
   sensitive   = true
 }
 

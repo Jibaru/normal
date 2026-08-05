@@ -1,0 +1,97 @@
+name: Deploy production
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+
+      - name: Migrate and verify the production database
+        run: bun run db:migrate && bun run db:check
+        env:
+          MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
+
+      - name: Deploy provider control
+        run: bun run --cwd apps/provider-control wrangler deploy --env production
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Deploy deletion coordinator
+        run: bun run --cwd apps/deletion-coordinator wrangler deploy --env production
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Deploy restore coordinator
+        run: bun run --cwd apps/restore-coordinator wrangler deploy --env production
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Render production API manifest
+        run: bun scripts/render-api-wrangler.ts apps/api/.wrangler/production.jsonc production
+        env:
+          CLERK_API_AUDIENCE: ${{ vars.API_ORIGIN }}
+          CLERK_AUTHORIZED_PARTY: ${{ vars.WEB_ORIGIN }}
+          CLERK_ISSUER: ${{ vars.CLERK_ISSUER }}
+          CLOUDFLARE_HYPERDRIVE_ID: ${{ vars.CLOUDFLARE_HYPERDRIVE_ID }}
+          CLOUDFLARE_OAUTH_KV_ID: ${{ vars.CLOUDFLARE_OAUTH_KV_ID }}
+          CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID: ${{ vars.CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID }}
+          DECRYPTED_MEDIA_BYTES_PER_DAY: ${{ vars.DECRYPTED_MEDIA_BYTES_PER_DAY }}
+          MCP_REQUESTS_PER_HOUR: ${{ vars.MCP_REQUESTS_PER_HOUR }}
+          MCP_REQUESTS_PER_MINUTE: ${{ vars.MCP_REQUESTS_PER_MINUTE }}
+          NEON_BRANCH_ID: ${{ vars.NEON_BRANCH_ID }}
+          OAUTH_ISSUER: ${{ vars.API_ORIGIN }}
+          OAUTH_RESOURCE: ${{ vars.API_ORIGIN }}/mcp
+          PROVIDER_APPROVED_SESSION_CAPACITY: ${{ vars.PROVIDER_APPROVED_SESSION_CAPACITY }}
+          READ_MESSAGE_RECORDS_PER_DAY: ${{ vars.READ_MESSAGE_RECORDS_PER_DAY }}
+          SENDS_PER_DAY: ${{ vars.SENDS_PER_DAY }}
+          SENDS_PER_MINUTE: ${{ vars.SENDS_PER_MINUTE }}
+
+      - name: Deploy API
+        run: bun run --cwd apps/api wrangler deploy --config .wrangler/production.jsonc --env production
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Deploy web
+        run: bun x vercel@50.39.0 deploy --prod --yes --cwd apps/web --token "$VERCEL_API_TOKEN"
+        env:
+          VERCEL_API_TOKEN: ${{ secrets.VERCEL_API_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+
+      - name: Smoke production
+        run: bun run deploy:smoke
+        env:
+          SMOKE_API_ORIGIN: ${{ vars.API_ORIGIN }}
+          SMOKE_CHECK_SECRET: ${{ secrets.SMOKE_CHECK_SECRET }}
+          SMOKE_MCP_ACCESS_TOKEN: ${{ secrets.MCP_SMOKE_ACCESS_TOKEN }}
+          SMOKE_WEB_ORIGIN: ${{ vars.WEB_ORIGIN }}

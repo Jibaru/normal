@@ -16,6 +16,11 @@ BEGIN
       RAISE EXCEPTION 'required runtime role % does not exist', runtime_role;
     END IF;
 
+    EXECUTE format(
+      'ALTER ROLE %I NOREPLICATION NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT',
+      runtime_role
+    );
+
     IF EXISTS (
       SELECT 1
       FROM pg_catalog.pg_roles
@@ -24,11 +29,6 @@ BEGIN
     ) THEN
       RAISE EXCEPTION 'runtime role % has prohibited privileged attributes', runtime_role;
     END IF;
-
-    EXECUTE format(
-      'ALTER ROLE %I NOCREATEDB NOCREATEROLE NOINHERIT',
-      runtime_role
-    );
 
     FOR granted_role IN
       SELECT parent.rolname
@@ -9228,6 +9228,8 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'whatsapp_deletion_runtime') THEN
     CREATE ROLE whatsapp_deletion_runtime LOGIN;
   END IF;
+  ALTER ROLE whatsapp_deletion_runtime
+    NOREPLICATION NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT;
   IF EXISTS (
     SELECT 1 FROM pg_catalog.pg_roles
     WHERE rolname = 'whatsapp_deletion_runtime'
@@ -9235,7 +9237,6 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'deletion runtime role has prohibited privileged attributes';
   END IF;
-  ALTER ROLE whatsapp_deletion_runtime NOCREATEDB NOCREATEROLE NOINHERIT;
 END
 $role$;
 --> statement-breakpoint
@@ -9922,6 +9923,10 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = role_name) THEN
       EXECUTE format('CREATE ROLE %I NOLOGIN', role_name);
     END IF;
+    EXECUTE format(
+      'ALTER ROLE %I NOREPLICATION NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT',
+      role_name
+    );
     IF EXISTS (
       SELECT 1 FROM pg_catalog.pg_roles
       WHERE rolname = role_name
@@ -9929,10 +9934,6 @@ BEGIN
     ) THEN
       RAISE EXCEPTION 'break-glass role % has prohibited privileged attributes', role_name;
     END IF;
-    EXECUTE format(
-      'ALTER ROLE %I NOCREATEDB NOCREATEROLE NOINHERIT',
-      role_name
-    );
   END LOOP;
 END
 $roles$;
@@ -10287,6 +10288,8 @@ BEGIN
       WHERE audit.deletion_marker_id = requested_marker_id
     );
   END IF;
+  ALTER ROLE whatsapp_restore_runtime
+    NOREPLICATION NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT;
   IF EXISTS (
     SELECT 1 FROM public.whatsapp_connections connections
     WHERE connections.personal_account_id = selected_account_id
@@ -10389,7 +10392,6 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'restore runtime role has prohibited privileged attributes';
   END IF;
-  ALTER ROLE whatsapp_restore_runtime NOCREATEDB NOCREATEROLE NOINHERIT;
 END
 $role$;
 --> statement-breakpoint

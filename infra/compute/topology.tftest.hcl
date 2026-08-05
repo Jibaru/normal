@@ -110,6 +110,7 @@ run "development_topology" {
       "plain_text:CLERK_API_AUDIENCE",
       "plain_text:CLERK_AUTHORIZED_PARTY",
       "plain_text:CLERK_ISSUER",
+      "plain_text:AWS_KMS_REGION",
       "plain_text:DEPLOYMENT_ENVIRONMENT",
       "plain_text:EXTERNAL_ONBOARDING_GATE",
       "plain_text:OAUTH_ISSUER",
@@ -334,19 +335,20 @@ run "production_topology" {
 
   assert {
     condition = (
-      cloudflare_queue.connection_setup_provisioning.settings.message_retention_period == 604800 &&
+      cloudflare_queue.connection_setup_provisioning.settings.message_retention_period == 86400 &&
       cloudflare_queue_consumer.connection_setup_provisioning.script_name == cloudflare_worker.api.name &&
       cloudflare_queue_consumer.connection_setup_provisioning.settings.batch_size == 1 &&
       cloudflare_queue_consumer.connection_setup_provisioning.settings.max_retries == 10 &&
       cloudflare_queue_consumer.connection_setup_provisioning.settings.retry_delay == 30 &&
-      cloudflare_queue_consumer.connection_setup_provisioning.settings.visibility_timeout_ms == 180000 &&
+      cloudflare_queue_consumer.connection_setup_provisioning.settings.visibility_timeout_ms == null &&
       cloudflare_queue_consumer.ingestion.dead_letter_queue == cloudflare_queue.dead_letter.queue_name &&
       cloudflare_queue_consumer.ingestion.settings.max_retries == 7 &&
       cloudflare_queue_consumer.ingestion.settings.retry_delay == 10800 &&
       cloudflare_queue_consumer.dead_letter.settings.max_retries == 100 &&
       cloudflare_queue_consumer.dead_letter.settings.retry_delay == 300 &&
-      cloudflare_queue.dead_letter.settings.message_retention_period == 345600 &&
-      cloudflare_queue.ingestion_replay.settings.message_retention_period == 604800 &&
+      cloudflare_queue.ingestion.settings.message_retention_period == 86400 &&
+      cloudflare_queue.dead_letter.settings.message_retention_period == 86400 &&
+      cloudflare_queue.ingestion_replay.settings.message_retention_period == 86400 &&
       cloudflare_queue_consumer.ingestion_replay.settings.max_retries == 100 &&
       cloudflare_queue_consumer.ingestion_replay.settings.retry_delay == 300
     )
