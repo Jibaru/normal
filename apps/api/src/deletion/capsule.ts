@@ -341,6 +341,20 @@ export const makeDeletionCapsuleWriter = ({
   };
 };
 
+const makeCapsuleDestroyer =
+  (
+    bucket: Pick<DeletionObjectBucket, "delete">,
+  ): DeletionCapsuleStore["destroy"] =>
+  ({ deletionMarkerId }) => {
+    if (!hasMarkerId(deletionMarkerId)) {
+      return Effect.fail(operationError("destroy-capsule"));
+    }
+    return Effect.tryPromise({
+      try: () => bucket.delete(objectKeyFor(deletionMarkerId)),
+      catch: () => operationError("destroy-capsule"),
+    });
+  };
+
 export const makeDeletionCapsuleStore = ({
   bucket,
   environment,
@@ -361,15 +375,7 @@ export const makeDeletionCapsuleStore = ({
       kmsWriter,
       read,
     }),
-    destroy: ({ deletionMarkerId }) => {
-      if (!hasMarkerId(deletionMarkerId)) {
-        return Effect.fail(operationError("destroy-capsule"));
-      }
-      return Effect.tryPromise({
-        try: () => bucket.delete(objectKeyFor(deletionMarkerId)),
-        catch: () => operationError("destroy-capsule"),
-      });
-    },
+    destroy: makeCapsuleDestroyer(bucket),
     read,
   };
 };
@@ -383,15 +389,7 @@ export const makeDeletionCapsuleCoordinatorStore = ({
   readonly environment: DeploymentEnvironment;
   readonly keyId: string;
 }): DeletionCapsuleCoordinatorStore => ({
-  destroy: ({ deletionMarkerId }) => {
-    if (!hasMarkerId(deletionMarkerId)) {
-      return Effect.fail(operationError("destroy-capsule"));
-    }
-    return Effect.tryPromise({
-      try: () => bucket.delete(objectKeyFor(deletionMarkerId)),
-      catch: () => operationError("destroy-capsule"),
-    });
-  },
+  destroy: makeCapsuleDestroyer(bucket),
   read: makeCapsuleReader({ bucket, environment, keyId }),
 });
 
