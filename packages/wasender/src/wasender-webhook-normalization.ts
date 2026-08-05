@@ -859,6 +859,8 @@ const normalizeContacts = async (
   );
 };
 
+const groupUpdateFields = ["subject", "name", "joined"] as const;
+
 const normalizeGroups = async (
   key: CryptoKey,
   data: unknown,
@@ -876,12 +878,7 @@ const normalizeGroups = async (
       if (group === null || jid === null) {
         return malformed(itemIndex, "missing_required_identity");
       }
-      if (
-        partialUpdate &&
-        !("subject" in group) &&
-        !("name" in group) &&
-        !("joined" in group)
-      ) {
+      if (partialUpdate && !groupUpdateFields.some((field) => field in group)) {
         return unsupported(itemIndex);
       }
       const displayName = firstString(group.subject, group.name);
