@@ -411,7 +411,7 @@ test("recovers when the external identity token lookup fails", async ({
   await expect(button).toBeEnabled();
 });
 
-test("opens the real Clerk sign-in flow when no browser session exists", async ({
+test("opens Clerk waitlist and sign-in flows when no browser session exists", async ({
   page,
 }) => {
   await page.addInitScript(() => {
@@ -419,6 +419,12 @@ test("opens the real Clerk sign-in flow when no browser session exists", async (
       configurable: false,
       value: {
         loaded: true,
+        openWaitlist: () => {
+          Object.defineProperty(window, "__openedClerkWaitlist", {
+            configurable: true,
+            value: true,
+          });
+        },
         openSignIn: () => {
           Object.defineProperty(window, "__openedClerkSignIn", {
             configurable: true,
@@ -432,14 +438,30 @@ test("opens the real Clerk sign-in flow when no browser session exists", async (
   });
   await page.goto("/");
 
+  await expect(
+    page.getByRole("button", { name: "Join the waitlist" }),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Continue to Personal Account" }),
   ).toHaveCount(0);
+  await page.getByRole("button", { name: "Join the waitlist" }).click();
+
+  expect(
+    await page.evaluate(
+      () =>
+        (
+          window as unknown as {
+            readonly __openedClerkWaitlist?: boolean;
+          }
+        ).__openedClerkWaitlist,
+    ),
+  ).toBe(true);
+
   await page.getByRole("button", { name: "Sign in" }).click();
 
   await expect(page.getByTestId("api-boundary-status")).toHaveText(
-    "Sign in to continue.",
+    "Join the private-beta waitlist, or sign in if you’re approved.",
   );
   expect(
     await page.evaluate(

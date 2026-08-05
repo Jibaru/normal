@@ -34,6 +34,7 @@ export interface BrowserClerkClient {
       }) => void)
     | undefined;
   readonly openSignIn?: (() => void) | undefined;
+  readonly openWaitlist?: (() => void) | undefined;
 }
 
 let loading: Promise<BrowserClerkClient> | undefined;

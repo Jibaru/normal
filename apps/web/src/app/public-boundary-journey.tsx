@@ -465,6 +465,17 @@ export function PublicBoundaryJourney({
     }
   };
 
+  const openWaitlist = async () => {
+    try {
+      const clerk = await loadBrowserClerk(clerkPublishableKey);
+      if (clerk.openWaitlist === undefined)
+        throw new Error("waitlist unavailable");
+      clerk.openWaitlist();
+    } catch {
+      setIdentityState("unavailable");
+    }
+  };
+
   const loadMoreToolCallLogs = async () => {
     if (toolCallLogCursor === null || toolCallLogPageState === "loading")
       return;
@@ -1183,9 +1194,14 @@ export function PublicBoundaryJourney({
           Continue to Personal Account
         </Button>
       ) : identityState === "signed_out" ? (
-        <Button onClick={openSignIn} type="button">
-          Sign in
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={openWaitlist} type="button">
+            Join the waitlist
+          </Button>
+          <Button onClick={openSignIn} type="button" variant="outline">
+            Sign in
+          </Button>
+        </div>
       ) : null}
       <p aria-live="polite" data-testid="api-boundary-status">
         {identityState === "loading"
@@ -1193,7 +1209,7 @@ export function PublicBoundaryJourney({
           : identityState === "unavailable"
             ? "Sign-in is temporarily unavailable. Please refresh and try again."
             : identityState === "signed_out"
-              ? "Sign in to continue."
+              ? "Join the private-beta waitlist, or sign in if you’re approved."
               : state === "ok"
                 ? "Personal Account ready"
                 : state === "waitlisted"

@@ -318,6 +318,11 @@ session-bound and is not present in a custom JWT template token.
 Configure the Clerk application to allow only the exact web origin represented
 by `CLERK_AUTHORIZED_PARTY`.
 
+Enable Waitlist mode and email authentication in each Clerk instance. The web
+app opens Clerk's native waitlist for new applicants and keeps sign-in available
+for existing or approved Users. Approve entries in Clerk only while provider
+capacity is available; the database admission gate remains the final safeguard.
+
 The API verifies the token locally with `CLERK_JWT_KEY` and independently
 requires the exact issuer, audience, authorized party, short expiry, and request
 Origin. It then maps the verified Clerk User through narrow fixed-search-path
