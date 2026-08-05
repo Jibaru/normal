@@ -674,6 +674,18 @@ const managementJsonResponse = (
 const managementNotFound = (browserOrigin?: string): Response =>
   managementJsonResponse({ error: "not_found" }, 404, browserOrigin);
 
+const managementFailureResponse = (
+  failure: unknown,
+  browserOrigin: string,
+): Response =>
+  typeof failure === "object" &&
+  failure !== null &&
+  "_tag" in failure &&
+  (failure._tag === "InvalidHumanIdentity" ||
+    failure._tag === "InvalidManagementAuthorization")
+    ? managementNotFound(browserOrigin)
+    : managementJsonResponse({ error: "unavailable" }, 503, browserOrigin);
+
 const authorizationHandleFromPath = (path: string): string | null => {
   if (!path.startsWith(`${MANAGEMENT_PATH}/`)) return null;
   const handle = path.slice(MANAGEMENT_PATH.length + 1);
@@ -708,17 +720,7 @@ const managementList = (
       Effect.provide(layer),
       Effect.match({
         onFailure: (failure: unknown) =>
-          typeof failure === "object" &&
-          failure !== null &&
-          "_tag" in failure &&
-          (failure._tag === "InvalidHumanIdentity" ||
-            failure._tag === "InvalidManagementAuthorization")
-            ? managementNotFound(browserOrigin)
-            : managementJsonResponse(
-                { error: "unavailable" },
-                503,
-                browserOrigin,
-              ),
+          managementFailureResponse(failure, browserOrigin),
         onSuccess: (authorizations) =>
           managementJsonResponse(
             {
@@ -780,17 +782,7 @@ const managementRevoke = (
       Effect.provide(layer),
       Effect.match({
         onFailure: (failure: unknown) =>
-          typeof failure === "object" &&
-          failure !== null &&
-          "_tag" in failure &&
-          (failure._tag === "InvalidHumanIdentity" ||
-            failure._tag === "InvalidManagementAuthorization")
-            ? managementNotFound(browserOrigin)
-            : managementJsonResponse(
-                { error: "unavailable" },
-                503,
-                browserOrigin,
-              ),
+          managementFailureResponse(failure, browserOrigin),
         onSuccess: (result) =>
           managementJsonResponse(
             {
