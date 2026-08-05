@@ -1,9 +1,8 @@
 import { sql } from "drizzle-orm";
-import type { Client as PgClient } from "pg";
 import {
   makeDatabase,
-  makeQueryConnection,
   type QueryConnection,
+  withPgQueryConnection,
 } from "./database";
 
 export type WebhookReplayReasonCode =
@@ -216,22 +215,7 @@ export const makeWebhookReplayRepository = (
 const makePgConnectionProvider = (
   connectionString: string,
 ): WebhookReplayConnectionProvider => ({
-  withConnection: async <Value>(
-    use: (connection: WebhookReplayConnection) => Promise<Value>,
-  ): Promise<Value> => {
-    const { Client } = await import("pg");
-    const client: PgClient = new Client({
-      connectionString,
-      connectionTimeoutMillis: 5_000,
-      query_timeout: 5_000,
-    });
-    await client.connect();
-    try {
-      return await use(makeQueryConnection(client));
-    } finally {
-      await client.end();
-    }
-  },
+  withConnection: (use) => withPgQueryConnection(connectionString, use),
 });
 
 export const makePgWebhookReplayRepository = (
