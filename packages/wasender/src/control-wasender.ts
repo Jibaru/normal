@@ -664,41 +664,33 @@ export const makeWasenderSessionLifecycle = (
         isProviderFailure(cause) ? cause : safeFailure("unavailable"),
     });
 
+  const changeSessionState = async (
+    session: LifecycleSessionLocator,
+    action: "connect" | "disconnect",
+  ): Promise<LifecycleSession> => {
+    const summary = await resolveProviderSession(session);
+    if (!summary) throw writeFailure("invalid_response", false);
+    const detail = await loadDetail(summary.id);
+    const body = await writeJson(
+      `/api/whatsapp-sessions/${summary.id}/${action}`,
+      action === "connect"
+        ? { body: { linkMethod: "qr" }, method: "POST" }
+        : { method: "POST" },
+    );
+    return completeLifecycleWrite(async () => {
+      const data = parseData(body.value);
+      if (!isRecord(data) || typeof data.status !== "string") {
+        throw writeFailure("invalid_response", true);
+      }
+      return toLifecycleSession({ ...detail, status: data.status });
+    });
+  };
+
   return {
     connectSession: ({ session }) =>
-      effect(async () => {
-        const summary = await resolveProviderSession(session);
-        if (!summary) throw writeFailure("invalid_response", false);
-        const detail = await loadDetail(summary.id);
-        const body = await writeJson(
-          `/api/whatsapp-sessions/${summary.id}/connect`,
-          { body: { linkMethod: "qr" }, method: "POST" },
-        );
-        return completeLifecycleWrite(async () => {
-          const data = parseData(body.value);
-          if (!isRecord(data) || typeof data.status !== "string") {
-            throw writeFailure("invalid_response", true);
-          }
-          return toLifecycleSession({ ...detail, status: data.status });
-        });
-      }),
+      effect(() => changeSessionState(session, "connect")),
     disconnectSession: ({ session }) =>
-      effect(async () => {
-        const summary = await resolveProviderSession(session);
-        if (!summary) throw writeFailure("invalid_response", false);
-        const detail = await loadDetail(summary.id);
-        const body = await writeJson(
-          `/api/whatsapp-sessions/${summary.id}/disconnect`,
-          { method: "POST" },
-        );
-        return completeLifecycleWrite(async () => {
-          const data = parseData(body.value);
-          if (!isRecord(data) || typeof data.status !== "string") {
-            throw writeFailure("invalid_response", true);
-          }
-          return toLifecycleSession({ ...detail, status: data.status });
-        });
-      }),
+      effect(() => changeSessionState(session, "disconnect")),
     createSession: ({ phoneNumber, setupMarker, webhookEndpoint }) =>
       effect(async () => {
         const number = Redacted.value(phoneNumber);
