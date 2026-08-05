@@ -1,6 +1,6 @@
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
-import { sharedTestBindings } from "./vitest.shared.ts";
+import { sharedTestBindings, sharedTestOptions } from "./vitest.shared.ts";
 
 export default defineConfig({
   plugins: [
@@ -23,12 +23,11 @@ export default defineConfig({
     }),
   ],
   test: {
-    setupFiles: ["./test/support/database-readiness.ts"],
+    ...sharedTestOptions,
     server: {
       deps: {
         inline: ["pg"],
       },
     },
-    testTimeout: 30_000,
   },
 });

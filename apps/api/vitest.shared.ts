@@ -37,3 +37,8 @@ export const sharedTestBindings = {
   WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET:
     "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
 } as const;
+
+export const sharedTestOptions = {
+  setupFiles: ["./test/support/database-readiness.ts"],
+  testTimeout: 30_000,
+} as const;
