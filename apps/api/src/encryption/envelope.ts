@@ -320,6 +320,30 @@ export const makeEnvelopeEncryption = ({
     context.accountId === connectionKey.personalAccountId &&
     context.connectionId === connectionKey.connectionId;
 
+  const decryptCiphertext = (
+    key: CryptoKey,
+    ciphertext: VersionedCiphertext,
+    context: EncryptionContext,
+  ): Effect.Effect<Uint8Array, EncryptionError> =>
+    attemptCrypto("decrypt", async () => {
+      const plaintext = await crypto.subtle.decrypt(
+        {
+          additionalData: toArrayBuffer(
+            ciphertextAdditionalData(
+              environment,
+              context,
+              ciphertext.keyVersion,
+            ),
+          ),
+          iv: toArrayBuffer(decodeBase64(ciphertext.nonce)),
+          name: "AES-GCM",
+        },
+        key,
+        toArrayBuffer(decodeBase64(ciphertext.ciphertext)),
+      );
+      return new Uint8Array(plaintext);
+    });
+
   return {
     createPersonalAccountKey: ({ accountId, keyVersion }) => {
       const operation = "create-personal-account-key";
@@ -470,24 +494,7 @@ export const makeEnvelopeEncryption = ({
         accountKey,
         connectionKey,
         (connectionCryptoKey) =>
-          attemptCrypto(operation, async () => {
-            const plaintext = await crypto.subtle.decrypt(
-              {
-                additionalData: toArrayBuffer(
-                  ciphertextAdditionalData(
-                    environment,
-                    context,
-                    ciphertext.keyVersion,
-                  ),
-                ),
-                iv: toArrayBuffer(decodeBase64(ciphertext.nonce)),
-                name: "AES-GCM",
-              },
-              connectionCryptoKey,
-              toArrayBuffer(decodeBase64(ciphertext.ciphertext)),
-            );
-            return new Uint8Array(plaintext);
-          }),
+          decryptCiphertext(connectionCryptoKey, ciphertext, context),
       );
     },
 
@@ -518,24 +525,7 @@ export const makeEnvelopeEncryption = ({
           return Effect.forEach(
             items,
             ({ ciphertext, context }) =>
-              attemptCrypto(operation, async () => {
-                const plaintext = await crypto.subtle.decrypt(
-                  {
-                    additionalData: toArrayBuffer(
-                      ciphertextAdditionalData(
-                        environment,
-                        context,
-                        ciphertext.keyVersion,
-                      ),
-                    ),
-                    iv: toArrayBuffer(decodeBase64(ciphertext.nonce)),
-                    name: "AES-GCM",
-                  },
-                  connectionCryptoKey,
-                  toArrayBuffer(decodeBase64(ciphertext.ciphertext)),
-                );
-                return new Uint8Array(plaintext);
-              }).pipe(
+              decryptCiphertext(connectionCryptoKey, ciphertext, context).pipe(
                 Effect.tap((plaintext) =>
                   Effect.sync(() => {
                     plaintexts.push(plaintext);
