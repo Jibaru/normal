@@ -14,6 +14,7 @@ import {
   HumanIdentity,
   type HumanIdentityService,
 } from "./auth/human-identity";
+import { decodeBase64 } from "./base64-url";
 import {
   ConnectionSetupProvisioningQueue,
   type ConnectionSetupProvisioningQueueError,
@@ -142,11 +143,6 @@ export const makeConnectionSetupNumberTokens = (
         catch: () => new ConnectionSetupTokenError(),
       }),
   };
-};
-
-const decodeBase64 = (value: string): Uint8Array => {
-  const decoded = atob(value);
-  return Uint8Array.from(decoded, (character) => character.charCodeAt(0));
 };
 
 type ConnectionSetupOutcome =

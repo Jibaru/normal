@@ -10,6 +10,7 @@ import type {
   ProviderNeutralFailure,
 } from "@whatsapp-mcp/wasender/session";
 import { Context, Data, Effect, Redacted } from "effect";
+import { decodeBase64 } from "./base64-url";
 import {
   type EnvelopeEncryption,
   EnvelopeEncryptionService,
@@ -90,11 +91,6 @@ type GroupDirectoryRequirements =
   | GroupDirectoryPersistenceService
   | GroupDirectoryProviderService
   | SafeTelemetryService;
-
-const decodeBase64 = (value: string): Uint8Array => {
-  const decoded = atob(value);
-  return Uint8Array.from(decoded, (character) => character.charCodeAt(0));
-};
 
 const protectValue = async (
   encryption: EnvelopeEncryption,

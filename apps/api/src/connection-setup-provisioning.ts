@@ -9,6 +9,7 @@ import type {
   FinishConnectionSetupProvisioningInput,
 } from "@whatsapp-mcp/db/connection-setup";
 import { Context, Data, Effect, type Layer } from "effect";
+import { decodeBase64 } from "./base64-url";
 import {
   type EnvelopeEncryption,
   EnvelopeEncryptionService,
@@ -187,11 +188,6 @@ const retry = (): ConnectionSetupProvisioningAttempt => ({
   delaySeconds: RETRY_DELAY_SECONDS,
   outcome: "retry",
 });
-
-const decodeBase64 = (value: string): Uint8Array => {
-  const decoded = atob(value);
-  return Uint8Array.from(decoded, (character) => character.charCodeAt(0));
-};
 
 const encryptProviderSession = (
   setup: Extract<
