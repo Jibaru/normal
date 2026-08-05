@@ -26,6 +26,7 @@ import {
   EnvelopeEncryptionService,
 } from "./encryption/envelope";
 import { hasFailureTag } from "./failure-tag";
+import { noStoreJsonResponse } from "./http-response";
 import {
   RestoreSafeDeletion,
   SafeTelemetry,
@@ -651,7 +652,7 @@ export const deleteWhatsAppConnection = (
     );
   });
 
-const corsHeaders = (browserOrigin: string): HeadersInit => ({
+const corsHeaders = (browserOrigin: string) => ({
   "access-control-allow-headers": "authorization",
   "access-control-allow-methods": "GET,POST,OPTIONS",
   "access-control-allow-origin": browserOrigin,
@@ -663,14 +664,11 @@ const jsonResponse = (
   status: number,
   browserOrigin?: string,
 ): Response =>
-  new Response(JSON.stringify(body), {
-    headers: {
-      ...(browserOrigin === undefined ? {} : corsHeaders(browserOrigin)),
-      "cache-control": "no-store",
-      "content-type": "application/json; charset=utf-8",
-    },
+  noStoreJsonResponse(
+    body,
     status,
-  });
+    browserOrigin === undefined ? {} : corsHeaders(browserOrigin),
+  );
 
 const notFound = (browserOrigin?: string): Response =>
   jsonResponse({ error: "not_found" }, 404, browserOrigin);
