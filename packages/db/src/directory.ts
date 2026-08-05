@@ -1,9 +1,8 @@
 import { sql } from "drizzle-orm";
-import type { Client as PgClient } from "pg";
 import {
   makeDatabase,
-  makeQueryConnection,
   type QueryConnection,
+  withPgQueryConnection,
 } from "./database";
 
 export interface DirectoryConnection extends QueryConnection {}
@@ -263,22 +262,7 @@ export const makeDirectoryRepository = (
 const makePgConnectionProvider = (
   connectionString: string,
 ): DirectoryConnectionProvider => ({
-  withConnection: async <Value>(
-    use: (connection: DirectoryConnection) => Promise<Value>,
-  ): Promise<Value> => {
-    const { Client } = await import("pg");
-    const client: PgClient = new Client({
-      connectionString,
-      connectionTimeoutMillis: 5_000,
-      query_timeout: 10_000,
-    });
-    await client.connect();
-    try {
-      return await use(makeQueryConnection(client));
-    } finally {
-      await client.end();
-    }
-  },
+  withConnection: (use) => withPgQueryConnection(connectionString, use, 10_000),
 });
 
 export const makePgDirectoryRepository = (
