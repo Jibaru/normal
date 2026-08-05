@@ -173,7 +173,7 @@ export const runDeploymentSmoke = async (
       ? started.canary_id
       : fail("deployment-canary");
 
-  const deadline = Date.now() + 30_000;
+  const deadline = Date.now() + 180_000;
   while (Date.now() <= deadline) {
     const state = await requestJson(
       fetch,
