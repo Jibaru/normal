@@ -2422,9 +2422,7 @@ export const makeMcpToolRepository = (
 const makePgConnectionProvider = (
   connectionString: string,
 ): McpToolConnectionProvider => ({
-  withConnection: async <Value>(
-    use: (connection: McpToolConnection) => Promise<Value>,
-  ): Promise<Value> =>
+  withConnection: (use) =>
     withPgRequestConnection(connectionString, (client) =>
       use(makeQueryConnection(client)),
     ),
