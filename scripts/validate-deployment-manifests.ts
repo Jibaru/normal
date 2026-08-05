@@ -185,21 +185,13 @@ for (const deployable of deployables) {
         configuration,
         `whatsapp-mcp-ingestion${environmentSuffix}`,
       );
-      const consumers = (
-        configuration.queues as
-          | {
-              readonly consumers?: ReadonlyArray<Record<string, unknown>>;
-            }
-          | undefined
-      )?.consumers;
       const deadLetter = findQueueConsumer(
         configuration,
         `whatsapp-mcp-ingestion-dlq${environmentSuffix}`,
       );
-      const replay = consumers?.find(
-        (consumer) =>
-          consumer.queue ===
-          `whatsapp-mcp-ingestion-replay${environmentSuffix}`,
+      const replay = findQueueConsumer(
+        configuration,
+        `whatsapp-mcp-ingestion-replay${environmentSuffix}`,
       );
       if (
         ingestion?.dead_letter_queue !==
