@@ -86,7 +86,7 @@ test("approves only explicit authority after recent Clerk reverification", async
   await page.goto(`/oauth/consent?request=${handoff}`);
   await expect(
     page.getByRole("heading", {
-      name: "Connect Approved MCP Client to WhatsApp?",
+      name: "Let Approved MCP Client use WhatsApp?",
     }),
   ).toBeVisible();
   await expect(
@@ -121,10 +121,8 @@ test("approves only explicit authority after recent Clerk reverification", async
       scopes: ["messages:send"],
       send_confirmed: true,
     });
-  expect(reverificationOpened).toBe(true);
-  expect(tokenRequests).toContainEqual({
-    skipCache: true,
-  });
+  await expect.poll(() => reverificationOpened).toBe(true);
+  await expect.poll(() => tokenRequests).toContainEqual({ skipCache: true });
 });
 
 test("denies without selecting a Connection or scope", async ({ page }) => {

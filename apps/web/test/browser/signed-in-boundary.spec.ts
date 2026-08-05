@@ -95,10 +95,15 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   });
   await page.goto("/");
 
-  await expect(page.getByText("Up to 3 WhatsApp Connections")).toBeVisible();
-  await expect(page.getByText("5 GB Stored Media")).toBeVisible();
   await expect(
-    page.getByText("30-day default Message Retention Policy"),
+    page.getByRole("heading", {
+      name: "Your WhatsApp, connected on your terms.",
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "Connect WhatsApp to the AI tools you choose. You decide which account they can use, what they can access, and when access ends.",
+    ),
   ).toBeVisible();
 
   await page
@@ -151,7 +156,8 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
 
   const whatsappNumber = page.getByLabel("WhatsApp Number");
   const startConnectionSetup = page.getByRole("button", {
-    name: "Start Connection Setup",
+    name: "Continue",
+    exact: true,
   });
   await whatsappNumber.fill("+1 (555) 012-3456");
   await startConnectionSetup.click();
@@ -182,26 +188,26 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   );
   const connection = page.getByTestId("whatsapp-connection");
   const retentionPolicy = page.getByRole("combobox", {
-    name: "Message Retention Policy",
+    name: "Keep message history for",
   });
   await expect(retentionPolicy).toContainText("30 days");
   await retentionPolicy.click();
   await page.getByRole("option", { name: "7 days" }).click();
-  await page.getByRole("button", { name: "Save retention policy" }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
   await expect(connection).toContainText("Current policy: 7 days");
   await retentionPolicy.click();
   await page
     .getByRole("option", { name: "Retain until Connection Deletion" })
     .click();
   await expect(
-    page.getByRole("button", { name: "Save retention policy" }),
+    page.getByRole("button", { name: "Save changes" }),
   ).toBeDisabled();
   await page
     .getByRole("checkbox", {
       name: "I explicitly choose to retain message content for longer.",
     })
     .check();
-  await page.getByRole("button", { name: "Save retention policy" }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
   await expect(connection).toContainText("retain until Connection Deletion");
   await expect(page.getByTestId("whatsapp-connection")).not.toContainText(
     "session-authority",
