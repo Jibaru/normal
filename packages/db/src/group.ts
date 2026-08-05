@@ -1,6 +1,5 @@
 import { and, eq, lt, notInArray, sql } from "drizzle-orm";
-import type { Client as PgClient } from "pg";
-import { makeDatabase, makeQueryConnection } from "./database";
+import { makeDatabase, withPgQueryConnection } from "./database";
 import {
   whatsappGroupDirectoryStatesInApp,
   whatsappGroupsInApp,
@@ -587,22 +586,7 @@ export const makeGroupRepository = (
 const makePgConnectionProvider = (
   connectionString: string,
 ): GroupConnectionProvider => ({
-  withConnection: async <Value>(
-    use: (connection: GroupConnection) => Promise<Value>,
-  ): Promise<Value> => {
-    const { Client } = await import("pg");
-    const client: PgClient = new Client({
-      connectionString,
-      connectionTimeoutMillis: 5_000,
-      query_timeout: 25_000,
-    });
-    await client.connect();
-    try {
-      return await use(makeQueryConnection(client));
-    } finally {
-      await client.end();
-    }
-  },
+  withConnection: (use) => withPgQueryConnection(connectionString, use, 25_000),
 });
 
 export const makePgGroupRepository = (
