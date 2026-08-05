@@ -33,3 +33,22 @@ export const makeQueryConnection = (client: PgClient): QueryConnection => ({
     return { rows: result.rows };
   },
 });
+
+export const withPgQueryConnection = async <Value>(
+  connectionString: string,
+  use: (connection: QueryConnection) => Promise<Value>,
+  queryTimeoutMillis = 5_000,
+): Promise<Value> => {
+  const { Client } = await import("pg");
+  const client: PgClient = new Client({
+    connectionString,
+    connectionTimeoutMillis: 5_000,
+    query_timeout: queryTimeoutMillis,
+  });
+  await client.connect();
+  try {
+    return await use(makeQueryConnection(client));
+  } finally {
+    await client.end();
+  }
+};
