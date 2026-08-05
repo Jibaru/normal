@@ -192,9 +192,9 @@ for (const deployable of deployables) {
             }
           | undefined
       )?.consumers;
-      const deadLetter = consumers?.find(
-        (consumer) =>
-          consumer.queue === `whatsapp-mcp-ingestion-dlq${environmentSuffix}`,
+      const deadLetter = findQueueConsumer(
+        configuration,
+        `whatsapp-mcp-ingestion-dlq${environmentSuffix}`,
       );
       const replay = consumers?.find(
         (consumer) =>
