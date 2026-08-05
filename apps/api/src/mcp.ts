@@ -50,6 +50,7 @@ import type {
 import { createMcpHandler } from "agents/mcp/server";
 import { Context, Data, Effect, type Layer, Option } from "effect";
 import { z } from "zod";
+import { encodeBase64 } from "./base64-url";
 import {
   contactSearchIndex,
   decryptDirectoryString,
@@ -1722,12 +1723,9 @@ const streamToBase64 = async (
   }
   if (offset !== expectedBytes)
     throw new Error("Stored Media did not match verified size");
-  let binary = "";
-  for (let index = 0; index < bytes.byteLength; index += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
-  }
+  const encoded = encodeBase64(bytes);
   bytes.fill(0);
-  return btoa(binary);
+  return encoded;
 };
 
 const listChats = (
