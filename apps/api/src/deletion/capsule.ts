@@ -1,6 +1,7 @@
 import type { DeploymentEnvironment } from "@whatsapp-mcp/domain/deployment";
 import { Effect } from "effect";
 import { decodeBase64, encodeBase64 } from "../base64-url";
+import { hasExactKeys } from "../record";
 import { type DeletionObjectBucket, DeletionPrimitiveError } from "./marker";
 
 const capsulePrefix = "capsules/v1/";
@@ -149,7 +150,7 @@ const parseEnvelope = (
     typeof value !== "object" ||
     value === null ||
     Array.isArray(value) ||
-    Object.keys(value).sort().join(",") !== "ciphertext,keyVersion,version"
+    !hasExactKeys(value, ["ciphertext", "keyVersion", "version"])
   ) {
     throw operationError("read-capsule");
   }
