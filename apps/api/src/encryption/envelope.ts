@@ -1,6 +1,6 @@
 import type { DeploymentEnvironment } from "@whatsapp-mcp/domain/deployment";
 import { Context, Data, Effect } from "effect";
-import { encodeBase64 } from "../base64-url";
+import { decodeBase64, encodeBase64 } from "../base64-url";
 
 const AES_KEY_BYTES = 32;
 const AES_GCM_NONCE_BYTES = 12;
@@ -122,11 +122,6 @@ const toArrayBuffer = (value: Uint8Array): ArrayBuffer =>
     value.byteOffset,
     value.byteOffset + value.byteLength,
   ) as ArrayBuffer;
-
-const decodeBase64 = (value: string) => {
-  const binary = atob(value);
-  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
-};
 
 const authenticatedBytes = (value: Readonly<Record<string, string | number>>) =>
   new TextEncoder().encode(JSON.stringify(value));

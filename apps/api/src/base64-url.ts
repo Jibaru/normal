@@ -6,6 +6,9 @@ export const encodeBase64 = (bytes: Uint8Array): string => {
   return btoa(binary);
 };
 
+export const decodeBase64 = (value: string): Uint8Array =>
+  Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
+
 export const encodeBase64Url = (bytes: Uint8Array): string =>
   encodeBase64(bytes)
     .replaceAll("+", "-")

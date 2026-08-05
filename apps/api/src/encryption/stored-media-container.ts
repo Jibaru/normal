@@ -1,6 +1,6 @@
 import type { DeploymentEnvironment } from "@whatsapp-mcp/domain/deployment";
 import { Context, Data, Effect } from "effect";
-import { encodeBase64 } from "../base64-url";
+import { decodeBase64, encodeBase64 } from "../base64-url";
 import type {
   ConnectionKeyEnvelope,
   EnvelopeEncryption,
@@ -147,11 +147,6 @@ const concat = (...parts: ReadonlyArray<Uint8Array>) => {
     offset += part.byteLength;
   }
   return result;
-};
-
-const decodeBase64 = (value: string) => {
-  const binary = atob(value);
-  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 };
 
 const error = (

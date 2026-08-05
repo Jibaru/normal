@@ -1,6 +1,6 @@
 import type { DeploymentEnvironment } from "@whatsapp-mcp/domain/deployment";
 import { Effect } from "effect";
-import { encodeBase64 } from "../base64-url";
+import { decodeBase64, encodeBase64 } from "../base64-url";
 import { type DeletionObjectBucket, DeletionPrimitiveError } from "./marker";
 
 const capsulePrefix = "capsules/v1/";
@@ -97,11 +97,6 @@ const contextFor = (
 
 const objectKeyFor = (deletionMarkerId: string) =>
   `${capsulePrefix}${deletionMarkerId}.json`;
-
-const decodeBase64 = (value: string) => {
-  const binary = atob(value);
-  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
-};
 
 const serializePlaintext = (identifiers: ProviderCleanupIdentifiers) =>
   JSON.stringify({
