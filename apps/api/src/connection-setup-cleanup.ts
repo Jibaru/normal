@@ -5,6 +5,7 @@ import type {
 } from "@whatsapp-mcp/contracts/provider-control";
 import type { ConnectionSetupCleanupClaim } from "@whatsapp-mcp/db/connection-setup";
 import { Context, Data, Effect, type Layer } from "effect";
+import { hasExactKeys } from "./record";
 import {
   SafeTelemetry,
   type SafeTelemetry as SafeTelemetryService,
@@ -121,7 +122,7 @@ export const isConnectionSetupCleanupMessage = (
     typeof value !== "object" ||
     value === null ||
     Array.isArray(value) ||
-    Object.keys(value).length !== 3
+    !hasExactKeys(value, ["kind", "setup_id", "version"])
   ) {
     return false;
   }
