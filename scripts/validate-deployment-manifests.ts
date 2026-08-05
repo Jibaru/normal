@@ -45,6 +45,16 @@ const assertAbsent = (
   }
 };
 
+const findQueueConsumer = (
+  configuration: Record<string, unknown>,
+  queue: string,
+) =>
+  (
+    configuration.queues as
+      | { readonly consumers?: ReadonlyArray<Record<string, unknown>> }
+      | undefined
+  )?.consumers?.find((consumer) => consumer.queue === queue);
+
 for (const deployable of deployables) {
   const manifestPath = `${repositoryRoot}/apps/${deployable}/wrangler.jsonc`;
   const manifest = Bun.JSONC.parse(
@@ -171,6 +181,10 @@ for (const deployable of deployables) {
           `API ${configurationName} configuration must schedule minute recovery, five-minute reconciliation, and hourly retention.`,
         );
       }
+      const ingestion = findQueueConsumer(
+        configuration,
+        `whatsapp-mcp-ingestion${environmentSuffix}`,
+      );
       const consumers = (
         configuration.queues as
           | {
@@ -178,10 +192,6 @@ for (const deployable of deployables) {
             }
           | undefined
       )?.consumers;
-      const ingestion = consumers?.find(
-        (consumer) =>
-          consumer.queue === `whatsapp-mcp-ingestion${environmentSuffix}`,
-      );
       const deadLetter = consumers?.find(
         (consumer) =>
           consumer.queue === `whatsapp-mcp-ingestion-dlq${environmentSuffix}`,
