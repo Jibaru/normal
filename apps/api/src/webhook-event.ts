@@ -42,6 +42,7 @@ import {
   groupNamePrefixIndexes,
   importGroupDirectoryIndexKey,
 } from "./group-privacy";
+import { hasExactKeys } from "./record";
 import {
   SafeTelemetry,
   type SafeTelemetry as SafeTelemetryService,
@@ -327,8 +328,12 @@ const parseCiphertext = (
     ) as unknown;
     if (
       !isRecord(parsed) ||
-      Object.keys(parsed).sort().join(",") !==
-        "ciphertext,key_version,nonce,version" ||
+      !hasExactKeys(parsed, [
+        "ciphertext",
+        "key_version",
+        "nonce",
+        "version",
+      ]) ||
       parsed.version !== 1 ||
       typeof parsed.key_version !== "number" ||
       !Number.isSafeInteger(parsed.key_version) ||
