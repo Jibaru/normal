@@ -305,6 +305,21 @@ export const makeEnvelopeEncryption = ({
     );
   };
 
+  const validCiphertextContext = (
+    accountKey: PersonalAccountKeyEnvelope,
+    connectionKey: ConnectionKeyEnvelope,
+    ciphertext: VersionedCiphertext,
+    context: EncryptionContext,
+  ): boolean =>
+    validateContext(context) &&
+    ciphertext.version === FORMAT_VERSION &&
+    ciphertext.keyVersion === connectionKey.keyVersion &&
+    hasText(ciphertext.nonce) &&
+    hasText(ciphertext.ciphertext) &&
+    context.accountId === accountKey.personalAccountId &&
+    context.accountId === connectionKey.personalAccountId &&
+    context.connectionId === connectionKey.connectionId;
+
   return {
     createPersonalAccountKey: ({ accountId, keyVersion }) => {
       const operation = "create-personal-account-key";
@@ -445,14 +460,7 @@ export const makeEnvelopeEncryption = ({
     decrypt: ({ accountKey, ciphertext, connectionKey, context }) => {
       const operation = "decrypt";
       if (
-        !validateContext(context) ||
-        ciphertext.version !== FORMAT_VERSION ||
-        ciphertext.keyVersion !== connectionKey.keyVersion ||
-        !hasText(ciphertext.nonce) ||
-        !hasText(ciphertext.ciphertext) ||
-        context.accountId !== accountKey.personalAccountId ||
-        context.accountId !== connectionKey.personalAccountId ||
-        context.connectionId !== connectionKey.connectionId
+        !validCiphertextContext(accountKey, connectionKey, ciphertext, context)
       ) {
         return Effect.fail(operationError(operation));
       }
@@ -488,14 +496,12 @@ export const makeEnvelopeEncryption = ({
       if (
         items.some(
           ({ ciphertext, context }) =>
-            !validateContext(context) ||
-            ciphertext.version !== FORMAT_VERSION ||
-            ciphertext.keyVersion !== connectionKey.keyVersion ||
-            !hasText(ciphertext.nonce) ||
-            !hasText(ciphertext.ciphertext) ||
-            context.accountId !== accountKey.personalAccountId ||
-            context.accountId !== connectionKey.personalAccountId ||
-            context.connectionId !== connectionKey.connectionId,
+            !validCiphertextContext(
+              accountKey,
+              connectionKey,
+              ciphertext,
+              context,
+            ),
         )
       ) {
         return Effect.fail(operationError(operation));
