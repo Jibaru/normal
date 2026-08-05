@@ -15,6 +15,12 @@ const manifestConfigurations = (manifest: Record<string, unknown>) => [
   ),
 ];
 
+const requiredSecrets = (configuration: Record<string, unknown>) =>
+  [
+    ...((configuration.secrets as { readonly required?: ReadonlyArray<string> })
+      ?.required ?? []),
+  ].sort();
+
 for (const deployable of deployables) {
   const manifestPath = `${repositoryRoot}/apps/${deployable}/wrangler.jsonc`;
   const manifest = Bun.JSONC.parse(
@@ -44,13 +50,8 @@ for (const deployable of deployables) {
           );
         }
       }
-      const requiredSecrets = (
-        configuration.secrets as
-          | { readonly required?: ReadonlyArray<string> }
-          | undefined
-      )?.required;
       if (
-        JSON.stringify([...(requiredSecrets ?? [])].sort()) !==
+        JSON.stringify(requiredSecrets(configuration)) !==
         JSON.stringify(requiredSecretNames)
       ) {
         throw new Error(
