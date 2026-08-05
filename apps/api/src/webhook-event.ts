@@ -388,7 +388,14 @@ const validateSource = (
       metadata.receivedAt !== message.received_at ||
       metadata.version !== "1" ||
       metadata.whatsappConnectionId !== message.whatsapp_connection_id ||
-      Object.keys(metadata).length !== 6 ||
+      !hasExactKeys(metadata, [
+        "ciphertextSha256",
+        "payloadBytes",
+        "personalAccountId",
+        "receivedAt",
+        "version",
+        "whatsappConnectionId",
+      ]) ||
       sourceHash !== message.ciphertext_sha256
     ) {
       return yield* Effect.fail(new WebhookEventPermanentValidationError());
