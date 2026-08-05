@@ -9,6 +9,7 @@ import {
   handleConnectionSetupProvisioningBatch,
   isConnectionSetupProvisioningMessage,
 } from "./connection-setup-provisioning";
+import { noStoreJsonResponse } from "./http-response";
 import {
   createMcpAuthorizationManagementHandler,
   isMcpAuthorizationManagementRequest,
@@ -110,13 +111,7 @@ export interface PublicBoundaryWorkerOptions {
 }
 
 const jsonResponse = (body: unknown, status = 200): Response =>
-  new Response(JSON.stringify(body), {
-    headers: {
-      "cache-control": "no-store",
-      "content-type": "application/json; charset=utf-8",
-    },
-    status,
-  });
+  noStoreJsonResponse(body, status);
 
 const bindingResponse = async (
   environment: PublicBoundaryEnvironment,
