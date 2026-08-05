@@ -1,3 +1,5 @@
+import { noStoreJsonResponse } from "./http-response";
+
 const path = "/_internal/deployment-smoke";
 const canaryPattern = /^smk_[A-Za-z0-9_-]{43}$/u;
 const secretPattern = /^[a-f0-9]{64}$/iu;
@@ -14,13 +16,7 @@ export interface DeploymentSmokeOptions {
 }
 
 const json = (body: unknown, status: number) =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      "cache-control": "no-store",
-      "content-type": "application/json; charset=utf-8",
-    },
-  });
+  noStoreJsonResponse(body, status);
 
 const bytes = (value: string) => new TextEncoder().encode(value);
 const constantTimeEqual = (left: string, right: string): boolean => {
