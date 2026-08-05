@@ -10,6 +10,7 @@ import {
 } from "./auth/human-identity";
 import { encodeBase64Url } from "./base64-url";
 import { hasFailureTag } from "./failure-tag";
+import { noStoreJsonResponse } from "./http-response";
 import {
   OAUTH_SCOPES,
   type OAuthConfiguration,
@@ -153,7 +154,7 @@ interface ConsentHandlerOptions {
     | undefined;
 }
 
-const corsHeaders = (browserOrigin: string): HeadersInit => ({
+const corsHeaders = (browserOrigin: string) => ({
   "access-control-allow-headers": "authorization,content-type",
   "access-control-allow-methods": "OPTIONS,POST",
   "access-control-allow-origin": browserOrigin,
@@ -165,14 +166,11 @@ const jsonResponse = (
   status: number,
   browserOrigin?: string,
 ): Response =>
-  new Response(JSON.stringify(body), {
-    headers: {
-      ...(browserOrigin === undefined ? {} : corsHeaders(browserOrigin)),
-      "cache-control": "no-store",
-      "content-type": "application/json; charset=utf-8",
-    },
+  noStoreJsonResponse(
+    body,
     status,
-  });
+    browserOrigin === undefined ? {} : corsHeaders(browserOrigin),
+  );
 
 const parseObject = async (
   request: Request,
@@ -649,7 +647,7 @@ type McpAuthorizationManagementRequirements =
   | McpAuthorizationPersistenceService
   | SafeTelemetryService;
 
-const managementCorsHeaders = (browserOrigin: string): HeadersInit => ({
+const managementCorsHeaders = (browserOrigin: string) => ({
   "access-control-allow-headers": "authorization,content-type",
   "access-control-allow-methods": "DELETE,GET,OPTIONS",
   "access-control-allow-origin": browserOrigin,
@@ -661,16 +659,11 @@ const managementJsonResponse = (
   status: number,
   browserOrigin?: string,
 ): Response =>
-  new Response(JSON.stringify(body), {
-    headers: {
-      ...(browserOrigin === undefined
-        ? {}
-        : managementCorsHeaders(browserOrigin)),
-      "cache-control": "no-store",
-      "content-type": "application/json; charset=utf-8",
-    },
+  noStoreJsonResponse(
+    body,
     status,
-  });
+    browserOrigin === undefined ? {} : managementCorsHeaders(browserOrigin),
+  );
 
 const managementNotFound = (browserOrigin?: string): Response =>
   managementJsonResponse({ error: "not_found" }, 404, browserOrigin);
