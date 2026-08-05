@@ -138,13 +138,7 @@ for (const deployable of deployables) {
       "SMOKE_CHECK_SECRET",
       "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
     ];
-    const configurations = [
-      ["top level", manifest],
-      ...Object.entries(
-        (manifest.env as Record<string, Record<string, unknown>> | undefined) ??
-          {},
-      ),
-    ] as const;
+    const configurations = manifestConfigurations(manifest);
     for (const [configurationName, configuration] of configurations) {
       const placement = configuration.placement as
         | { readonly region?: unknown }
