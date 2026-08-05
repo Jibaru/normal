@@ -205,6 +205,7 @@ describe("provider-neutral capability seam", () => {
         reconciliations += 1;
         return Effect.succeed({ outcome: "absent" });
       },
+      repairSessionConfiguration: () => Effect.succeed(lifecycleSession),
     });
 
     const result = await Effect.runPromise(

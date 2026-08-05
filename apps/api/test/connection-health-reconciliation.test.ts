@@ -68,6 +68,9 @@ const makeHarness = (
   const providerInputs: Array<
     Parameters<ConnectionHealthProviderService["reconcile"]>[0]
   > = [];
+  const repairInputs: Array<
+    Parameters<ConnectionHealthProviderService["repair"]>[0]
+  > = [];
   const events: Array<SafeTelemetryEvent> = [];
   let clockCall = 0;
   const layer = Layer.mergeAll(
@@ -87,6 +90,11 @@ const makeHarness = (
           providerInputs.push(input);
           return observation;
         }),
+      repair: (input) =>
+        Effect.sync(() => {
+          repairInputs.push(input);
+          return success(session("connected"));
+        }),
     }),
     Layer.succeed(SafeTelemetry, {
       emit: (event) =>
@@ -95,7 +103,7 @@ const makeHarness = (
         }),
     }),
   );
-  return { events, finishes, layer, providerInputs };
+  return { events, finishes, layer, providerInputs, repairInputs };
 };
 
 describe("five-minute connection health reconciliation", () => {
@@ -186,9 +194,9 @@ describe("five-minute connection health reconciliation", () => {
     },
     {
       expected: {
-        gapEvidence: "webhook_configuration",
-        state: "degraded",
-        webhookConfigurationHealthy: false,
+        gapEvidence: "healthy",
+        state: "connected",
+        webhookConfigurationHealthy: true,
       },
       name: "confirmed webhook configuration drift",
       observation: failure("integrity_failed"),
@@ -219,6 +227,11 @@ describe("five-minute connection health reconciliation", () => {
           "https://api.example.test/webhooks/wasender/30000000-0000-4000-8000-000000000036",
       },
     ]);
+    expect(harness.repairInputs).toEqual(
+      example.name === "confirmed webhook configuration drift"
+        ? harness.providerInputs
+        : [],
+    );
     expect(harness.finishes).toEqual([
       {
         checkedAt,
@@ -290,6 +303,7 @@ describe("five-minute connection health reconciliation", () => {
               session: session("connected"),
             });
           }),
+        repair: () => Effect.die("repair should not run"),
       }),
     );
 
@@ -322,6 +336,7 @@ describe("five-minute connection health reconciliation", () => {
               session: session("connected"),
             });
           },
+          repairSessionConfiguration: async () => success(session("connected")),
         },
       },
       {

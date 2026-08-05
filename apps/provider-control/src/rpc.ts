@@ -6,6 +6,7 @@ import {
   decodeGetQrCodeRequest,
   decodeListSessionsRequest,
   decodeReconcileSessionRequest,
+  decodeRepairSessionConfigurationRequest,
   type LifecycleSession,
   type ProviderControlFailure,
   type ProviderControlFailureCode,
@@ -442,6 +443,21 @@ export const makeProviderControlRpc = (
                 }),
           }),
         reconciliationObservation,
+      ),
+    repairSessionConfiguration: (input) =>
+      invoke(
+        "repairSessionConfiguration",
+        input,
+        decodeRepairSessionConfigurationRequest,
+        "lifecycle-write",
+        (lifecycle, request) =>
+          lifecycle.repairSessionConfiguration({
+            setupMarker: request.setupMarker as SetupMarker,
+            webhookEndpoint: Redacted.make(
+              request.webhookUrl,
+            ) as WebhookEndpoint,
+          }),
+        (value) => lifecycleSession(value, "lifecycle-write"),
       ),
   };
 };

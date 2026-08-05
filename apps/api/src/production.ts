@@ -608,6 +608,7 @@ const configLayer = (environment: ApiEnvironment) =>
               "getQrCode",
               "listSessions",
               "reconcileSession",
+              "repairSessionConfiguration",
             ])
           ) {
             return yield* Effect.fail(new MissingProviderControlBinding());
@@ -2306,7 +2307,10 @@ export const createProductionScheduledHandler =
       if (
         typeof connectionString !== "string" ||
         typeof environment.OAUTH_ISSUER !== "string" ||
-        !hasMethods(environment.PROVIDER_CONTROL, ["reconcileSession"])
+        !hasMethods(environment.PROVIDER_CONTROL, [
+          "reconcileSession",
+          "repairSessionConfiguration",
+        ])
       ) {
         throw new Error("Connection health reconciliation unavailable");
       }

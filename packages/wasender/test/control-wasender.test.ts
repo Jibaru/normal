@@ -40,6 +40,7 @@ const providerSession = (overrides: Record<string, unknown> = {}) => ({
   api_key: "session_credential",
   created_at: "2026-07-30T12:00:00Z",
   id: 41,
+  ignore_groups: false,
   log_messages: false,
   name: setupMarker,
   phone_number: "+15550123456",
@@ -93,6 +94,7 @@ describe("real Wasender lifecycle adapter", () => {
     );
     expect(await requests[1]?.json()).toEqual({
       account_protection: true,
+      ignore_groups: false,
       log_messages: false,
       name: setupMarker,
       phone_number: "+15550123456",
@@ -108,6 +110,47 @@ describe("real Wasender lifecycle adapter", () => {
     expect(Redacted.value(result.authority as SessionAuthority)).toContain(
       "session_credential",
     );
+  });
+
+  test("repairs group webhook delivery on an existing provider session", async () => {
+    const requests: Request[] = [];
+    const responses = [
+      json({
+        success: true,
+        data: [providerSession({ api_key: undefined, ignore_groups: true })],
+      }),
+      json({
+        success: true,
+        data: providerSession({ ignore_groups: true }),
+      }),
+      json({ success: true, data: providerSession() }),
+      json({ success: true, data: providerSession() }),
+    ];
+    const lifecycle = makeWasenderSessionLifecycle(
+      { credential, referenceSecret },
+      {
+        fetch: async (request) => {
+          requests.push(request);
+          return responses.shift() ?? json({}, { status: 500 });
+        },
+      },
+    );
+
+    const result = await Effect.runPromise(
+      lifecycle.repairSessionConfiguration({ setupMarker, webhookEndpoint }),
+    );
+
+    expect(requests.map((request) => request.method)).toEqual([
+      "GET",
+      "GET",
+      "PUT",
+      "GET",
+    ]);
+    expect(await requests[2]?.json()).toMatchObject({
+      ignore_groups: false,
+      webhook_events: expect.arrayContaining(["messages-group.received"]),
+    });
+    expect(result.connectionState).toBe("connecting");
   });
 
   test("adopts one deterministic marker and reports duplicates for quarantine", async () => {

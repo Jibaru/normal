@@ -31,6 +31,10 @@ const ReconcileSessionRequest = Schema.Struct({
   setupMarker: SetupMarker,
   webhookUrl: Schema.optional(WebhookUrl),
 });
+const RepairSessionConfigurationRequest = Schema.Struct({
+  setupMarker: SetupMarker,
+  webhookUrl: WebhookUrl,
+});
 const ListSessionsRequest = Schema.Struct({
   setupMarker: SetupMarker,
 });
@@ -49,6 +53,9 @@ const strictDecode = <A, I>(schema: Schema.Schema<A, I>) =>
 export const decodeReconcileSessionRequest = strictDecode(
   ReconcileSessionRequest,
 );
+export const decodeRepairSessionConfigurationRequest = strictDecode(
+  RepairSessionConfigurationRequest,
+);
 export const decodeListSessionsRequest = strictDecode(ListSessionsRequest);
 export const decodeCreateSessionRequest = strictDecode(CreateSessionRequest);
 export const decodeConnectSessionRequest = strictDecode(SessionRequest);
@@ -59,6 +66,10 @@ export const decodeDeleteSessionRequest = strictDecode(SessionRequest);
 export interface ReconcileSessionRequest {
   readonly setupMarker: string;
   readonly webhookUrl?: string | undefined;
+}
+export interface RepairSessionConfigurationRequest {
+  readonly setupMarker: string;
+  readonly webhookUrl: string;
 }
 
 export interface ListSessionsRequest {
@@ -170,6 +181,7 @@ export type ProviderControlRpcMethod =
   | "disconnectSession"
   | "getQrCode"
   | "listSessions"
+  | "repairSessionConfiguration"
   | "reconcileSession";
 
 export interface ProviderControlRpcTelemetryEvent {
@@ -201,4 +213,7 @@ export interface ProviderControlService {
   readonly reconcileSession: (
     request: ReconcileSessionRequest,
   ) => Promise<ProviderControlResult<SessionReconciliation>>;
+  readonly repairSessionConfiguration: (
+    request: RepairSessionConfigurationRequest,
+  ) => Promise<ProviderControlResult<LifecycleSession>>;
 }

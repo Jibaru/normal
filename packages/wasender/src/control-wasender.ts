@@ -70,6 +70,7 @@ export interface WasenderLifecycleDependencies {
 interface ProviderSession {
   readonly apiKey: string | null;
   readonly id: number;
+  readonly ignoreGroups: boolean | null;
   readonly logMessages: boolean | null;
   readonly name: string;
   readonly readIncomingMessages: boolean | null;
@@ -129,6 +130,7 @@ const parseProviderSession = (
   const {
     api_key: apiKey,
     id,
+    ignore_groups: ignoreGroups,
     log_messages: logMessages,
     name,
     read_incoming_messages: readIncomingMessages,
@@ -152,6 +154,9 @@ const parseProviderSession = (
     (logMessages !== undefined &&
       logMessages !== null &&
       typeof logMessages !== "boolean") ||
+    (ignoreGroups !== undefined &&
+      ignoreGroups !== null &&
+      typeof ignoreGroups !== "boolean") ||
     (readIncomingMessages !== undefined &&
       readIncomingMessages !== null &&
       typeof readIncomingMessages !== "boolean") ||
@@ -172,6 +177,7 @@ const parseProviderSession = (
   return {
     apiKey: typeof apiKey === "string" && apiKey.length > 0 ? apiKey : null,
     id: id as number,
+    ignoreGroups: typeof ignoreGroups === "boolean" ? ignoreGroups : null,
     logMessages: typeof logMessages === "boolean" ? logMessages : null,
     name,
     readIncomingMessages:
@@ -491,7 +497,10 @@ export const makeWasenderSessionLifecycle = (
 
   const writeJson = async (
     path: string,
-    init: { readonly body?: unknown; readonly method: "DELETE" | "POST" },
+    init: {
+      readonly body?: unknown;
+      readonly method: "DELETE" | "POST" | "PUT";
+    },
   ): Promise<BoundedBody> => {
     const startedAt = now();
     try {
@@ -650,6 +659,7 @@ export const makeWasenderSessionLifecycle = (
     webhookUrl: string,
   ): boolean =>
     session.logMessages === false &&
+    session.ignoreGroups === false &&
     session.readIncomingMessages === false &&
     session.webhookEnabled === true &&
     session.webhookUrl === webhookUrl &&
@@ -733,6 +743,7 @@ export const makeWasenderSessionLifecycle = (
         const body = await writeJson("/api/whatsapp-sessions", {
           body: {
             account_protection: true,
+            ignore_groups: false,
             log_messages: false,
             name: marker,
             phone_number: number,
@@ -830,6 +841,35 @@ export const makeWasenderSessionLifecycle = (
             ...LifecycleSession[],
           ],
         };
+      }),
+    repairSessionConfiguration: ({ setupMarker, webhookEndpoint }) =>
+      effect(async () => {
+        const webhookUrl = Redacted.value(webhookEndpoint);
+        const providerSessions = await loadSessionsForMarker(setupMarker);
+        if (providerSessions.length !== 1) {
+          throw writeFailure("integrity_failed", false);
+        }
+        const providerSession = providerSessions[0];
+        if (!providerSession) throw writeFailure("integrity_failed", false);
+        await writeJson(`/api/whatsapp-sessions/${providerSession.id}`, {
+          body: {
+            account_protection: true,
+            ignore_groups: false,
+            log_messages: false,
+            read_incoming_messages: false,
+            webhook_enabled: true,
+            webhook_events: webhookEvents,
+            webhook_url: webhookUrl,
+          },
+          method: "PUT",
+        });
+        return completeLifecycleWrite(async () => {
+          const repaired = await loadDetail(providerSession.id);
+          if (!hasWebhookConfiguration(repaired, webhookUrl)) {
+            throw writeFailure("integrity_failed", true);
+          }
+          return toLifecycleSession(repaired);
+        });
       }),
   };
 };

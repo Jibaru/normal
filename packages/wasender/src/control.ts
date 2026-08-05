@@ -107,6 +107,10 @@ export interface SessionLifecycle {
     readonly setupMarker: SetupMarker;
     readonly webhookEndpoint?: WebhookEndpoint | undefined;
   }) => AdapterEffect<SessionReconciliation>;
+  readonly repairSessionConfiguration: (request: {
+    readonly setupMarker: SetupMarker;
+    readonly webhookEndpoint: WebhookEndpoint;
+  }) => AdapterEffect<LifecycleSession>;
   readonly deleteSession: (request: {
     readonly session: LifecycleSessionLocator;
   }) => AdapterEffect<SessionDeletionObservation>;

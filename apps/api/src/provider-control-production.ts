@@ -42,7 +42,11 @@ export const makeProviderControlLayers = (provider: ProviderControlService) => {
   ) => safeRead(() => provider.reconcileSession(input));
 
   return {
-    connectionHealth: Layer.succeed(ConnectionHealthProvider, { reconcile }),
+    connectionHealth: Layer.succeed(ConnectionHealthProvider, {
+      reconcile,
+      repair: (input) =>
+        lifecycleWrite(() => provider.repairSessionConfiguration(input)),
+    }),
     connectionSetupCleanup: Layer.succeed(ConnectionSetupCleanupProvider, {
       delete: (input) => lifecycleWrite(() => provider.deleteSession(input)),
       reconcile,

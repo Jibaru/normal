@@ -17,6 +17,7 @@ const provider = () => ({
   getQrCode: vi.fn().mockResolvedValue(success),
   listSessions: vi.fn().mockResolvedValue(success),
   reconcileSession: vi.fn().mockResolvedValue(success),
+  repairSessionConfiguration: vi.fn().mockResolvedValue(success),
 });
 
 const allLayers = (service: ProviderControlService) => {

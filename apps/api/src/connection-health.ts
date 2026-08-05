@@ -1,4 +1,5 @@
 import type {
+  LifecycleSession,
   ProviderControlResult,
   SessionReconciliation,
 } from "@whatsapp-mcp/contracts/provider-control";
@@ -39,6 +40,10 @@ export interface ConnectionHealthProviderService {
     readonly setupMarker: string;
     readonly webhookUrl: string;
   }) => Effect.Effect<ProviderControlResult<SessionReconciliation>>;
+  readonly repair: (input: {
+    readonly setupMarker: string;
+    readonly webhookUrl: string;
+  }) => Effect.Effect<ProviderControlResult<LifecycleSession>>;
 }
 
 export const ConnectionHealthProvider =
@@ -126,6 +131,20 @@ const normalize = (
   }
 };
 
+const normalizeRepair = (
+  result: ProviderControlResult<LifecycleSession>,
+): NormalizedHealthObservation =>
+  result.ok
+    ? normalize({
+        ok: true,
+        value: { outcome: "present", session: result.value },
+      })
+    : {
+        gapEvidence: "webhook_configuration",
+        state: "degraded",
+        webhookConfigurationHealthy: false,
+      };
+
 const webhookUrl = (apiOrigin: string, webhookIngressId: string): string => {
   const origin = new URL(apiOrigin);
   if (
@@ -157,11 +176,15 @@ export const reconcileConnectionHealth = (
     const clock = yield* ConnectionHealthClock;
     const telemetry = yield* SafeTelemetry;
     const startedAt = yield* clock.now;
-    const result = yield* provider.reconcile({
+    const input = {
       setupMarker: candidate.setupMarker,
       webhookUrl: webhookUrl(apiOrigin, candidate.webhookIngressId),
-    });
-    const observation = normalize(result);
+    };
+    const result = yield* provider.reconcile(input);
+    const observation =
+      !result.ok && result.error.code === "integrity_failed"
+        ? normalizeRepair(yield* provider.repair(input))
+        : normalize(result);
     const checkedAt = yield* clock.now;
     const applied = yield* persistence.finish({
       checkedAt,

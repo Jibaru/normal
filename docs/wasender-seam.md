@@ -38,8 +38,12 @@ per-session Layer uses it.
 
 The lifecycle adapter calls the documented account endpoints at the fixed
 `https://www.wasenderapi.com` origin. Creation uses the deterministic Connection
-Setup marker as the provider name and always disables provider message logging
-and automatic incoming-message reads. Provider numeric identifiers become
+Setup marker as the provider name, always disables provider message logging
+and automatic incoming-message reads, and explicitly keeps group webhook
+delivery enabled. The five-minute reconciliation may repair only this complete
+safe webhook configuration through the lifecycle-write policy. It verifies the
+repair with a fresh provider read before reporting the configuration healthy.
+Provider numeric identifiers become
 domain-separated HMAC locators; resolving a locator therefore performs a
 bounded account list instead of exposing or embedding the raw identifier. A QR
 payload is rendered immediately to SVG bytes and the payload is not retained.
