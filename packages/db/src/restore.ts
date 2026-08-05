@@ -1,8 +1,8 @@
 import { sql } from "drizzle-orm";
 import {
   makeDatabase,
-  makeQueryConnection,
   type QueryConnection,
+  withPgQueryConnection,
 } from "./database";
 
 export interface RestoreCandidate {
@@ -42,23 +42,10 @@ export interface RestoreRepository {
   ) => Promise<boolean>;
 }
 
-const withClient = async <Value>(
+const withClient = <Value>(
   connectionString: string,
   use: (client: QueryConnection) => Promise<Value>,
-) => {
-  const { Client } = await import("pg");
-  const client = new Client({
-    connectionString,
-    connectionTimeoutMillis: 10_000,
-    query_timeout: 30_000,
-  });
-  await client.connect();
-  try {
-    return await use(makeQueryConnection(client));
-  } finally {
-    await client.end();
-  }
-};
+) => withPgQueryConnection(connectionString, use, 30_000, 10_000);
 
 export const makePgRestoreRepository = (
   connectionString: string,

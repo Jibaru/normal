@@ -38,11 +38,12 @@ export const withPgQueryConnection = async <Value>(
   connectionString: string,
   use: (connection: QueryConnection) => Promise<Value>,
   queryTimeoutMillis = 5_000,
+  connectionTimeoutMillis = 5_000,
 ): Promise<Value> => {
   const { Client } = await import("pg");
   const client: PgClient = new Client({
     connectionString,
-    connectionTimeoutMillis: 5_000,
+    connectionTimeoutMillis,
     query_timeout: queryTimeoutMillis,
   });
   await client.connect();
