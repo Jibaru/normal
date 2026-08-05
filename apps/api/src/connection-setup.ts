@@ -314,6 +314,11 @@ const jsonResponse = (
 const notFound = (browserOrigin?: string): Response =>
   jsonResponse({ error: "not_found" }, 404, browserOrigin);
 
+const failureResponse = (failure: unknown, browserOrigin: string): Response =>
+  hasFailureTag(failure, "InvalidHumanIdentity", "ConnectionSetupNotAccessible")
+    ? notFound(browserOrigin)
+    : jsonResponse({ error: "unavailable" }, 503, browserOrigin);
+
 const decodeRequest = async (
   request: Request,
 ): Promise<{
@@ -441,13 +446,7 @@ export const createConnectionSetupHandler =
           Effect.provide(layer),
           Effect.match({
             onFailure: (failure: unknown) =>
-              hasFailureTag(
-                failure,
-                "InvalidHumanIdentity",
-                "ConnectionSetupNotAccessible",
-              )
-                ? notFound(browserOrigin)
-                : jsonResponse({ error: "unavailable" }, 503, browserOrigin),
+              failureResponse(failure, browserOrigin),
             onSuccess: (result) => cancellationResponse(result, browserOrigin),
           }),
         ),
@@ -482,13 +481,7 @@ export const createConnectionSetupHandler =
         Effect.provide(layer),
         Effect.match({
           onFailure: (failure: unknown) =>
-            hasFailureTag(
-              failure,
-              "InvalidHumanIdentity",
-              "ConnectionSetupNotAccessible",
-            )
-              ? notFound(browserOrigin)
-              : jsonResponse({ error: "unavailable" }, 503, browserOrigin),
+            failureResponse(failure, browserOrigin),
           onSuccess: (result) => {
             if ("setup" in result) {
               return successResponse(result, browserOrigin);
