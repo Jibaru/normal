@@ -100,10 +100,7 @@ export function ConsentExperience({
   }, [clerk, clerkJwtTemplate, getToken, inspectEndpoint, isLoaded, request]);
 
   const submitApproval = useReverification(async () => {
-    const token = await getToken({
-      skipCache: true,
-      template: clerkJwtTemplate,
-    });
+    const token = await getToken({ skipCache: true });
     if (!token || !inspection) throw new Error("token unavailable");
     const response = await fetch(decisionEndpoint, {
       body: JSON.stringify({

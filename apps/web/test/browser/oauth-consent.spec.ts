@@ -122,12 +122,7 @@ test("approves only explicit authority after recent Clerk reverification", async
       send_confirmed: true,
     });
   await expect.poll(() => reverificationOpened).toBe(true);
-  await expect
-    .poll(() => tokenRequests)
-    .toContainEqual({
-      skipCache: true,
-      template: "whatsapp-api",
-    });
+  await expect.poll(() => tokenRequests).toContainEqual({ skipCache: true });
   await expect(page).toHaveURL(/\?oauth=approved$/u);
 });
 
