@@ -28,6 +28,16 @@ const hasSameStrings = (
   actual.length === expected.length &&
   actual.every((value, index) => value === expected[index]);
 
+const assertAbsent = (
+  configuration: Record<string, unknown>,
+  keys: ReadonlyArray<string>,
+  errorFor: (key: string) => string,
+) => {
+  for (const key of keys) {
+    if (key in configuration) throw new Error(errorFor(key));
+  }
+};
+
 for (const deployable of deployables) {
   const manifestPath = `${repositoryRoot}/apps/${deployable}/wrangler.jsonc`;
   const manifest = Bun.JSONC.parse(
@@ -50,13 +60,12 @@ for (const deployable of deployables) {
     ];
     const configurations = manifestConfigurations(manifest);
     for (const [configurationName, configuration] of configurations) {
-      for (const key of forbiddenAuthority) {
-        if (key in configuration) {
-          throw new Error(
-            `Provider-control must not declare ${key}; it receives lifecycle secrets only.`,
-          );
-        }
-      }
+      assertAbsent(
+        configuration,
+        forbiddenAuthority,
+        (key) =>
+          `Provider-control must not declare ${key}; it receives lifecycle secrets only.`,
+      );
       if (
         !hasSameStrings(requiredSecrets(configuration), requiredSecretNames)
       ) {
