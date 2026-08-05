@@ -547,9 +547,7 @@ export const makeMcpAuthorizationRepository = (
 const makePgConnectionProvider = (
   connectionString: string,
 ): PersonalAccountConnectionProvider => ({
-  withConnection: async <Value>(
-    use: (connection: PersonalAccountConnection) => Promise<Value>,
-  ): Promise<Value> =>
+  withConnection: (use) =>
     withPgRequestConnection(connectionString, (client) =>
       use(makeQueryConnection(client)),
     ),
