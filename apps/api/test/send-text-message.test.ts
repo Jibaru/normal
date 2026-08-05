@@ -43,6 +43,11 @@ const recipientRoute = await sealRecipientRoute(
   "contact",
   "15551234567",
 );
+const groupRecipientRoute = await sealRecipientRoute(
+  await deriveRecipientRouteKeys("session-authority"),
+  "group",
+  "120363123456789012@g.us",
+);
 const storedAuthority = JSON.stringify({
   sessionCredential: "session-authority",
   webhookVerificationSecret: "webhook-secret",
@@ -60,6 +65,115 @@ const input = {
 
 describe("atomic send workflow", () => {
   afterEach(() => vi.unstubAllGlobals());
+
+  test("keeps a slow group provider attempt alive after returning the committed receipt", async () => {
+    const providerResponse = Promise.withResolvers<Response>();
+    const recordProviderOutcome = vi.fn(async ({ status }) => ({
+      createdAt: new Date("2026-08-03T12:00:00.000Z"),
+      publicId: "snd_123456789012345678947",
+      status,
+      statusChangedAt: new Date("2026-08-03T12:00:01.000Z"),
+    }));
+    const repository: AtomicSendRepository = {
+      commit: async () => ({
+        outcome: "created",
+        provider: {
+          ...material,
+          authority: protectedValue(storedAuthority),
+          identityKey: protectedValue("x".repeat(32)),
+          recipient: protectedValue(groupRecipientRoute),
+          recipientRecordId: `di1_${"G".repeat(43)}`,
+          recipientType: "group",
+        },
+        receipt: {
+          createdAt: new Date("2026-08-03T12:00:00.000Z"),
+          publicId: "snd_123456789012345678947",
+          status: "processing",
+          statusChangedAt: new Date("2026-08-03T12:00:00.000Z"),
+        },
+      }),
+      expireLeases: vi.fn(),
+      recordProviderOutcome,
+    };
+    const encryption: EnvelopeEncryption = {
+      createConnectionKey: () => Effect.die("unused"),
+      createPersonalAccountKey: () => Effect.die("unused"),
+      decrypt: ({ context }) =>
+        Effect.succeed(
+          new TextEncoder().encode(
+            context.fieldOrObjectPurpose === "webhook-identity-key"
+              ? "x".repeat(32)
+              : context.fieldOrObjectPurpose === "provider-session-authority"
+                ? storedAuthority
+                : groupRecipientRoute,
+          ),
+        ),
+      decryptMany: () => Effect.die("unused"),
+      encrypt: () =>
+        Effect.succeed({
+          ciphertext: btoa("encrypted-pending-content"),
+          keyVersion: 1,
+          nonce: btoa(String.fromCharCode(...new Uint8Array(12))),
+          version: 1,
+        }),
+    };
+    const providerAttempt = vi.fn(() => providerResponse.promise);
+    vi.stubGlobal("fetch", providerAttempt);
+    const service = makeAtomicSendTextMessageService({
+      encryption,
+      fingerprintKey: await importSendFingerprintKey("47".repeat(32)),
+      hourRequestLimit: 600,
+      minuteRequestLimit: 60,
+      nextAuditLogId: () => "50000000-0000-4000-8000-000000000047",
+      nextSend: () => ({
+        id: "60000000-0000-4000-8000-000000000047",
+        publicId: "snd_123456789012345678947",
+      }),
+      now: () => new Date("2026-08-03T12:00:01.000Z"),
+      repository,
+      sendDailyLimit: 200,
+      sendPerMinuteLimit: 10,
+      telemetry: () => undefined,
+    });
+    let deferred: Promise<void> | undefined;
+    const result = Effect.runPromise(
+      service.send(
+        { ...input, recipientId: "grp_123456789012345678947" },
+        (attempt) => {
+          deferred = attempt;
+        },
+      ),
+    );
+
+    await expect(
+      Promise.race([
+        result,
+        new Promise((resolve) =>
+          setTimeout(() => resolve("request-still-waiting"), 50),
+        ),
+      ]),
+    ).resolves.toMatchObject({
+      outcome: "receipt",
+      receipt: { status: "processing" },
+    });
+    await vi.waitFor(() => expect(providerAttempt).toHaveBeenCalledTimes(1));
+    providerResponse.resolve(
+      new Response(
+        JSON.stringify({
+          success: true,
+          data: {
+            jid: "120363123456789012@g.us",
+            msgId: 47,
+            status: "in_progress",
+          },
+        }),
+      ),
+    );
+    await deferred;
+    expect(recordProviderOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "accepted" }),
+    );
+  });
 
   test("commits encrypted state before exactly one provider attempt", async () => {
     const order: string[] = [];

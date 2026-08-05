@@ -48,6 +48,66 @@ const OAUTH_CLIENTS: ReadonlyArray<AllowlistedOAuthClient> = [
   },
 ];
 
+const isChatGptClientMetadataId = (clientId: string): boolean => {
+  try {
+    const url = new URL(clientId);
+    return (
+      url.protocol === "https:" &&
+      url.hostname === "chatgpt.com" &&
+      url.port === "" &&
+      url.username === "" &&
+      url.password === "" &&
+      url.search === "" &&
+      url.hash === "" &&
+      url.pathname.startsWith("/oauth/") &&
+      url.pathname.endsWith("/client.json")
+    );
+  } catch {
+    return false;
+  }
+};
+
+const isChatGptRedirectUri = (redirectUri: string): boolean => {
+  try {
+    const url = new URL(redirectUri);
+    return (
+      url.protocol === "https:" &&
+      url.hostname === "chatgpt.com" &&
+      url.port === "" &&
+      url.username === "" &&
+      url.password === "" &&
+      url.hash === ""
+    );
+  } catch {
+    return false;
+  }
+};
+
+const loadDynamicChatGptClient = async (
+  clientId: string,
+  helpers: OAuthHelpers,
+): Promise<AllowlistedOAuthClient | undefined> => {
+  if (!isChatGptClientMetadataId(clientId)) return undefined;
+  const metadata = await helpers.lookupClient(clientId);
+  if (
+    !metadata ||
+    metadata.clientId !== clientId ||
+    metadata.tokenEndpointAuthMethod !== "none" ||
+    metadata.redirectUris.length === 0 ||
+    metadata.redirectUris.some(
+      (redirectUri) => !isChatGptRedirectUri(redirectUri),
+    )
+  ) {
+    return undefined;
+  }
+  return {
+    clientClass: "chatgpt",
+    clientId,
+    clientName: "ChatGPT",
+    redirectUris: metadata.redirectUris,
+  };
+};
+
 export interface OAuthConfiguration {
   readonly clients: ReadonlyArray<AllowlistedOAuthClient>;
   readonly consentOrigin: string;
@@ -384,15 +444,31 @@ export const openAuthorizationRequest = async (
       candidate.clientClass === opened.clientClass &&
       candidate.clientName === opened.clientName,
   );
+  const dynamicClient =
+    opened.clientClass === "chatgpt" &&
+    opened.clientName === "ChatGPT" &&
+    typeof opened.clientId === "string" &&
+    isChatGptClientMetadataId(opened.clientId) &&
+    isAuthRequest(opened.request) &&
+    opened.request.clientId === opened.clientId &&
+    isChatGptRedirectUri(opened.request.redirectUri)
+      ? ({
+          clientClass: "chatgpt",
+          clientId: opened.clientId,
+          clientName: "ChatGPT",
+          redirectUris: [opened.request.redirectUri],
+        } satisfies AllowlistedOAuthClient)
+      : undefined;
+  const trustedClient = client ?? dynamicClient;
   if (
     opened.version !== 1 ||
-    !client ||
+    !trustedClient ||
     typeof opened.expiresAt !== "number" ||
     !Number.isSafeInteger(opened.expiresAt) ||
     opened.expiresAt <= Date.now() ||
     !isAuthRequest(opened.request) ||
-    opened.request.clientId !== client.clientId ||
-    !client.redirectUris.includes(opened.request.redirectUri) ||
+    opened.request.clientId !== trustedClient.clientId ||
+    !trustedClient.redirectUris.includes(opened.request.redirectUri) ||
     opened.request.resource !== configuration.resource ||
     opened.request.scope.length === 0 ||
     opened.request.scope.some(
@@ -405,7 +481,7 @@ export const openAuthorizationRequest = async (
     await kv.delete(keyName);
   }
   return {
-    client,
+    client: trustedClient,
     expiresAt: opened.expiresAt,
     request: opened.request,
   };
@@ -500,9 +576,13 @@ const makeAuthorizationHandler = (
       const requestedScope = requestedParameter(url, "scope")
         ?.split(" ")
         .filter(Boolean);
-      const client = options.configuration.clients.find(
-        (candidate) => candidate.clientId === clientId,
-      );
+      const client =
+        options.configuration.clients.find(
+          (candidate) => candidate.clientId === clientId,
+        ) ??
+        (clientId && environment.OAUTH_PROVIDER
+          ? await loadDynamicChatGptClient(clientId, environment.OAUTH_PROVIDER)
+          : undefined);
       clientClass = client?.clientClass;
       if (
         !client ||
@@ -624,9 +704,10 @@ const parseTokenRequest = async (
       grantTypes.length !== 1 ||
       clientId === undefined ||
       !["authorization_code", "refresh_token"].includes(grantTypes[0] ?? "") ||
-      !configuration.clients.some(
+      (!configuration.clients.some(
         (candidate) => candidate.clientId === clientId,
-      )
+      ) &&
+        !isChatGptClientMetadataId(clientId))
     ) {
       return null;
     }
@@ -804,7 +885,7 @@ export const createOAuthHandler = (
     },
     apiRoute: options.configuration.resource,
     authorizeEndpoint: `${options.configuration.issuer}/oauth/authorize`,
-    clientIdMetadataDocumentEnabled: false,
+    clientIdMetadataDocumentEnabled: true,
     defaultHandler: makeAuthorizationHandler(options),
     onError: (error) => {
       options.telemetry({
@@ -889,9 +970,13 @@ export const createOAuthHandler = (
       const oauthSubject = oauthSubjectFromRefreshToken(
         tokenRequest.refreshToken,
       );
-      const clientClass = options.configuration.clients.find(
-        (candidate) => candidate.clientId === tokenRequest.clientId,
-      )?.clientClass;
+      const clientClass =
+        options.configuration.clients.find(
+          (candidate) => candidate.clientId === tokenRequest.clientId,
+        )?.clientClass ??
+        (isChatGptClientMetadataId(tokenRequest.clientId)
+          ? "chatgpt"
+          : undefined);
       if (oauthSubject === null) {
         return oauthTokenError("invalid_grant", 400);
       }

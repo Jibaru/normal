@@ -133,7 +133,7 @@ export interface AtomicSendServiceOptions {
 export const makeAtomicSendTextMessageService = (
   options: AtomicSendServiceOptions,
 ): SendTextMessageService => ({
-  send: (input) =>
+  send: (input, deferProviderAttempt) =>
     Effect.tryPromise(async (): Promise<SendTextMessageResult> => {
       const observedAt = options.now();
       const send = options.nextSend();
@@ -214,140 +214,172 @@ export const makeAtomicSendTextMessageService = (
           value.fill(0);
         }
       };
-      let status:
-        | "accepted"
-        | "sent"
-        | "delivered"
-        | "read"
-        | "failed"
-        | "unknown";
-      let messageIdentity: string | undefined;
-      try {
-        const authority = sessionCredential(
-          await decryptString(envelope(provider.authority), {
-            entity: "whatsapp-connection",
-            purpose: "provider-session-authority",
-            recordId: provider.connectionKey.connectionId,
-          }),
-        );
-        const recipient = await decryptString(envelope(provider.recipient), {
-          entity:
-            provider.recipientType === "contact"
-              ? "directory-contact"
-              : "whatsapp-group",
-          purpose: "provider-identity",
-          recordId: provider.recipientRecordId,
-        });
-        const contactPhone =
-          provider.recipientType === "contact" && provider.contactPhone != null
-            ? await decryptString(envelope(provider.contactPhone), {
-                entity: "directory-contact",
-                purpose: "phone-number",
+      const completeProviderAttempt =
+        async (): Promise<SendTextMessageOutput> => {
+          let status:
+            | "accepted"
+            | "sent"
+            | "delivered"
+            | "read"
+            | "failed"
+            | "unknown";
+          let messageIdentity: string | undefined;
+          try {
+            const authority = sessionCredential(
+              await decryptString(envelope(provider.authority), {
+                entity: "whatsapp-connection",
+                purpose: "provider-session-authority",
+                recordId: provider.connectionKey.connectionId,
+              }),
+            );
+            const recipient = await decryptString(
+              envelope(provider.recipient),
+              {
+                entity:
+                  provider.recipientType === "contact"
+                    ? "directory-contact"
+                    : "whatsapp-group",
+                purpose: "provider-identity",
                 recordId: provider.recipientRecordId,
-              })
-            : null;
-        const identityBytes = await Effect.runPromise(
-          options.encryption.decrypt({
-            ...opened,
-            ciphertext: envelope(provider.identityKey),
-            context: {
-              accountId: provider.accountKey.personalAccountId,
-              connectionId: provider.connectionKey.connectionId,
-              entity: "whatsapp-connection",
-              fieldOrObjectPurpose: "webhook-identity-key",
-              recordId: provider.connectionKey.connectionId,
-            },
-          }),
-        );
-        try {
-          const resolvedRecipient =
-            contactPhone === null
-              ? (Redacted.make(recipient) as WasenderRecipientRoute)
-              : await makeWasenderRecipientRoute(
-                  Redacted.make(identityBytes) as WasenderIdentityProtectionKey,
-                  "contact",
-                  contactPhone,
-                );
-          const locator = "send-recipient" as RecipientLocator;
-          const adapter = makeWasenderTextSending({
-            authority: Redacted.make(authority) as never,
-            identityKey: Redacted.make(
-              identityBytes,
-            ) as WasenderIdentityProtectionKey,
-            resolveRecipient: (candidate) =>
-              candidate === locator ? resolvedRecipient : null,
-            telemetry: { emit: options.telemetry },
-          });
-          const result = await Effect.runPromise(
-            adapter.sendText({ recipient: locator, text: input.text }),
-          );
-          status =
-            result.outcome === "ambiguous"
-              ? "unknown"
-              : result.outcome === "definitive_failure"
-                ? "failed"
-                : result.status;
-          if (result.outcome === "identity_evidence") {
-            messageIdentity = result.messageIdentity;
-          }
-        } finally {
-          identityBytes.fill(0);
-        }
-      } catch {
-        status = "unknown";
-      }
-      const updated = await options.repository
-        .recordProviderOutcome({
-          changedAt: options.now(),
-          ...(messageIdentity === undefined ? {} : { messageIdentity }),
-          sendId: send.id,
-          status,
-          ...(messageIdentity !== undefined &&
-          (status === "sent" || status === "delivered" || status === "read")
-            ? {
-                storedMessage: await (async () => {
-                  const identifiers = options.nextStoredMessage?.() ?? {
-                    conversationId: crypto.randomUUID(),
-                    conversationPublicId: makeConversationId(),
-                    messageId: crypto.randomUUID(),
-                    messagePublicId: makeMessageId(),
-                  };
-                  const plaintext = encoder.encode(
-                    JSON.stringify({ mediaSource: null, text: input.text }),
-                  );
-                  const protectedContent = await Effect.runPromise(
-                    Effect.acquireUseRelease(
-                      Effect.succeed(plaintext),
-                      (bytes) =>
-                        options.encryption.encrypt({
-                          ...opened,
-                          context: {
-                            accountId: provider.accountKey.personalAccountId,
-                            connectionId: provider.connectionKey.connectionId,
-                            entity: "stored-message",
-                            fieldOrObjectPurpose: "content",
-                            recordId: messageIdentity,
-                          },
-                          plaintext: bytes,
-                        }),
-                      (bytes) => Effect.sync(() => bytes.fill(0)),
-                    ),
-                  );
-                  return {
-                    content: {
-                      ciphertext: decodeBase64(protectedContent.ciphertext),
-                      keyVersion: protectedContent.keyVersion,
-                      nonce: decodeBase64(protectedContent.nonce),
-                    },
-                    contentType: "text" as const,
-                    ...identifiers,
-                  };
-                })(),
+              },
+            );
+            const contactPhone =
+              provider.recipientType === "contact" &&
+              provider.contactPhone != null
+                ? await decryptString(envelope(provider.contactPhone), {
+                    entity: "directory-contact",
+                    purpose: "phone-number",
+                    recordId: provider.recipientRecordId,
+                  })
+                : null;
+            const identityBytes = await Effect.runPromise(
+              options.encryption.decrypt({
+                ...opened,
+                ciphertext: envelope(provider.identityKey),
+                context: {
+                  accountId: provider.accountKey.personalAccountId,
+                  connectionId: provider.connectionKey.connectionId,
+                  entity: "whatsapp-connection",
+                  fieldOrObjectPurpose: "webhook-identity-key",
+                  recordId: provider.connectionKey.connectionId,
+                },
+              }),
+            );
+            try {
+              const resolvedRecipient =
+                contactPhone === null
+                  ? (Redacted.make(recipient) as WasenderRecipientRoute)
+                  : await makeWasenderRecipientRoute(
+                      Redacted.make(
+                        identityBytes,
+                      ) as WasenderIdentityProtectionKey,
+                      "contact",
+                      contactPhone,
+                    );
+              const locator = "send-recipient" as RecipientLocator;
+              const adapter = makeWasenderTextSending({
+                authority: Redacted.make(authority) as never,
+                identityKey: Redacted.make(
+                  identityBytes,
+                ) as WasenderIdentityProtectionKey,
+                resolveRecipient: (candidate) =>
+                  candidate === locator ? resolvedRecipient : null,
+                telemetry: { emit: options.telemetry },
+              });
+              const result = await Effect.runPromise(
+                adapter.sendText({ recipient: locator, text: input.text }),
+              );
+              status =
+                result.outcome === "ambiguous"
+                  ? "unknown"
+                  : result.outcome === "definitive_failure"
+                    ? "failed"
+                    : result.status;
+              if (result.outcome === "identity_evidence") {
+                messageIdentity = result.messageIdentity;
               }
-            : {}),
-        })
-        .catch(() => committed.receipt);
-      return { outcome: "receipt", receipt: receipt(updated, false) };
+            } finally {
+              identityBytes.fill(0);
+            }
+          } catch {
+            status = "unknown";
+          }
+          const updated = await options.repository
+            .recordProviderOutcome({
+              changedAt: options.now(),
+              ...(messageIdentity === undefined ? {} : { messageIdentity }),
+              sendId: send.id,
+              status,
+              ...(messageIdentity !== undefined &&
+              (status === "sent" || status === "delivered" || status === "read")
+                ? {
+                    storedMessage: await (async () => {
+                      const identifiers = options.nextStoredMessage?.() ?? {
+                        conversationId: crypto.randomUUID(),
+                        conversationPublicId: makeConversationId(),
+                        messageId: crypto.randomUUID(),
+                        messagePublicId: makeMessageId(),
+                      };
+                      const plaintext = encoder.encode(
+                        JSON.stringify({ mediaSource: null, text: input.text }),
+                      );
+                      const protectedContent = await Effect.runPromise(
+                        Effect.acquireUseRelease(
+                          Effect.succeed(plaintext),
+                          (bytes) =>
+                            options.encryption.encrypt({
+                              ...opened,
+                              context: {
+                                accountId:
+                                  provider.accountKey.personalAccountId,
+                                connectionId:
+                                  provider.connectionKey.connectionId,
+                                entity: "stored-message",
+                                fieldOrObjectPurpose: "content",
+                                recordId: messageIdentity,
+                              },
+                              plaintext: bytes,
+                            }),
+                          (bytes) => Effect.sync(() => bytes.fill(0)),
+                        ),
+                      );
+                      return {
+                        content: {
+                          ciphertext: decodeBase64(protectedContent.ciphertext),
+                          keyVersion: protectedContent.keyVersion,
+                          nonce: decodeBase64(protectedContent.nonce),
+                        },
+                        contentType: "text" as const,
+                        ...identifiers,
+                      };
+                    })(),
+                  }
+                : {}),
+            })
+            .catch(() => committed.receipt);
+          return receipt(updated, false);
+        };
+      if (deferProviderAttempt !== undefined) {
+        const providerAttempt = completeProviderAttempt();
+        try {
+          deferProviderAttempt(providerAttempt.then(() => undefined));
+          return {
+            outcome: "receipt",
+            receipt: receipt(committed.receipt, false),
+          };
+        } catch {
+          // If the runtime cannot extend the request lifetime, complete the
+          // already-committed single attempt before returning.
+        }
+        return {
+          outcome: "receipt",
+          receipt: await providerAttempt,
+        };
+      }
+      return {
+        outcome: "receipt",
+        receipt: await completeProviderAttempt(),
+      };
     }).pipe(
       Effect.catchAll(() =>
         Effect.succeed({ outcome: "service_unavailable" as const }),

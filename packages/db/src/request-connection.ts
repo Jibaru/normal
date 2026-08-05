@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { Client as PgClient } from "pg";
 
 interface ConnectionScope<Client> {
+  active: boolean;
   readonly connections: Map<string, Promise<Client>>;
 }
 
@@ -30,11 +31,15 @@ export const makeRequestConnectionManager = <Client>(input: {
   return {
     run: async (use) => {
       if (storage.getStore() !== undefined) return use();
-      const scope: ConnectionScope<Client> = { connections: new Map() };
+      const scope: ConnectionScope<Client> = {
+        active: true,
+        connections: new Map(),
+      };
       return storage.run(scope, async () => {
         try {
           return await use();
         } finally {
+          scope.active = false;
           const clients = await Promise.allSettled(scope.connections.values());
           await Promise.allSettled(
             clients.flatMap((client) =>
@@ -46,7 +51,7 @@ export const makeRequestConnectionManager = <Client>(input: {
     },
     withConnection: async (key, use) => {
       const scope = storage.getStore();
-      if (scope !== undefined) return use(await acquire(scope, key));
+      if (scope?.active === true) return use(await acquire(scope, key));
       const client = await input.connect(key);
       try {
         return await use(client);

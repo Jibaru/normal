@@ -14,6 +14,7 @@ export type EncryptionOperation =
 
 export class EncryptionError extends Data.TaggedError("EncryptionError")<{
   readonly operation: EncryptionOperation;
+  readonly stage?: "account-key" | "connection-key" | "ciphertext";
 }> {}
 
 export interface KmsKeyService {
@@ -173,8 +174,11 @@ const zero = (value: Uint8Array) =>
     value.fill(0);
   });
 
-const operationError = (operation: EncryptionOperation) =>
-  new EncryptionError({ operation });
+const operationError = (
+  operation: EncryptionOperation,
+  stage?: EncryptionError["stage"],
+) =>
+  new EncryptionError({ operation, ...(stage === undefined ? {} : { stage }) });
 
 const validateAccountEnvelope = (
   envelope: PersonalAccountKeyEnvelope,
@@ -237,12 +241,12 @@ export const makeEnvelopeEncryption = ({
     use: (key: CryptoKey) => Effect.Effect<A, EncryptionError>,
   ): Effect.Effect<A, EncryptionError> => {
     if (!validateAccountEnvelope(envelope, contentRootKeyId)) {
-      return Effect.fail(operationError(operation));
+      return Effect.fail(operationError(operation, "account-key"));
     }
 
     const acquire = Effect.try({
       try: () => decodeBase64(envelope.ciphertext),
-      catch: () => operationError(operation),
+      catch: () => operationError(operation, "account-key"),
     }).pipe(
       Effect.flatMap((ciphertext) =>
         kms.decrypt({
@@ -255,7 +259,7 @@ export const makeEnvelopeEncryption = ({
           keyId: envelope.kmsKeyId,
         }),
       ),
-      Effect.mapError(() => operationError(operation)),
+      Effect.mapError(() => operationError(operation, "account-key")),
     );
 
     return Effect.acquireUseRelease(
@@ -276,7 +280,7 @@ export const makeEnvelopeEncryption = ({
       connectionKey.personalAccountId !== accountKey.personalAccountId ||
       connectionKey.accountKeyVersion !== accountKey.keyVersion
     ) {
-      return Effect.fail(operationError(operation));
+      return Effect.fail(operationError(operation, "connection-key"));
     }
 
     return withAccountKey(operation, accountKey, (accountCryptoKey) =>
@@ -294,6 +298,7 @@ export const makeEnvelopeEncryption = ({
         );
         return new Uint8Array(plaintext);
       }).pipe(
+        Effect.mapError(() => operationError(operation, "connection-key")),
         Effect.flatMap((keyBytes) =>
           Effect.acquireUseRelease(
             Effect.succeed(keyBytes),
@@ -342,7 +347,7 @@ export const makeEnvelopeEncryption = ({
         toArrayBuffer(decodeBase64(ciphertext.ciphertext)),
       );
       return new Uint8Array(plaintext);
-    });
+    }).pipe(Effect.mapError(() => operationError("decrypt", "ciphertext")));
 
   return {
     createPersonalAccountKey: ({ accountId, keyVersion }) => {
@@ -352,7 +357,7 @@ export const makeEnvelopeEncryption = ({
         !isPositiveVersion(keyVersion) ||
         !hasText(contentRootKeyId)
       ) {
-        return Effect.fail(operationError(operation));
+        return Effect.fail(operationError(operation, "ciphertext"));
       }
 
       const generated = kms

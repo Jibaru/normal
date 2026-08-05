@@ -18,9 +18,9 @@ export const metadata: Metadata = {
   metadataBase: new URL(
     process.env.NEXT_PUBLIC_WEB_ORIGIN ?? "http://localhost:3000",
   ),
-  title: "Normal | WhatsApp MCP for your AI",
+  title: "Normal | WhatsApp in ChatGPT and Claude",
   description:
-    "Connect WhatsApp to the MCP Clients you choose. Find conversations, understand context, and send messages with your confirmation.",
+    "Bring your WhatsApp data into ChatGPT and Claude. Search conversations, summarize groups, find details, and draft replies with explicit permissions.",
 };
 
 export default function RootLayout({

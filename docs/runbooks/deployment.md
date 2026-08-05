@@ -342,19 +342,19 @@ BEGIN
 END
 $transition$;
 
-CREATE TABLE app_private.drizzle_migrations (
+CREATE TABLE public.drizzle_migrations (
   id serial PRIMARY KEY,
   hash text NOT NULL,
   created_at bigint
 );
 
-INSERT INTO app_private.drizzle_migrations (hash, created_at)
+INSERT INTO public.drizzle_migrations (hash, created_at)
 VALUES (
   '20063ae83cd8d6a8e5849c7f5e7956644aba347643d0608e16dd1711fc132e75',
   1785787776687
 );
 
-GRANT SELECT ON app_private.drizzle_migrations
+GRANT SELECT ON public.drizzle_migrations
   TO whatsapp_api_runtime, whatsapp_webhook_runtime,
      whatsapp_deletion_runtime, whatsapp_restore_runtime;
 
@@ -378,7 +378,7 @@ unset MIGRATION_DATABASE_URL
 
 Migration execution uses `drizzle-kit migrate` with `packages/db/drizzle.config.ts`.
 Drizzle applies pending migrations in a transaction and records their hashes in
-`app_private.drizzle_migrations`. An interrupted migration rolls back; rerun
+`public.drizzle_migrations`. An interrupted migration rolls back; rerun
 `bun run db:migrate` after correcting the cause. Never edit an applied
 migration - add a new forward migration. The baseline includes the
 RLS-protected refresh-credential ledger and least-privilege API-role functions;

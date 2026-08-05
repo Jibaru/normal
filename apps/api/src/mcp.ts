@@ -59,7 +59,7 @@ import {
 } from "./directory-privacy";
 import {
   type EncryptionContext,
-  type EncryptionError,
+  EncryptionError,
   type EnvelopeEncryption,
   EnvelopeEncryptionService,
   type VersionedCiphertext,
@@ -282,6 +282,7 @@ export interface SendTextMessageService {
       readonly recipientId: string;
       readonly text: string;
     },
+    deferProviderAttempt?: (attempt: Promise<void>) => void,
   ) => Effect.Effect<SendTextMessageResult, never>;
 }
 
@@ -883,16 +884,20 @@ const listConnections = (
 const sendTextMessage = (
   authorization: McpAccessAuthorization,
   input: z.infer<typeof SendTextMessageInput>,
+  deferProviderAttempt?: (attempt: Promise<void>) => void,
 ) =>
   Effect.gen(function* () {
     const service = yield* SendTextMessage;
-    const result = yield* service.send({
-      ...authorization,
-      connectionId: input.connection_id,
-      idempotencyKey: input.idempotency_key,
-      recipientId: input.recipient_id,
-      text: input.text,
-    });
+    const result = yield* service.send(
+      {
+        ...authorization,
+        connectionId: input.connection_id,
+        idempotencyKey: input.idempotency_key,
+        recipientId: input.recipient_id,
+        text: input.text,
+      },
+      deferProviderAttempt,
+    );
     if (result.outcome === "receipt") {
       yield* emitToolCompletion("send_text_message", "success", 1);
       return buildSendTextMessageResult(result.receipt);
@@ -1971,8 +1976,19 @@ const listChats = (
               };
             }),
           };
-    if (chats._tag === "Left")
-      return yield* fail("service_unavailable", "decryption");
+    if (chats._tag === "Left") {
+      const failureStage =
+        chats.left instanceof EncryptionError
+          ? chats.left.stage === "account-key"
+            ? "decryption_account_key"
+            : chats.left.stage === "connection-key"
+              ? "decryption_connection_key"
+              : chats.left.stage === "ciphertext"
+                ? "decryption_ciphertext"
+                : "decryption"
+          : "decryption";
+      return yield* fail("service_unavailable", failureStage);
+    }
     let nextCursor: string | null = null;
     if (hasMore) {
       const last = selected.at(-1);
@@ -2756,9 +2772,9 @@ export const createMcpRequestHandler =
         },
         async (input) => {
           const result = await Effect.runPromise(
-            sendTextMessage(authorization, input).pipe(
-              Effect.provide(options.layer),
-            ),
+            sendTextMessage(authorization, input, (attempt) =>
+              context.waitUntil(attempt),
+            ).pipe(Effect.provide(options.layer)),
           );
           return {
             ...result,

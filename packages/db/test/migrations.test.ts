@@ -38,11 +38,21 @@ describe("production migrations", () => {
       hash: string;
     }>("SELECT created_at, hash FROM public.drizzle_migrations ORDER BY id");
 
-    expect(result.rows).toHaveLength(1);
-    expect(Number(result.rows[0]?.created_at)).toBe(EXPECTED_SCHEMA_VERSION);
-    expect(result.rows[0]?.hash).toBe(
-      "3154967c1dd4f561c13d6cc1646b138217ff8184e2d9483714b03fdae9574624",
-    );
+    expect(
+      result.rows.map((row) => ({
+        ...row,
+        created_at: Number(row.created_at),
+      })),
+    ).toEqual([
+      {
+        created_at: 1785787776687,
+        hash: "3154967c1dd4f561c13d6cc1646b138217ff8184e2d9483714b03fdae9574624",
+      },
+      {
+        created_at: EXPECTED_SCHEMA_VERSION,
+        hash: "e549a123254ba6a9bd052d12e6f0f4890b452aff5657afa41c9f20973e8de87d",
+      },
+    ]);
   });
 
   test("coexists with the complete legacy migration ledger", async () => {
@@ -66,7 +76,7 @@ describe("production migrations", () => {
         (SELECT count(*)::int FROM public.schema_migrations) AS legacy,
         (SELECT count(*)::int FROM public.drizzle_migrations) AS standard
     `);
-    expect(ledgers.rows).toEqual([{ legacy: 40, standard: 1 }]);
+    expect(ledgers.rows).toEqual([{ legacy: 40, standard: 2 }]);
   });
 
   test("clears only retention limitations superseded by a complete Directory snapshot", async () => {

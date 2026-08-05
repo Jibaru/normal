@@ -12,12 +12,12 @@ describe("API Worker entrypoint", () => {
   });
 
   test("serves OAuth metadata through the configured Worker export", async () => {
-    const response = await exports.default.fetch(
+    const protectedResourceResponse = await exports.default.fetch(
       "https://api.example.test/.well-known/oauth-protected-resource/mcp",
     );
 
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({
+    expect(protectedResourceResponse.status).toBe(200);
+    expect(await protectedResourceResponse.json()).toEqual({
       authorization_servers: ["https://api.example.test"],
       bearer_methods_supported: ["header"],
       resource: "https://api.example.test/mcp",
@@ -28,6 +28,14 @@ describe("API Worker entrypoint", () => {
         "messages:read",
         "messages:send",
       ],
+    });
+
+    const authorizationServerResponse = await exports.default.fetch(
+      "https://api.example.test/.well-known/oauth-authorization-server",
+    );
+    expect(authorizationServerResponse.status).toBe(200);
+    expect(await authorizationServerResponse.json()).toMatchObject({
+      client_id_metadata_document_supported: true,
     });
   });
 

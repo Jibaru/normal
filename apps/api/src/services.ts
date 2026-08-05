@@ -272,6 +272,9 @@ export interface McpToolCallCompletedEvent {
   readonly failureStage?:
     | "audit_completion"
     | "configuration"
+    | "decryption_account_key"
+    | "decryption_ciphertext"
+    | "decryption_connection_key"
     | "decryption"
     | "output"
     | "query"

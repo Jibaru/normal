@@ -1580,6 +1580,59 @@ describe("MCP tool repository", () => {
     });
   });
 
+  test("loads chat read material when the OAuth context has no client ID", async () => {
+    const conversationId = "70000000-0000-4000-8000-000000000049";
+    await database.query(
+      `UPDATE public.mcp_authorizations SET scopes=ARRAY['messages:read']::text[] WHERE id=$1`,
+      [authorizationId],
+    );
+    await database.query(
+      `INSERT INTO public.whatsapp_conversations (
+         id, personal_account_id, whatsapp_connection_id, public_id, kind,
+         recipient_locator, recipient_public_id, last_activity_at,
+         last_activity_direction
+       ) VALUES (
+         $1, $2, '20000000-0000-4000-8000-000000000030',
+         'cvs_123456789012345678949', 'direct', $3,
+         'ctc_123456789012345678949', $4, 'inbound'
+       )`,
+      [conversationId, accountId, `di1_${"G".repeat(43)}`, observedAt],
+    );
+    await database.query(
+      `INSERT INTO public.stored_messages (
+         id, personal_account_id, whatsapp_connection_id, conversation_id,
+         public_id, message_identity, direction, sent_at, content_type,
+         content_ciphertext_version, content_key_version, content_nonce,
+         content_ciphertext, received_at, webhook_item_identity
+       ) VALUES (
+         '71000000-0000-4000-8000-000000000049', $1,
+         '20000000-0000-4000-8000-000000000030', $2,
+         'msg_123456789012345678949', $3, 'inbound', $4, 'text', 1, 1,
+         decode(repeat('11',12),'hex'), decode(repeat('12',32),'hex'), $4, $3
+       )`,
+      [accountId, conversationId, `wi1_${"G".repeat(43)}`, observedAt],
+    );
+
+    const page = await repository.listChats({
+      authorizationId,
+      oauthSubject,
+      connectionPublicId: connectionA,
+      cursorActivityAt: null,
+      cursorPublicId: null,
+      kind: "all",
+      limit: 20,
+      observedAt,
+    });
+
+    expect(page).toMatchObject({
+      accountKey: { personalAccountId: accountId },
+      chats: [{ conversationId: "cvs_123456789012345678949" }],
+      connectionKey: {
+        connectionId: "20000000-0000-4000-8000-000000000030",
+      },
+    });
+  });
+
   test("atomically reauthorizes and reserves protected Stored Media bytes", async () => {
     const conversationId = "70000000-0000-4000-8000-000000000046";
     const messageId = "71000000-0000-4000-8000-000000000046";

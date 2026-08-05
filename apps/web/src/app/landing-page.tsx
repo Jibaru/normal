@@ -15,7 +15,6 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { FaqAccordion } from "@/components/faq-accordion";
-import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import {
   Card,
@@ -98,6 +97,31 @@ function Wordmark() {
   );
 }
 
+function AiClientLogo({ client }: { readonly client: "ChatGPT" | "Claude" }) {
+  if (client === "Claude") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 32 32">
+        <path d="M15.9 3.2v25.6M4.8 9.6l22.3 12.8M4.8 22.4 27.1 9.6M8.5 5.5l14.8 21M3.2 16h25.6M8.5 26.5l14.8-21" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg aria-hidden="true" viewBox="0 0 32 32">
+      <path d="M16 5.1a6.2 6.2 0 0 1 10.4 4.5 6.2 6.2 0 0 1 1.2 11.4 6.2 6.2 0 0 1-9.2 7.1 6.2 6.2 0 0 1-10.5-4.4A6.2 6.2 0 0 1 6.7 12.3 6.2 6.2 0 0 1 16 5.1Zm0 0 5.4 3.1v6.2M6.7 12.3l5.4 3.1 5.4-3.1m.9 15.8v-6.2L13 18.8m14.6 2.2-5.4-3.1-5.4 3.1M7.9 23.7v-6.2l5.4-3.1m13.1-4.8L21 12.7v6.2" />
+    </svg>
+  );
+}
+
+function AiClientPill({ client }: { readonly client: "ChatGPT" | "Claude" }) {
+  return (
+    <span className="ai-client-pill">
+      <AiClientLogo client={client} />
+      {client}
+    </span>
+  );
+}
+
 export function LandingPage() {
   return (
     <main className="landing" id="top">
@@ -121,30 +145,72 @@ export function LandingPage() {
       </nav>
 
       <section className="hero">
-        <div className="hero-copy landing-shell">
-          <Badge className="eyebrow" variant="outline">
-            WhatsApp MCP for your AI
-          </Badge>
-          <h1>
-            Give your AI access to WhatsApp. <em>Keep control.</em>
-          </h1>
-          <p className="hero-description">
-            Normal securely connects your WhatsApp to the MCP Clients you
-            choose. Find conversations, understand context, and send messages
-            with your confirmation.
-          </p>
-          <div className="hero-actions">
-            <ContactButton />
-            <a className="text-link" href="#use-cases">
-              See how it works
-              <ArrowDown aria-hidden="true" />
-            </a>
+        <div className="hero-layout landing-shell">
+          <div className="hero-copy">
+            <div className="ai-client-row">
+              <AiClientPill client="ChatGPT" />
+              <AiClientPill client="Claude" />
+            </div>
+            <h1>
+              Your WhatsApp, inside <em>ChatGPT and Claude.</em>
+            </h1>
+            <p className="hero-description">
+              Ask questions about your chats, find forgotten details, summarize
+              busy groups, and draft replies without copying messages back and
+              forth.
+            </p>
+            <div className="hero-actions">
+              <ContactButton>Connect my WhatsApp</ContactButton>
+              <a className="text-link" href="#how-it-works">
+                See how it works
+                <ArrowDown aria-hidden="true" />
+              </a>
+            </div>
+            <p className="hero-note">
+              <ShieldCheck aria-hidden="true" />
+              You choose what each AI can read or send. Revoke access anytime.
+            </p>
           </div>
-          <p className="hero-note">
-            <ShieldCheck aria-hidden="true" />
-            You choose the WhatsApp Connection, permissions, and when access
-            ends.
-          </p>
+
+          <div
+            className="hero-demo"
+            role="img"
+            aria-label="Example of WhatsApp data in ChatGPT or Claude"
+          >
+            <div className="hero-demo-topbar">
+              <div className="hero-demo-client">
+                <AiClientLogo client="ChatGPT" />
+                <span>ChatGPT</span>
+              </div>
+              <span className="connected-status">
+                <span aria-hidden="true" /> Connected to WhatsApp
+              </span>
+            </div>
+            <div className="hero-demo-body">
+              <div className="demo-message demo-message-user">
+                What did the group decide about the launch date?
+              </div>
+              <div className="demo-response">
+                <div className="demo-response-icon">
+                  <AiClientLogo client="ChatGPT" />
+                </div>
+                <div>
+                  <p>
+                    The group agreed to launch on <strong>September 18</strong>.
+                    Camila will confirm the venue and Marco owns the guest list.
+                  </p>
+                  <div className="demo-sources">
+                    <MessagesSquare aria-hidden="true" />
+                    <span>Found in Launch planning · 14 messages</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="hero-demo-footer">
+              <span>WhatsApp context, available when you ask</span>
+              <ShieldCheck aria-hidden="true" />
+            </div>
+          </div>
         </div>
       </section>
 
@@ -152,9 +218,9 @@ export function LandingPage() {
         <p className="section-kicker">The missing context</p>
         <div className="tension-grid">
           <h2>
-            Your AI is useful.
+            ChatGPT and Claude are useful.
             <br />
-            Your conversations are <em>somewhere else.</em>
+            Your WhatsApp data is <em>somewhere else.</em>
           </h2>
           <div>
             <p className="tension-copy">
@@ -162,7 +228,9 @@ export function LandingPage() {
               WhatsApp. Your AI cannot help with any of it unless you manually
               copy everything across.
             </p>
-            <strong className="tension-close">Normal closes that gap.</strong>
+            <strong className="tension-close">
+              Normal brings WhatsApp into the conversation.
+            </strong>
           </div>
         </div>
       </section>
