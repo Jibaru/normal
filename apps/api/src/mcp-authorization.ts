@@ -9,6 +9,7 @@ import {
   type HumanIdentityService,
 } from "./auth/human-identity";
 import { encodeBase64Url } from "./base64-url";
+import { hasFailureTag } from "./failure-tag";
 import {
   OAUTH_SCOPES,
   type OAuthConfiguration,
@@ -678,11 +679,11 @@ const managementFailureResponse = (
   failure: unknown,
   browserOrigin: string,
 ): Response =>
-  typeof failure === "object" &&
-  failure !== null &&
-  "_tag" in failure &&
-  (failure._tag === "InvalidHumanIdentity" ||
-    failure._tag === "InvalidManagementAuthorization")
+  hasFailureTag(
+    failure,
+    "InvalidHumanIdentity",
+    "InvalidManagementAuthorization",
+  )
     ? managementNotFound(browserOrigin)
     : managementJsonResponse({ error: "unavailable" }, 503, browserOrigin);
 
