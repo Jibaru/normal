@@ -89,12 +89,11 @@ for (const deployable of deployables) {
           `Deletion coordinator ${name} must require its isolated KMS and database credentials.`,
         );
       }
-      for (const forbidden of ["hyperdrive", "kv_namespaces", "queues"]) {
-        if (forbidden in configuration)
-          throw new Error(
-            `Deletion coordinator must not declare ${forbidden}.`,
-          );
-      }
+      assertAbsent(
+        configuration,
+        ["hyperdrive", "kv_namespaces", "queues"],
+        (key) => `Deletion coordinator must not declare ${key}.`,
+      );
     }
   } else if (deployable === "restore-coordinator") {
     const configurations = manifestConfigurations(manifest);
