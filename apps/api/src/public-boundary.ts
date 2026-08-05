@@ -1,4 +1,5 @@
 import { Context, Data, Effect, type Layer } from "effect";
+import { noStoreJsonResponse } from "./http-response";
 
 export class ControlledBoundaryFailure extends Data.TaggedError(
   "ControlledBoundaryFailure",
@@ -64,7 +65,7 @@ type BoundaryRequirements =
   | BoundaryProvider
   | BoundaryResource;
 
-const corsHeaders = (request: Request, browserOrigin: string): HeadersInit =>
+const corsHeaders = (request: Request, browserOrigin: string) =>
   request.headers.get("origin") === browserOrigin
     ? {
         "access-control-allow-headers": "authorization,content-type",
@@ -80,14 +81,7 @@ const jsonResponse = (
   body: unknown,
   status = 200,
 ): Response =>
-  new Response(JSON.stringify(body), {
-    headers: {
-      ...corsHeaders(request, browserOrigin),
-      "cache-control": "no-store",
-      "content-type": "application/json; charset=utf-8",
-    },
-    status,
-  });
+  noStoreJsonResponse(body, status, corsHeaders(request, browserOrigin));
 
 const runAuthenticated = <Value>(
   request: Request,
