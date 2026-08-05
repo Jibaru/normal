@@ -3,6 +3,7 @@ import {
   HumanIdentity,
   type HumanIdentityService,
 } from "./auth/human-identity";
+import { noStoreJsonResponse, noStoreResponse } from "./http-response";
 import {
   RestoreSafeDeletion,
   SafeTelemetry,
@@ -77,23 +78,19 @@ type Requirements =
   | SafeTelemetryService;
 
 const response = (body: unknown, status: number, browserOrigin?: string) =>
-  new Response(status === 204 ? null : JSON.stringify(body), {
-    headers: {
-      ...(browserOrigin === undefined
-        ? {}
-        : {
-            "access-control-allow-headers": "authorization",
-            "access-control-allow-methods": "DELETE,OPTIONS",
-            "access-control-allow-origin": browserOrigin,
-            vary: "Origin",
-          }),
-      "cache-control": "no-store",
-      ...(status === 204
-        ? {}
-        : { "content-type": "application/json; charset=utf-8" }),
-    },
-    status,
-  });
+  status === 204
+    ? noStoreResponse(null, status, corsHeaders(browserOrigin))
+    : noStoreJsonResponse(body, status, corsHeaders(browserOrigin));
+
+const corsHeaders = (browserOrigin?: string) =>
+  browserOrigin === undefined
+    ? {}
+    : {
+        "access-control-allow-headers": "authorization",
+        "access-control-allow-methods": "DELETE,OPTIONS",
+        "access-control-allow-origin": browserOrigin,
+        vary: "Origin",
+      };
 
 export const isPersonalAccountDeletionRequest = (request: Request): boolean => {
   const pathname = new URL(request.url).pathname;
