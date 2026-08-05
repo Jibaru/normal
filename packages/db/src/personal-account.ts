@@ -1,6 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
-import type { Client as PgClient } from "pg";
-import { type Database, makeDatabase, makeQueryConnection } from "./database";
+import { type Database, makeDatabase, withPgQueryConnection } from "./database";
 import { personalAccountsInApp } from "./schema";
 import { withTransaction } from "./transaction";
 
@@ -302,22 +301,7 @@ export const makePersonalAccountRepository = (
 const makePgConnectionProvider = (
   connectionString: string,
 ): PersonalAccountConnectionProvider => ({
-  withConnection: async <Value>(
-    use: (connection: PersonalAccountConnection) => Promise<Value>,
-  ): Promise<Value> => {
-    const { Client } = await import("pg");
-    const client: PgClient = new Client({
-      connectionString,
-      connectionTimeoutMillis: 5_000,
-      query_timeout: 5_000,
-    });
-    await client.connect();
-    try {
-      return await use(makeQueryConnection(client));
-    } finally {
-      await client.end();
-    }
-  },
+  withConnection: (use) => withPgQueryConnection(connectionString, use),
 });
 
 export const makePgPersonalAccountRepository = (
