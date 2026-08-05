@@ -3,6 +3,7 @@ import type {
   ReadinessResponse,
 } from "@whatsapp-mcp/contracts/health";
 import { Effect, type Layer } from "effect";
+import { noStoreJsonResponse } from "./http-response";
 import {
   ApplicationConfig,
   DatabaseReadiness,
@@ -10,16 +11,8 @@ import {
   SafeTelemetry,
 } from "./services";
 
-const jsonHeaders = {
-  "cache-control": "no-store",
-  "content-type": "application/json; charset=utf-8",
-} as const;
-
 const jsonResponse = (body: unknown, status: number): Response =>
-  new Response(JSON.stringify(body), {
-    headers: jsonHeaders,
-    status,
-  });
+  noStoreJsonResponse(body, status);
 
 const canaryProgram = (request: Request) =>
   Effect.gen(function* () {
