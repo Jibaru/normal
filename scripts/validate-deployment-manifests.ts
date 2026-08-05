@@ -8,6 +8,13 @@ const deployables = [
 ] as const;
 const oauthKvValidationId = "22222222222222222222222222222222";
 
+const manifestConfigurations = (manifest: Record<string, unknown>) => [
+  ["top level", manifest] as const,
+  ...Object.entries(
+    (manifest.env as Record<string, Record<string, unknown>> | undefined) ?? {},
+  ),
+];
+
 for (const deployable of deployables) {
   const manifestPath = `${repositoryRoot}/apps/${deployable}/wrangler.jsonc`;
   const manifest = Bun.JSONC.parse(
@@ -28,13 +35,7 @@ for (const deployable of deployables) {
       "r2_buckets",
       "services",
     ];
-    const configurations = [
-      ["top level", manifest],
-      ...Object.entries(
-        (manifest.env as Record<string, Record<string, unknown>> | undefined) ??
-          {},
-      ),
-    ] as const;
+    const configurations = manifestConfigurations(manifest);
     for (const [configurationName, configuration] of configurations) {
       for (const key of forbiddenAuthority) {
         if (key in configuration) {
@@ -58,13 +59,7 @@ for (const deployable of deployables) {
       }
     }
   } else if (deployable === "deletion-coordinator") {
-    const configurations = [
-      ["top level", manifest],
-      ...Object.entries(
-        (manifest.env as Record<string, Record<string, unknown>> | undefined) ??
-          {},
-      ),
-    ] as const;
+    const configurations = manifestConfigurations(manifest);
     const required = [
       "AWS_ACCESS_KEY_ID",
       "AWS_SECRET_ACCESS_KEY",
@@ -93,13 +88,7 @@ for (const deployable of deployables) {
       }
     }
   } else if (deployable === "restore-coordinator") {
-    const configurations = [
-      ["top level", manifest],
-      ...Object.entries(
-        (manifest.env as Record<string, Record<string, unknown>> | undefined) ??
-          {},
-      ),
-    ] as const;
+    const configurations = manifestConfigurations(manifest);
     const required = [
       "DELETION_MARKER_HMAC_SECRET",
       "NEON_BRANCH_ID",
