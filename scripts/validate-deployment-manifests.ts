@@ -7,6 +7,7 @@ const deployables = [
   "restore-coordinator",
 ] as const;
 const oauthKvValidationId = "22222222222222222222222222222222";
+const requiredApiCrons = ["* * * * *", "*/5 * * * *", "0 * * * *"].sort();
 
 const manifestConfigurations = (manifest: Record<string, unknown>) => [
   ["top level", manifest] as const,
@@ -167,7 +168,7 @@ for (const deployable of deployables) {
           : `-${configurationName}`;
       if (
         JSON.stringify(configuredCrons(configuration)) !==
-        JSON.stringify(["* * * * *", "*/5 * * * *", "0 * * * *"].sort())
+        JSON.stringify(requiredApiCrons)
       ) {
         throw new Error(
           `API ${configurationName} configuration must schedule minute recovery, five-minute reconciliation, and hourly retention.`,
