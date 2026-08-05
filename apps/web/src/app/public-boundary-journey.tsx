@@ -1,5 +1,6 @@
 "use client";
 
+import { useAuth, useClerk } from "@clerk/nextjs";
 import { makeIdempotencyKey } from "@whatsapp-mcp/contracts/handles";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -21,11 +22,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import { loadBrowserClerk } from "../clerk/browser";
 
 interface PublicBoundaryJourneyProps {
   readonly clerkJwtTemplate: string;
-  readonly clerkPublishableKey: string;
   readonly connectionsEndpoint: string;
   readonly connectionSetupEndpoint: string;
   readonly mcpAuthorizationsEndpoint: string;
@@ -41,8 +40,6 @@ type JourneyState =
   | "unavailable"
   | "waitlisted"
   | "ok";
-
-type IdentityState = "loading" | "signed_out" | "signed_in" | "unavailable";
 
 type SetupState =
   | "cancelled"
@@ -329,7 +326,6 @@ const decodeSafeWhatsAppConnection = (
 
 export function PublicBoundaryJourney({
   clerkJwtTemplate,
-  clerkPublishableKey,
   connectionsEndpoint,
   connectionSetupEndpoint,
   mcpAuthorizationsEndpoint,
@@ -337,7 +333,16 @@ export function PublicBoundaryJourney({
   personalAccountDeletionEndpoint,
   toolCallLogsEndpoint,
 }: PublicBoundaryJourneyProps) {
-  const [identityState, setIdentityState] = useState<IdentityState>("loading");
+  const { getToken: getClerkToken, isLoaded, isSignedIn } = useAuth();
+  const clerk = useClerk();
+  const [identityUnavailable, setIdentityUnavailable] = useState(false);
+  const identityState = identityUnavailable
+    ? "unavailable"
+    : !isLoaded
+      ? "loading"
+      : isSignedIn
+        ? "signed_in"
+        : "signed_out";
   const [state, setState] = useState<JourneyState>("idle");
   const [setupState, setSetupState] = useState<SetupState>("idle");
   const [authorizationState, setAuthorizationState] =
@@ -400,31 +405,6 @@ export function PublicBoundaryJourney({
   const observationGeneration = useRef(0);
   const observationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    let active = true;
-    let unsubscribe: (() => void) | undefined;
-
-    void loadBrowserClerk(clerkPublishableKey)
-      .then((clerk) => {
-        if (!active) return;
-        const updateIdentity = () => {
-          if (active) {
-            setIdentityState(clerk.session ? "signed_in" : "signed_out");
-          }
-        };
-        updateIdentity();
-        unsubscribe = clerk.addListener?.(updateIdentity);
-      })
-      .catch(() => {
-        if (active) setIdentityState("unavailable");
-      });
-
-    return () => {
-      active = false;
-      unsubscribe?.();
-    };
-  }, [clerkPublishableKey]);
-
   useEffect(
     () => () => {
       observationGeneration.current += 1;
@@ -446,33 +426,22 @@ export function PublicBoundaryJourney({
   );
 
   const getToken = async () => {
-    const clerk = await loadBrowserClerk(clerkPublishableKey);
-    const token = await clerk.session?.getToken({
-      template: clerkJwtTemplate,
-    });
-    if (token === undefined || token === null) return null;
-    return token;
+    return getClerkToken({ template: clerkJwtTemplate });
   };
 
   const openSignIn = async () => {
     try {
-      const clerk = await loadBrowserClerk(clerkPublishableKey);
-      if (clerk.openSignIn === undefined)
-        throw new Error("sign-in unavailable");
-      clerk.openSignIn();
+      await clerk.openSignIn();
     } catch {
-      setIdentityState("unavailable");
+      setIdentityUnavailable(true);
     }
   };
 
   const openWaitlist = async () => {
     try {
-      const clerk = await loadBrowserClerk(clerkPublishableKey);
-      if (clerk.openWaitlist === undefined)
-        throw new Error("waitlist unavailable");
-      clerk.openWaitlist();
+      await clerk.openWaitlist();
     } catch {
-      setIdentityState("unavailable");
+      setIdentityUnavailable(true);
     }
   };
 
@@ -893,7 +862,6 @@ export function PublicBoundaryJourney({
     try {
       const token = await getToken();
       if (token === null) {
-        setIdentityState("signed_out");
         setState("signed_out");
         return;
       }

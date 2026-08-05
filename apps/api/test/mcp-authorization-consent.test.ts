@@ -302,6 +302,18 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
       stale.helpers,
     );
     expect(staleResponse.status).toBe(403);
+    expect(await staleResponse.json()).toEqual({
+      clerk_error: {
+        metadata: {
+          reverification: {
+            afterMinutes: 5,
+            level: "first_factor",
+          },
+        },
+        reason: "reverification-error",
+        type: "forbidden",
+      },
+    });
 
     const changed = await makeHarness();
     const changedResponse = await changed.handler(

@@ -15,7 +15,6 @@ const personalAccountConfiguration =
   isClerkPublishableKey(clerkPublishableKey)
     ? {
         clerkJwtTemplate: CLERK_JWT_TEMPLATE,
-        clerkPublishableKey,
         mcpAuthorizationsEndpoint: new URL(
           "/v1/mcp-authorizations",
           apiOrigin,

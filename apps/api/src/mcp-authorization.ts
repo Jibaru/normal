@@ -372,15 +372,23 @@ const decide = async (
         );
   if (verified._tag === "Left") {
     return jsonResponse(
-      {
-        error:
-          typeof verified.left === "object" &&
-          verified.left !== null &&
-          "_tag" in verified.left &&
-          verified.left._tag === "RecentHumanVerificationRequired"
-            ? "recent_reverification_required"
-            : "not_found",
-      },
+      typeof verified.left === "object" &&
+        verified.left !== null &&
+        "_tag" in verified.left &&
+        verified.left._tag === "RecentHumanVerificationRequired"
+        ? {
+            clerk_error: {
+              metadata: {
+                reverification: {
+                  afterMinutes: 5,
+                  level: "first_factor",
+                },
+              },
+              reason: "reverification-error",
+              type: "forbidden",
+            },
+          }
+        : { error: "not_found" },
       typeof verified.left === "object" &&
         verified.left !== null &&
         "_tag" in verified.left &&

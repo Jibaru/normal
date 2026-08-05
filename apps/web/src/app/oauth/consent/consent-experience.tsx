@@ -1,5 +1,6 @@
 "use client";
 
+import { useAuth, useClerk, useReverification } from "@clerk/nextjs";
 import { useEffect, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -13,11 +14,9 @@ import {
 } from "@/components/ui/field";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { loadBrowserClerk } from "../../../clerk/browser";
 
 interface ConsentExperienceProps {
   readonly clerkJwtTemplate: string;
-  readonly clerkPublishableKey: string;
   readonly decisionEndpoint: string;
   readonly inspectEndpoint: string;
   readonly request: string;
@@ -41,22 +40,14 @@ const scopeLabels: Readonly<Record<string, string>> = {
   "messages:send": "Send WhatsApp messages for you",
 };
 
-const recentFirstFactor = (
-  factorVerificationAge: [number, number] | null | undefined,
-): boolean =>
-  factorVerificationAge !== null &&
-  factorVerificationAge !== undefined &&
-  Number.isSafeInteger(factorVerificationAge[0]) &&
-  factorVerificationAge[0] >= 0 &&
-  factorVerificationAge[0] < 5;
-
 export function ConsentExperience({
   clerkJwtTemplate,
-  clerkPublishableKey,
   decisionEndpoint,
   inspectEndpoint,
   request,
 }: ConsentExperienceProps) {
+  const { getToken, isLoaded } = useAuth();
+  const clerk = useClerk();
   const [inspection, setInspection] = useState<Inspection | null>(null);
   const [connections, setConnections] = useState<ReadonlyArray<string>>([]);
   const [scopes, setScopes] = useState<ReadonlyArray<string>>([]);
@@ -70,12 +61,10 @@ export function ConsentExperience({
     let active = true;
     const load = async () => {
       try {
-        const clerk = await loadBrowserClerk(clerkPublishableKey);
-        const token = await clerk.session?.getToken({
-          template: clerkJwtTemplate,
-        });
+        if (!isLoaded) return;
+        const token = await getToken({ template: clerkJwtTemplate });
         if (!token) {
-          clerk.openSignIn?.();
+          await clerk.openSignIn();
           throw new Error("signed out");
         }
         const response = await fetch(inspectEndpoint, {
@@ -108,74 +97,61 @@ export function ConsentExperience({
     return () => {
       active = false;
     };
-  }, [clerkJwtTemplate, clerkPublishableKey, inspectEndpoint, request]);
+  }, [clerk, clerkJwtTemplate, getToken, inspectEndpoint, isLoaded, request]);
 
-  const tokenAfterRecentVerification = async (): Promise<string> => {
-    const clerk = await loadBrowserClerk(clerkPublishableKey);
-    const session = clerk.session;
-    if (!session) throw new Error("signed out");
-    if (!recentFirstFactor(session.factorVerificationAge)) {
-      if (!clerk.__internal_openReverification) {
-        throw new Error("reverification unavailable");
-      }
-      await new Promise<void>((resolve, reject) => {
-        clerk.__internal_openReverification?.({
-          afterVerification: resolve,
-          afterVerificationCancelled: () =>
-            reject(new Error("reverification cancelled")),
-          level: "first_factor",
-        });
-      });
-    }
-    session.clearCache?.();
-    const token = await session.getToken({
-      skipCache: true,
+  const submitApproval = useReverification(async () => {
+    const token = await getToken({ skipCache: true });
+    if (!token || !inspection) throw new Error("token unavailable");
+    return fetch(decisionEndpoint, {
+      body: JSON.stringify({
+        connection_ids: connections,
+        decision: "approve",
+        presentation: inspection.presentation,
+        read_confirmed: readConfirmed,
+        request,
+        scopes,
+        send_confirmed: sendConfirmed,
+      }),
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      method: "POST",
     });
-    if (!token) throw new Error("token unavailable");
-    return token;
-  };
+  });
 
   const submit = async (decision: "approve" | "deny") => {
     if (!inspection) return;
     setState("submitting");
     try {
-      const clerk = await loadBrowserClerk(clerkPublishableKey);
-      const token =
+      const body =
         decision === "approve"
-          ? await tokenAfterRecentVerification()
-          : await clerk.session?.getToken({ template: clerkJwtTemplate });
-      if (!token) throw new Error("token unavailable");
-      const response = await fetch(decisionEndpoint, {
-        body: JSON.stringify(
-          decision === "deny"
-            ? {
-                decision,
-                presentation: inspection.presentation,
-                request,
-              }
-            : {
-                connection_ids: connections,
-                decision,
-                presentation: inspection.presentation,
-                read_confirmed: readConfirmed,
-                request,
-                scopes,
-                send_confirmed: sendConfirmed,
-              },
-        ),
-        headers: {
-          authorization: `Bearer ${token}`,
-          "content-type": "application/json",
-        },
-        method: "POST",
-      });
-      const body = (await response.json()) as {
+          ? await submitApproval()
+          : await (async () => {
+              const token = await getToken({ template: clerkJwtTemplate });
+              if (!token) throw new Error("token unavailable");
+              const response = await fetch(decisionEndpoint, {
+                body: JSON.stringify({
+                  decision,
+                  presentation: inspection.presentation,
+                  request,
+                }),
+                headers: {
+                  authorization: `Bearer ${token}`,
+                  "content-type": "application/json",
+                },
+                method: "POST",
+              });
+              if (!response.ok) throw new Error("decision unavailable");
+              return response.json();
+            })();
+      const result = body as {
         readonly redirect_to?: unknown;
       };
-      if (!response.ok || typeof body.redirect_to !== "string") {
+      if (typeof result.redirect_to !== "string") {
         throw new Error("decision unavailable");
       }
-      window.location.assign(body.redirect_to);
+      window.location.assign(result.redirect_to);
     } catch {
       setState("unavailable");
     }

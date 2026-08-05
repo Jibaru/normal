@@ -31,7 +31,6 @@ export default async function OAuthConsentPage({
   return (
     <ConsentExperience
       clerkJwtTemplate={CLERK_JWT_TEMPLATE}
-      clerkPublishableKey={clerkPublishableKey}
       decisionEndpoint={new URL(
         "/v1/oauth/consent/decision",
         apiOrigin,

@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
-    "@clerk/clerk-js": "6.25.12",
+    "@clerk/nextjs": "7.6.5",
     "@whatsapp-mcp/contracts": "workspace:*",
     "@whatsapp-mcp/domain": "workspace:*",
     "class-variance-authority": "^0.7.1",

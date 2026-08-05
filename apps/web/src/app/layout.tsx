@@ -1,5 +1,7 @@
+import { ClerkProvider } from "@clerk/nextjs";
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { isClerkPublishableKey } from "../effect/clerk-config";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -22,12 +24,19 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  return (
+  const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  const content = (
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} dark h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
+  );
+
+  if (!isClerkPublishableKey(publishableKey)) return content;
+
+  return (
+    <ClerkProvider publishableKey={publishableKey}>{content}</ClerkProvider>
   );
 }
