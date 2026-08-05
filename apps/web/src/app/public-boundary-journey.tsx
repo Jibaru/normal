@@ -2022,7 +2022,7 @@ export function PublicBoundaryJourney({
                       </div>
                       <dl className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                         <div className="flex gap-1">
-                          <dt>Number</dt>
+                          <dt>Number </dt>
                           <dd>ending {connection.numberSuffix}</dd>
                         </div>
                         <div className="flex gap-1">

@@ -99,12 +99,12 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
 
   await expect(
     page.getByRole("heading", {
-      name: "Give your AI access to WhatsApp. Keep control.",
+      name: "Your WhatsApp, inside ChatGPT and Claude.",
     }),
   ).toBeVisible();
   await expect(
     page.getByText(
-      "Normal securely connects your WhatsApp to the MCP Clients you choose. Find conversations, understand context, and send messages with your confirmation.",
+      "Ask questions about your chats, find forgotten details, summarize busy groups, and draft replies without copying messages back and forth.",
     ),
   ).toBeVisible();
   await expect(page.getByRole("link", { name: "Log in" })).toHaveAttribute(
@@ -333,6 +333,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     }),
   ).toHaveCount(0);
   await expect(resumedConnection).toContainText("Number ending 3456");
+  await resumedReconnect.getByRole("button", { name: "Close" }).click();
   expect(setupBodies).toHaveLength(1);
   expect(setupBodies[0]?.whatsapp_number).toBe("+1 (555) 012-3456");
   expect(setupBodies[0]?.idempotency_key).toMatch(/^[A-Za-z0-9_-]{21}$/);
