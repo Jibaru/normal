@@ -35,10 +35,10 @@ interface Inspection {
 }
 
 const scopeLabels: Readonly<Record<string, string>> = {
-  "connections:read": "Read connection details",
-  "directory:read": "Read WhatsApp Directory",
-  "messages:read": "Read Stored Messages",
-  "messages:send": "Send messages",
+  "connections:read": "See which WhatsApp account is connected",
+  "directory:read": "See your WhatsApp contacts and groups",
+  "messages:read": "Read your WhatsApp messages",
+  "messages:send": "Send WhatsApp messages for you",
 };
 
 const recentFirstFactor = (
@@ -200,7 +200,7 @@ export function ConsentExperience({
     <main className="min-h-screen bg-background px-6 py-12 text-foreground">
       <section className="mx-auto flex max-w-2xl flex-col gap-8">
         <p className="font-mono text-sm uppercase tracking-[0.2em] text-primary">
-          MCP Authorization
+          WhatsApp access
         </p>
         {inspection === null ? (
           state === "loading" ? (
@@ -220,14 +220,17 @@ export function ConsentExperience({
         ) : (
           <>
             <div className="flex flex-col gap-2">
-              <p className="text-muted-foreground">Allow this MCP Client?</p>
               <h1 className="text-3xl font-semibold">
-                {inspection.client.name}
+                Connect {inspection.client.name} to WhatsApp?
               </h1>
+              <p className="text-muted-foreground">
+                Choose the WhatsApp account and actions you want to allow.
+                Nothing else will be shared.
+              </p>
             </div>
 
             <FieldSet>
-              <FieldLegend>WhatsApp Connections</FieldLegend>
+              <FieldLegend>Which WhatsApp account can it use?</FieldLegend>
               <FieldGroup>
                 {inspection.connections.map((connection) => (
                   <FieldLabel
@@ -264,7 +267,7 @@ export function ConsentExperience({
             </FieldSet>
 
             <FieldSet>
-              <FieldLegend>Permissions</FieldLegend>
+              <FieldLegend>What can it do?</FieldLegend>
               <FieldGroup>
                 {inspection.requested_scopes.map((scope) => (
                   <FieldLabel key={scope}>
@@ -282,29 +285,36 @@ export function ConsentExperience({
               </FieldGroup>
             </FieldSet>
 
-            <FieldSet>
-              <FieldLegend>Confirm authority</FieldLegend>
-              <FieldGroup>
-                <FieldLabel>
-                  <Field orientation="horizontal">
-                    <Checkbox
-                      checked={readConfirmed}
-                      onCheckedChange={setReadConfirmed}
-                    />
-                    Share selected read data
-                  </Field>
-                </FieldLabel>
-                <FieldLabel>
-                  <Field orientation="horizontal">
-                    <Checkbox
-                      checked={sendConfirmed}
-                      onCheckedChange={setSendConfirmed}
-                    />
-                    Allow outbound sends
-                  </Field>
-                </FieldLabel>
-              </FieldGroup>
-            </FieldSet>
+            {hasRead || hasSend ? (
+              <FieldSet>
+                <FieldLegend>Before you continue</FieldLegend>
+                <FieldGroup>
+                  {hasRead ? (
+                    <FieldLabel>
+                      <Field orientation="horizontal">
+                        <Checkbox
+                          checked={readConfirmed}
+                          onCheckedChange={setReadConfirmed}
+                        />
+                        I’m okay with this app seeing the WhatsApp information I
+                        selected
+                      </Field>
+                    </FieldLabel>
+                  ) : null}
+                  {hasSend ? (
+                    <FieldLabel>
+                      <Field orientation="horizontal">
+                        <Checkbox
+                          checked={sendConfirmed}
+                          onCheckedChange={setSendConfirmed}
+                        />
+                        I’m okay with this app sending WhatsApp messages for me
+                      </Field>
+                    </FieldLabel>
+                  ) : null}
+                </FieldGroup>
+              </FieldSet>
+            ) : null}
 
             <div className="flex gap-3">
               <Button
@@ -315,7 +325,7 @@ export function ConsentExperience({
                 {state === "submitting" ? (
                   <Spinner data-icon="inline-start" />
                 ) : null}
-                Approve
+                Allow access
               </Button>
               <Button
                 disabled={state === "submitting"}
@@ -323,7 +333,7 @@ export function ConsentExperience({
                 type="button"
                 variant="outline"
               >
-                Deny
+                Cancel
               </Button>
             </div>
             {state === "unavailable" ? (

@@ -94,14 +94,15 @@ test("approves only explicit authority after recent Clerk reverification", async
 
   await page.goto(`/oauth/consent?request=${handoff}`);
   await expect(
-    page.getByRole("heading", { name: "Approved MCP Client" }),
+    page.getByRole("heading", {
+      name: "Connect Approved MCP Client to WhatsApp?",
+    }),
   ).toBeVisible();
   await expect(
-    page.getByRole("checkbox", { name: "Share selected read data" }),
-  ).not.toBeChecked();
-  await expect(
-    page.getByRole("checkbox", { name: "Allow outbound sends" }),
-  ).not.toBeChecked();
+    page.getByRole("checkbox", {
+      name: "I’m okay with this app sending WhatsApp messages for me",
+    }),
+  ).not.toBeVisible();
   await expect(
     page.getByLabel("Personal WhatsApp, ending in 3456"),
   ).not.toBeChecked();
@@ -109,9 +110,15 @@ test("approves only explicit authority after recent Clerk reverification", async
   await page
     .getByRole("checkbox", { name: "Personal WhatsApp, ending in 3456" })
     .check();
-  await page.getByRole("checkbox", { name: "Send messages" }).check();
-  await page.getByRole("checkbox", { name: "Allow outbound sends" }).check();
-  await page.getByRole("button", { name: "Approve" }).click();
+  await page
+    .getByRole("checkbox", { name: "Send WhatsApp messages for you" })
+    .check();
+  await page
+    .getByRole("checkbox", {
+      name: "I’m okay with this app sending WhatsApp messages for me",
+    })
+    .check();
+  await page.getByRole("button", { name: "Allow access" }).click();
 
   await expect
     .poll(() => decision)
@@ -161,7 +168,7 @@ test("denies without selecting a Connection or scope", async ({ page }) => {
   });
 
   await page.goto(`/oauth/consent?request=${handoff}`);
-  await page.getByRole("button", { name: "Deny" }).click();
+  await page.getByRole("button", { name: "Cancel" }).click();
 
   await expect
     .poll(() => decision)
