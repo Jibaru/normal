@@ -1,0 +1,85 @@
+name: Feature request
+description: Propose an improvement to the product or engineering system
+title: "Feature: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Start with the user problem. A clear problem statement makes it easier to evaluate the safest and simplest solution.
+
+        Do not include message content, credentials, tokens, full phone numbers, provider payloads, or other private data.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and ADRs for this request.
+          required: true
+        - label: I removed or replaced all private and secret data.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem should we solve?
+      description: Explain who has the problem, what they are trying to do, and why the current behavior is not enough.
+      placeholder: As a User, I need to... because...
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: What outcome would be useful?
+      description: Describe the result without locking the issue to one implementation.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Main area
+      options:
+        - Web app
+        - API or MCP
+        - OAuth or authorization
+        - WhatsApp Connection setup
+        - Message ingestion or Stored Media
+        - Provider control
+        - Deletion or restore
+        - Database or migrations
+        - Infrastructure or operations
+        - Developer experience
+        - Documentation
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Possible approach
+      description: Optional. Share an idea, API shape, workflow, or alternative if you have one.
+
+  - type: textarea
+    id: safety
+    attributes:
+      label: Security and data lifecycle impact
+      description: Consider authorization, message access, sending, audit, quotas, encryption, retention, deletion, restore, and telemetry. Write "None known" if none apply.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What can people do today, and why is that not sufficient?
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add relevant issue links, ADRs, mockups, or safe examples.

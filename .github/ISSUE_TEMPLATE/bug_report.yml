@@ -1,0 +1,100 @@
+name: Bug report
+description: Report reproducible behavior that is not working as expected
+title: "Bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. Do not include message content, credentials, tokens, full phone numbers, provider payloads, or other private data.
+
+        If this is a security vulnerability, stop here and use [private vulnerability reporting](https://github.com/cuevaio/whatsapp-mcp/security/advisories/new).
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for this problem.
+          required: true
+        - label: I removed or replaced all private and secret data.
+          required: true
+        - label: This report does not describe a security vulnerability.
+          required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the problem and its impact in plain language.
+      placeholder: When I try to..., the platform...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+      description: Describe the behavior you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How can we reproduce it?
+      description: Give the smallest reliable sequence. Use fake values in examples.
+      placeholder: |
+        1. Start...
+        2. Open...
+        3. Run...
+        4. Observe...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Web app
+        - API or MCP
+        - OAuth or authorization
+        - WhatsApp Connection setup
+        - Message ingestion or Stored Media
+        - Provider control
+        - Deletion or restore
+        - Database or migrations
+        - Infrastructure or deployment
+        - Documentation
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Share the commit SHA, deployment environment, or approximate date when you saw the problem.
+      placeholder: main at abc1234, local development, or production on 2026-08-05
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include relevant browser, operating system, Bun version, and local or deployed environment. Do not include secrets.
+      placeholder: macOS, Chrome 140, Bun 1.3.14, local development
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Safe supporting evidence
+      description: Add sanitized logs, screenshots, or error messages. Remove private data first.
+      render: shell
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else?
+      description: Add relevant issue links, recent changes, or other useful context.
