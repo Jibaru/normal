@@ -97,12 +97,12 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
 
   await expect(
     page.getByRole("heading", {
-      name: "Your WhatsApp, connected on your terms.",
+      name: "Give your AI access to WhatsApp. Keep control.",
     }),
   ).toBeVisible();
   await expect(
     page.getByText(
-      "Connect WhatsApp to the AI tools you choose. You decide which account they can use, what they can access, and when access ends.",
+      "Normal securely connects your WhatsApp to the MCP Clients you choose. Find conversations, understand context, and send messages with your confirmation.",
     ),
   ).toBeVisible();
 

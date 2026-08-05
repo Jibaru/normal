@@ -15,8 +15,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "WhatsApp MCP",
-  description: "Manage your WhatsApp MCP Personal Account.",
+  title: "Normal | WhatsApp MCP for your AI",
+  description:
+    "Connect WhatsApp to the MCP Clients you choose. Find conversations, understand context, and send messages with your confirmation.",
 };
 
 export default function RootLayout({
