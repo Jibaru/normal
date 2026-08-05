@@ -797,6 +797,14 @@ const normalizeReceipts = async (
   );
 };
 
+const contactUpdateFields = [
+  "name",
+  "notify",
+  "verifiedName",
+  "phoneNumber",
+  "active",
+] as const;
+
 const normalizeContacts = async (
   key: CryptoKey,
   data: unknown,
@@ -816,11 +824,7 @@ const normalizeContacts = async (
       }
       if (
         partialUpdate &&
-        !("name" in contact) &&
-        !("notify" in contact) &&
-        !("verifiedName" in contact) &&
-        !("phoneNumber" in contact) &&
-        !("active" in contact)
+        !contactUpdateFields.some((field) => field in contact)
       ) {
         return unsupported(itemIndex);
       }
