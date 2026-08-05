@@ -15,7 +15,7 @@ import {
   type WasenderRecipientRoute,
 } from "@whatsapp-mcp/wasender/session";
 import { Effect, Redacted } from "effect";
-import { encodeBase64, encodeBase64Url } from "./base64-url";
+import { decodeBase64, encodeBase64, encodeBase64Url } from "./base64-url";
 import type {
   EnvelopeEncryption,
   VersionedCiphertext,
@@ -174,14 +174,9 @@ export const makeAtomicSendTextMessageService = (
             }),
           );
           return {
-            ciphertext: Uint8Array.from(
-              atob(protectedContent.ciphertext),
-              (character) => character.charCodeAt(0),
-            ),
+            ciphertext: decodeBase64(protectedContent.ciphertext),
             keyVersion: protectedContent.keyVersion,
-            nonce: Uint8Array.from(atob(protectedContent.nonce), (character) =>
-              character.charCodeAt(0),
-            ),
+            nonce: decodeBase64(protectedContent.nonce),
           };
         },
       );
@@ -340,15 +335,9 @@ export const makeAtomicSendTextMessageService = (
                   );
                   return {
                     content: {
-                      ciphertext: Uint8Array.from(
-                        atob(protectedContent.ciphertext),
-                        (character) => character.charCodeAt(0),
-                      ),
+                      ciphertext: decodeBase64(protectedContent.ciphertext),
                       keyVersion: protectedContent.keyVersion,
-                      nonce: Uint8Array.from(
-                        atob(protectedContent.nonce),
-                        (character) => character.charCodeAt(0),
-                      ),
+                      nonce: decodeBase64(protectedContent.nonce),
                     },
                     contentType: "text" as const,
                     ...identifiers,
