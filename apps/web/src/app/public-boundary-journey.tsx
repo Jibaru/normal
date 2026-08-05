@@ -425,9 +425,7 @@ export function PublicBoundaryJourney({
     [],
   );
 
-  const getToken = async () => {
-    return getClerkToken({ template: clerkJwtTemplate });
-  };
+  const getToken = () => getClerkToken({ template: clerkJwtTemplate });
 
   const openSignIn = async () => {
     try {
