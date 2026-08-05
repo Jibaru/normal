@@ -8,6 +8,7 @@ import {
   SafeTelemetry,
   type SafeTelemetry as SafeTelemetryService,
 } from "./services";
+import { isCanonicalTimestamp } from "./timestamp";
 import type { WebhookEventQueueMessage } from "./webhook-event";
 
 export interface WebhookReplayRequest {
@@ -26,13 +27,6 @@ const reasons = new Set<WebhookReplayReasonCode>([
   "schema_support_deployed",
   "transient_incident_resolved",
 ]);
-
-const isCanonicalTimestamp = (value: string): boolean => {
-  const timestamp = new Date(value);
-  return (
-    Number.isFinite(timestamp.valueOf()) && timestamp.toISOString() === value
-  );
-};
 
 export const isWebhookReplayRequest = (
   value: unknown,
