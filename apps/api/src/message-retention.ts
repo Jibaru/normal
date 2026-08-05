@@ -4,6 +4,7 @@ import {
   HumanIdentity,
   type HumanIdentityService,
 } from "./auth/human-identity";
+import { hasFailureTag } from "./failure-tag";
 import {
   SafeTelemetry,
   type SafeTelemetry as SafeTelemetryService,
@@ -172,10 +173,7 @@ export const createMessageRetentionHandler =
         Effect.provide(layer),
         Effect.match({
           onFailure: (failure: unknown) =>
-            typeof failure === "object" &&
-            failure !== null &&
-            "_tag" in failure &&
-            failure._tag === "InvalidHumanIdentity"
+            hasFailureTag(failure, "InvalidHumanIdentity")
               ? json({ error: "not_found" }, 404, browserOrigin)
               : json({ error: "unavailable" }, 503, browserOrigin),
           onSuccess: (result) =>
