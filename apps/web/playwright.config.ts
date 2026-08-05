@@ -32,7 +32,7 @@ export default defineConfig({
       url: `${apiOrigin}/test/ready`,
     },
     {
-      command: `DEPLOYMENT_ENVIRONMENT=development NEXT_PUBLIC_API_ORIGIN=https://api.example.test NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_Y2xlcmsuZXhhbXBsZS50ZXN0JA bun run build && bun run start --hostname 127.0.0.1 --port ${webPort}`,
+      command: `DEPLOYMENT_ENVIRONMENT=development NEXT_PUBLIC_API_ORIGIN=https://api.example.test NEXT_PUBLIC_CLERK_JS_URL=${webOrigin}/clerk-test.js NEXT_PUBLIC_CLERK_UI_URL=${webOrigin}/clerk-ui-test.js NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_Y2xlcmsuZXhhbXBsZS50ZXN0JA bun run build && bun run start --hostname 127.0.0.1 --port ${webPort}`,
       reuseExistingServer: !process.env.CI,
       timeout: 180_000,
       url: webOrigin,

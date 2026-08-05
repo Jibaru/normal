@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
+import { installClerkBrowser } from "../support/clerk-browser";
 
 const apiPort = process.env.PLAYWRIGHT_API_PORT ?? "8787";
+const webOrigin = `http://127.0.0.1:${process.env.PLAYWRIGHT_WEB_PORT ?? "3000"}`;
 
 // A failed journey must not retain the ephemeral QR response in a trace.
 test.use({ trace: "off" });
@@ -9,6 +11,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   page,
   request,
 }) => {
+  let requestedTokenOptions: unknown;
   let bootstrapMethod: string | undefined;
   const setupBodies: Array<{
     readonly idempotency_key: string;
@@ -69,32 +72,26 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
 
     const response = await request.fetch(localUrl.toString(), {
       data: original.postDataBuffer(),
-      headers: original.headers(),
+      headers: {
+        ...original.headers(),
+        origin: "http://127.0.0.1:3000",
+      },
       method: original.method(),
     });
     await route.fulfill({
       body: await response.body(),
-      headers: response.headers(),
+      headers: {
+        ...response.headers(),
+        "access-control-allow-origin": webOrigin,
+      },
       status: response.status(),
     });
   });
-  await page.addInitScript(() => {
-    Object.defineProperty(window, "Clerk", {
-      configurable: false,
-      value: {
-        loaded: true,
-        session: {
-          getToken: async (options: unknown) => {
-            Object.defineProperty(window, "__requestedTokenTemplate", {
-              configurable: true,
-              value: options,
-            });
-            return "signed-test-user";
-          },
-        },
-      },
-      writable: false,
-    });
+  await installClerkBrowser(page, {
+    onTokenRequest: (options) => {
+      requestedTokenOptions = options;
+    },
+    signedIn: true,
   });
   await page.goto("/");
 
@@ -149,16 +146,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
       name: "Revoke Approved MCP Client",
     }),
   ).toBeDisabled();
-  expect(
-    await page.evaluate(
-      () =>
-        (
-          window as unknown as {
-            readonly __requestedTokenTemplate?: unknown;
-          }
-        ).__requestedTokenTemplate,
-    ),
-  ).toEqual({ template: "whatsapp-api" });
+  expect(requestedTokenOptions).toEqual({ template: "whatsapp-api" });
   expect(bootstrapMethod).toBe("POST");
 
   const whatsappNumber = page.getByLabel("WhatsApp Number");
@@ -290,26 +278,24 @@ test("waitlists a signed-in User when private-beta capacity is exhausted", async
 
     const response = await request.fetch(localUrl.toString(), {
       data: original.postDataBuffer(),
-      headers: original.headers(),
+      headers: {
+        ...original.headers(),
+        origin: "http://127.0.0.1:3000",
+      },
       method: original.method(),
     });
     await route.fulfill({
       body: await response.body(),
-      headers: response.headers(),
+      headers: {
+        ...response.headers(),
+        "access-control-allow-origin": webOrigin,
+      },
       status: response.status(),
     });
   });
-  await page.addInitScript(() => {
-    Object.defineProperty(window, "Clerk", {
-      configurable: false,
-      value: {
-        loaded: true,
-        session: {
-          getToken: async () => "signed-waitlisted-user",
-        },
-      },
-      writable: false,
-    });
+  await installClerkBrowser(page, {
+    signedIn: true,
+    token: "signed-waitlisted-user",
   });
   await page.goto("/");
 
@@ -345,27 +331,22 @@ test("keeps the Personal Account usable when MCP Authorization listing is unavai
     localUrl.port = apiPort;
     const response = await request.fetch(localUrl.toString(), {
       data: original.postDataBuffer(),
-      headers: original.headers(),
+      headers: {
+        ...original.headers(),
+        origin: "http://127.0.0.1:3000",
+      },
       method: original.method(),
     });
     await route.fulfill({
       body: await response.body(),
-      headers: response.headers(),
+      headers: {
+        ...response.headers(),
+        "access-control-allow-origin": webOrigin,
+      },
       status: response.status(),
     });
   });
-  await page.addInitScript(() => {
-    Object.defineProperty(window, "Clerk", {
-      configurable: false,
-      value: {
-        loaded: true,
-        session: {
-          getToken: async () => "signed-test-user",
-        },
-      },
-      writable: false,
-    });
-  });
+  await installClerkBrowser(page, { signedIn: true });
   await page.goto("/");
 
   await page
@@ -384,19 +365,9 @@ test("keeps the Personal Account usable when MCP Authorization listing is unavai
 test("recovers when the external identity token lookup fails", async ({
   page,
 }) => {
-  await page.addInitScript(() => {
-    Object.defineProperty(window, "Clerk", {
-      configurable: false,
-      value: {
-        loaded: true,
-        session: {
-          getToken: async () => {
-            throw new Error("identity unavailable");
-          },
-        },
-      },
-      writable: false,
-    });
+  await installClerkBrowser(page, {
+    signedIn: true,
+    tokenError: "identity unavailable",
   });
   await page.goto("/");
 
@@ -414,28 +385,7 @@ test("recovers when the external identity token lookup fails", async ({
 test("opens Clerk waitlist and sign-in flows when no browser session exists", async ({
   page,
 }) => {
-  await page.addInitScript(() => {
-    Object.defineProperty(window, "Clerk", {
-      configurable: false,
-      value: {
-        loaded: true,
-        openWaitlist: () => {
-          Object.defineProperty(window, "__openedClerkWaitlist", {
-            configurable: true,
-            value: true,
-          });
-        },
-        openSignIn: () => {
-          Object.defineProperty(window, "__openedClerkSignIn", {
-            configurable: true,
-            value: true,
-          });
-        },
-        session: null,
-      },
-      writable: false,
-    });
-  });
+  await installClerkBrowser(page);
   await page.goto("/");
 
   await expect(
@@ -478,32 +428,8 @@ test("opens Clerk waitlist and sign-in flows when no browser session exists", as
 test("reveals the Personal Account action after Clerk signs in", async ({
   page,
 }) => {
-  await page.addInitScript(() => {
-    let listener: (() => void) | undefined;
-    const clerk: {
-      addListener: (next: () => void) => () => void;
-      loaded: boolean;
-      openSignIn: () => void;
-      session: { getToken: () => Promise<string> } | null;
-    } = {
-      addListener: (next) => {
-        listener = next;
-        return () => {
-          listener = undefined;
-        };
-      },
-      loaded: true,
-      openSignIn: () => {
-        clerk.session = { getToken: async () => "signed-test-user" };
-        listener?.();
-      },
-      session: null,
-    };
-    Object.defineProperty(window, "Clerk", {
-      configurable: false,
-      value: clerk,
-      writable: false,
-    });
+  await installClerkBrowser(page, {
+    signInToken: "signed-test-user",
   });
   await page.goto("/");
 

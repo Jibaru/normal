@@ -1,4 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
+import { installClerkBrowser } from "../support/clerk-browser";
 
 const webPort = process.env.PLAYWRIGHT_WEB_PORT ?? "3000";
 const handoff = "R".repeat(43);
@@ -6,45 +7,15 @@ const connectionId = "con_123456789012345678901";
 
 const installClerk = async (
   page: Page,
-  factorAge: number,
+  _factorAge: number,
   onReverification = () => undefined,
   onTokenRequest = (_options: unknown) => undefined,
 ) => {
-  await page.exposeFunction("__recordReverification", onReverification);
-  await page.exposeFunction("__recordTokenRequest", onTokenRequest);
-  await page.addInitScript((initialFactorAge: number) => {
-    const session = {
-      clearCache: () => undefined,
-      factorVerificationAge: [initialFactorAge, -1] as [number, number],
-      getToken: async (options: unknown) => {
-        void (
-          window as unknown as {
-            __recordTokenRequest: (options: unknown) => Promise<void>;
-          }
-        ).__recordTokenRequest(options);
-        return "signed-test-user";
-      },
-    };
-    Object.defineProperty(window, "Clerk", {
-      configurable: false,
-      value: {
-        __internal_openReverification: (options: {
-          readonly afterVerification?: () => void;
-        }) => {
-          void (
-            window as unknown as {
-              __recordReverification: () => Promise<void>;
-            }
-          ).__recordReverification();
-          session.factorVerificationAge = [0, -1];
-          options.afterVerification?.();
-        },
-        loaded: true,
-        session,
-      },
-      writable: false,
-    });
-  }, factorAge);
+  await installClerkBrowser(page, {
+    onReverification,
+    onTokenRequest,
+    signedIn: true,
+  });
 };
 
 test("approves only explicit authority after recent Clerk reverification", async ({
@@ -52,6 +23,7 @@ test("approves only explicit authority after recent Clerk reverification", async
 }) => {
   let decision: Record<string, unknown> | undefined;
   let reverificationOpened = false;
+  let approvalAttempts = 0;
   const tokenRequests: Array<unknown> = [];
   await installClerk(
     page,
@@ -84,6 +56,25 @@ test("approves only explicit authority after recent Clerk reverification", async
       return;
     }
     decision = request.postDataJSON() as Record<string, unknown>;
+    if (decision.decision === "approve" && approvalAttempts++ === 0) {
+      await route.fulfill({
+        contentType: "application/json",
+        status: 403,
+        body: JSON.stringify({
+          clerk_error: {
+            metadata: {
+              reverification: {
+                afterMinutes: 5,
+                level: "first_factor",
+              },
+            },
+            reason: "reverification-error",
+            type: "forbidden",
+          },
+        }),
+      });
+      return;
+    }
     await route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
