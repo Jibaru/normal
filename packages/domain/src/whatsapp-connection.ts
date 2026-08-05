@@ -16,7 +16,7 @@ export const isWhatsAppConnectionState = (
   whatsappConnectionStates.some((state) => state === value);
 
 export const canStartNewSend = (state: WhatsAppConnectionState): boolean =>
-  connectionSideEffectAvailability(state).decision === "allowed";
+  state === "connected";
 
 export type ConnectionSideEffectAvailability =
   | {
