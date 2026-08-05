@@ -1148,12 +1148,14 @@ export function PublicBoundaryJourney({
   return (
     <section
       aria-label="Signed-in API boundary"
-      className="flex flex-col gap-3"
+      className="flex flex-col gap-10"
     >
       {identityState === "signed_in" ? (
         <Button
+          className="self-start"
           disabled={state === "loading"}
           onClick={checkBoundary}
+          size="lg"
           type="button"
         >
           {state === "loading" ? <Spinner data-icon="inline-start" /> : null}
@@ -1169,7 +1171,11 @@ export function PublicBoundaryJourney({
           </Button>
         </div>
       ) : null}
-      <p aria-live="polite" data-testid="api-boundary-status">
+      <p
+        className="text-sm text-muted-foreground"
+        aria-live="polite"
+        data-testid="api-boundary-status"
+      >
         {identityState === "loading"
           ? "Checking sign-in status…"
           : identityState === "unavailable"
@@ -1190,12 +1196,14 @@ export function PublicBoundaryJourney({
         <>
           <section
             aria-label="MCP Authorizations"
-            className="flex flex-col gap-3 rounded-lg border bg-card p-4 text-card-foreground"
+            className="flex flex-col gap-5"
           >
             <div>
-              <h2 className="text-lg font-medium">MCP Authorizations</h2>
+              <h2 className="text-xl font-semibold tracking-tight">
+                Apps with access
+              </h2>
               <p className="text-sm text-muted-foreground">
-                Review and revoke access held by approved MCP Clients.
+                See what each MCP Client can do, or remove its access instantly.
               </p>
             </div>
             {authorizationState === "loading" ? (
@@ -1217,7 +1225,7 @@ export function PublicBoundaryJourney({
                         : "Active";
                   return (
                     <li
-                      className="flex flex-col gap-3 rounded-lg border bg-background p-4"
+                      className="flex flex-col gap-4 rounded-xl bg-card p-5 ring-1 ring-foreground/10 sm:p-6"
                       key={authorization.id}
                     >
                       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1225,7 +1233,10 @@ export function PublicBoundaryJourney({
                           <h3 className="font-medium">
                             {authorization.client.name}
                           </h3>
-                          <p className="font-mono text-xs text-muted-foreground">
+                          <p
+                            className="mt-0.5 max-w-48 truncate font-mono text-xs text-muted-foreground"
+                            title={authorization.client.id}
+                          >
                             {authorization.client.id}
                           </p>
                         </div>
@@ -1236,7 +1247,7 @@ export function PublicBoundaryJourney({
                           {stateLabel}
                         </Badge>
                       </div>
-                      <dl className="grid gap-2 text-sm sm:grid-cols-2">
+                      <dl className="grid gap-3 text-sm sm:grid-cols-2">
                         <div>
                           <dt className="text-muted-foreground">Created</dt>
                           <dd>
@@ -1254,16 +1265,21 @@ export function PublicBoundaryJourney({
                           </dd>
                         </div>
                       </dl>
-                      <div className="flex flex-col gap-1">
-                        <p className="text-sm text-muted-foreground">
-                          WhatsApp Connections
-                        </p>
-                        <ul className="flex flex-col gap-1 font-mono text-xs">
-                          {authorization.connectionIds.map((connectionId) => (
-                            <li key={connectionId}>{connectionId}</li>
-                          ))}
-                        </ul>
-                      </div>
+                      <details className="text-sm text-muted-foreground">
+                        <summary className="w-fit cursor-pointer select-none font-medium text-foreground">
+                          Technical details
+                        </summary>
+                        <div className="mt-3 flex flex-col gap-1">
+                          <p className="text-sm text-muted-foreground">
+                            WhatsApp Connections
+                          </p>
+                          <ul className="flex flex-col gap-1 font-mono text-xs">
+                            {authorization.connectionIds.map((connectionId) => (
+                              <li key={connectionId}>{connectionId}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      </details>
                       <div className="flex flex-col gap-1">
                         <p className="text-sm text-muted-foreground">
                           Permissions
@@ -1279,6 +1295,7 @@ export function PublicBoundaryJourney({
                         </ul>
                       </div>
                       <Button
+                        className="self-start"
                         aria-label={`Revoke ${authorization.client.name}`}
                         disabled={
                           authorization.revocationState === "revoked" ||
@@ -1301,15 +1318,14 @@ export function PublicBoundaryJourney({
               </ul>
             )}
           </section>
-          <section
-            aria-label="Tool Call Logs"
-            className="flex flex-col gap-3 rounded-lg border bg-card p-4 text-card-foreground"
-          >
+          <section aria-label="Tool Call Logs" className="flex flex-col gap-5">
             <div>
-              <h2 className="text-lg font-medium">Tool Call Logs</h2>
+              <h2 className="text-xl font-semibold tracking-tight">
+                Recent activity
+              </h2>
               <p className="text-sm text-muted-foreground">
-                Metadata-only activity from the last 90 days. Message content,
-                full numbers, credentials, and provider data are never shown.
+                See how your MCP Clients used WhatsApp in the last 90 days.
+                Message content and full numbers are never shown here.
               </p>
             </div>
             {toolCallLogState === "loading" ? (
@@ -1324,7 +1340,7 @@ export function PublicBoundaryJourney({
               <ul className="flex flex-col gap-3">
                 {toolCallLogs.map((log, index) => (
                   <li
-                    className="flex flex-col gap-3 rounded-lg border bg-background p-4"
+                    className="flex flex-col gap-3 rounded-xl bg-card p-5 ring-1 ring-foreground/10 sm:p-6"
                     data-testid="tool-call-log"
                     key={`${log.startedAt}:${log.references[0]}:${index}`}
                   >
@@ -1363,7 +1379,7 @@ export function PublicBoundaryJourney({
                         </dd>
                       </div>
                     </dl>
-                    <ul className="flex flex-col gap-1 font-mono text-xs text-muted-foreground">
+                    <ul className="hidden flex-col gap-1 font-mono text-xs text-muted-foreground sm:flex">
                       {log.references.map((reference) => (
                         <li key={reference}>{reference}</li>
                       ))}
@@ -1391,14 +1407,20 @@ export function PublicBoundaryJourney({
               <p aria-live="polite">More Tool Call Logs are unavailable.</p>
             ) : null}
           </section>
-          <form
-            className="flex flex-col gap-3 rounded-lg border bg-card p-4 text-card-foreground"
-            onSubmit={startSetup}
-          >
+          <form className="flex max-w-xl flex-col gap-4" onSubmit={startSetup}>
+            <div>
+              <h2 className="text-xl font-semibold tracking-tight">
+                Add WhatsApp
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                Enter the number you want to connect. You will scan a QR code in
+                WhatsApp next.
+              </p>
+            </div>
             <FieldGroup>
               <Field>
                 <FieldLabel htmlFor="whatsapp-number">
-                  WhatsApp Number
+                  WhatsApp number
                 </FieldLabel>
                 <Input
                   autoComplete="tel"
@@ -1418,16 +1440,21 @@ export function PublicBoundaryJourney({
                   value={whatsappNumber}
                 />
                 <FieldDescription>
-                  Include the country code. Your setup expires after 15 minutes.
+                  Include the country code, for example +51. The QR code expires
+                  after 15 minutes.
                 </FieldDescription>
               </Field>
             </FieldGroup>
             <div className="flex flex-wrap gap-2">
-              <Button disabled={setupState === "loading"} type="submit">
+              <Button
+                disabled={setupState === "loading"}
+                size="lg"
+                type="submit"
+              >
                 {setupState === "loading" ? (
                   <Spinner data-icon="inline-start" />
                 ) : null}
-                Start Connection Setup
+                Continue
               </Button>
               {setupId !== null &&
               (setupState === "pending" ||
@@ -1438,7 +1465,7 @@ export function PublicBoundaryJourney({
                 setupState === "provisioning_failed" ||
                 setupState === "provisioning_quarantined") ? (
                 <Button onClick={cancelSetup} type="button" variant="outline">
-                  Cancel Connection Setup
+                  Cancel setup
                 </Button>
               ) : null}
             </div>
@@ -1488,7 +1515,7 @@ export function PublicBoundaryJourney({
               // biome-ignore lint/performance/noImgElement: QR bytes are already a complete generated SVG.
               <img
                 alt="Scan this WhatsApp QR code"
-                className="h-64 w-64 rounded bg-white p-3"
+                className="size-64 rounded-lg bg-background p-3"
                 src={qrImageUrl}
               />
             )}
@@ -1498,18 +1525,25 @@ export function PublicBoundaryJourney({
       {state === "ok" ? (
         <section
           aria-label="WhatsApp Connections"
-          className="flex flex-col gap-3"
+          className="flex flex-col gap-5"
         >
-          <h2 className="text-xl font-semibold">WhatsApp Connections</h2>
+          <div>
+            <h2 className="text-xl font-semibold tracking-tight">
+              Your WhatsApp Connections
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              Connection health, message history, and reconnect controls.
+            </p>
+          </div>
           {connections.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               No WhatsApp Connections yet.
             </p>
           ) : (
-            <ul className="flex flex-col gap-2">
+            <ul className="flex flex-col gap-3">
               {connections.map((connection) => (
                 <li
-                  className="rounded-lg border bg-card p-4 text-card-foreground"
+                  className="rounded-xl bg-card p-5 text-card-foreground ring-1 ring-foreground/10 sm:p-6"
                   data-testid="whatsapp-connection"
                   key={connection.id}
                 >
@@ -1519,19 +1553,24 @@ export function PublicBoundaryJourney({
                   <p className="text-sm text-muted-foreground">
                     Number ending {connection.numberSuffix}
                   </p>
-                  <p className="text-sm capitalize text-emerald-400">
+                  <Badge
+                    className="mt-2 capitalize"
+                    variant={
+                      connection.state === "connected" ? "secondary" : "outline"
+                    }
+                  >
                     {connection.state.replace("_", " ")}
-                  </p>
+                  </Badge>
                   <time
                     className="text-xs text-muted-foreground"
                     dateTime={connection.stateChangedAt}
                   >
                     State changed {connection.stateChangedAt}
                   </time>
-                  <div className="mt-3 flex flex-col gap-2 rounded border p-3">
+                  <div className="mt-5 flex flex-col gap-3">
                     <Field>
                       <FieldLabel htmlFor={`retention-${connection.id}`}>
-                        Message Retention Policy
+                        Keep message history for
                       </FieldLabel>
                       <Select
                         items={[
@@ -1630,7 +1669,7 @@ export function PublicBoundaryJourney({
                       type="button"
                       variant="outline"
                     >
-                      Save retention policy
+                      Save changes
                     </Button>
                     <p
                       aria-live="polite"
@@ -1647,7 +1686,7 @@ export function PublicBoundaryJourney({
                     </p>
                   ) : connection.state === "degraded" ||
                     connection.state === "reconnect_required" ? (
-                    <p className="mt-2 text-sm text-amber-300">
+                    <p className="mt-2 text-sm text-muted-foreground">
                       New side effects are blocked until this WhatsApp
                       Connection recovers.
                     </p>
@@ -1695,7 +1734,7 @@ export function PublicBoundaryJourney({
                     // biome-ignore lint/performance/noImgElement: QR bytes are already a complete generated SVG.
                     <img
                       alt="Reconnect this WhatsApp Connection QR code"
-                      className="mt-3 h-64 w-64 rounded bg-white p-3"
+                      className="mt-3 size-64 rounded-lg bg-background p-3"
                       src={reconnectQr.url}
                     />
                   ) : null}
@@ -1708,9 +1747,9 @@ export function PublicBoundaryJourney({
       {state === "ok" ? (
         <section
           aria-label="Personal Account Deletion"
-          className="flex flex-col gap-3 rounded-lg border border-destructive/40 p-4"
+          className="flex flex-col items-start gap-3"
         >
-          <h2 className="text-xl font-semibold">Delete Personal Account</h2>
+          <h2 className="text-lg font-semibold">Delete Personal Account</h2>
           <p className="text-sm text-muted-foreground">
             Permanently revoke access, cancel incomplete Connection Setups, and
             delete every WhatsApp Connection.

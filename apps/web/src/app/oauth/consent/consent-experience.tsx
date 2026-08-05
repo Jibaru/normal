@@ -173,11 +173,9 @@ export function ConsentExperience({
     (!hasSend || sendConfirmed);
 
   return (
-    <main className="min-h-screen bg-background px-6 py-12 text-foreground">
-      <section className="mx-auto flex max-w-2xl flex-col gap-8">
-        <p className="font-mono text-sm uppercase tracking-[0.2em] text-primary">
-          WhatsApp access
-        </p>
+    <main className="min-h-screen bg-background text-foreground">
+      <section className="page-shell flex max-w-2xl flex-col gap-8">
+        <p className="text-sm font-semibold text-primary">WhatsApp access</p>
         {inspection === null ? (
           state === "loading" ? (
             <div aria-live="polite" className="flex flex-col gap-3">
@@ -196,17 +194,17 @@ export function ConsentExperience({
         ) : (
           <>
             <div className="flex flex-col gap-2">
-              <h1 className="text-3xl font-semibold">
-                Connect {inspection.client.name} to WhatsApp?
+              <h1 className="text-balance text-3xl font-semibold tracking-[-0.03em] sm:text-4xl">
+                Let {inspection.client.name} use WhatsApp?
               </h1>
               <p className="text-muted-foreground">
-                Choose the WhatsApp account and actions you want to allow.
-                Nothing else will be shared.
+                Choose exactly what it can access. You can remove access at any
+                time.
               </p>
             </div>
 
             <FieldSet>
-              <FieldLegend>Which WhatsApp account can it use?</FieldLegend>
+              <FieldLegend>WhatsApp account</FieldLegend>
               <FieldGroup>
                 {inspection.connections.map((connection) => (
                   <FieldLabel
@@ -243,7 +241,7 @@ export function ConsentExperience({
             </FieldSet>
 
             <FieldSet>
-              <FieldLegend>What can it do?</FieldLegend>
+              <FieldLegend>Allow access to</FieldLegend>
               <FieldGroup>
                 {inspection.requested_scopes.map((scope) => (
                   <FieldLabel key={scope}>
@@ -264,7 +262,7 @@ export function ConsentExperience({
             {hasRead || hasSend ? (
               <FieldSet>
                 <FieldLegend>Before you continue</FieldLegend>
-                <FieldGroup>
+                <FieldGroup className="mt-3 gap-3">
                   {hasRead ? (
                     <FieldLabel>
                       <Field orientation="horizontal">
@@ -296,6 +294,7 @@ export function ConsentExperience({
               <Button
                 disabled={!canApprove}
                 onClick={() => void submit("approve")}
+                size="lg"
                 type="button"
               >
                 {state === "submitting" ? (
