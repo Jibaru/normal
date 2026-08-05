@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { connection } from "next/server";
-import { getPersonalAccountConfiguration } from "../personal-account-configuration";
-import { DashboardExperience } from "./dashboard-experience";
+import { DashboardRoute } from "./dashboard-route";
 
 export const metadata: Metadata = {
   title: "Dashboard | Normal",
@@ -12,6 +11,9 @@ export const metadata: Metadata = {
 export default async function DashboardPage() {
   await connection();
   return (
-    <DashboardExperience configuration={getPersonalAccountConfiguration()} />
+    <DashboardRoute
+      description="Connect your MCP Clients and review your Personal Account."
+      title="Overview"
+    />
   );
 }

@@ -13,6 +13,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
 }) => {
   let requestedTokenOptions: unknown;
   let bootstrapMethod: string | undefined;
+  let bootstrapRequests = 0;
   const setupBodies: Array<{
     readonly idempotency_key: string;
     readonly whatsapp_number: string;
@@ -36,6 +37,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     const requestPath = new URL(original.url()).pathname;
     if (requestPath === "/v1/personal-account/bootstrap") {
       bootstrapMethod = original.method();
+      bootstrapRequests += 1;
     }
     if (
       requestPath === "/v1/connection-setups" &&
@@ -105,25 +107,33 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
       "Normal securely connects your WhatsApp to the MCP Clients you choose. Find conversations, understand context, and send messages with your confirmation.",
     ),
   ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Log in" })).toHaveAttribute(
+    "href",
+    "/dashboard",
+  );
   await expect(
     page.getByRole("region", { name: "Signed-in API boundary" }),
   ).toHaveCount(0);
 
   await page.goto("/dashboard");
   await expect(
-    page.getByRole("heading", { name: "Dashboard", exact: true }),
+    page.getByRole("heading", { name: "Overview", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("navigation", { name: "Dashboard navigation" }),
   ).toBeVisible();
 
-  await page
-    .getByRole("button", { name: "Continue to Personal Account" })
-    .click();
-
-  await expect(page.getByTestId("api-boundary-status")).toHaveText(
-    "Personal Account ready",
+  await expect(page.getByText("Preparing your Personal Account…")).toHaveCount(
+    0,
   );
+  await expect(
+    page.getByRole("button", { name: "Continue to Personal Account" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("region", { name: "MCP Authorizations" }),
+  ).toHaveCount(0);
+  await page.getByRole("link", { name: "MCP Authorizations" }).click();
+  await expect(page).toHaveURL(/\/dashboard\/authorizations$/u);
   const authorizations = page.getByRole("region", {
     name: "MCP Authorizations",
   });
@@ -136,6 +146,23 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(
     authorizations.getByTestId("mcp-authorization-state"),
   ).toHaveText("Active");
+  await authorizations
+    .getByRole("button", { name: "Revoke Approved MCP Client" })
+    .click();
+  await expect(
+    authorizations.getByTestId("mcp-authorization-state"),
+  ).toHaveText("Revoked");
+  await expect(
+    authorizations.getByRole("button", {
+      name: "Revoke Approved MCP Client",
+    }),
+  ).toBeDisabled();
+  expect(requestedTokenOptions).toEqual({ template: "whatsapp-api" });
+  expect(bootstrapMethod).toBe("POST");
+  expect(bootstrapRequests).toBe(1);
+
+  await page.getByRole("link", { name: "Tool Call Logs" }).click();
+  await expect(page).toHaveURL(/\/dashboard\/activity$/u);
   const toolCallLogs = page.getByRole("region", { name: "Tool Call Logs" });
   await expect(toolCallLogs.getByTestId("tool-call-log")).toContainText(
     "list connections",
@@ -151,19 +178,16 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await toolCallLogs.getByRole("button", { name: "Load more" }).click();
   await expect(toolCallLogs.getByTestId("tool-call-log")).toHaveCount(2);
   await expect(toolCallLogs).toContainText("read messages");
-  await authorizations
-    .getByRole("button", { name: "Revoke Approved MCP Client" })
+
+  await page.getByRole("link", { name: "WhatsApp Connections" }).click();
+  await expect(page).toHaveURL(/\/dashboard\/connections$/u);
+  expect(bootstrapRequests).toBe(1);
+  await expect(page.getByRole("button", { name: "Sign out" })).toHaveCount(0);
+  await page
+    .getByRole("button", { name: /Personal Account Signed in/u })
     .click();
-  await expect(
-    authorizations.getByTestId("mcp-authorization-state"),
-  ).toHaveText("Revoked");
-  await expect(
-    authorizations.getByRole("button", {
-      name: "Revoke Approved MCP Client",
-    }),
-  ).toBeDisabled();
-  expect(requestedTokenOptions).toEqual({ template: "whatsapp-api" });
-  expect(bootstrapMethod).toBe("POST");
+  await expect(page.getByRole("menuitem", { name: "Log out" })).toBeVisible();
+  await page.keyboard.press("Escape");
 
   const whatsappNumber = page.getByLabel("WhatsApp Number");
   const startConnectionSetup = page.getByRole("button", {
@@ -243,9 +267,6 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     }),
   ).toBeVisible();
   await page.reload();
-  await page
-    .getByRole("button", { name: "Continue to Personal Account" })
-    .click();
   const resumedConnection = page.getByTestId("whatsapp-connection");
   await expect(resumedConnection).toContainText("connecting");
   resumeReconnectPolling = true;
@@ -265,6 +286,11 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   expect(setupBodies).toHaveLength(1);
   expect(setupBodies[0]?.whatsapp_number).toBe("+1 (555) 012-3456");
   expect(setupBodies[0]?.idempotency_key).toMatch(/^[A-Za-z0-9_-]{21}$/);
+  await page.getByRole("link", { name: "Settings" }).click();
+  await expect(page).toHaveURL(/\/dashboard\/settings$/u);
+  await expect(
+    page.getByRole("region", { name: "Personal Account Deletion" }),
+  ).toBeVisible();
   const providerObservations = await request.get(
     `http://127.0.0.1:${apiPort}/test/provider-observations`,
   );
@@ -316,13 +342,9 @@ test("waitlists a signed-in User when private-beta capacity is exhausted", async
   });
   await page.goto("/dashboard");
 
-  await page
-    .getByRole("button", { name: "Continue to Personal Account" })
-    .click();
-
-  await expect(page.getByTestId("api-boundary-status")).toHaveText(
-    "You’re on the private-beta waitlist",
-  );
+  await expect(
+    page.getByText("You’re on the private beta waitlist."),
+  ).toBeVisible();
 });
 
 test("keeps the Personal Account usable when MCP Authorization listing is unavailable", async ({
@@ -364,19 +386,11 @@ test("keeps the Personal Account usable when MCP Authorization listing is unavai
     });
   });
   await installClerkBrowser(page, { signedIn: true });
-  await page.goto("/dashboard");
+  await page.goto("/dashboard/authorizations");
 
-  await page
-    .getByRole("button", { name: "Continue to Personal Account" })
-    .click();
-
-  await expect(page.getByTestId("api-boundary-status")).toHaveText(
-    "Personal Account ready",
-  );
   await expect(
     page.getByText("MCP Authorizations are temporarily unavailable."),
   ).toBeVisible();
-  await expect(page.getByLabel("WhatsApp Number")).toBeVisible();
 });
 
 test("recovers when the external identity token lookup fails", async ({
@@ -388,15 +402,14 @@ test("recovers when the external identity token lookup fails", async ({
   });
   await page.goto("/dashboard");
 
-  const button = page.getByRole("button", {
-    name: "Continue to Personal Account",
-  });
-  await button.click();
-
-  await expect(page.getByTestId("api-boundary-status")).toHaveText(
-    "Your Personal Account is temporarily unavailable. Please try again.",
-  );
-  await expect(button).toBeEnabled();
+  await expect(
+    page.getByText(
+      "Your Personal Account is temporarily unavailable. Please try again.",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Continue to Personal Account" }),
+  ).toHaveCount(0);
 });
 
 test("keeps the dashboard behind Clerk sign in when no browser session exists", async ({
@@ -424,7 +437,7 @@ test("keeps the dashboard behind Clerk sign in when no browser session exists", 
   ).toBe(true);
 });
 
-test("reveals the Personal Account action after Clerk signs in", async ({
+test("opens the Personal Account automatically after Clerk signs in", async ({
   page,
 }) => {
   await installClerkBrowser(page, {
@@ -436,8 +449,10 @@ test("reveals the Personal Account action after Clerk signs in", async ({
 
   await expect(
     page.getByRole("button", { name: "Continue to Personal Account" }),
-  ).toBeVisible();
-  await expect(page.getByTestId("api-boundary-status")).toHaveText(
-    "Signed in. Continue to create or open your Personal Account.",
-  );
+  ).toHaveCount(0);
+  await expect(
+    page.getByText(
+      "Signed in. Continue to create or open your Personal Account.",
+    ),
+  ).toHaveCount(0);
 });

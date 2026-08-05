@@ -21,10 +21,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { McpConnectionGuides } from "./mcp-connection-guides";
 
 interface PublicBoundaryJourneyProps {
+  readonly autoInitialize?: boolean;
   readonly clerkJwtTemplate: string;
   readonly connectionsEndpoint: string;
   readonly connectionSetupEndpoint: string;
@@ -33,7 +35,15 @@ interface PublicBoundaryJourneyProps {
   readonly personalAccountEndpoint: string;
   readonly personalAccountDeletionEndpoint: string;
   readonly toolCallLogsEndpoint: string;
+  readonly view?: PersonalAccountView;
 }
+
+export type PersonalAccountView =
+  | "overview"
+  | "connections"
+  | "authorizations"
+  | "activity"
+  | "settings";
 
 type JourneyState =
   | "idle"
@@ -327,6 +337,7 @@ const decodeSafeWhatsAppConnection = (
 };
 
 export function PublicBoundaryJourney({
+  autoInitialize = false,
   clerkJwtTemplate,
   connectionsEndpoint,
   connectionSetupEndpoint,
@@ -335,6 +346,7 @@ export function PublicBoundaryJourney({
   personalAccountEndpoint,
   personalAccountDeletionEndpoint,
   toolCallLogsEndpoint,
+  view = "overview",
 }: PublicBoundaryJourneyProps) {
   const { getToken: getClerkToken, isLoaded, isSignedIn } = useAuth();
   const clerk = useClerk();
@@ -407,6 +419,7 @@ export function PublicBoundaryJourney({
   const lifecycleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const observationGeneration = useRef(0);
   const observationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const automaticallyInitialized = useRef(false);
 
   useEffect(
     () => () => {
@@ -948,6 +961,23 @@ export function PublicBoundaryJourney({
     }
   };
 
+  // The transition to an authenticated Clerk session owns this one-time
+  // bootstrap. The ref prevents development remount checks from duplicating it.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: checkBoundary uses the values from this authenticated render.
+  useEffect(() => {
+    if (
+      !autoInitialize ||
+      !isLoaded ||
+      !isSignedIn ||
+      automaticallyInitialized.current
+    ) {
+      return;
+    }
+
+    automaticallyInitialized.current = true;
+    void checkBoundary();
+  }, [autoInitialize, isLoaded, isSignedIn]);
+
   const revokeAuthorization = async (authorization: McpAuthorization) => {
     setRevokingAuthorization(authorization.id);
     try {
@@ -1153,7 +1183,7 @@ export function PublicBoundaryJourney({
       aria-label="Signed-in API boundary"
       className="flex flex-col gap-10"
     >
-      {identityState === "signed_in" ? (
+      {identityState === "signed_in" && !autoInitialize ? (
         <Button
           className="self-start"
           disabled={state === "loading"}
@@ -1174,359 +1204,392 @@ export function PublicBoundaryJourney({
           </Button>
         </div>
       ) : null}
-      <p
-        className="text-sm text-muted-foreground"
-        aria-live="polite"
-        data-testid="api-boundary-status"
-      >
-        {identityState === "loading"
-          ? "Checking sign-in status…"
-          : identityState === "unavailable"
-            ? "Sign-in is temporarily unavailable. Please refresh and try again."
-            : identityState === "signed_out"
-              ? "Join the private-beta waitlist, or sign in if you’re approved."
-              : state === "ok"
-                ? "Personal Account ready"
-                : state === "waitlisted"
-                  ? "You’re on the private-beta waitlist"
-                  : state === "loading"
-                    ? "Preparing your Personal Account…"
-                    : state === "unavailable"
-                      ? "Your Personal Account is temporarily unavailable. Please try again."
-                      : "Signed in. Continue to create or open your Personal Account."}
-      </p>
+      {!autoInitialize ? (
+        <p
+          className="text-sm text-muted-foreground"
+          aria-live="polite"
+          data-testid="api-boundary-status"
+        >
+          {identityState === "loading"
+            ? "Checking sign-in status…"
+            : identityState === "unavailable"
+              ? "Sign-in is temporarily unavailable. Please refresh and try again."
+              : identityState === "signed_out"
+                ? "Join the private-beta waitlist, or sign in if you’re approved."
+                : state === "ok"
+                  ? "Personal Account ready"
+                  : state === "waitlisted"
+                    ? "You’re on the private-beta waitlist"
+                    : state === "loading"
+                      ? "Preparing your Personal Account…"
+                      : state === "unavailable"
+                        ? "Your Personal Account is temporarily unavailable. Please try again."
+                        : "Signed in. Continue to create or open your Personal Account."}
+        </p>
+      ) : state === "idle" || state === "loading" ? (
+        <div className="flex flex-col gap-3">
+          <span className="sr-only">Loading Personal Account</span>
+          <Skeleton className="h-5 w-40" />
+          <Skeleton className="h-24 w-full" />
+        </div>
+      ) : state === "waitlisted" ? (
+        <p aria-live="polite" className="text-sm text-muted-foreground">
+          You’re on the private beta waitlist.
+        </p>
+      ) : state === "unavailable" ? (
+        <p aria-live="polite" className="text-sm text-muted-foreground">
+          Your Personal Account is temporarily unavailable. Please try again.
+        </p>
+      ) : null}
       {state === "ok" ? (
         <>
-          <McpConnectionGuides serverUrl={mcpServerUrl} />
-          <section
-            aria-label="MCP Authorizations"
-            className="flex flex-col gap-5"
-          >
-            <div>
-              <h2 className="text-xl font-semibold tracking-tight">
-                Apps with access
-              </h2>
-              <p className="text-sm text-muted-foreground">
-                See what each MCP Client can do, or remove its access instantly.
-              </p>
-            </div>
-            {authorizationState === "loading" ? (
-              <p aria-live="polite">Loading MCP Authorizations…</p>
-            ) : authorizationState === "unavailable" ? (
-              <p aria-live="polite">
-                MCP Authorizations are temporarily unavailable.
-              </p>
-            ) : authorizations.length === 0 ? (
-              <p>No MCP Clients currently have access.</p>
-            ) : (
-              <ul className="flex flex-col gap-3">
-                {authorizations.map((authorization) => {
-                  const stateLabel =
-                    authorization.revocationState === "revoked"
-                      ? "Revoked"
-                      : authorization.expiryState === "expired"
-                        ? "Expired"
-                        : "Active";
-                  return (
+          {view === "overview" ? (
+            <McpConnectionGuides serverUrl={mcpServerUrl} />
+          ) : null}
+          {view === "authorizations" ? (
+            <section
+              aria-label="MCP Authorizations"
+              className="flex flex-col gap-5"
+            >
+              <div>
+                <h2 className="text-xl font-semibold tracking-tight">
+                  Apps with access
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  See what each MCP Client can do, or remove its access
+                  instantly.
+                </p>
+              </div>
+              {authorizationState === "loading" ? (
+                <p aria-live="polite">Loading MCP Authorizations…</p>
+              ) : authorizationState === "unavailable" ? (
+                <p aria-live="polite">
+                  MCP Authorizations are temporarily unavailable.
+                </p>
+              ) : authorizations.length === 0 ? (
+                <p>No MCP Clients currently have access.</p>
+              ) : (
+                <ul className="flex flex-col gap-3">
+                  {authorizations.map((authorization) => {
+                    const stateLabel =
+                      authorization.revocationState === "revoked"
+                        ? "Revoked"
+                        : authorization.expiryState === "expired"
+                          ? "Expired"
+                          : "Active";
+                    return (
+                      <li
+                        className="flex flex-col gap-4 rounded-xl bg-card p-5 ring-1 ring-foreground/10 sm:p-6"
+                        key={authorization.id}
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <h3 className="font-medium">
+                              {authorization.client.name}
+                            </h3>
+                            <p
+                              className="mt-0.5 max-w-48 truncate font-mono text-xs text-muted-foreground"
+                              title={authorization.client.id}
+                            >
+                              {authorization.client.id}
+                            </p>
+                          </div>
+                          <Badge
+                            data-testid="mcp-authorization-state"
+                            variant="outline"
+                          >
+                            {stateLabel}
+                          </Badge>
+                        </div>
+                        <dl className="grid gap-3 text-sm sm:grid-cols-2">
+                          <div>
+                            <dt className="text-muted-foreground">Created</dt>
+                            <dd>
+                              <time dateTime={authorization.createdAt}>
+                                {displayTime(authorization.createdAt)} UTC
+                              </time>
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-muted-foreground">Expires</dt>
+                            <dd>
+                              <time dateTime={authorization.expiresAt}>
+                                {displayTime(authorization.expiresAt)} UTC
+                              </time>
+                            </dd>
+                          </div>
+                        </dl>
+                        <details className="text-sm text-muted-foreground">
+                          <summary className="w-fit cursor-pointer select-none font-medium text-foreground">
+                            Technical details
+                          </summary>
+                          <div className="mt-3 flex flex-col gap-1">
+                            <p className="text-sm text-muted-foreground">
+                              WhatsApp Connections
+                            </p>
+                            <ul className="flex flex-col gap-1 font-mono text-xs">
+                              {authorization.connectionIds.map(
+                                (connectionId) => (
+                                  <li key={connectionId}>{connectionId}</li>
+                                ),
+                              )}
+                            </ul>
+                          </div>
+                        </details>
+                        <div className="flex flex-col gap-1">
+                          <p className="text-sm text-muted-foreground">
+                            Permissions
+                          </p>
+                          <ul className="flex flex-wrap gap-2 text-xs">
+                            {authorization.scopes.map((scope) => (
+                              <li key={scope}>
+                                <Badge variant="secondary">
+                                  {scopeLabels[scope]}
+                                </Badge>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                        <Button
+                          className="self-start"
+                          aria-label={`Revoke ${authorization.client.name}`}
+                          disabled={
+                            authorization.revocationState === "revoked" ||
+                            revokingAuthorization === authorization.id
+                          }
+                          onClick={() => revokeAuthorization(authorization)}
+                          type="button"
+                          variant="destructive"
+                        >
+                          {revokingAuthorization === authorization.id ? (
+                            <Spinner data-icon="inline-start" />
+                          ) : null}
+                          {revokingAuthorization === authorization.id
+                            ? "Revoking…"
+                            : "Revoke access"}
+                        </Button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </section>
+          ) : null}
+          {view === "activity" ? (
+            <section
+              aria-label="Tool Call Logs"
+              className="flex flex-col gap-5"
+            >
+              <div>
+                <h2 className="text-xl font-semibold tracking-tight">
+                  Recent activity
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  See how your MCP Clients used WhatsApp in the last 90 days.
+                  Message content and full numbers are never shown here.
+                </p>
+              </div>
+              {toolCallLogState === "loading" ? (
+                <p aria-live="polite">Loading Tool Call Logs…</p>
+              ) : toolCallLogState === "unavailable" ? (
+                <p aria-live="polite">
+                  Tool Call Logs are temporarily unavailable.
+                </p>
+              ) : toolCallLogs.length === 0 ? (
+                <p>No tool activity in the last 90 days.</p>
+              ) : (
+                <ul className="flex flex-col gap-3">
+                  {toolCallLogs.map((log, index) => (
                     <li
-                      className="flex flex-col gap-4 rounded-xl bg-card p-5 ring-1 ring-foreground/10 sm:p-6"
-                      key={authorization.id}
+                      className="flex flex-col gap-3 rounded-xl bg-card p-5 ring-1 ring-foreground/10 sm:p-6"
+                      data-testid="tool-call-log"
+                      key={`${log.startedAt}:${log.references[0]}:${index}`}
                     >
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <h3 className="font-medium">
-                            {authorization.client.name}
+                            {log.capability.replaceAll("_", " ")}
                           </h3>
-                          <p
-                            className="mt-0.5 max-w-48 truncate font-mono text-xs text-muted-foreground"
-                            title={authorization.client.id}
-                          >
-                            {authorization.client.id}
+                          <p className="text-sm text-muted-foreground">
+                            {log.client.name}
                           </p>
                         </div>
-                        <Badge
-                          data-testid="mcp-authorization-state"
-                          variant="outline"
-                        >
-                          {stateLabel}
+                        <Badge className="capitalize" variant="outline">
+                          {log.outcome.replaceAll("_", " ")}
                         </Badge>
                       </div>
-                      <dl className="grid gap-3 text-sm sm:grid-cols-2">
+                      <dl className="grid gap-2 text-sm sm:grid-cols-3">
                         <div>
-                          <dt className="text-muted-foreground">Created</dt>
+                          <dt className="text-muted-foreground">Started</dt>
                           <dd>
-                            <time dateTime={authorization.createdAt}>
-                              {displayTime(authorization.createdAt)} UTC
+                            <time dateTime={log.startedAt}>
+                              {displayTime(log.startedAt)} UTC
                             </time>
                           </dd>
                         </div>
                         <div>
-                          <dt className="text-muted-foreground">Expires</dt>
+                          <dt className="text-muted-foreground">Results</dt>
+                          <dd>{log.counts.results ?? "Pending"}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-muted-foreground">Latency</dt>
                           <dd>
-                            <time dateTime={authorization.expiresAt}>
-                              {displayTime(authorization.expiresAt)} UTC
-                            </time>
+                            {log.latencyMs === null
+                              ? "Pending"
+                              : `${log.latencyMs} ms`}
                           </dd>
                         </div>
                       </dl>
-                      <details className="text-sm text-muted-foreground">
-                        <summary className="w-fit cursor-pointer select-none font-medium text-foreground">
-                          Technical details
-                        </summary>
-                        <div className="mt-3 flex flex-col gap-1">
-                          <p className="text-sm text-muted-foreground">
-                            WhatsApp Connections
-                          </p>
-                          <ul className="flex flex-col gap-1 font-mono text-xs">
-                            {authorization.connectionIds.map((connectionId) => (
-                              <li key={connectionId}>{connectionId}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      </details>
-                      <div className="flex flex-col gap-1">
-                        <p className="text-sm text-muted-foreground">
-                          Permissions
-                        </p>
-                        <ul className="flex flex-wrap gap-2 text-xs">
-                          {authorization.scopes.map((scope) => (
-                            <li key={scope}>
-                              <Badge variant="secondary">
-                                {scopeLabels[scope]}
-                              </Badge>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                      <Button
-                        className="self-start"
-                        aria-label={`Revoke ${authorization.client.name}`}
-                        disabled={
-                          authorization.revocationState === "revoked" ||
-                          revokingAuthorization === authorization.id
-                        }
-                        onClick={() => revokeAuthorization(authorization)}
-                        type="button"
-                        variant="destructive"
-                      >
-                        {revokingAuthorization === authorization.id ? (
-                          <Spinner data-icon="inline-start" />
-                        ) : null}
-                        {revokingAuthorization === authorization.id
-                          ? "Revoking…"
-                          : "Revoke access"}
-                      </Button>
+                      <ul className="hidden flex-col gap-1 font-mono text-xs text-muted-foreground sm:flex">
+                        {log.references.map((reference) => (
+                          <li key={reference}>{reference}</li>
+                        ))}
+                      </ul>
                     </li>
-                  );
-                })}
-              </ul>
-            )}
-          </section>
-          <section aria-label="Tool Call Logs" className="flex flex-col gap-5">
-            <div>
-              <h2 className="text-xl font-semibold tracking-tight">
-                Recent activity
-              </h2>
-              <p className="text-sm text-muted-foreground">
-                See how your MCP Clients used WhatsApp in the last 90 days.
-                Message content and full numbers are never shown here.
-              </p>
-            </div>
-            {toolCallLogState === "loading" ? (
-              <p aria-live="polite">Loading Tool Call Logs…</p>
-            ) : toolCallLogState === "unavailable" ? (
-              <p aria-live="polite">
-                Tool Call Logs are temporarily unavailable.
-              </p>
-            ) : toolCallLogs.length === 0 ? (
-              <p>No tool activity in the last 90 days.</p>
-            ) : (
-              <ul className="flex flex-col gap-3">
-                {toolCallLogs.map((log, index) => (
-                  <li
-                    className="flex flex-col gap-3 rounded-xl bg-card p-5 ring-1 ring-foreground/10 sm:p-6"
-                    data-testid="tool-call-log"
-                    key={`${log.startedAt}:${log.references[0]}:${index}`}
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <h3 className="font-medium">
-                          {log.capability.replaceAll("_", " ")}
-                        </h3>
-                        <p className="text-sm text-muted-foreground">
-                          {log.client.name}
-                        </p>
-                      </div>
-                      <Badge className="capitalize" variant="outline">
-                        {log.outcome.replaceAll("_", " ")}
-                      </Badge>
-                    </div>
-                    <dl className="grid gap-2 text-sm sm:grid-cols-3">
-                      <div>
-                        <dt className="text-muted-foreground">Started</dt>
-                        <dd>
-                          <time dateTime={log.startedAt}>
-                            {displayTime(log.startedAt)} UTC
-                          </time>
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-muted-foreground">Results</dt>
-                        <dd>{log.counts.results ?? "Pending"}</dd>
-                      </div>
-                      <div>
-                        <dt className="text-muted-foreground">Latency</dt>
-                        <dd>
-                          {log.latencyMs === null
-                            ? "Pending"
-                            : `${log.latencyMs} ms`}
-                        </dd>
-                      </div>
-                    </dl>
-                    <ul className="hidden flex-col gap-1 font-mono text-xs text-muted-foreground sm:flex">
-                      {log.references.map((reference) => (
-                        <li key={reference}>{reference}</li>
-                      ))}
-                    </ul>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {toolCallLogState === "ok" && toolCallLogCursor !== null ? (
-              <Button
-                disabled={toolCallLogPageState === "loading"}
-                onClick={loadMoreToolCallLogs}
-                type="button"
-                variant="outline"
-              >
-                {toolCallLogPageState === "loading" ? (
-                  <Spinner data-icon="inline-start" />
-                ) : null}
-                {toolCallLogPageState === "loading"
-                  ? "Loading more…"
-                  : "Load more"}
-              </Button>
-            ) : null}
-            {toolCallLogPageState === "unavailable" ? (
-              <p aria-live="polite">More Tool Call Logs are unavailable.</p>
-            ) : null}
-          </section>
-          <form className="flex max-w-xl flex-col gap-4" onSubmit={startSetup}>
-            <div>
-              <h2 className="text-xl font-semibold tracking-tight">
-                Add WhatsApp
-              </h2>
-              <p className="text-sm text-muted-foreground">
-                Enter the number you want to connect. You will scan a QR code in
-                WhatsApp next.
-              </p>
-            </div>
-            <FieldGroup>
-              <Field>
-                <FieldLabel htmlFor="whatsapp-number">
-                  WhatsApp number
-                </FieldLabel>
-                <Input
-                  autoComplete="tel"
-                  disabled={setupState === "loading"}
-                  id="whatsapp-number"
-                  inputMode="tel"
-                  onChange={(event) => {
-                    stopObserving();
-                    setWhatsappNumber(event.target.value);
-                    setSetupCleanupState(null);
-                    setSetupId(null);
-                    setSetupState("idle");
-                  }}
-                  placeholder="+1 555 012 3456"
-                  required
-                  type="tel"
-                  value={whatsappNumber}
-                />
-                <FieldDescription>
-                  Include the country code, for example +51. The QR code expires
-                  after 15 minutes.
-                </FieldDescription>
-              </Field>
-            </FieldGroup>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                disabled={setupState === "loading"}
-                size="lg"
-                type="submit"
-              >
-                {setupState === "loading" ? (
-                  <Spinner data-icon="inline-start" />
-                ) : null}
-                Continue
-              </Button>
-              {setupId !== null &&
-              (setupState === "pending" ||
-                setupState === "replayed" ||
-                setupState === "qr_available" ||
-                setupState === "connecting" ||
-                setupState === "provisioned" ||
-                setupState === "provisioning_failed" ||
-                setupState === "provisioning_quarantined") ? (
-                <Button onClick={cancelSetup} type="button" variant="outline">
-                  Cancel setup
+                  ))}
+                </ul>
+              )}
+              {toolCallLogState === "ok" && toolCallLogCursor !== null ? (
+                <Button
+                  disabled={toolCallLogPageState === "loading"}
+                  onClick={loadMoreToolCallLogs}
+                  type="button"
+                  variant="outline"
+                >
+                  {toolCallLogPageState === "loading" ? (
+                    <Spinner data-icon="inline-start" />
+                  ) : null}
+                  {toolCallLogPageState === "loading"
+                    ? "Loading more…"
+                    : "Load more"}
                 </Button>
               ) : null}
-            </div>
-            <p aria-live="polite" data-testid="connection-setup-status">
-              {setupState === "pending"
-                ? "Connection Setup started. Preparing your QR code."
-                : setupState === "replayed"
-                  ? "Connection Setup already started. Preparing your QR code."
-                  : setupState === "qr_available"
-                    ? "Scan this QR code with WhatsApp."
-                    : setupState === "connecting"
-                      ? "Waiting for WhatsApp to finish connecting."
-                      : setupState === "connected"
-                        ? "WhatsApp Connection active."
-                        : setupState === "provisioned"
-                          ? "Connection Setup is ready."
-                          : setupState === "provisioning_failed"
-                            ? "Connection Setup could not be prepared."
-                            : setupState === "provisioning_quarantined"
-                              ? "Connection Setup needs support review."
-                              : setupState === "cancelling"
-                                ? "Cancelling Connection Setup."
-                                : setupState === "cancelled"
-                                  ? setupCleanupState === "complete"
-                                    ? "Connection Setup cancelled. Provider cleanup is complete."
-                                    : setupCleanupState === "retrying"
-                                      ? "Connection Setup cancelled. Provider cleanup is retrying."
-                                      : "Connection Setup cancelled. Provider cleanup is in progress."
-                                  : setupState === "expired"
+              {toolCallLogPageState === "unavailable" ? (
+                <p aria-live="polite">More Tool Call Logs are unavailable.</p>
+              ) : null}
+            </section>
+          ) : null}
+          {view === "connections" ? (
+            <form
+              className="flex max-w-xl flex-col gap-4"
+              onSubmit={startSetup}
+            >
+              <div>
+                <h2 className="text-xl font-semibold tracking-tight">
+                  Add WhatsApp
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  Enter the number you want to connect. You will scan a QR code
+                  in WhatsApp next.
+                </p>
+              </div>
+              <FieldGroup>
+                <Field>
+                  <FieldLabel htmlFor="whatsapp-number">
+                    WhatsApp number
+                  </FieldLabel>
+                  <Input
+                    autoComplete="tel"
+                    disabled={setupState === "loading"}
+                    id="whatsapp-number"
+                    inputMode="tel"
+                    onChange={(event) => {
+                      stopObserving();
+                      setWhatsappNumber(event.target.value);
+                      setSetupCleanupState(null);
+                      setSetupId(null);
+                      setSetupState("idle");
+                    }}
+                    placeholder="+1 555 012 3456"
+                    required
+                    type="tel"
+                    value={whatsappNumber}
+                  />
+                  <FieldDescription>
+                    Include the country code, for example +51. The QR code
+                    expires after 15 minutes.
+                  </FieldDescription>
+                </Field>
+              </FieldGroup>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  disabled={setupState === "loading"}
+                  size="lg"
+                  type="submit"
+                >
+                  {setupState === "loading" ? (
+                    <Spinner data-icon="inline-start" />
+                  ) : null}
+                  Continue
+                </Button>
+                {setupId !== null &&
+                (setupState === "pending" ||
+                  setupState === "replayed" ||
+                  setupState === "qr_available" ||
+                  setupState === "connecting" ||
+                  setupState === "provisioned" ||
+                  setupState === "provisioning_failed" ||
+                  setupState === "provisioning_quarantined") ? (
+                  <Button onClick={cancelSetup} type="button" variant="outline">
+                    Cancel setup
+                  </Button>
+                ) : null}
+              </div>
+              <p aria-live="polite" data-testid="connection-setup-status">
+                {setupState === "pending"
+                  ? "Connection Setup started. Preparing your QR code."
+                  : setupState === "replayed"
+                    ? "Connection Setup already started. Preparing your QR code."
+                    : setupState === "qr_available"
+                      ? "Scan this QR code with WhatsApp."
+                      : setupState === "connecting"
+                        ? "Waiting for WhatsApp to finish connecting."
+                        : setupState === "connected"
+                          ? "WhatsApp Connection active."
+                          : setupState === "provisioned"
+                            ? "Connection Setup is ready."
+                            : setupState === "provisioning_failed"
+                              ? "Connection Setup could not be prepared."
+                              : setupState === "provisioning_quarantined"
+                                ? "Connection Setup needs support review."
+                                : setupState === "cancelling"
+                                  ? "Cancelling Connection Setup."
+                                  : setupState === "cancelled"
                                     ? setupCleanupState === "complete"
-                                      ? "Connection Setup expired. Provider cleanup is complete."
+                                      ? "Connection Setup cancelled. Provider cleanup is complete."
                                       : setupCleanupState === "retrying"
-                                        ? "Connection Setup expired. Provider cleanup is retrying."
-                                        : "Connection Setup expired. Provider cleanup is in progress."
-                                    : setupState === "number_unavailable"
-                                      ? "That WhatsApp Number is already in use."
-                                      : setupState ===
-                                          "connection_limit_reached"
-                                        ? "Your Personal Account already has three active setup or Connection slots."
-                                        : setupState === "invalid"
-                                          ? "Enter a valid international WhatsApp Number."
-                                          : setupState}
-            </p>
-            {qrImageUrl === null ? null : (
-              // The object URL is created from the authenticated, non-persisted
-              // SVG response and is revoked as soon as setup completes.
-              // biome-ignore lint/performance/noImgElement: QR bytes are already a complete generated SVG.
-              <img
-                alt="Scan this WhatsApp QR code"
-                className="size-64 rounded-lg bg-background p-3"
-                src={qrImageUrl}
-              />
-            )}
-          </form>
+                                        ? "Connection Setup cancelled. Provider cleanup is retrying."
+                                        : "Connection Setup cancelled. Provider cleanup is in progress."
+                                    : setupState === "expired"
+                                      ? setupCleanupState === "complete"
+                                        ? "Connection Setup expired. Provider cleanup is complete."
+                                        : setupCleanupState === "retrying"
+                                          ? "Connection Setup expired. Provider cleanup is retrying."
+                                          : "Connection Setup expired. Provider cleanup is in progress."
+                                      : setupState === "number_unavailable"
+                                        ? "That WhatsApp Number is already in use."
+                                        : setupState ===
+                                            "connection_limit_reached"
+                                          ? "Your Personal Account already has three active setup or Connection slots."
+                                          : setupState === "invalid"
+                                            ? "Enter a valid international WhatsApp Number."
+                                            : setupState}
+              </p>
+              {qrImageUrl === null ? null : (
+                // The object URL is created from the authenticated, non-persisted
+                // SVG response and is revoked as soon as setup completes.
+                // biome-ignore lint/performance/noImgElement: QR bytes are already a complete generated SVG.
+                <img
+                  alt="Scan this WhatsApp QR code"
+                  className="size-64 rounded-lg bg-background p-3"
+                  src={qrImageUrl}
+                />
+              )}
+            </form>
+          ) : null}
         </>
       ) : null}
-      {state === "ok" ? (
+      {state === "ok" && view === "connections" ? (
         <section
           aria-label="WhatsApp Connections"
           className="flex flex-col gap-5"
@@ -1748,7 +1811,7 @@ export function PublicBoundaryJourney({
           )}
         </section>
       ) : null}
-      {state === "ok" ? (
+      {state === "ok" && view === "settings" ? (
         <section
           aria-label="Personal Account Deletion"
           className="flex flex-col items-start gap-3"

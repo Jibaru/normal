@@ -109,7 +109,15 @@ export function LandingPage() {
           <a href="#how-it-works">How it works</a>
           <a href="#control">Control</a>
         </div>
-        <ContactButton />
+        <div className="landing-nav-actions">
+          <a
+            className={buttonVariants({ variant: "outline" })}
+            href="/dashboard"
+          >
+            Log in
+          </a>
+          <ContactButton />
+        </div>
       </nav>
 
       <section className="hero">

@@ -156,7 +156,6 @@ html {
 .dashboard-header {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
   gap: 24px;
 }
 
@@ -244,7 +243,18 @@ html {
   text-decoration: none;
 }
 
-.landing-nav > a:last-child {
+.landing-nav-actions {
+  display: flex;
+  align-items: center;
+  justify-self: end;
+  gap: 8px;
+}
+
+.landing-nav-actions a {
+  white-space: nowrap;
+}
+
+.landing-nav-actions > a:last-child {
   justify-self: end;
 }
 
@@ -840,7 +850,7 @@ html {
     min-height: 68px;
   }
 
-  .landing-nav > a:last-child {
+  .landing-nav-actions > a:last-child {
     min-height: 38px;
     padding-inline: 14px;
   }
