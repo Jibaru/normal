@@ -1,5 +1,6 @@
 import type { DeploymentEnvironment } from "@whatsapp-mcp/domain/deployment";
 import { Data, Effect, Redacted } from "effect";
+import { hasExactKeys } from "../record";
 
 const markerKeyDomain = "whatsapp-mcp/deletion-marker-key/v1";
 const markerPrefix = "markers/v1/";
@@ -94,8 +95,12 @@ const parseMarker = (value: string): DeletionMarker => {
   const parsed: unknown = JSON.parse(value);
   if (
     !isRecord(parsed) ||
-    Object.keys(parsed).sort().join(",") !==
-      "deletionKind,keyUnavailableAt,requestedAt,version" ||
+    !hasExactKeys(parsed, [
+      "deletionKind",
+      "keyUnavailableAt",
+      "requestedAt",
+      "version",
+    ]) ||
     parsed.version !== markerVersion ||
     !isDeletionKind(parsed.deletionKind) ||
     !isCanonicalTimestamp(parsed.requestedAt) ||
