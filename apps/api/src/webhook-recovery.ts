@@ -1,4 +1,5 @@
 import { Context, Data, Effect, type Layer } from "effect";
+import { hasExactKeys } from "./record";
 import {
   SafeTelemetry,
   type SafeTelemetry as SafeTelemetryService,
@@ -98,7 +99,14 @@ const messageFromObject = (
   if (
     objectId === undefined ||
     payloadBytes === null ||
-    Object.keys(metadata).length !== 6
+    !hasExactKeys(metadata, [
+      "ciphertextSha256",
+      "payloadBytes",
+      "personalAccountId",
+      "receivedAt",
+      "version",
+      "whatsappConnectionId",
+    ])
   ) {
     return null;
   }
