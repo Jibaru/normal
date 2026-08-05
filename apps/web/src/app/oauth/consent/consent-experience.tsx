@@ -102,7 +102,7 @@ export function ConsentExperience({
   const submitApproval = useReverification(async () => {
     const token = await getToken({ skipCache: true });
     if (!token || !inspection) throw new Error("token unavailable");
-    return fetch(decisionEndpoint, {
+    const response = await fetch(decisionEndpoint, {
       body: JSON.stringify({
         connection_ids: connections,
         decision: "approve",
@@ -118,6 +118,7 @@ export function ConsentExperience({
       },
       method: "POST",
     });
+    return response.json();
   });
 
   const submit = async (decision: "approve" | "deny") => {
