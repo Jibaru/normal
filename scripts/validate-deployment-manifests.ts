@@ -148,13 +148,8 @@ for (const deployable of deployables) {
           `API ${configurationName} configuration must run beside the regional database to keep MCP query round trips low latency.`,
         );
       }
-      const requiredSecrets = (
-        configuration.secrets as
-          | { readonly required?: ReadonlyArray<string> }
-          | undefined
-      )?.required;
       if (
-        JSON.stringify([...(requiredSecrets ?? [])].sort()) !==
+        JSON.stringify(requiredSecrets(configuration)) !==
         JSON.stringify(requiredSecretNames)
       ) {
         throw new Error(
