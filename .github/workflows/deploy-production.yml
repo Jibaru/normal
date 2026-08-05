@@ -82,7 +82,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
       - name: Deploy web
-        run: bun x vercel@50.39.0 deploy --prod --yes --cwd apps/web --token "$VERCEL_API_TOKEN"
+        run: bun x vercel@50.39.0 deploy --prod --yes --token "$VERCEL_API_TOKEN"
         env:
           VERCEL_API_TOKEN: ${{ secrets.VERCEL_API_TOKEN }}
           VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
