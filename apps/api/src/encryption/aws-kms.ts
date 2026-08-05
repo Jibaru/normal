@@ -27,6 +27,23 @@ const requiredBytes = (
   return value;
 };
 
+const decrypt =
+  (client: Pick<KMSClient, "send">): KmsKeyService["decrypt"] =>
+  ({ ciphertext, encryptionContext, keyId }) =>
+    Effect.tryPromise({
+      try: async () => {
+        const result = await client.send(
+          new DecryptCommand({
+            CiphertextBlob: ciphertext,
+            EncryptionContext: encryptionContext,
+            KeyId: keyId,
+          }),
+        );
+        return requiredBytes(result.Plaintext, "decrypt");
+      },
+      catch: () => new AwsKmsError({ operation: "decrypt" }),
+    });
+
 export const makeAwsKmsKeyService = (
   client: Pick<KMSClient, "send">,
 ): KmsKeyService => ({
@@ -59,20 +76,7 @@ export const makeAwsKmsKeyService = (
           operation: "generate-data-key",
         }),
     }),
-  decrypt: ({ ciphertext, encryptionContext, keyId }) =>
-    Effect.tryPromise({
-      try: async () => {
-        const result = await client.send(
-          new DecryptCommand({
-            CiphertextBlob: ciphertext,
-            EncryptionContext: encryptionContext,
-            KeyId: keyId,
-          }),
-        );
-        return requiredBytes(result.Plaintext, "decrypt");
-      },
-      catch: () => new AwsKmsError({ operation: "decrypt" }),
-    }),
+  decrypt: decrypt(client),
 });
 
 export const makeAwsDeletionCapsuleKmsWriter = (
@@ -97,18 +101,5 @@ export const makeAwsDeletionCapsuleKmsWriter = (
 export const makeAwsDeletionCapsuleKmsReader = (
   client: Pick<KMSClient, "send">,
 ): DeletionCapsuleKmsReader => ({
-  decrypt: ({ ciphertext, encryptionContext, keyId }) =>
-    Effect.tryPromise({
-      try: async () => {
-        const result = await client.send(
-          new DecryptCommand({
-            CiphertextBlob: ciphertext,
-            EncryptionContext: encryptionContext,
-            KeyId: keyId,
-          }),
-        );
-        return requiredBytes(result.Plaintext, "decrypt");
-      },
-      catch: () => new AwsKmsError({ operation: "decrypt" }),
-    }),
+  decrypt: decrypt(client),
 });
