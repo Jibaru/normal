@@ -1,3 +1,5 @@
+import { encodeBase64Url } from "./base64-url";
+
 const textEncoder = new TextEncoder();
 
 export type RecipientRouteKind = "contact" | "group";
@@ -9,15 +11,6 @@ export interface RecipientRouteKeys {
 
 type RecipientRouteVersion = "v1" | "v2";
 
-const base64Url = (bytes: Uint8Array): string => {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary)
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/u, "");
-};
-
 const decodeBase64Url = (value: string): Uint8Array | null => {
   if (!/^[A-Za-z0-9_-]+$/u.test(value)) return null;
   const padding = "=".repeat((4 - (value.length % 4)) % 4);
@@ -28,7 +21,7 @@ const decodeBase64Url = (value: string): Uint8Array | null => {
     const bytes = Uint8Array.from(binary, (character) =>
       character.charCodeAt(0),
     );
-    return base64Url(bytes) === value ? bytes : null;
+    return encodeBase64Url(bytes) === value ? bytes : null;
   } catch {
     return null;
   }
@@ -122,7 +115,7 @@ const sealRoute = async (
   const sealed = new Uint8Array(iv.byteLength + ciphertext.byteLength);
   sealed.set(iv);
   sealed.set(ciphertext, iv.byteLength);
-  return `loc_${version}_${kind === "contact" ? "c" : "g"}_${base64Url(sealed)}`;
+  return `loc_${version}_${kind === "contact" ? "c" : "g"}_${encodeBase64Url(sealed)}`;
 };
 
 export const sealRecipientRoute = async (

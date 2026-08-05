@@ -1,4 +1,5 @@
 import { Effect, Redacted } from "effect";
+import { encodeBase64Url } from "./base64-url";
 import { makeBoundedRetryAfterMs, maximumJsonResponseBytes } from "./common";
 import {
   deriveIdentityRecipientRouteKeys,
@@ -460,18 +461,7 @@ const equalityLocator = async (
       textEncoder.encode(`${kind}-recipient\0${JSON.stringify(value)}`),
     ),
   );
-  return `wi1_${base64Url(signature)}`;
-};
-
-const base64Url = (bytes: Uint8Array): string => {
-  let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary)
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/u, "");
+  return `wi1_${encodeBase64Url(signature)}`;
 };
 
 const outputBytes = (value: unknown): number =>

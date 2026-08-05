@@ -1,4 +1,5 @@
 import { Effect, Layer, Redacted } from "effect";
+import { encodeBase64Url } from "./base64-url";
 import {
   makeBoundedRetryAfterMs,
   maximumJsonResponseBytes,
@@ -182,17 +183,6 @@ const mapIdentityStatus = (
   return null;
 };
 
-const base64Url = (bytes: Uint8Array): string => {
-  let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary)
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/u, "");
-};
-
 const protectMessageIdentity = async (
   keyBytes: Uint8Array,
   providerIdentity: string,
@@ -209,7 +199,7 @@ const protectMessageIdentity = async (
     key,
     textEncoder.encode(`message-identity\0${JSON.stringify(providerIdentity)}`),
   );
-  return `wi1_${base64Url(new Uint8Array(signature))}` as StableMessageIdentity;
+  return `wi1_${encodeBase64Url(new Uint8Array(signature))}` as StableMessageIdentity;
 };
 
 const definitiveFailure = (
