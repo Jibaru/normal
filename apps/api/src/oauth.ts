@@ -6,7 +6,7 @@ import {
   OAuthProvider,
 } from "@cloudflare/workers-oauth-provider";
 import { Config, ConfigProvider, Data, Effect, Redacted } from "effect";
-import { encodeBase64Url } from "./base64-url";
+import { decodeBase64Url, encodeBase64Url } from "./base64-url";
 import type {
   OAuthAuthorizationRequestCompletedEvent,
   OAuthProtocolRequestFailedEvent,
@@ -295,17 +295,6 @@ export const sealAuthorizationRequest = async (
   return lookupSecret;
 };
 
-const base64UrlToBytes = (value: string): Uint8Array => {
-  if (!/^[A-Za-z0-9_-]+$/.test(value)) {
-    throw new Error("invalid base64url");
-  }
-  const padded = value
-    .replaceAll("-", "+")
-    .replaceAll("_", "/")
-    .padEnd(Math.ceil(value.length / 4) * 4, "=");
-  return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
-};
-
 export interface OpenedAuthorizationRequest {
   readonly client: AllowlistedOAuthClient;
   readonly expiresAt: number;
@@ -378,12 +367,12 @@ export const openAuthorizationRequest = async (
   const plaintext = await crypto.subtle.decrypt(
     {
       additionalData: new TextEncoder().encode(configuration.resource),
-      iv: base64UrlToBytes(record.iv),
+      iv: decodeBase64Url(record.iv),
       name: "AES-GCM",
       tagLength: 128,
     },
     key,
-    base64UrlToBytes(record.ciphertext),
+    decodeBase64Url(record.ciphertext),
   );
   const opened = JSON.parse(new TextDecoder().decode(plaintext)) as Record<
     string,

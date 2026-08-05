@@ -14,3 +14,14 @@ export const encodeBase64Url = (bytes: Uint8Array): string =>
     .replaceAll("+", "-")
     .replaceAll("/", "_")
     .replace(/=+$/u, "");
+
+export const decodeBase64Url = (value: string): Uint8Array => {
+  if (!/^[A-Za-z0-9_-]+$/u.test(value)) {
+    throw new Error("invalid base64url");
+  }
+  const base64 = value
+    .replaceAll("-", "+")
+    .replaceAll("_", "/")
+    .padEnd(Math.ceil(value.length / 4) * 4, "=");
+  return decodeBase64(base64);
+};
