@@ -27,6 +27,7 @@ import {
 } from "./encryption/envelope";
 import { hasFailureTag } from "./failure-tag";
 import { noStoreJsonResponse } from "./http-response";
+import { hasExactKeys } from "./record";
 import {
   SafeTelemetry,
   type SafeTelemetry as SafeTelemetryService,
@@ -335,7 +336,7 @@ const decodeRequest = async (
     typeof value !== "object" ||
     value === null ||
     Array.isArray(value) ||
-    Object.keys(value).length !== 2
+    !hasExactKeys(value, ["idempotency_key", "whatsapp_number"])
   ) {
     return null;
   }
