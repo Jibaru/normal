@@ -175,9 +175,27 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(toolCallLogs.getByTestId("tool-call-log")).not.toContainText(
     /message text|phone|provider/iu,
   );
-  await toolCallLogs.getByRole("button", { name: "Load more" }).click();
+  await toolCallLogs.getByRole("button", { name: "Next page" }).click();
   await expect(toolCallLogs.getByTestId("tool-call-log")).toHaveCount(2);
   await expect(toolCallLogs).toContainText("read messages");
+  await expect(toolCallLogs).toContainText("Page 1 of 1");
+  await toolCallLogs.getByRole("button", { name: "Sort by results" }).click();
+  await expect(toolCallLogs.getByTestId("tool-call-log").first()).toContainText(
+    "list connections",
+  );
+  await toolCallLogs.getByRole("button", { name: "Sort by results" }).click();
+  await expect(toolCallLogs.getByTestId("tool-call-log").first()).toContainText(
+    "read messages",
+  );
+  await toolCallLogs
+    .getByLabel("Search Tool Call Logs")
+    .fill("list connections");
+  await expect(toolCallLogs.getByTestId("tool-call-log")).toHaveCount(1);
+  await expect(toolCallLogs.getByTestId("tool-call-log")).toContainText(
+    "list connections",
+  );
+  await toolCallLogs.getByLabel("Search Tool Call Logs").fill("");
+  await expect(toolCallLogs.getByTestId("tool-call-log")).toHaveCount(2);
 
   await page.getByRole("link", { name: "WhatsApp Connections" }).click();
   await expect(page).toHaveURL(/\/dashboard\/connections$/u);
@@ -189,6 +207,8 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(page.getByRole("menuitem", { name: "Log out" })).toBeVisible();
   await page.keyboard.press("Escape");
 
+  await expect(page.getByLabel("WhatsApp Number")).toHaveCount(0);
+  await page.getByRole("button", { name: "New connection" }).click();
   const whatsappNumber = page.getByLabel("WhatsApp Number");
   const startConnectionSetup = page.getByRole("button", {
     name: "Continue",
@@ -215,6 +235,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(
     page.getByRole("img", { name: "Scan this WhatsApp QR code" }),
   ).toHaveCount(0);
+  await page.getByRole("button", { name: "Close" }).click();
   await expect(page.getByTestId("whatsapp-connection")).toContainText(
     "Number ending 3456",
   );
@@ -222,63 +243,92 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     "connected",
   );
   const connection = page.getByTestId("whatsapp-connection");
-  const retentionPolicy = page.getByRole("combobox", {
+  await connection
+    .getByRole("button", {
+      name: "Options for WhatsApp Connection ending 3456",
+    })
+    .click();
+  await page.getByRole("menuitem", { name: "Configure" }).click();
+  const configuration = page.getByRole("dialog", {
+    name: "Configure WhatsApp Connection",
+  });
+  const retentionPolicy = configuration.getByRole("combobox", {
     name: "Keep message history for",
   });
   await expect(retentionPolicy).toContainText("30 days");
   await retentionPolicy.click();
   await page.getByRole("option", { name: "7 days" }).click();
-  await page.getByRole("button", { name: "Save changes" }).click();
-  await expect(connection).toContainText("Current policy: 7 days");
+  await configuration.getByRole("button", { name: "Save changes" }).click();
+  await expect(configuration).toContainText("Current policy: 7 days");
   await retentionPolicy.click();
   await page
     .getByRole("option", { name: "Retain until Connection Deletion" })
     .click();
   await expect(
-    page.getByRole("button", { name: "Save changes" }),
+    configuration.getByRole("button", { name: "Save changes" }),
   ).toBeDisabled();
-  await page
+  await configuration
     .getByRole("checkbox", {
       name: "I explicitly choose to retain message content for longer.",
     })
     .check();
-  await page.getByRole("button", { name: "Save changes" }).click();
-  await expect(connection).toContainText("retain until Connection Deletion");
+  await configuration.getByRole("button", { name: "Save changes" }).click();
+  await expect(configuration).toContainText("retain until Connection Deletion");
   await expect(page.getByTestId("whatsapp-connection")).not.toContainText(
     "session-authority",
   );
+  await configuration.getByRole("button", { name: "Close" }).click();
   await connection
     .getByRole("button", {
-      name: "Disconnect WhatsApp Connection ending 3456",
+      name: "Options for WhatsApp Connection ending 3456",
     })
     .click();
+  await page.getByRole("menuitem", { name: "Disconnect" }).click();
   await expect(connection).toContainText("disconnected");
-  await expect(connection).toContainText(
-    "Retained history remains available under your Message Retention Policy.",
-  );
   await connection
+    .getByRole("button", {
+      name: "Options for WhatsApp Connection ending 3456",
+    })
+    .click();
+  await page.getByRole("menuitem", { name: "Reconnect" }).click();
+  const reconnect = page.getByRole("dialog", {
+    name: "Reconnect WhatsApp Connection",
+  });
+  await expect(reconnect).toContainText(
+    "Retained history remains available under its Message Retention Policy.",
+  );
+  await reconnect
     .getByRole("button", {
       name: "Reconnect WhatsApp Connection ending 3456",
     })
     .click();
   await expect(
-    connection.getByRole("img", {
+    reconnect.getByRole("img", {
       name: "Reconnect this WhatsApp Connection QR code",
     }),
   ).toBeVisible();
   await page.reload();
   const resumedConnection = page.getByTestId("whatsapp-connection");
   await expect(resumedConnection).toContainText("connecting");
+  await resumedConnection
+    .getByRole("button", {
+      name: "Options for WhatsApp Connection ending 3456",
+    })
+    .click();
+  await page.getByRole("menuitem", { name: "Reconnect" }).click();
+  const resumedReconnect = page.getByRole("dialog", {
+    name: "Reconnect WhatsApp Connection",
+  });
   resumeReconnectPolling = true;
   releaseReconnectPoll?.();
-  await resumedConnection
+  await resumedReconnect
     .getByRole("button", {
       name: "Reconnect WhatsApp Connection ending 3456",
     })
     .click();
   await expect(resumedConnection).toContainText("connected");
   await expect(
-    resumedConnection.getByRole("img", {
+    resumedReconnect.getByRole("img", {
       name: "Reconnect this WhatsApp Connection QR code",
     }),
   ).toHaveCount(0);

@@ -2,10 +2,31 @@
 
 import { useAuth, useClerk } from "@clerk/nextjs";
 import { makeIdempotencyKey } from "@whatsapp-mcp/contracts/handles";
+import {
+  ArrowUpDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  MoreHorizontalIcon,
+} from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Field,
   FieldDescription,
@@ -23,6 +44,14 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { McpConnectionGuides } from "./mcp-connection-guides";
 
 interface PublicBoundaryJourneyProps {
@@ -115,6 +144,32 @@ interface ToolCallLogPage {
   readonly logs: ReadonlyArray<ToolCallLog>;
   readonly nextCursor: string | null;
 }
+
+type ToolCallLogSort =
+  | "capability"
+  | "startedAt"
+  | "results"
+  | "latencyMs"
+  | "outcome";
+
+type SortDirection = "ascending" | "descending";
+
+const toolCallLogOutcomes: ReadonlyArray<ToolCallLog["outcome"]> = [
+  "started",
+  "success",
+  "execution_error",
+  "rate_limited",
+  "authorization_denied",
+];
+
+const compareOptionalNumbers = (
+  left: number | null,
+  right: number | null,
+): number => {
+  if (left === null) return right === null ? 0 : 1;
+  if (right === null) return -1;
+  return left - right;
+};
 
 const decodeToolCallLogs = (value: unknown): ToolCallLogPage | null => {
   if (
@@ -376,6 +431,16 @@ export function PublicBoundaryJourney({
   const [toolCallLogPageState, setToolCallLogPageState] = useState<
     "idle" | "loading" | "unavailable"
   >("idle");
+  const [toolCallLogSearch, setToolCallLogSearch] = useState("");
+  const [toolCallLogOutcome, setToolCallLogOutcome] = useState<
+    "all" | ToolCallLog["outcome"]
+  >("all");
+  const [toolCallLogSort, setToolCallLogSort] =
+    useState<ToolCallLogSort>("startedAt");
+  const [toolCallLogSortDirection, setToolCallLogSortDirection] =
+    useState<SortDirection>("descending");
+  const [toolCallLogPage, setToolCallLogPage] = useState(0);
+  const [toolCallLogPageSize, setToolCallLogPageSize] = useState(10);
   const [revokingAuthorization, setRevokingAuthorization] = useState<
     string | null
   >(null);
@@ -385,6 +450,12 @@ export function PublicBoundaryJourney({
   const [connections, setConnections] = useState<
     ReadonlyArray<SafeWhatsAppConnection>
   >([]);
+  const [configurationConnectionId, setConfigurationConnectionId] = useState<
+    string | null
+  >(null);
+  const [reconnectConnectionId, setReconnectConnectionId] = useState<
+    string | null
+  >(null);
   const [connectionLifecycleAction, setConnectionLifecycleAction] = useState<
     string | null
   >(null);
@@ -420,6 +491,72 @@ export function PublicBoundaryJourney({
   const observationGeneration = useRef(0);
   const observationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const automaticallyInitialized = useRef(false);
+
+  const normalizedToolCallLogSearch = toolCallLogSearch.trim().toLowerCase();
+  const filteredToolCallLogs = toolCallLogs.filter((log) => {
+    if (toolCallLogOutcome !== "all" && log.outcome !== toolCallLogOutcome) {
+      return false;
+    }
+    if (normalizedToolCallLogSearch.length === 0) return true;
+    return [
+      log.capability.replaceAll("_", " "),
+      log.client.name,
+      log.outcome.replaceAll("_", " "),
+      ...log.references,
+    ].some((value) =>
+      value.toLowerCase().includes(normalizedToolCallLogSearch),
+    );
+  });
+  const sortedToolCallLogs = [...filteredToolCallLogs].sort((left, right) => {
+    let comparison: number;
+    switch (toolCallLogSort) {
+      case "capability":
+        comparison = left.capability.localeCompare(right.capability);
+        break;
+      case "startedAt":
+        comparison = left.startedAt.localeCompare(right.startedAt);
+        break;
+      case "results":
+        comparison = compareOptionalNumbers(
+          left.counts.results,
+          right.counts.results,
+        );
+        break;
+      case "latencyMs":
+        comparison = compareOptionalNumbers(left.latencyMs, right.latencyMs);
+        break;
+      case "outcome":
+        comparison = left.outcome.localeCompare(right.outcome);
+        break;
+    }
+    return toolCallLogSortDirection === "ascending" ? comparison : -comparison;
+  });
+  const toolCallLogPageCount = Math.max(
+    1,
+    Math.ceil(sortedToolCallLogs.length / toolCallLogPageSize),
+  );
+  const currentToolCallLogPage = Math.min(
+    toolCallLogPage,
+    toolCallLogPageCount - 1,
+  );
+  const visibleToolCallLogs = sortedToolCallLogs.slice(
+    currentToolCallLogPage * toolCallLogPageSize,
+    (currentToolCallLogPage + 1) * toolCallLogPageSize,
+  );
+
+  const changeToolCallLogSort = (sort: ToolCallLogSort) => {
+    setToolCallLogPage(0);
+    if (toolCallLogSort === sort) {
+      setToolCallLogSortDirection((current) =>
+        current === "ascending" ? "descending" : "ascending",
+      );
+      return;
+    }
+    setToolCallLogSort(sort);
+    setToolCallLogSortDirection(
+      sort === "startedAt" ? "descending" : "ascending",
+    );
+  };
 
   useEffect(
     () => () => {
@@ -459,9 +596,9 @@ export function PublicBoundaryJourney({
     }
   };
 
-  const loadMoreToolCallLogs = async () => {
+  const loadMoreToolCallLogs = async (): Promise<boolean> => {
     if (toolCallLogCursor === null || toolCallLogPageState === "loading")
-      return;
+      return false;
     setToolCallLogPageState("loading");
     try {
       const token = await getToken();
@@ -476,8 +613,20 @@ export function PublicBoundaryJourney({
       setToolCallLogs((current) => [...current, ...page.logs]);
       setToolCallLogCursor(page.nextCursor);
       setToolCallLogPageState("idle");
+      return page.logs.length > 0;
     } catch {
       setToolCallLogPageState("unavailable");
+      return false;
+    }
+  };
+
+  const goToNextToolCallLogPage = async () => {
+    if (currentToolCallLogPage < toolCallLogPageCount - 1) {
+      setToolCallLogPage(currentToolCallLogPage + 1);
+      return;
+    }
+    if (await loadMoreToolCallLogs()) {
+      setToolCallLogPage(currentToolCallLogPage + 1);
     }
   };
 
@@ -1398,194 +1547,305 @@ export function PublicBoundaryJourney({
               ) : toolCallLogs.length === 0 ? (
                 <p>No tool activity in the last 90 days.</p>
               ) : (
-                <ul className="flex flex-col gap-3">
-                  {toolCallLogs.map((log, index) => (
-                    <li
-                      className="flex flex-col gap-3 rounded-xl bg-card p-5 ring-1 ring-foreground/10 sm:p-6"
-                      data-testid="tool-call-log"
-                      key={`${log.startedAt}:${log.references[0]}:${index}`}
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <h3 className="font-medium">
-                            {log.capability.replaceAll("_", " ")}
-                          </h3>
-                          <p className="text-sm text-muted-foreground">
-                            {log.client.name}
-                          </p>
-                        </div>
-                        <Badge className="capitalize" variant="outline">
-                          {log.outcome.replaceAll("_", " ")}
-                        </Badge>
-                      </div>
-                      <dl className="grid gap-2 text-sm sm:grid-cols-3">
-                        <div>
-                          <dt className="text-muted-foreground">Started</dt>
-                          <dd>
-                            <time dateTime={log.startedAt}>
-                              {displayTime(log.startedAt)} UTC
-                            </time>
-                          </dd>
-                        </div>
-                        <div>
-                          <dt className="text-muted-foreground">Results</dt>
-                          <dd>{log.counts.results ?? "Pending"}</dd>
-                        </div>
-                        <div>
-                          <dt className="text-muted-foreground">Latency</dt>
-                          <dd>
-                            {log.latencyMs === null
-                              ? "Pending"
-                              : `${log.latencyMs} ms`}
-                          </dd>
-                        </div>
-                      </dl>
-                      <ul className="hidden flex-col gap-1 font-mono text-xs text-muted-foreground sm:flex">
-                        {log.references.map((reference) => (
-                          <li key={reference}>{reference}</li>
+                <div className="flex flex-col gap-3">
+                  <FieldGroup className="flex flex-col gap-2 sm:flex-row">
+                    <Field className="sm:max-w-sm">
+                      <FieldLabel className="sr-only" htmlFor="log-search">
+                        Search Tool Call Logs
+                      </FieldLabel>
+                      <Input
+                        id="log-search"
+                        onChange={(event) => {
+                          setToolCallLogSearch(event.target.value);
+                          setToolCallLogPage(0);
+                        }}
+                        placeholder="Search tools, clients, or references…"
+                        type="search"
+                        value={toolCallLogSearch}
+                      />
+                    </Field>
+                    <Field className="sm:w-fit">
+                      <FieldLabel className="sr-only" htmlFor="log-outcome">
+                        Filter by outcome
+                      </FieldLabel>
+                      <Select
+                        items={[
+                          { label: "All outcomes", value: "all" },
+                          ...toolCallLogOutcomes.map((outcome) => ({
+                            label: outcome.replaceAll("_", " "),
+                            value: outcome,
+                          })),
+                        ]}
+                        onValueChange={(value) => {
+                          if (value === null) return;
+                          setToolCallLogOutcome(
+                            value as "all" | ToolCallLog["outcome"],
+                          );
+                          setToolCallLogPage(0);
+                        }}
+                        value={toolCallLogOutcome}
+                      >
+                        <SelectTrigger id="log-outcome">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            <SelectItem value="all">All outcomes</SelectItem>
+                            {toolCallLogOutcomes.map((outcome) => (
+                              <SelectItem key={outcome} value={outcome}>
+                                <span className="capitalize">
+                                  {outcome.replaceAll("_", " ")}
+                                </span>
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </Field>
+                  </FieldGroup>
+                  <div className="rounded-xl border bg-card">
+                    <Table className="min-w-4xl">
+                      <TableHeader className="bg-muted/40 text-xs text-muted-foreground">
+                        <TableRow>
+                          <TableHead
+                            aria-sort={
+                              toolCallLogSort === "capability"
+                                ? toolCallLogSortDirection
+                                : "none"
+                            }
+                            className="px-4"
+                          >
+                            <Button
+                              aria-label="Sort by tool"
+                              className="-ml-2"
+                              onClick={() =>
+                                changeToolCallLogSort("capability")
+                              }
+                              size="sm"
+                              type="button"
+                              variant="ghost"
+                            >
+                              Tool
+                              <ArrowUpDownIcon data-icon="inline-end" />
+                            </Button>
+                          </TableHead>
+                          <TableHead
+                            aria-sort={
+                              toolCallLogSort === "startedAt"
+                                ? toolCallLogSortDirection
+                                : "none"
+                            }
+                            className="px-4"
+                          >
+                            <Button
+                              aria-label="Sort by started time"
+                              className="-ml-2"
+                              onClick={() => changeToolCallLogSort("startedAt")}
+                              size="sm"
+                              type="button"
+                              variant="ghost"
+                            >
+                              Started
+                              <ArrowUpDownIcon data-icon="inline-end" />
+                            </Button>
+                          </TableHead>
+                          <TableHead
+                            aria-sort={
+                              toolCallLogSort === "results"
+                                ? toolCallLogSortDirection
+                                : "none"
+                            }
+                            className="px-4"
+                          >
+                            <Button
+                              aria-label="Sort by results"
+                              className="-ml-2"
+                              onClick={() => changeToolCallLogSort("results")}
+                              size="sm"
+                              type="button"
+                              variant="ghost"
+                            >
+                              Results
+                              <ArrowUpDownIcon data-icon="inline-end" />
+                            </Button>
+                          </TableHead>
+                          <TableHead
+                            aria-sort={
+                              toolCallLogSort === "latencyMs"
+                                ? toolCallLogSortDirection
+                                : "none"
+                            }
+                            className="px-4"
+                          >
+                            <Button
+                              aria-label="Sort by latency"
+                              className="-ml-2"
+                              onClick={() => changeToolCallLogSort("latencyMs")}
+                              size="sm"
+                              type="button"
+                              variant="ghost"
+                            >
+                              Latency
+                              <ArrowUpDownIcon data-icon="inline-end" />
+                            </Button>
+                          </TableHead>
+                          <TableHead className="px-4">References</TableHead>
+                          <TableHead
+                            aria-sort={
+                              toolCallLogSort === "outcome"
+                                ? toolCallLogSortDirection
+                                : "none"
+                            }
+                            className="px-4 text-right"
+                          >
+                            <Button
+                              aria-label="Sort by outcome"
+                              className="-mr-2"
+                              onClick={() => changeToolCallLogSort("outcome")}
+                              size="sm"
+                              type="button"
+                              variant="ghost"
+                            >
+                              Outcome
+                              <ArrowUpDownIcon data-icon="inline-end" />
+                            </Button>
+                          </TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {visibleToolCallLogs.map((log, index) => (
+                          <TableRow
+                            data-testid="tool-call-log"
+                            key={`${log.startedAt}:${log.references[0]}:${index}`}
+                          >
+                            <TableCell className="px-4 py-3 align-top">
+                              <p className="whitespace-nowrap font-medium">
+                                {log.capability.replaceAll("_", " ")}
+                              </p>
+                              <p className="whitespace-nowrap text-xs text-muted-foreground">
+                                {log.client.name}
+                              </p>
+                            </TableCell>
+                            <TableCell className="px-4 py-3 align-top">
+                              <time dateTime={log.startedAt}>
+                                {displayTime(log.startedAt)} UTC
+                              </time>
+                            </TableCell>
+                            <TableCell className="px-4 py-3 align-top">
+                              {log.counts.results ?? "Pending"}
+                            </TableCell>
+                            <TableCell className="px-4 py-3 align-top">
+                              {log.latencyMs === null
+                                ? "Pending"
+                                : `${log.latencyMs} ms`}
+                            </TableCell>
+                            <TableCell className="px-4 py-3 align-top">
+                              <ul className="flex flex-col gap-0.5 font-mono text-xs text-muted-foreground">
+                                {log.references.map((reference) => (
+                                  <li key={reference}>{reference}</li>
+                                ))}
+                              </ul>
+                            </TableCell>
+                            <TableCell className="px-4 py-3 text-right align-top">
+                              <Badge className="capitalize" variant="outline">
+                                {log.outcome.replaceAll("_", " ")}
+                              </Badge>
+                            </TableCell>
+                          </TableRow>
                         ))}
-                      </ul>
-                    </li>
-                  ))}
-                </ul>
+                        {visibleToolCallLogs.length === 0 ? (
+                          <TableRow>
+                            <TableCell
+                              className="h-24 text-center text-muted-foreground"
+                              colSpan={6}
+                            >
+                              No Tool Call Logs match these filters.
+                            </TableCell>
+                          </TableRow>
+                        ) : null}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <span>
+                        {sortedToolCallLogs.length === 0
+                          ? "0 rows"
+                          : `${currentToolCallLogPage * toolCallLogPageSize + 1}–${Math.min(
+                              (currentToolCallLogPage + 1) *
+                                toolCallLogPageSize,
+                              sortedToolCallLogs.length,
+                            )} of ${sortedToolCallLogs.length} loaded rows`}
+                      </span>
+                      <Select
+                        items={[10, 25, 50].map((size) => ({
+                          label: `${size} per page`,
+                          value: String(size),
+                        }))}
+                        onValueChange={(value) => {
+                          if (value === null) return;
+                          setToolCallLogPageSize(Number(value));
+                          setToolCallLogPage(0);
+                        }}
+                        value={String(toolCallLogPageSize)}
+                      >
+                        <SelectTrigger aria-label="Rows per page" size="sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            {[10, 25, 50].map((size) => (
+                              <SelectItem key={size} value={String(size)}>
+                                {size} per page
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-muted-foreground">
+                        Page {currentToolCallLogPage + 1} of{" "}
+                        {toolCallLogPageCount}
+                      </span>
+                      <Button
+                        aria-label="Previous page"
+                        disabled={currentToolCallLogPage === 0}
+                        onClick={() =>
+                          setToolCallLogPage(currentToolCallLogPage - 1)
+                        }
+                        size="icon-sm"
+                        type="button"
+                        variant="outline"
+                      >
+                        <ChevronLeftIcon />
+                      </Button>
+                      <Button
+                        aria-label="Next page"
+                        disabled={
+                          toolCallLogPageState === "loading" ||
+                          (currentToolCallLogPage >= toolCallLogPageCount - 1 &&
+                            toolCallLogCursor === null)
+                        }
+                        onClick={goToNextToolCallLogPage}
+                        size="icon-sm"
+                        type="button"
+                        variant="outline"
+                      >
+                        {toolCallLogPageState === "loading" ? (
+                          <Spinner />
+                        ) : (
+                          <ChevronRightIcon />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
               )}
-              {toolCallLogState === "ok" && toolCallLogCursor !== null ? (
-                <Button
-                  disabled={toolCallLogPageState === "loading"}
-                  onClick={loadMoreToolCallLogs}
-                  type="button"
-                  variant="outline"
-                >
-                  {toolCallLogPageState === "loading" ? (
-                    <Spinner data-icon="inline-start" />
-                  ) : null}
-                  {toolCallLogPageState === "loading"
-                    ? "Loading more…"
-                    : "Load more"}
-                </Button>
-              ) : null}
               {toolCallLogPageState === "unavailable" ? (
                 <p aria-live="polite">More Tool Call Logs are unavailable.</p>
               ) : null}
             </section>
-          ) : null}
-          {view === "connections" ? (
-            <form
-              className="flex max-w-xl flex-col gap-4"
-              onSubmit={startSetup}
-            >
-              <div>
-                <h2 className="text-xl font-semibold tracking-tight">
-                  Add WhatsApp
-                </h2>
-                <p className="text-sm text-muted-foreground">
-                  Enter the number you want to connect. You will scan a QR code
-                  in WhatsApp next.
-                </p>
-              </div>
-              <FieldGroup>
-                <Field>
-                  <FieldLabel htmlFor="whatsapp-number">
-                    WhatsApp number
-                  </FieldLabel>
-                  <Input
-                    autoComplete="tel"
-                    disabled={setupState === "loading"}
-                    id="whatsapp-number"
-                    inputMode="tel"
-                    onChange={(event) => {
-                      stopObserving();
-                      setWhatsappNumber(event.target.value);
-                      setSetupCleanupState(null);
-                      setSetupId(null);
-                      setSetupState("idle");
-                    }}
-                    placeholder="+1 555 012 3456"
-                    required
-                    type="tel"
-                    value={whatsappNumber}
-                  />
-                  <FieldDescription>
-                    Include the country code, for example +51. The QR code
-                    expires after 15 minutes.
-                  </FieldDescription>
-                </Field>
-              </FieldGroup>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  disabled={setupState === "loading"}
-                  size="lg"
-                  type="submit"
-                >
-                  {setupState === "loading" ? (
-                    <Spinner data-icon="inline-start" />
-                  ) : null}
-                  Continue
-                </Button>
-                {setupId !== null &&
-                (setupState === "pending" ||
-                  setupState === "replayed" ||
-                  setupState === "qr_available" ||
-                  setupState === "connecting" ||
-                  setupState === "provisioned" ||
-                  setupState === "provisioning_failed" ||
-                  setupState === "provisioning_quarantined") ? (
-                  <Button onClick={cancelSetup} type="button" variant="outline">
-                    Cancel setup
-                  </Button>
-                ) : null}
-              </div>
-              <p aria-live="polite" data-testid="connection-setup-status">
-                {setupState === "pending"
-                  ? "Connection Setup started. Preparing your QR code."
-                  : setupState === "replayed"
-                    ? "Connection Setup already started. Preparing your QR code."
-                    : setupState === "qr_available"
-                      ? "Scan this QR code with WhatsApp."
-                      : setupState === "connecting"
-                        ? "Waiting for WhatsApp to finish connecting."
-                        : setupState === "connected"
-                          ? "WhatsApp Connection active."
-                          : setupState === "provisioned"
-                            ? "Connection Setup is ready."
-                            : setupState === "provisioning_failed"
-                              ? "Connection Setup could not be prepared."
-                              : setupState === "provisioning_quarantined"
-                                ? "Connection Setup needs support review."
-                                : setupState === "cancelling"
-                                  ? "Cancelling Connection Setup."
-                                  : setupState === "cancelled"
-                                    ? setupCleanupState === "complete"
-                                      ? "Connection Setup cancelled. Provider cleanup is complete."
-                                      : setupCleanupState === "retrying"
-                                        ? "Connection Setup cancelled. Provider cleanup is retrying."
-                                        : "Connection Setup cancelled. Provider cleanup is in progress."
-                                    : setupState === "expired"
-                                      ? setupCleanupState === "complete"
-                                        ? "Connection Setup expired. Provider cleanup is complete."
-                                        : setupCleanupState === "retrying"
-                                          ? "Connection Setup expired. Provider cleanup is retrying."
-                                          : "Connection Setup expired. Provider cleanup is in progress."
-                                      : setupState === "number_unavailable"
-                                        ? "That WhatsApp Number is already in use."
-                                        : setupState ===
-                                            "connection_limit_reached"
-                                          ? "Your Personal Account already has three active setup or Connection slots."
-                                          : setupState === "invalid"
-                                            ? "Enter a valid international WhatsApp Number."
-                                            : setupState}
-              </p>
-              {qrImageUrl === null ? null : (
-                // The object URL is created from the authenticated, non-persisted
-                // SVG response and is revoked as soon as setup completes.
-                // biome-ignore lint/performance/noImgElement: QR bytes are already a complete generated SVG.
-                <img
-                  alt="Scan this WhatsApp QR code"
-                  className="size-64 rounded-lg bg-background p-3"
-                  src={qrImageUrl}
-                />
-              )}
-            </form>
           ) : null}
         </>
       ) : null}
@@ -1594,13 +1854,142 @@ export function PublicBoundaryJourney({
           aria-label="WhatsApp Connections"
           className="flex flex-col gap-5"
         >
-          <div>
-            <h2 className="text-xl font-semibold tracking-tight">
-              Your WhatsApp Connections
-            </h2>
-            <p className="text-sm text-muted-foreground">
-              Connection health, message history, and reconnect controls.
-            </p>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-xl font-semibold tracking-tight">
+                Your WhatsApp Connections
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                Connection health, message history, and reconnect controls.
+              </p>
+            </div>
+            <Dialog>
+              <DialogTrigger render={<Button />}>New connection</DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>New WhatsApp Connection</DialogTitle>
+                  <DialogDescription>
+                    Enter the number you want to connect. You will scan a QR
+                    code in WhatsApp next.
+                  </DialogDescription>
+                </DialogHeader>
+                <form className="flex flex-col gap-4" onSubmit={startSetup}>
+                  <FieldGroup>
+                    <Field>
+                      <FieldLabel htmlFor="whatsapp-number">
+                        WhatsApp number
+                      </FieldLabel>
+                      <Input
+                        autoComplete="tel"
+                        disabled={setupState === "loading"}
+                        id="whatsapp-number"
+                        inputMode="tel"
+                        onChange={(event) => {
+                          stopObserving();
+                          setWhatsappNumber(event.target.value);
+                          setSetupCleanupState(null);
+                          setSetupId(null);
+                          setSetupState("idle");
+                        }}
+                        placeholder="+1 555 012 3456"
+                        required
+                        type="tel"
+                        value={whatsappNumber}
+                      />
+                      <FieldDescription>
+                        Include the country code, for example +51. The QR code
+                        expires after 15 minutes.
+                      </FieldDescription>
+                    </Field>
+                  </FieldGroup>
+                  <div className="flex flex-wrap gap-2">
+                    <Button disabled={setupState === "loading"} type="submit">
+                      {setupState === "loading" ? (
+                        <Spinner data-icon="inline-start" />
+                      ) : null}
+                      Continue
+                    </Button>
+                    {setupId !== null &&
+                    (setupState === "pending" ||
+                      setupState === "replayed" ||
+                      setupState === "qr_available" ||
+                      setupState === "connecting" ||
+                      setupState === "provisioned" ||
+                      setupState === "provisioning_failed" ||
+                      setupState === "provisioning_quarantined") ? (
+                      <Button
+                        onClick={cancelSetup}
+                        type="button"
+                        variant="outline"
+                      >
+                        Cancel setup
+                      </Button>
+                    ) : null}
+                  </div>
+                  {setupState === "idle" ? null : (
+                    <p aria-live="polite" data-testid="connection-setup-status">
+                      {setupState === "loading"
+                        ? "Starting Connection Setup."
+                        : setupState === "unavailable"
+                          ? "Connection Setup is temporarily unavailable."
+                          : setupState === "pending"
+                            ? "Connection Setup started. Preparing your QR code."
+                            : setupState === "replayed"
+                              ? "Connection Setup already started. Preparing your QR code."
+                              : setupState === "qr_available"
+                                ? "Scan this QR code with WhatsApp."
+                                : setupState === "connecting"
+                                  ? "Waiting for WhatsApp to finish connecting."
+                                  : setupState === "connected"
+                                    ? "WhatsApp Connection active."
+                                    : setupState === "provisioned"
+                                      ? "Connection Setup is ready."
+                                      : setupState === "provisioning_failed"
+                                        ? "Connection Setup could not be prepared."
+                                        : setupState ===
+                                            "provisioning_quarantined"
+                                          ? "Connection Setup needs support review."
+                                          : setupState === "cancelling"
+                                            ? "Cancelling Connection Setup."
+                                            : setupState === "cancelled"
+                                              ? setupCleanupState === "complete"
+                                                ? "Connection Setup cancelled. Provider cleanup is complete."
+                                                : setupCleanupState ===
+                                                    "retrying"
+                                                  ? "Connection Setup cancelled. Provider cleanup is retrying."
+                                                  : "Connection Setup cancelled. Provider cleanup is in progress."
+                                              : setupState === "expired"
+                                                ? setupCleanupState ===
+                                                  "complete"
+                                                  ? "Connection Setup expired. Provider cleanup is complete."
+                                                  : setupCleanupState ===
+                                                      "retrying"
+                                                    ? "Connection Setup expired. Provider cleanup is retrying."
+                                                    : "Connection Setup expired. Provider cleanup is in progress."
+                                                : setupState ===
+                                                    "number_unavailable"
+                                                  ? "That WhatsApp Number is already in use."
+                                                  : setupState ===
+                                                      "connection_limit_reached"
+                                                    ? "Your Personal Account already has three active setup or Connection slots."
+                                                    : setupState === "invalid"
+                                                      ? "Enter a valid international WhatsApp Number."
+                                                      : ""}
+                    </p>
+                  )}
+                  {qrImageUrl === null ? null : (
+                    // The object URL is created from the authenticated, non-persisted
+                    // SVG response and is revoked as soon as setup completes.
+                    // biome-ignore lint/performance/noImgElement: QR bytes are already a complete generated SVG.
+                    <img
+                      alt="Scan this WhatsApp QR code"
+                      className="size-64 self-center rounded-lg bg-background p-3"
+                      src={qrImageUrl}
+                    />
+                  )}
+                </form>
+              </DialogContent>
+            </Dialog>
           </div>
           {connections.length === 0 ? (
             <p className="text-sm text-muted-foreground">
@@ -1610,201 +1999,283 @@ export function PublicBoundaryJourney({
             <ul className="flex flex-col gap-3">
               {connections.map((connection) => (
                 <li
-                  className="rounded-xl bg-card p-5 text-card-foreground ring-1 ring-foreground/10 sm:p-6"
+                  className="rounded-xl bg-card p-4 text-card-foreground ring-1 ring-foreground/10"
                   data-testid="whatsapp-connection"
                   key={connection.id}
                 >
-                  <p className="font-medium">
-                    {connection.displayName ?? "WhatsApp Connection"}
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    Number ending {connection.numberSuffix}
-                  </p>
-                  <Badge
-                    className="mt-2 capitalize"
-                    variant={
-                      connection.state === "connected" ? "secondary" : "outline"
-                    }
-                  >
-                    {connection.state.replace("_", " ")}
-                  </Badge>
-                  <time
-                    className="text-xs text-muted-foreground"
-                    dateTime={connection.stateChangedAt}
-                  >
-                    State changed {connection.stateChangedAt}
-                  </time>
-                  <div className="mt-5 flex flex-col gap-3">
-                    <Field>
-                      <FieldLabel htmlFor={`retention-${connection.id}`}>
-                        Keep message history for
-                      </FieldLabel>
-                      <Select
-                        items={[
-                          ...connection.retentionOptions.map((days) => ({
-                            label: `${days} days`,
-                            value: String(days),
-                          })),
-                          {
-                            label: "Retain until Connection Deletion",
-                            value: "until-deletion",
-                          },
-                        ]}
-                        onValueChange={(value) => {
-                          if (value === null) return;
-                          setRetentionDrafts((current) => ({
-                            ...current,
-                            [connection.id]: value,
-                          }));
-                          setRetentionAcknowledgements((current) => ({
-                            ...current,
-                            [connection.id]: false,
-                          }));
-                        }}
-                        value={
-                          retentionDrafts[connection.id] ??
-                          (connection.retentionDays === null
-                            ? "until-deletion"
-                            : String(connection.retentionDays))
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate font-medium">
+                          {connection.displayName ?? "WhatsApp Connection"}
+                        </p>
+                        <Badge
+                          className="capitalize"
+                          variant={
+                            connection.state === "connected"
+                              ? "secondary"
+                              : "outline"
+                          }
+                        >
+                          {connection.state.replace("_", " ")}
+                        </Badge>
+                      </div>
+                      <dl className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                        <div className="flex gap-1">
+                          <dt>Number</dt>
+                          <dd>ending {connection.numberSuffix}</dd>
+                        </div>
+                        <div className="flex gap-1">
+                          <dt>Message history</dt>
+                          <dd>
+                            {connection.retentionDays === null
+                              ? "until Connection Deletion"
+                              : `${connection.retentionDays} days`}
+                          </dd>
+                        </div>
+                        <div className="flex gap-1">
+                          <dt>State changed</dt>
+                          <dd>
+                            <time dateTime={connection.stateChangedAt}>
+                              {displayTime(connection.stateChangedAt)} UTC
+                            </time>
+                          </dd>
+                        </div>
+                      </dl>
+                    </div>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        render={
+                          <Button
+                            aria-label={`Options for WhatsApp Connection ending ${connection.numberSuffix}`}
+                            size="icon-sm"
+                            variant="ghost"
+                          />
                         }
                       >
-                        <SelectTrigger id={`retention-${connection.id}`}>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectGroup>
-                            {connection.retentionOptions.map((days) => (
-                              <SelectItem key={days} value={String(days)}>
-                                {days} days
-                              </SelectItem>
-                            ))}
-                            <SelectItem value="until-deletion">
-                              Retain until Connection Deletion
-                            </SelectItem>
-                          </SelectGroup>
-                        </SelectContent>
-                      </Select>
-                    </Field>
-                    {(() => {
-                      const draft = retentionDrafts[connection.id];
-                      const next =
-                        draft === "until-deletion"
-                          ? null
-                          : Number(draft ?? connection.retentionDays);
-                      const broadens =
-                        next === null ||
-                        (connection.retentionDays !== null &&
-                          next > connection.retentionDays);
-                      return broadens ? (
-                        <Field orientation="horizontal">
-                          <Checkbox
-                            checked={
-                              retentionAcknowledgements[connection.id] === true
+                        <MoreHorizontalIcon />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuGroup>
+                          <DropdownMenuItem
+                            onClick={() =>
+                              setConfigurationConnectionId(connection.id)
                             }
-                            id={`retention-acknowledgement-${connection.id}`}
-                            onCheckedChange={(checked) =>
+                          >
+                            Configure
+                          </DropdownMenuItem>
+                          {connection.state === "connected" ? (
+                            <DropdownMenuItem
+                              disabled={connectionLifecycleAction !== null}
+                              onClick={() =>
+                                startConnectionLifecycle(
+                                  connection,
+                                  "disconnect",
+                                )
+                              }
+                              variant="destructive"
+                            >
+                              Disconnect
+                            </DropdownMenuItem>
+                          ) : connection.state === "connecting" ||
+                            connection.state === "disconnected" ||
+                            connection.state === "degraded" ||
+                            connection.state === "reconnect_required" ? (
+                            <DropdownMenuItem
+                              onClick={() =>
+                                setReconnectConnectionId(connection.id)
+                              }
+                            >
+                              Reconnect
+                            </DropdownMenuItem>
+                          ) : null}
+                        </DropdownMenuGroup>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                  <Dialog
+                    onOpenChange={(open) => {
+                      if (!open) setConfigurationConnectionId(null);
+                    }}
+                    open={configurationConnectionId === connection.id}
+                  >
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Configure WhatsApp Connection</DialogTitle>
+                        <DialogDescription>
+                          Choose how long to keep message history for the
+                          WhatsApp Connection ending {connection.numberSuffix}.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="flex flex-col gap-4">
+                        <Field>
+                          <FieldLabel htmlFor={`retention-${connection.id}`}>
+                            Keep message history for
+                          </FieldLabel>
+                          <Select
+                            items={[
+                              ...connection.retentionOptions.map((days) => ({
+                                label: `${days} days`,
+                                value: String(days),
+                              })),
+                              {
+                                label: "Retain until Connection Deletion",
+                                value: "until-deletion",
+                              },
+                            ]}
+                            onValueChange={(value) => {
+                              if (value === null) return;
+                              setRetentionDrafts((current) => ({
+                                ...current,
+                                [connection.id]: value,
+                              }));
                               setRetentionAcknowledgements((current) => ({
                                 ...current,
-                                [connection.id]: checked,
-                              }))
+                                [connection.id]: false,
+                              }));
+                            }}
+                            value={
+                              retentionDrafts[connection.id] ??
+                              (connection.retentionDays === null
+                                ? "until-deletion"
+                                : String(connection.retentionDays))
                             }
-                          />
-                          <FieldLabel
-                            htmlFor={`retention-acknowledgement-${connection.id}`}
                           >
-                            I explicitly choose to retain message content for
-                            longer.
-                          </FieldLabel>
+                            <SelectTrigger id={`retention-${connection.id}`}>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectGroup>
+                                {connection.retentionOptions.map((days) => (
+                                  <SelectItem key={days} value={String(days)}>
+                                    {days} days
+                                  </SelectItem>
+                                ))}
+                                <SelectItem value="until-deletion">
+                                  Retain until Connection Deletion
+                                </SelectItem>
+                              </SelectGroup>
+                            </SelectContent>
+                          </Select>
                         </Field>
-                      ) : null;
-                    })()}
-                    <Button
-                      disabled={(() => {
-                        const draft = retentionDrafts[connection.id];
-                        const next =
-                          draft === "until-deletion"
-                            ? null
-                            : Number(draft ?? connection.retentionDays);
-                        return (
-                          (next === null ||
+                        {(() => {
+                          const draft = retentionDrafts[connection.id];
+                          const next =
+                            draft === "until-deletion"
+                              ? null
+                              : Number(draft ?? connection.retentionDays);
+                          const broadens =
+                            next === null ||
                             (connection.retentionDays !== null &&
-                              next > connection.retentionDays)) &&
-                          retentionAcknowledgements[connection.id] !== true
-                        );
-                      })()}
-                      onClick={() => void updateRetention(connection)}
-                      type="button"
-                      variant="outline"
-                    >
-                      Save changes
-                    </Button>
-                    <p
-                      aria-live="polite"
-                      className="text-sm text-muted-foreground"
-                    >
-                      {retentionStatus[connection.id] ??
-                        `Current policy: ${connection.retentionDays === null ? "retain until Connection Deletion" : `${connection.retentionDays} days`}.`}
-                    </p>
-                  </div>
-                  {connection.state === "disconnected" ? (
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      Retained history remains available under your Message
-                      Retention Policy.
-                    </p>
-                  ) : connection.state === "degraded" ||
-                    connection.state === "reconnect_required" ? (
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      New side effects are blocked until this WhatsApp
-                      Connection recovers.
-                    </p>
-                  ) : null}
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {connection.state === "connected" ? (
-                      <Button
-                        aria-label={`Disconnect WhatsApp Connection ending ${connection.numberSuffix}`}
-                        disabled={connectionLifecycleAction !== null}
-                        onClick={() =>
-                          startConnectionLifecycle(connection, "disconnect")
-                        }
-                        type="button"
-                        variant="destructive"
-                      >
-                        Disconnect
-                      </Button>
-                    ) : connection.state === "connecting" ||
-                      connection.state === "disconnected" ||
-                      connection.state === "degraded" ||
-                      connection.state === "reconnect_required" ? (
-                      <Button
-                        aria-label={`Reconnect WhatsApp Connection ending ${connection.numberSuffix}`}
-                        disabled={connectionLifecycleAction !== null}
-                        onClick={() =>
-                          startConnectionLifecycle(connection, "reconnect")
-                        }
-                        type="button"
-                        variant="outline"
-                      >
-                        Reconnect
-                      </Button>
-                    ) : null}
-                  </div>
-                  <p
-                    aria-live="polite"
-                    className="mt-2 text-sm text-muted-foreground"
-                    data-testid="connection-lifecycle-status"
+                              next > connection.retentionDays);
+                          return broadens ? (
+                            <Field orientation="horizontal">
+                              <Checkbox
+                                checked={
+                                  retentionAcknowledgements[connection.id] ===
+                                  true
+                                }
+                                id={`retention-acknowledgement-${connection.id}`}
+                                onCheckedChange={(checked) =>
+                                  setRetentionAcknowledgements((current) => ({
+                                    ...current,
+                                    [connection.id]: checked,
+                                  }))
+                                }
+                              />
+                              <FieldLabel
+                                htmlFor={`retention-acknowledgement-${connection.id}`}
+                              >
+                                I explicitly choose to retain message content
+                                for longer.
+                              </FieldLabel>
+                            </Field>
+                          ) : null;
+                        })()}
+                        <Button
+                          disabled={(() => {
+                            const draft = retentionDrafts[connection.id];
+                            const next =
+                              draft === "until-deletion"
+                                ? null
+                                : Number(draft ?? connection.retentionDays);
+                            return (
+                              (next === null ||
+                                (connection.retentionDays !== null &&
+                                  next > connection.retentionDays)) &&
+                              retentionAcknowledgements[connection.id] !== true
+                            );
+                          })()}
+                          onClick={() => void updateRetention(connection)}
+                          type="button"
+                          variant="outline"
+                        >
+                          Save changes
+                        </Button>
+                        <p
+                          aria-live="polite"
+                          className="text-sm text-muted-foreground"
+                        >
+                          {retentionStatus[connection.id] ??
+                            `Current policy: ${connection.retentionDays === null ? "retain until Connection Deletion" : `${connection.retentionDays} days`}.`}
+                        </p>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                  <Dialog
+                    onOpenChange={(open) => {
+                      if (!open) setReconnectConnectionId(null);
+                    }}
+                    open={reconnectConnectionId === connection.id}
                   >
-                    {connectionLifecycleStatus[connection.id] ?? ""}
-                  </p>
-                  {reconnectQr?.connectionId === connection.id ? (
-                    // The object URL contains only the authenticated ephemeral
-                    // provider QR response and is revoked after reconciliation.
-                    // biome-ignore lint/performance/noImgElement: QR bytes are already a complete generated SVG.
-                    <img
-                      alt="Reconnect this WhatsApp Connection QR code"
-                      className="mt-3 size-64 rounded-lg bg-background p-3"
-                      src={reconnectQr.url}
-                    />
-                  ) : null}
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Reconnect WhatsApp Connection</DialogTitle>
+                        <DialogDescription>
+                          Restore the WhatsApp Connection ending{" "}
+                          {connection.numberSuffix}. You may need to scan a new
+                          QR code in WhatsApp.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="flex flex-col gap-4">
+                        <p className="text-sm text-muted-foreground">
+                          New side effects remain blocked until this WhatsApp
+                          Connection recovers. Retained history remains
+                          available under its Message Retention Policy.
+                        </p>
+                        <Button
+                          aria-label={`Reconnect WhatsApp Connection ending ${connection.numberSuffix}`}
+                          disabled={connectionLifecycleAction !== null}
+                          onClick={() =>
+                            startConnectionLifecycle(connection, "reconnect")
+                          }
+                          type="button"
+                        >
+                          {connectionLifecycleAction !== null ? (
+                            <Spinner data-icon="inline-start" />
+                          ) : null}
+                          Reconnect
+                        </Button>
+                        <p
+                          aria-live="polite"
+                          className="text-sm text-muted-foreground"
+                          data-testid="connection-lifecycle-status"
+                        >
+                          {connectionLifecycleStatus[connection.id] ?? ""}
+                        </p>
+                        {reconnectQr?.connectionId === connection.id ? (
+                          // The object URL contains only the authenticated ephemeral
+                          // provider QR response and is revoked after reconciliation.
+                          // biome-ignore lint/performance/noImgElement: QR bytes are already a complete generated SVG.
+                          <img
+                            alt="Reconnect this WhatsApp Connection QR code"
+                            className="size-64 self-center rounded-lg bg-background p-3"
+                            src={reconnectQr.url}
+                          />
+                        ) : null}
+                      </div>
+                    </DialogContent>
+                  </Dialog>
                 </li>
               ))}
             </ul>

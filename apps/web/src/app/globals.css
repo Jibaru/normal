@@ -173,13 +173,8 @@ html {
   font-size: 0.9rem;
 }
 
-.dashboard-content-card {
+.dashboard-content {
   margin-top: 30px;
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  background: var(--background);
-  padding: 24px;
-  box-shadow: 0 12px 36px rgb(0 0 0 / 4%);
 }
 
 @media (min-width: 768px) {
@@ -187,9 +182,8 @@ html {
     padding: 56px 48px 96px;
   }
 
-  .dashboard-content-card {
+  .dashboard-content {
     margin-top: 40px;
-    padding: 36px;
   }
 }
 

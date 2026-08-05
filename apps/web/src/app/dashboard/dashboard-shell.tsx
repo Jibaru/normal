@@ -249,7 +249,7 @@ export function DashboardShell({
           </div>
           <div className="dashboard-main">
             {children}
-            <section className="dashboard-content-card">
+            <section className="dashboard-content">
               {configuration === null ? (
                 <p className="text-sm text-muted-foreground">
                   Your Personal Account is temporarily unavailable.
