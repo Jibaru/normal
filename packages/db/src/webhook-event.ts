@@ -1,7 +1,6 @@
 import type { WhatsAppConnectionState } from "@whatsapp-mcp/domain/whatsapp-connection";
 import { and, eq, gt, inArray, ne, sql } from "drizzle-orm";
-import type { Client as PgClient } from "pg";
-import { type Database, makeDatabase, makeQueryConnection } from "./database";
+import { type Database, makeDatabase, withPgQueryConnection } from "./database";
 import type { ProtectedGroupFields } from "./group";
 import {
   directoryContactProjectionsInApp,
@@ -2214,22 +2213,7 @@ export const makeWebhookEventRepository = (
 const makePgConnectionProvider = (
   connectionString: string,
 ): WebhookEventConnectionProvider => ({
-  withConnection: async <Value>(
-    use: (connection: WebhookEventConnection) => Promise<Value>,
-  ): Promise<Value> => {
-    const { Client } = await import("pg");
-    const client: PgClient = new Client({
-      connectionString,
-      connectionTimeoutMillis: 5_000,
-      query_timeout: 5_000,
-    });
-    await client.connect();
-    try {
-      return await use(makeQueryConnection(client));
-    } finally {
-      await client.end();
-    }
-  },
+  withConnection: (use) => withPgQueryConnection(connectionString, use),
 });
 
 export const makePgWebhookEventRepository = (
