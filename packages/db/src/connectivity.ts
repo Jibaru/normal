@@ -12,14 +12,13 @@ let recentDevelopmentReadiness:
   | { readonly branchId: string | undefined; readonly checkedAt: number }
   | undefined;
 
-const withClient = async <Value>(
+const withClient = <Value>(
   connectionString: string,
   use: (client: QueryConnection) => Promise<Value>,
-): Promise<Value> => {
-  return withPgRequestConnection(connectionString, (client) =>
+): Promise<Value> =>
+  withPgRequestConnection(connectionString, (client) =>
     use(makeQueryConnection(client)),
   );
-};
 
 export const checkDatabaseReadiness = (
   connectionString: string,
