@@ -149,8 +149,7 @@ for (const deployable of deployables) {
         );
       }
       if (
-        JSON.stringify(requiredSecrets(configuration)) !==
-        JSON.stringify(requiredSecretNames)
+        !hasSameStrings(requiredSecrets(configuration), requiredSecretNames)
       ) {
         throw new Error(
           `API ${configurationName} configuration must require its exact identity, KMS, database, cursor, send fingerprint, deployed smoke, OAuth protocol, and WhatsApp Number reservation secrets.`,
