@@ -5,6 +5,7 @@ import type {
 } from "@whatsapp-mcp/contracts/provider-control";
 import type { ConnectionSetupCleanupClaim } from "@whatsapp-mcp/db/connection-setup";
 import { Context, Data, Effect, type Layer } from "effect";
+import { handleQueueBatch } from "./queue-batch";
 import { hasExactKeys } from "./record";
 import {
   SafeTelemetry,
@@ -255,28 +256,17 @@ export const cleanupConnectionSetup = (
     return yield* deleteOne(setupId, workerId, session.session);
   });
 
-export const handleConnectionSetupCleanupBatch = async (
+export const handleConnectionSetupCleanupBatch = (
   batch: MessageBatch,
   layer: Layer.Layer<ConnectionSetupCleanupRequirements, unknown>,
-): Promise<void> => {
-  for (const message of batch.messages) {
-    if (!isConnectionSetupCleanupMessage(message.body)) {
-      message.ack();
-      continue;
-    }
-    try {
-      const result = await Effect.runPromise(
-        cleanupConnectionSetup(message.body.setup_id).pipe(
-          Effect.provide(layer),
-        ),
-      );
-      if (result.outcome === "retry") {
-        message.retry({ delaySeconds: result.delaySeconds });
-      } else {
-        message.ack();
-      }
-    } catch {
-      message.retry({ delaySeconds: RETRY_DELAY_SECONDS });
-    }
-  }
-};
+): Promise<void> =>
+  handleQueueBatch(
+    batch,
+    isConnectionSetupCleanupMessage,
+    (message) =>
+      Effect.runPromise(
+        cleanupConnectionSetup(message.setup_id).pipe(Effect.provide(layer)),
+      ),
+    (result) => (result.outcome === "retry" ? result.delaySeconds : null),
+    RETRY_DELAY_SECONDS,
+  );
