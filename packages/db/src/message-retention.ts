@@ -1,8 +1,8 @@
 import { sql } from "drizzle-orm";
 import {
   makeDatabase,
-  makeQueryConnection,
   type QueryConnection,
+  withPgQueryConnection,
 } from "./database";
 
 export interface MessageRetentionPolicy {
@@ -89,20 +89,7 @@ export const makeMessageRetentionRepository = (
 const makePgProvider = (
   connectionString: string,
 ): MessageRetentionConnectionProvider => ({
-  withConnection: async (use) => {
-    const { Client } = await import("pg");
-    const client = new Client({
-      connectionString,
-      connectionTimeoutMillis: 5_000,
-      query_timeout: 70_000,
-    });
-    await client.connect();
-    try {
-      return await use(makeQueryConnection(client));
-    } finally {
-      await client.end();
-    }
-  },
+  withConnection: (use) => withPgQueryConnection(connectionString, use, 70_000),
 });
 
 export const makePgMessageRetentionRepository = (connectionString: string) =>
