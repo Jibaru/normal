@@ -197,7 +197,7 @@ const parseSessionList = (value: unknown): ReadonlyArray<ProviderSession> => {
   const data = parseData(value);
   if (!Array.isArray(data)) throw safeFailure("invalid_response");
   const sessions = data.map((entry) => parseProviderSession(entry, false));
-  if (sessions.some((entry) => entry === null)) {
+  if (sessions.includes(null)) {
     throw safeFailure("invalid_response");
   }
   return sessions as ReadonlyArray<ProviderSession>;
