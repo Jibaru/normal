@@ -18,6 +18,7 @@ import {
   type OpenedAuthorizationRequest,
   openAuthorizationRequest,
 } from "./oauth";
+import { hasExactKeys } from "./record";
 import {
   SafeTelemetry,
   type SafeTelemetry as SafeTelemetryService,
@@ -189,12 +190,6 @@ const parseObject = async (
     return null;
   }
 };
-
-const hasExactKeys = (
-  body: Record<string, unknown>,
-  expected: ReadonlyArray<string>,
-): boolean =>
-  Object.keys(body).sort().join(",") === [...expected].sort().join(",");
 
 const runEither = <Value, Error, Requirements>(
   effect: Effect.Effect<Value, Error, Requirements>,
