@@ -1,9 +1,6 @@
 import { and, desc, eq, gt, lt, or, sql } from "drizzle-orm";
 import { makeDatabase, withPgQueryConnection } from "./database";
-import type {
-  PersonalAccountConnection,
-  PersonalAccountConnectionProvider,
-} from "./personal-account";
+import type { PersonalAccountConnectionProvider } from "./personal-account";
 import {
   mcpAuthorizationsInApp,
   personalAccountsInApp,
