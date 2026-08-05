@@ -22,12 +22,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
+import { McpConnectionGuides } from "./mcp-connection-guides";
 
 interface PublicBoundaryJourneyProps {
   readonly clerkJwtTemplate: string;
   readonly connectionsEndpoint: string;
   readonly connectionSetupEndpoint: string;
   readonly mcpAuthorizationsEndpoint: string;
+  readonly mcpServerUrl: string;
   readonly personalAccountEndpoint: string;
   readonly personalAccountDeletionEndpoint: string;
   readonly toolCallLogsEndpoint: string;
@@ -329,6 +331,7 @@ export function PublicBoundaryJourney({
   connectionsEndpoint,
   connectionSetupEndpoint,
   mcpAuthorizationsEndpoint,
+  mcpServerUrl,
   personalAccountEndpoint,
   personalAccountDeletionEndpoint,
   toolCallLogsEndpoint,
@@ -1194,6 +1197,7 @@ export function PublicBoundaryJourney({
       </p>
       {state === "ok" ? (
         <>
+          <McpConnectionGuides serverUrl={mcpServerUrl} />
           <section
             aria-label="MCP Authorizations"
             className="flex flex-col gap-5"

@@ -18,6 +18,7 @@ const personalAccountConfiguration =
           "/v1/mcp-authorizations",
           apiOrigin,
         ).toString(),
+        mcpServerUrl: new URL("/mcp", apiOrigin).toString(),
         toolCallLogsEndpoint: new URL(
           "/v1/tool-call-logs",
           apiOrigin,
