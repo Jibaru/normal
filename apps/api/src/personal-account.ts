@@ -9,6 +9,7 @@ import {
   type EnvelopeEncryption,
   EnvelopeEncryptionService,
 } from "./encryption/envelope";
+import { hasFailureTag } from "./failure-tag";
 import {
   SafeTelemetry,
   type SafeTelemetry as SafeTelemetryService,
@@ -240,11 +241,11 @@ export const createPersonalAccountHandler =
         Effect.provide(layer),
         Effect.match({
           onFailure: (failure: unknown) =>
-            typeof failure === "object" &&
-            failure !== null &&
-            "_tag" in failure &&
-            (failure._tag === "InvalidHumanIdentity" ||
-              failure._tag === "PersonalAccountNotAccessible")
+            hasFailureTag(
+              failure,
+              "InvalidHumanIdentity",
+              "PersonalAccountNotAccessible",
+            )
               ? notFound(browserOrigin)
               : jsonResponse({ error: "unavailable" }, 503, browserOrigin),
           onSuccess: (result) =>
