@@ -288,7 +288,15 @@ export const isWebhookEventQueueMessage = (
   value.payload_bytes >= 1 &&
   value.payload_bytes <= 1_048_576 &&
   utcTimestamp(value.received_at) &&
-  Object.keys(value).length === 7;
+  hasExactKeys(value, [
+    "ciphertext_sha256",
+    "object_id",
+    "payload_bytes",
+    "personal_account_id",
+    "received_at",
+    "version",
+    "whatsapp_connection_id",
+  ]);
 
 const sha256Hex = (value: Uint8Array): Effect.Effect<string> =>
   Effect.promise(async () =>
