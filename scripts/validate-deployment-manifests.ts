@@ -166,10 +166,7 @@ for (const deployable of deployables) {
         configurationName === "top level" || configurationName === "production"
           ? ""
           : `-${configurationName}`;
-      if (
-        JSON.stringify(configuredCrons(configuration)) !==
-        JSON.stringify(requiredApiCrons)
-      ) {
+      if (!hasSameStrings(configuredCrons(configuration), requiredApiCrons)) {
         throw new Error(
           `API ${configurationName} configuration must schedule minute recovery, five-minute reconciliation, and hourly retention.`,
         );
