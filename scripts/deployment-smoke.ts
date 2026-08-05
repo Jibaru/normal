@@ -47,6 +47,43 @@ const requestJson = async (
   return body as Record<string, unknown>;
 };
 
+const requestMcpJson = async (
+  fetch: (input: string, init?: RequestInit) => Promise<Response>,
+  input: string,
+  init: RequestInit,
+): Promise<Record<string, unknown>> => {
+  let response: Response;
+  try {
+    response = await fetch(input, init);
+  } catch {
+    return fail("mcp");
+  }
+  if (!response.ok) return fail("mcp");
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    const body = await response.json().catch(() => null);
+    if (typeof body !== "object" || body === null || Array.isArray(body))
+      return fail("mcp");
+    return body as Record<string, unknown>;
+  }
+  if (!contentType.includes("text/event-stream")) return fail("mcp");
+  const text = await response.text().catch(() => "");
+  for (const event of text.split(/\r?\n\r?\n/u)) {
+    const lines = event.split(/\r?\n/u);
+    if (!lines.some((line) => line === "event: message")) continue;
+    const data = lines
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n");
+    const body = await Promise.resolve()
+      .then(() => JSON.parse(data) as unknown)
+      .catch(() => null);
+    if (typeof body === "object" && body !== null && !Array.isArray(body))
+      return body as Record<string, unknown>;
+  }
+  return fail("mcp");
+};
+
 const rpc = (method: string, id: string) => ({
   id,
   jsonrpc: "2.0",
@@ -111,7 +148,7 @@ export const runDeploymentSmoke = async (
     ["initialize", "smoke-init"],
     ["tools/list", "smoke-discovery"],
   ] as const) {
-    const body = await requestJson(fetch, "mcp", `${api}/mcp`, {
+    const body = await requestMcpJson(fetch, `${api}/mcp`, {
       body: JSON.stringify(rpc(method, id)),
       headers: mcpHeaders,
       method: "POST",

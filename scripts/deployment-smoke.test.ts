@@ -56,7 +56,10 @@ describe("deployed production smoke command", () => {
         });
       if (url.pathname === "/mcp") {
         const payload = (await request.json()) as { id: string };
-        return json({ id: payload.id, jsonrpc: "2.0", result: {} });
+        return new Response(
+          `event: message\ndata: ${JSON.stringify({ id: payload.id, jsonrpc: "2.0", result: {} })}\n\n`,
+          { headers: { "content-type": "text/event-stream" } },
+        );
       }
       if (request.method === "POST")
         return json({ canary_id: `smk_${"a".repeat(43)}` }, 202);
