@@ -25,6 +25,7 @@ import {
   type EnvelopeEncryption,
   EnvelopeEncryptionService,
 } from "./encryption/envelope";
+import { hasFailureTag } from "./failure-tag";
 import {
   RestoreSafeDeletion,
   SafeTelemetry,
@@ -835,11 +836,11 @@ export const createWhatsAppConnectionHandler =
         Effect.provide(layer),
         Effect.match({
           onFailure: (failure: unknown) =>
-            typeof failure === "object" &&
-            failure !== null &&
-            "_tag" in failure &&
-            (failure._tag === "InvalidHumanIdentity" ||
-              failure._tag === "WhatsAppConnectionNotAccessible")
+            hasFailureTag(
+              failure,
+              "InvalidHumanIdentity",
+              "WhatsAppConnectionNotAccessible",
+            )
               ? notFound(browserOrigin)
               : jsonResponse({ error: "unavailable" }, 503, browserOrigin),
           onSuccess: (result) => {
