@@ -21,6 +21,12 @@ const requiredSecrets = (configuration: Record<string, unknown>) =>
       ?.required ?? []),
   ].sort();
 
+const configuredCrons = (configuration: Record<string, unknown>) =>
+  [
+    ...((configuration.triggers as { readonly crons?: ReadonlyArray<string> })
+      ?.crons ?? []),
+  ].sort();
+
 const hasSameStrings = (
   actual: ReadonlyArray<string>,
   expected: ReadonlyArray<string>,
@@ -159,13 +165,8 @@ for (const deployable of deployables) {
         configurationName === "top level" || configurationName === "production"
           ? ""
           : `-${configurationName}`;
-      const crons = (
-        configuration.triggers as
-          | { readonly crons?: ReadonlyArray<string> }
-          | undefined
-      )?.crons;
       if (
-        JSON.stringify([...(crons ?? [])].sort()) !==
+        JSON.stringify(configuredCrons(configuration)) !==
         JSON.stringify(["* * * * *", "*/5 * * * *", "0 * * * *"].sort())
       ) {
         throw new Error(
