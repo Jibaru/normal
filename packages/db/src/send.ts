@@ -214,7 +214,7 @@ export const makePgAtomicSendRepository = (
         };
         const authorized = await db.execute<Record<string, unknown>>(
           sql`WITH locked_account AS MATERIALIZED (
-                SELECT account.id, account.message_retention_days
+                SELECT account.id
                 FROM public.personal_accounts AS account
                 WHERE account.id = ${accountId}
                 FOR UPDATE
@@ -239,7 +239,7 @@ export const makePgAtomicSendRepository = (
               )
               SELECT conn.id AS connection_id,
                      conn.state AS connection_state,
-                     locked_account.message_retention_days,
+                     conn.message_retention_days,
                      bound.id AS bound_id,
                      bound.public_id AS bound_public_id,
                      bound.status AS bound_status,
@@ -283,7 +283,12 @@ export const makePgAtomicSendRepository = (
           return { outcome: "authorization_denied" as const };
         }
         const connectionId = scalar(authorized[0], "connection_id");
-        const retentionDays = integer(authorized[0].message_retention_days);
+        // A WhatsApp Connection set to retain until deletion stores NULL and
+        // contributes no policy deadline of its own.
+        const retentionDays =
+          authorized[0].message_retention_days === null
+            ? null
+            : integer(authorized[0].message_retention_days);
         const bound: Record<string, unknown>[] =
           authorized[0].bound_id === null
             ? []
@@ -386,10 +391,12 @@ export const makePgAtomicSendRepository = (
           await finishAudit("execution_error", "recipient_not_found");
           return { outcome: "recipient_not_found" as const };
         }
-        const policyPendingExpiry = new Date(
-          input.observedAt.valueOf() + retentionDays * 86_400_000,
-        );
+        const policyPendingExpiry =
+          retentionDays === null
+            ? null
+            : new Date(input.observedAt.valueOf() + retentionDays * 86_400_000);
         const pendingExpiresAt =
+          policyPendingExpiry !== null &&
           policyPendingExpiry < input.pendingExpiresAt
             ? policyPendingExpiry
             : input.pendingExpiresAt;
