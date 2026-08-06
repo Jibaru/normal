@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Effect, Redacted } from "effect";
+import { parseEncryptedMediaSource } from "../src/media-source";
 import {
   importWebhookIdentityKey,
   makeWasenderWebhookNormalization,
@@ -148,6 +149,45 @@ describe("Wasender webhook normalization", () => {
       }
       expect(Redacted.value(mediaSource)).toContain("provider-media-key");
     }
+  });
+
+  test("preserves a retrievable provider source for media messages", async () => {
+    const normalizer = await makeNormalizer();
+    const delivery = await normalize(normalizer, messageBatchFixture);
+    const image = delivery.items[1];
+
+    expect(image?.kind).toBe("message_upsert");
+    if (image?.kind !== "message_upsert") {
+      throw new Error("expected normalized image message");
+    }
+    expect(image.content.mediaSource).not.toBeNull();
+    if (image.content.mediaSource === null) {
+      throw new Error("expected protected media source");
+    }
+
+    expect(parseEncryptedMediaSource(image.content.mediaSource)).toMatchObject({
+      expectedSizeBytes: null,
+      fileName: null,
+      mimeType: "image/jpeg",
+      requestBody: {
+        data: {
+          messages: {
+            key: {
+              id: "inbound-image-1",
+              remoteJid: "120363000000@g.us",
+            },
+            message: {
+              imageMessage: {
+                caption: "photo",
+                mediaKey: "provider-media-key",
+                mimetype: "image/jpeg",
+                url: "https://mmg.whatsapp.net/provider-object",
+              },
+            },
+          },
+        },
+      },
+    });
   });
 
   test("isolates malformed media metadata from valid batch siblings", async () => {

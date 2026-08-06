@@ -1,6 +1,7 @@
 import { Data, Effect, Either, Encoding, Layer, Redacted } from "effect";
 import type { ProviderNeutralFailure, UtcTimestamp } from "./common";
 import type { LifecycleConnectionState } from "./control";
+import { makeEncryptedMediaSource } from "./media-source";
 import {
   deriveIdentityRecipientRouteKeys,
   sealIdentityRecipientRoute,
@@ -9,7 +10,6 @@ import type {
   ContactLocator,
   GroupLocator,
   IdentityBearingSendStatus,
-  MediaSource,
   RecipientLocator,
   StableMessageIdentity,
 } from "./session";
@@ -396,6 +396,7 @@ const messageContainer = (record: JsonRecord): JsonRecord | null =>
 const extractContent = (
   rawMessage: unknown,
   messageBody: unknown = null,
+  mediaMessageEnvelope: unknown = null,
 ): NormalizedMessageContent | null => {
   const message = asRecord(rawMessage) ?? {};
   const mediaKinds: ReadonlyArray<readonly [string, NormalizedContentType]> = [
@@ -409,8 +410,12 @@ const extractContent = (
     const media = asRecord(message[field]);
     if (media !== null) {
       try {
+        canonicalJson(media);
         return {
-          mediaSource: Redacted.make(canonicalJson(media)) as MediaSource,
+          mediaSource:
+            mediaMessageEnvelope === null
+              ? null
+              : makeEncryptedMediaSource(mediaMessageEnvelope),
           text: firstString(messageBody, media.caption),
           type,
         };
@@ -470,7 +475,10 @@ const normalizeMessage = async (
       envelopeOccurrence?.epochMilliseconds,
     );
     const editedAt = occurrence?.timestamp ?? receivedAt;
-    const content = extractContent(editedMessage);
+    const content = extractContent(editedMessage, null, {
+      key: targetKey,
+      message: editedMessage,
+    });
     if (
       content === null ||
       (content.text === null && content.mediaSource === null)
@@ -528,7 +536,10 @@ const normalizeMessage = async (
             remoteJid,
           )
       : null;
-  const content = extractContent(record.message, record.messageBody);
+  const content = extractContent(record.message, record.messageBody, {
+    key: keyRecord,
+    message: record.message,
+  });
   if (content === null) {
     return malformed(itemIndex);
   }
