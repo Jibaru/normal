@@ -103,8 +103,7 @@ jobs:
             --arg token "$AWS_SESSION_TOKEN" \
             '{AWS_ACCESS_KEY_ID:$access,AWS_SECRET_ACCESS_KEY:$secret,AWS_SESSION_TOKEN:$token}' \
             | bun x wrangler secret bulk \
-                --config apps/api/.wrangler/production.jsonc \
-                --env production
+                --name whatsapp-mcp-api
 
       - name: Deploy API
         run: bun run --cwd apps/api wrangler deploy --config .wrangler/production.jsonc --env production

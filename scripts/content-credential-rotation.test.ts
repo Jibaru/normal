@@ -78,9 +78,11 @@ describe("production content credential rotation", () => {
     expect(rotation).toContain("role-chaining: true");
     expect(rotation).toContain("role-skip-session-tagging: true");
     expect(rotation).toContain("wrangler secret bulk");
+    expect(rotation).toContain("--name whatsapp-mcp-api");
     expect(deployment).toContain("Rotate API Content Runtime credentials");
     expect(deployment).toContain("id-token: write");
     expect(deployment).toContain("role-skip-session-tagging: true");
+    expect(deployment).toContain("--name whatsapp-mcp-api");
     for (const name of [
       "AWS_ACCESS_KEY_ID",
       "AWS_SECRET_ACCESS_KEY",
