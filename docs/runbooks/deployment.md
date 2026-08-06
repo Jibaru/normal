@@ -432,12 +432,27 @@ cryptographic operation.
 
 The API credential broker must assume only `ContentRuntimeRole` and continuously
 rotate its short-lived access key, secret, and session token in the Cloudflare
-secret store before expiration. Configure the three values with `wrangler
-secret put`; do not give Cloudflare the administrator, deletion coordinator,
-provider-control, or ordinary operator credentials. The trusted bootstrap
-principal also needs a narrowly scoped `sts:AssumeRole` identity policy for
-that one role because the template deliberately declares only each role's trust
-side.
+secret store before expiration. Production uses the GitHub OIDC broker declared
+by `infra/aws/content-credential-broker.template.json`. Its trust is restricted
+to this repository's protected `production` environment, and its only authority
+is `sts:AssumeRole` for the exact production `ContentRuntimeRole`. The scheduled
+`rotate-production-content-credentials.yml` workflow refreshes the three API
+Worker secrets every 20 minutes; the deployment workflow performs the same
+rotation immediately before publishing the API.
+
+Deploy the broker stack, then update the production KMS stack's
+`ContentRuntimeAssumerArn` parameter to the broker role ARN. Store that ARN as
+the protected GitHub environment variable
+`AWS_CONTENT_CREDENTIAL_BROKER_ROLE_ARN`, and store the production runtime role
+ARN as `AWS_CONTENT_RUNTIME_ROLE_ARN`. Run the rotation workflow manually and
+verify the three secret names before relying on its schedule. The broker retains
+the reviewed emergency assumer in its trust policy for incident recovery, but
+neither authority receives content permissions directly.
+
+Do not give Cloudflare the administrator, deletion coordinator,
+provider-control, or ordinary operator credentials. Never print the assumed
+credentials or store them in GitHub secrets, repository files, workflow
+artifacts, or shell history.
 
 Generate the deletion-marker HMAC once per environment, store it only as the
 `DELETION_MARKER_HMAC_SECRET` Worker secret and in the encrypted recovery

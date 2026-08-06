@@ -110,3 +110,64 @@ assert.deepEqual(
 console.info(
   "KMS infrastructure declares separated us-east-1 keys, rotation, and constrained authorities.",
 );
+
+const brokerTemplate = (await Bun.file(
+  "infra/aws/content-credential-broker.template.json",
+).json()) as {
+  readonly Resources?: Readonly<Record<string, Resource>>;
+};
+const brokerResources = brokerTemplate.Resources;
+assert(brokerResources, "Content credential broker must declare resources");
+assert.equal(
+  brokerResources.GitHubOidcProvider?.Type,
+  "AWS::IAM::OIDCProvider",
+);
+assert.equal(
+  brokerResources.ContentCredentialBrokerRole?.Type,
+  "AWS::IAM::Role",
+);
+
+const broker = brokerResources.ContentCredentialBrokerRole as Resource & {
+  readonly Properties?: {
+    readonly AssumeRolePolicyDocument?: {
+      readonly Statement?: ReadonlyArray<{
+        readonly Action?: string;
+        readonly Condition?: Readonly<Record<string, unknown>>;
+        readonly Principal?: Readonly<Record<string, unknown>>;
+      }>;
+    };
+    readonly Policies?: ReadonlyArray<{
+      readonly PolicyDocument?: {
+        readonly Statement?: ReadonlyArray<{
+          readonly Action?: string;
+          readonly Effect?: string;
+          readonly Resource?: unknown;
+        }>;
+      };
+    }>;
+  };
+};
+const oidcTrust = broker.Properties?.AssumeRolePolicyDocument?.Statement?.find(
+  (statement) => statement.Action === "sts:AssumeRoleWithWebIdentity",
+);
+const substitution = (name: string) => `${"$"}{${name}}`;
+const githubSubject = `repo:${substitution("GitHubRepository")}:environment:${substitution("GitHubEnvironment")}`;
+assert.deepEqual(oidcTrust?.Condition, {
+  StringEquals: {
+    "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+    "token.actions.githubusercontent.com:sub": {
+      "Fn::Sub": githubSubject,
+    },
+  },
+});
+assert.deepEqual(broker.Properties?.Policies?.[0]?.PolicyDocument?.Statement, [
+  {
+    Action: "sts:AssumeRole",
+    Effect: "Allow",
+    Resource: { Ref: "RuntimeRoleArn" },
+  },
+]);
+
+console.info(
+  "Content credential broker restricts GitHub OIDC and runtime role authority.",
+);
