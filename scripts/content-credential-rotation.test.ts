@@ -39,7 +39,7 @@ describe("production content credential rotation", () => {
     if (webIdentity?.Condition === undefined)
       throw new Error("GitHub OIDC trust condition is required");
     const substitution = (name: string) => `${"$"}{${name}}`;
-    const githubSubject = `repo:${substitution("GitHubRepository")}:environment:${substitution("GitHubEnvironment")}`;
+    const githubSubject = `repo:${substitution("GitHubRepositoryIdentity")}:environment:${substitution("GitHubEnvironment")}`;
 
     expect(provider.Url).toBe("https://token.actions.githubusercontent.com");
     expect(provider.ClientIdList).toEqual(["sts.amazonaws.com"]);

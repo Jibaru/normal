@@ -434,8 +434,9 @@ The API credential broker must assume only `ContentRuntimeRole` and continuously
 rotate its short-lived access key, secret, and session token in the Cloudflare
 secret store before expiration. Production uses the GitHub OIDC broker declared
 by `infra/aws/content-credential-broker.template.json`. Its trust is restricted
-to this repository's protected `production` environment, and its only authority
-is `sts:AssumeRole` for the exact production `ContentRuntimeRole`. The scheduled
+to this repository's immutable organization and repository IDs plus its
+protected `production` environment, and its only authority is `sts:AssumeRole`
+for the exact production `ContentRuntimeRole`. The scheduled
 `rotate-production-content-credentials.yml` workflow refreshes the three API
 Worker secrets every 20 minutes; the deployment workflow performs the same
 rotation immediately before publishing the API.

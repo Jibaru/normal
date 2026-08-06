@@ -151,7 +151,7 @@ const oidcTrust = broker.Properties?.AssumeRolePolicyDocument?.Statement?.find(
   (statement) => statement.Action === "sts:AssumeRoleWithWebIdentity",
 );
 const substitution = (name: string) => `${"$"}{${name}}`;
-const githubSubject = `repo:${substitution("GitHubRepository")}:environment:${substitution("GitHubEnvironment")}`;
+const githubSubject = `repo:${substitution("GitHubRepositoryIdentity")}:environment:${substitution("GitHubEnvironment")}`;
 assert.deepEqual(oidcTrust?.Condition, {
   StringEquals: {
     "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
