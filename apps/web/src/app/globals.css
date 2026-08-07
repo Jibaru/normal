@@ -39,13 +39,13 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
+  --radius-sm: var(--radius);
+  --radius-md: var(--radius);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
+  --radius-xl: var(--radius);
+  --radius-2xl: var(--radius);
+  --radius-3xl: var(--radius);
+  --radius-4xl: var(--radius);
 }
 
 :root {
@@ -343,7 +343,7 @@ html {
   align-items: center;
   gap: 9px;
   border: 1px solid var(--landing-line);
-  border-radius: 999px;
+  border-radius: var(--radius);
   padding: 9px 13px 9px 10px;
   background: color-mix(in oklch, var(--background) 92%, transparent);
   font-size: 0.78rem;
@@ -361,7 +361,7 @@ html {
 .hero-demo {
   overflow: hidden;
   border: 1px solid color-mix(in oklch, var(--foreground) 13%, transparent);
-  border-radius: 24px;
+  border-radius: var(--radius);
   background: var(--background);
   box-shadow:
     0 36px 90px color-mix(in oklch, var(--foreground) 12%, transparent),
@@ -415,7 +415,7 @@ html {
 .demo-message {
   max-width: 78%;
   margin-left: auto;
-  border-radius: 18px 18px 4px 18px;
+  border-radius: var(--radius);
   padding: 14px 16px;
   background: var(--foreground);
   color: var(--background);
@@ -436,7 +436,7 @@ html {
   height: 32px;
   place-items: center;
   border: 1px solid var(--landing-line);
-  border-radius: 10px;
+  border-radius: var(--radius);
   background: var(--background);
 }
 
@@ -454,7 +454,7 @@ html {
   width: fit-content;
   margin-top: 18px;
   border: 1px solid var(--landing-line);
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 9px 11px;
   background: var(--background);
   color: var(--muted-foreground);
@@ -711,7 +711,7 @@ html {
   display: grid;
   grid-template-columns: minmax(0, 1.05fr) minmax(380px, 0.95fr);
   overflow: hidden;
-  border-radius: 24px;
+  border-radius: var(--radius);
   background: var(--landing-ink);
   color: var(--landing-paper);
 }
@@ -836,7 +836,7 @@ html {
 .account-boundary {
   min-width: 0;
   border: 1px solid var(--landing-line);
-  border-radius: 20px;
+  border-radius: var(--radius);
   padding: clamp(26px, 4vw, 48px);
   background: var(--card);
   box-shadow: 0 16px 50px color-mix(in oklch, var(--foreground) 7%, transparent);
@@ -1268,7 +1268,7 @@ html {
   gap: 12px;
   padding: 24px;
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: var(--radius);
   background: var(--muted);
 }
 
@@ -1347,7 +1347,7 @@ html {
   min-height: 180px;
   padding: 26px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius);
   color: inherit;
   text-decoration: none;
 }
@@ -1383,7 +1383,7 @@ html {
   align-items: center;
   gap: 8px;
   margin-top: 30px;
-  border-radius: 10px;
+  border-radius: var(--radius);
   padding: 12px 18px;
   background: var(--background);
   color: var(--foreground);
