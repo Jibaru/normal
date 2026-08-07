@@ -2,6 +2,8 @@
 
 import { Check, Copy, ExternalLink, MessageCircleMore } from "lucide-react";
 import { useState } from "react";
+import { ClaudeLogo } from "@/components/logos/claude";
+import { OpenAILogo } from "@/components/logos/openai";
 import { Button, buttonVariants } from "@/components/ui/button";
 
 interface McpConnectionGuidesProps {
@@ -121,11 +123,15 @@ function GuideCard({
             aria-hidden="true"
             className={
               accent === "claude"
-                ? "grid size-9 place-items-center rounded-xl bg-[#d97757] text-lg font-semibold text-white"
-                : "grid size-9 place-items-center rounded-xl bg-foreground text-lg font-semibold text-background"
+                ? "grid size-9 place-items-center rounded-xl bg-[#f5ede8]"
+                : "grid size-9 place-items-center rounded-xl bg-foreground"
             }
           >
-            {accent === "claude" ? "C" : "◎"}
+            {accent === "claude" ? (
+              <ClaudeLogo className="size-5" />
+            ) : (
+              <OpenAILogo className="size-5" />
+            )}
           </span>
           <h3 className="text-lg font-semibold tracking-tight">{name}</h3>
         </div>
