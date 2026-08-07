@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { FaqAccordion } from "@/components/faq-accordion";
+import { ClaudeLogo } from "@/components/logos/claude";
+import { OpenAILogo } from "@/components/logos/openai";
 import { buttonVariants } from "@/components/ui/button";
 import {
   Card,
@@ -99,18 +101,10 @@ function Wordmark() {
 
 function AiClientLogo({ client }: { readonly client: "ChatGPT" | "Claude" }) {
   if (client === "Claude") {
-    return (
-      <svg aria-hidden="true" viewBox="0 0 32 32">
-        <path d="M15.9 3.2v25.6M4.8 9.6l22.3 12.8M4.8 22.4 27.1 9.6M8.5 5.5l14.8 21M3.2 16h25.6M8.5 26.5l14.8-21" />
-      </svg>
-    );
+    return <ClaudeLogo aria-hidden="true" />;
   }
 
-  return (
-    <svg aria-hidden="true" viewBox="0 0 32 32">
-      <path d="M16 5.1a6.2 6.2 0 0 1 10.4 4.5 6.2 6.2 0 0 1 1.2 11.4 6.2 6.2 0 0 1-9.2 7.1 6.2 6.2 0 0 1-10.5-4.4A6.2 6.2 0 0 1 6.7 12.3 6.2 6.2 0 0 1 16 5.1Zm0 0 5.4 3.1v6.2M6.7 12.3l5.4 3.1 5.4-3.1m.9 15.8v-6.2L13 18.8m14.6 2.2-5.4-3.1-5.4 3.1M7.9 23.7v-6.2l5.4-3.1m13.1-4.8L21 12.7v6.2" />
-    </svg>
-  );
+  return <OpenAILogo mode="light" />;
 }
 
 function AiClientPill({ client }: { readonly client: "ChatGPT" | "Claude" }) {
