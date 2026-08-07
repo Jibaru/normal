@@ -38,7 +38,6 @@ Secret examples never contain usable key material.
 | `SEND_FINGERPRINT_HMAC_SECRET` | Secret | API outbound-send workflow | Dedicated 32-byte hex HMAC key for non-reversible exact-request fingerprints retained with idempotency bindings. Generate independently; do not replace it while any 90-day binding remains live. |
 | `SENDS_PER_MINUTE` | Non-secret approved quota | API outbound-send workflow | Per-authorization exact rolling-minute send reservation limit. There is no production default. |
 | `SENDS_PER_DAY` | Non-secret approved quota | API outbound-send workflow | Per-Personal-Account UTC-day send reservation limit. There is no production default. |
-| `PROVIDER_APPROVED_SESSION_CAPACITY` | Non-secret operational limit | API | Vendor-approved session ceiling for the environment. Set the reviewed integer through `provider_approved_session_capacity`; missing, placeholder, fractional, or values below three fail closed. Increase only after written provider approval. |
 | `MESSAGE_RETENTION_DAY_OPTIONS` | Non-secret reviewed product policy | API and web Message Retention Policy controls | Set to the reviewed strictly increasing comma-separated finite-day choices containing the 30-day default; `7,30,90` is the private-beta example. Change only through a reviewed product deployment. |
 | `DATABASE_URL` | Secret | Database tooling that consumes `@whatsapp-mcp/db/config` | Issue a restricted Neon role URL, store it in the deployment secret store, and rotate it through Neon plus the deployment platform. API production traffic uses Hyperdrive instead. |
 | `MIGRATION_DATABASE_URL` | Secret | `bun run db:migrate` and `bun run db:check` | Obtain the direct, unpooled owner URL from the sensitive OpenTofu output. It must be a TLS Neon URL and must never be configured on a Worker or web deployable. Rotate it by rotating the Neon migration-owner password. |
@@ -328,30 +327,21 @@ by `CLERK_AUTHORIZED_PARTY`.
 Enable Waitlist mode and email authentication in each Clerk instance. Clerk is
 the sole waitlist and approval authority. The web app opens Clerk's native
 waitlist for new applicants and keeps sign-in available for approved Users.
-Approve entries in Clerk only while provider capacity is available; the
-database capacity check remains the final fail-closed safeguard.
+Clerk approval does not reserve provider capacity.
 
 The API verifies the token locally with `CLERK_JWT_KEY` and independently
 requires the exact issuer, audience, authorized party, short expiry, and request
 Origin. It then maps the verified Clerk User through narrow fixed-search-path
 database functions, starts a transaction with `SET LOCAL
 app.personal_account_id`, and relies on RLS for the remaining tenant access.
-Neon serializes private-beta admission before the first successful request can
-create one active Personal Account and one KMS-wrapped Personal Account data
-key. Each admitted Personal Account reserves its full three-session entitlement
-against `PROVIDER_APPROVED_SESSION_CAPACITY`; active and deleting accounts keep
-that reservation. This conservative reservation ensures the product can state
-the three-Connection limit without allowing later setup provisioning to exceed
-the vendor ceiling. Neon also stores the 5 GB Stored Media limit and the
-default 30-day Message Retention Policy and is the value source for the
-bootstrap response.
-
-When the next three-session entitlement would exceed approved capacity, Neon
-creates no Personal Account and persists no applicant state. The API returns
-transient service unavailability, and a later bootstrap can succeed after
-capacity increases. Admission never invokes provider-control, so exhausted
-capacity cannot create a provider session. Retries and concurrent tabs recover
-the same active account or converge on the same fail-closed capacity result.
+Neon serializes bootstrap before the first successful request can create one
+active Personal Account and one KMS-wrapped Personal Account data key. It also
+stores the three-Connection limit, the 5 GB Stored Media limit, and the default
+30-day Message Retention Policy and is the value source for the bootstrap
+response. Bootstrap does not invoke provider-control or reserve provider
+capacity. Provider availability is evaluated when a Connection Setup attempts
+to provision a WhatsApp Connection; a definitive provider rejection leaves no
+WhatsApp Connection and is shown as temporary capacity unavailability.
 A deleting or deleted mapping, invalid identity, wrong tenant, wrong Origin, or
 unavailable key returns the same public not-found boundary and never discloses
 an identifier.
@@ -629,7 +619,6 @@ repository:
 | `web_hostname` | Distinct public hostname assigned to the Vercel web project. |
 | `clerk_issuer` | Exact HTTPS issuer for the same-environment Clerk instance. |
 | `clerk_publishable_key` | Public browser key for the same-environment Clerk instance. |
-| `provider_approved_session_capacity` | Required reviewed integer ceiling; each admitted Personal Account reserves three sessions. |
 | `mcp_requests_per_minute` | Required approved positive integer for authoritative per-Personal-Account requests in an exact rolling minute. |
 | `mcp_requests_per_hour` | Required approved integer for authoritative per-Personal-Account requests in an exact rolling hour; at least the minute value. |
 | `read_message_records_per_day` | Required approved positive integer for UTC-day Stored Message record reservations. |

@@ -42,7 +42,6 @@ export interface Env {
   readonly OAUTH_KV: KVNamespace;
   readonly OAUTH_PROTOCOL_ENCRYPTION_KEY: string;
   readonly OAUTH_RESOURCE: string;
-  readonly PROVIDER_APPROVED_SESSION_CAPACITY: string;
   readonly PROVIDER_CONTROL: Fetcher & ProviderControlService;
   readonly STORED_MEDIA: R2Bucket;
   readonly WEBHOOK_INGRESS: R2Bucket;

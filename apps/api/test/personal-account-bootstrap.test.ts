@@ -7,7 +7,6 @@ import {
 import { EnvelopeEncryptionService } from "../src/encryption/envelope";
 import {
   createPersonalAccountHandler,
-  PersonalAccountCapacityConfig,
   PersonalAccountIdentifiers,
   PersonalAccountPersistence,
   PersonalAccountPersistenceError,
@@ -24,7 +23,6 @@ const makeHarness = (
     readonly deleted?: boolean;
     readonly identityValid?: boolean;
     readonly persistenceFailure?: boolean;
-    readonly providerApprovedSessionCapacity?: number;
   } = {},
 ) => {
   const accounts = new Map<
@@ -34,8 +32,6 @@ const makeHarness = (
   const events: Array<SafeTelemetryEvent> = [];
   let generatedKeys = 0;
   let nextIdentifier = 0;
-  let providerApprovedSessionCapacity =
-    options.providerApprovedSessionCapacity ?? 3;
 
   const persistence: PersonalAccountPersistenceService = {
     create: (input) =>
@@ -53,9 +49,6 @@ const makeHarness = (
                 storedMediaLimitBytes: 5_368_709_120,
                 whatsappConnectionLimit: 3,
               };
-            }
-            if (accounts.size * 3 + 3 > input.providerApprovedSessionCapacity) {
-              return { admissionState: "capacity_unavailable" as const };
             }
             accounts.set(input.clerkUserId, {
               keyAvailable: true,
@@ -98,11 +91,6 @@ const makeHarness = (
       verifyRecently: () => Effect.die("not used"),
     }),
     Layer.succeed(PersonalAccountPersistence, persistence),
-    Layer.succeed(PersonalAccountCapacityConfig, {
-      get providerApprovedSessionCapacity() {
-        return providerApprovedSessionCapacity;
-      },
-    }),
     Layer.succeed(PersonalAccountIdentifiers, {
       next: Effect.sync(() => {
         nextIdentifier += 1;
@@ -142,9 +130,6 @@ const makeHarness = (
     events,
     generatedKeys: () => generatedKeys,
     handler: createPersonalAccountHandler(layer, browserOrigin),
-    setProviderApprovedSessionCapacity: (capacity: number) => {
-      providerApprovedSessionCapacity = capacity;
-    },
   };
 };
 
@@ -213,44 +198,6 @@ describe("Personal Account bootstrap HTTP boundary", () => {
       {
         event: "personal_account.bootstrap.completed",
         outcome: "recovered",
-        service: "api",
-      },
-    ]);
-  });
-
-  test("returns unavailable without persisting an applicant and admits a later retry when capacity grows", async () => {
-    const capacityExhaustedRequest = new Request(endpoint, {
-      headers: {
-        authorization: "Bearer signed-clerk-token",
-        origin: browserOrigin,
-      },
-      method: "POST",
-    });
-    const capacityHarness = makeHarness({
-      providerApprovedSessionCapacity: 0,
-    });
-    const first = await capacityHarness.handler(capacityExhaustedRequest);
-    const replay = await capacityHarness.handler(bootstrapRequest());
-    capacityHarness.setProviderApprovedSessionCapacity(3);
-    const promoted = await capacityHarness.handler(bootstrapRequest());
-
-    expect(first.status).toBe(503);
-    expect(await first.json()).toEqual({ error: "unavailable" });
-    expect(await replay.json()).toEqual({ error: "unavailable" });
-    expect(await promoted.json()).toEqual({
-      personal_account: {
-        state: "active",
-        message_retention_days: 30,
-        stored_media_limit_bytes: 5_368_709_120,
-        whatsapp_connection_limit: 3,
-      },
-    });
-    expect(capacityHarness.accounts).toHaveLength(1);
-    expect(capacityHarness.generatedKeys()).toBe(3);
-    expect(capacityHarness.events).toEqual([
-      {
-        event: "personal_account.bootstrap.completed",
-        outcome: "created",
         service: "api",
       },
     ]);

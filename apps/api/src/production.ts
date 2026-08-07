@@ -172,7 +172,6 @@ import {
 import {
   createPersonalAccountHandler,
   isPersonalAccountRequest,
-  PersonalAccountCapacityConfig,
   PersonalAccountIdentifiers,
   PersonalAccountPersistence,
   PersonalAccountPersistenceError,
@@ -273,7 +272,6 @@ export interface ApiEnvironment {
   readonly OAUTH_PROTOCOL_ENCRYPTION_KEY?: string | undefined;
   readonly OAUTH_RESOURCE?: string | undefined;
   readonly DECRYPTED_MEDIA_BYTES_PER_DAY?: string | undefined;
-  readonly PROVIDER_APPROVED_SESSION_CAPACITY?: string | undefined;
   readonly PROVIDER_CONTROL?: unknown;
   readonly STORED_MEDIA?: unknown;
   readonly WEBHOOK_INGRESS?: unknown;
@@ -364,16 +362,6 @@ const productionConfig = Config.all({
   sendQuota: sendQuotaConfig,
   smokeCheckSecret,
 });
-
-const providerApprovedSessionCapacity = Config.integer(
-  "PROVIDER_APPROVED_SESSION_CAPACITY",
-).pipe(
-  Config.validate({
-    message:
-      "PROVIDER_APPROVED_SESSION_CAPACITY must reserve at least one Personal Account entitlement",
-    validation: (value) => Number.isSafeInteger(value) && value >= 3,
-  }),
-);
 
 const isExactHttpsOrigin = (value: string): boolean => {
   try {
@@ -1392,17 +1380,6 @@ const mcpAuthorizationRuntimeLayer = Layer.mergeAll(
   }),
 );
 
-const personalAccountCapacityConfigLayer = (environment: ApiEnvironment) =>
-  Layer.effect(
-    PersonalAccountCapacityConfig,
-    providerApprovedSessionCapacity.pipe(
-      Effect.map((capacity) => ({
-        providerApprovedSessionCapacity: capacity,
-      })),
-      Effect.withConfigProvider(environmentConfigProvider(environment)),
-    ),
-  );
-
 const deletionLayer = (environment: ApiEnvironment) =>
   Layer.effect(
     RestoreSafeDeletion,
@@ -1544,7 +1521,6 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     personalAccountPersistenceLayer(environment),
     personalAccountDeletionLayer(environment),
     personalAccountIdentifiersLayer,
-    personalAccountCapacityConfigLayer(environment),
     connectionSetupPersistenceLayers.setup,
     connectionSetupPersistenceLayers.provisioning,
     providerControlLayers.connectionSetupProvisioning,

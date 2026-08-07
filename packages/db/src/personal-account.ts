@@ -27,10 +27,6 @@ export interface ActivePersonalAccount {
   readonly whatsappConnectionLimit: number;
 }
 
-export interface PersonalAccountCapacityUnavailable {
-  readonly admissionState: "capacity_unavailable";
-}
-
 export type ResolvedPersonalAccount = ActivePersonalAccount;
 
 export interface CreatePersonalAccountInput {
@@ -39,7 +35,6 @@ export interface CreatePersonalAccountInput {
   readonly keyVersion: number;
   readonly kmsKeyId: string;
   readonly personalAccountId: string;
-  readonly providerApprovedSessionCapacity: number;
 }
 
 export interface CreatedPersonalAccount {
@@ -70,9 +65,7 @@ export interface PersonalAccountRepository {
   readonly purgeExpiredDeletionRecords: (limit: number) => Promise<number>;
   readonly create: (
     input: CreatePersonalAccountInput,
-  ) => Promise<
-    CreatedPersonalAccount | PersonalAccountCapacityUnavailable | null
-  >;
+  ) => Promise<CreatedPersonalAccount | null>;
   readonly resolve: (
     clerkUserId: string,
   ) => Promise<ResolvedPersonalAccount | null>;
@@ -138,12 +131,8 @@ interface AdmissionRow extends Record<string, unknown> {
   readonly whatsapp_connection_limit: unknown;
 }
 
-const admissionState = (
-  row: AdmissionRow | undefined,
-): "active" | "capacity_unavailable" | null => {
+const admissionState = (row: AdmissionRow | undefined): "active" | null => {
   if (row?.admission_state === "active") return "active";
-  if (row?.admission_state === "capacity_unavailable")
-    return "capacity_unavailable";
   return null;
 };
 
@@ -240,16 +229,15 @@ export const makePersonalAccountRepository = (
       const db = makeDatabase(connection);
       return withTransaction(connection, async () => {
         const rows = await db.execute<AdmissionRow>(
+          // Migration 0003 ignores the sixth argument. Keep it until the old
+          // Worker version can no longer run during a migration-first rollout.
           sql`SELECT * FROM public.admit_personal_account_for_clerk(
             ${input.clerkUserId}, ${input.personalAccountId},
             ${input.keyVersion}, ${input.kmsKeyId}, ${input.keyCiphertext},
-            ${input.providerApprovedSessionCapacity}
+            ${3}
           )`,
         );
         const row = rows[0];
-        if (admissionState(row) === "capacity_unavailable") {
-          return { admissionState: "capacity_unavailable" as const };
-        }
         if (
           admissionState(row) !== "active" ||
           typeof row?.personal_account_id !== "string" ||

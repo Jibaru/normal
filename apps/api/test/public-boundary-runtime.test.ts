@@ -303,19 +303,21 @@ describe("public-boundary Worker harness", () => {
     });
   });
 
-  test("returns unavailable when provider capacity is exhausted", async () => {
+  test("bootstraps another Clerk-authenticated User without a provider reservation", async () => {
     const response = await exports.default.fetch(
       new Request("https://api.example.test/v1/personal-account/bootstrap", {
         headers: {
-          authorization: "Bearer signed-capacity-exhausted-user",
+          authorization: "Bearer signed-second-test-user",
           origin: "http://127.0.0.1:3000",
         },
         method: "POST",
       }),
     );
 
-    expect(response.status).toBe(503);
-    expect(await response.json()).toEqual({ error: "unavailable" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      personal_account: { state: "active", whatsapp_connection_limit: 3 },
+    });
   });
 
   test("lists and revokes an MCP Authorization through the signed-in product boundary", async () => {

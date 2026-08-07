@@ -86,6 +86,7 @@ type SetupState =
   | "qr_available"
   | "connected"
   | "provisioned"
+  | "provider_capacity_unavailable"
   | "provisioning_failed"
   | "provisioning_quarantined"
   | "replayed"
@@ -993,6 +994,7 @@ export function PublicBoundaryJourney({
       if (!isCurrent()) return;
       replaceQrImage(null);
       if (
+        body.error === "provider_capacity_unavailable" ||
         body.error === "provisioning_failed" ||
         body.error === "provisioning_quarantined"
       ) {
@@ -1898,6 +1900,7 @@ export function PublicBoundaryJourney({
                       setupState === "qr_available" ||
                       setupState === "connecting" ||
                       setupState === "provisioned" ||
+                      setupState === "provider_capacity_unavailable" ||
                       setupState === "provisioning_failed" ||
                       setupState === "provisioning_quarantined") ? (
                       <Button
@@ -1927,37 +1930,41 @@ export function PublicBoundaryJourney({
                                     ? "WhatsApp Connection active."
                                     : setupState === "provisioned"
                                       ? "Connection Setup is ready."
-                                      : setupState === "provisioning_failed"
-                                        ? "Connection Setup could not be prepared."
-                                        : setupState ===
-                                            "provisioning_quarantined"
-                                          ? "Connection Setup needs support review."
-                                          : setupState === "cancelling"
-                                            ? "Cancelling Connection Setup."
-                                            : setupState === "cancelled"
-                                              ? setupCleanupState === "complete"
-                                                ? "Connection Setup cancelled. Provider cleanup is complete."
-                                                : setupCleanupState ===
-                                                    "retrying"
-                                                  ? "Connection Setup cancelled. Provider cleanup is retrying."
-                                                  : "Connection Setup cancelled. Provider cleanup is in progress."
-                                              : setupState === "expired"
+                                      : setupState ===
+                                          "provider_capacity_unavailable"
+                                        ? "WhatsApp Connection capacity is temporarily unavailable. Please try again later."
+                                        : setupState === "provisioning_failed"
+                                          ? "Connection Setup could not be prepared."
+                                          : setupState ===
+                                              "provisioning_quarantined"
+                                            ? "Connection Setup needs support review."
+                                            : setupState === "cancelling"
+                                              ? "Cancelling Connection Setup."
+                                              : setupState === "cancelled"
                                                 ? setupCleanupState ===
                                                   "complete"
-                                                  ? "Connection Setup expired. Provider cleanup is complete."
+                                                  ? "Connection Setup cancelled. Provider cleanup is complete."
                                                   : setupCleanupState ===
                                                       "retrying"
-                                                    ? "Connection Setup expired. Provider cleanup is retrying."
-                                                    : "Connection Setup expired. Provider cleanup is in progress."
-                                                : setupState ===
-                                                    "number_unavailable"
-                                                  ? "That WhatsApp Number is already in use."
+                                                    ? "Connection Setup cancelled. Provider cleanup is retrying."
+                                                    : "Connection Setup cancelled. Provider cleanup is in progress."
+                                                : setupState === "expired"
+                                                  ? setupCleanupState ===
+                                                    "complete"
+                                                    ? "Connection Setup expired. Provider cleanup is complete."
+                                                    : setupCleanupState ===
+                                                        "retrying"
+                                                      ? "Connection Setup expired. Provider cleanup is retrying."
+                                                      : "Connection Setup expired. Provider cleanup is in progress."
                                                   : setupState ===
-                                                      "connection_limit_reached"
-                                                    ? "Your Personal Account already has three active setup or Connection slots."
-                                                    : setupState === "invalid"
-                                                      ? "Enter a valid international WhatsApp Number."
-                                                      : ""}
+                                                      "number_unavailable"
+                                                    ? "That WhatsApp Number is already in use."
+                                                    : setupState ===
+                                                        "connection_limit_reached"
+                                                      ? "Your Personal Account already has three active setup or Connection slots."
+                                                      : setupState === "invalid"
+                                                        ? "Enter a valid international WhatsApp Number."
+                                                        : ""}
                     </p>
                   )}
                   {qrImageUrl === null ? null : (

@@ -47,7 +47,6 @@ describe("Connection Setup repository", () => {
       keyVersion: 1,
       kmsKeyId: "arn:aws:kms:us-east-1:111122223333:key/content-root-key",
       personalAccountId: accountA,
-      providerApprovedSessionCapacity: 6,
     });
     await accounts.create({
       clerkUserId: "user_setupb",
@@ -55,7 +54,6 @@ describe("Connection Setup repository", () => {
       keyVersion: 1,
       kmsKeyId: "arn:aws:kms:us-east-1:111122223333:key/content-root-key",
       personalAccountId: accountB,
-      providerApprovedSessionCapacity: 6,
     });
   });
 

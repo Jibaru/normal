@@ -104,10 +104,11 @@ export type WhatsAppConnectionLifecycleClaim =
 
 export type ConnectionSetupActivation =
   | {
-      readonly outcome:
-        | "pending"
-        | "provisioning_failed"
-        | "provisioning_quarantined";
+      readonly outcome: "pending" | "provisioning_quarantined";
+    }
+  | {
+      readonly failureCode: string;
+      readonly outcome: "provisioning_failed";
     }
   | {
       readonly outcome: "activated";
@@ -532,12 +533,11 @@ const activation = (
   row: ActivationRow | undefined,
 ): ConnectionSetupActivation | null => {
   if (row === undefined) return null;
-  if (
-    row.outcome === "pending" ||
-    row.outcome === "provisioning_failed" ||
-    row.outcome === "provisioning_quarantined"
-  ) {
+  if (row.outcome === "pending" || row.outcome === "provisioning_quarantined") {
     return { outcome: row.outcome };
+  }
+  if (row.outcome === "provisioning_failed") {
+    throw new Error("Connection Setup failure code was not loaded");
   }
   if (row.outcome === "activated") {
     const connection = connectionRecord(row, "connection_");
@@ -828,6 +828,21 @@ export const makeWhatsAppConnectionRepository = (
         )`,
       );
       let row = rows[0];
+      if (row?.outcome === "provisioning_failed") {
+        const failures = await db.execute<{ failure_code: unknown }>(
+          sql`SELECT public.load_connection_setup_failure_code_for_user(
+            ${input.clerkUserId}, ${input.setupId}
+          ) AS failure_code`,
+        );
+        const failureCode = failures[0]?.failure_code;
+        if (
+          typeof failureCode !== "string" ||
+          !/^[a-z][a-z0-9_]{0,63}$/u.test(failureCode)
+        ) {
+          throw new Error("invalid Connection Setup failure code");
+        }
+        return { failureCode, outcome: "provisioning_failed" };
+      }
       if (row?.outcome === "provisioned") {
         const ingress = await db.execute<{ webhook_ingress_id: unknown }>(
           sql`SELECT public.load_connection_setup_webhook_ingress_for_user(

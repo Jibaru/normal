@@ -264,7 +264,6 @@ for (const deployable of deployables) {
             READ_MESSAGE_RECORDS_PER_DAY: "10000",
             SENDS_PER_DAY: "200",
             SENDS_PER_MINUTE: "10",
-            PROVIDER_APPROVED_SESSION_CAPACITY: "3",
           },
           stderr: "pipe",
           stdout: "pipe",
@@ -365,7 +364,6 @@ for (const deployable of deployables) {
         'env.MCP_REQUESTS_PER_MINUTE ("60")',
         'env.READ_MESSAGE_RECORDS_PER_DAY ("10000")',
         'env.DECRYPTED_MEDIA_BYTES_PER_DAY ("268435456")',
-        'env.PROVIDER_APPROVED_SESSION_CAPACITY ("3")',
       ]) {
         if (!output.includes(binding)) {
           throw new Error(

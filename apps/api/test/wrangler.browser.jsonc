@@ -8,7 +8,6 @@
   "preview_urls": false,
   "vars": {
     "DEPLOYMENT_ENVIRONMENT": "test",
-    "PROVIDER_APPROVED_SESSION_CAPACITY": "3",
     "MCP_REQUESTS_PER_MINUTE": "60",
     "MESSAGE_RETENTION_DAY_OPTIONS": "7,30,90",
     "MCP_REQUESTS_PER_HOUR": "600",

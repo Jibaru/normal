@@ -217,16 +217,6 @@ describe("API production root", () => {
     expect(response.status).toBe(503);
   });
 
-  test("fails closed when provider-approved capacity is missing", async () => {
-    const { PROVIDER_APPROVED_SESSION_CAPACITY: _missing, ...environment } =
-      validEnvironment();
-    const response = await createProductionHandler(environment)(
-      new Request("https://api.example.test/health"),
-    );
-
-    expect(response.status).toBe(503);
-  });
-
   test("fails closed when the WhatsApp Number reservation secret is malformed", async () => {
     const response = await createProductionHandler({
       ...validEnvironment(),
@@ -244,18 +234,6 @@ describe("API production root", () => {
 
     expect(response.status).toBe(503);
   });
-
-  test.each(["0", "2", "3.5", "replace-with-approved-capacity"])(
-    "fails closed when provider-approved capacity is %s",
-    async (capacity) => {
-      const response = await createProductionHandler({
-        ...validEnvironment(),
-        PROVIDER_APPROVED_SESSION_CAPACITY: capacity,
-      })(new Request("https://api.example.test/health"));
-
-      expect(response.status).toBe(503);
-    },
-  );
 
   test.each([
     ["MCP_REQUESTS_PER_MINUTE", "0"],

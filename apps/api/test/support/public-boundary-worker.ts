@@ -30,7 +30,6 @@ import {
   MessageRetentionPersistence,
 } from "../../src/message-retention";
 import {
-  PersonalAccountCapacityConfig,
   PersonalAccountIdentifiers,
   PersonalAccountPersistence,
 } from "../../src/personal-account";
@@ -200,8 +199,8 @@ const makeTestLayer = (
         if (authorization === "Bearer signed-test-user") {
           return Effect.succeed("user_test_public_boundary");
         }
-        if (authorization === "Bearer signed-capacity-exhausted-user") {
-          return Effect.succeed("user_capacity_exhausted_public_boundary");
+        if (authorization === "Bearer signed-second-test-user") {
+          return Effect.succeed("user_second_test_public_boundary");
         }
         return Effect.fail(new InvalidHumanIdentityRequest());
       },
@@ -225,15 +224,9 @@ const makeTestLayer = (
     Layer.succeed(PersonalAccountIdentifiers, {
       next: Effect.succeed("10000000-0000-4000-8000-000000000018"),
     }),
-    Layer.succeed(PersonalAccountCapacityConfig, {
-      providerApprovedSessionCapacity: 3,
-    }),
     Layer.succeed(PersonalAccountPersistence, {
       create: (input) =>
         Effect.sync(() => {
-          if (input.clerkUserId === "user_capacity_exhausted_public_boundary") {
-            return { admissionState: "capacity_unavailable" as const };
-          }
           const existing = personalAccounts.get(input.clerkUserId);
           if (existing) {
             return {

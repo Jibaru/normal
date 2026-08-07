@@ -9,23 +9,22 @@ run "development_topology" {
   }
 
   variables {
-    deployment_environment             = "development"
-    cloudflare_account_id              = "11111111111111111111111111111111"
-    cloudflare_zone_id                 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    api_hyperdrive_id                  = "11111111111111111111111111111111"
-    webhook_hyperdrive_id              = "22222222222222222222222222222222"
-    vercel_team_id                     = "team_developmentvalidation"
-    api_hostname                       = "api.dev.example.com"
-    web_hostname                       = "app.dev.example.com"
-    clerk_issuer                       = "https://clerk.dev.example.com"
-    clerk_publishable_key              = "pk_test_Y2xlcmsuZGV2LmV4YW1wbGUuY29tJA"
-    provider_approved_session_capacity = 3
-    mcp_requests_per_minute            = 60
-    mcp_requests_per_hour              = 600
-    read_message_records_per_day       = 10000
-    decrypted_media_bytes_per_day      = 268435456
-    sends_per_minute                   = 10
-    sends_per_day                      = 200
+    deployment_environment        = "development"
+    cloudflare_account_id         = "11111111111111111111111111111111"
+    cloudflare_zone_id            = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    api_hyperdrive_id             = "11111111111111111111111111111111"
+    webhook_hyperdrive_id         = "22222222222222222222222222222222"
+    vercel_team_id                = "team_developmentvalidation"
+    api_hostname                  = "api.dev.example.com"
+    web_hostname                  = "app.dev.example.com"
+    clerk_issuer                  = "https://clerk.dev.example.com"
+    clerk_publishable_key         = "pk_test_Y2xlcmsuZGV2LmV4YW1wbGUuY29tJA"
+    mcp_requests_per_minute       = 60
+    mcp_requests_per_hour         = 600
+    read_message_records_per_day  = 10000
+    decrypted_media_bytes_per_day = 268435456
+    sends_per_minute              = 10
+    sends_per_day                 = 200
   }
 
   assert {
@@ -121,7 +120,6 @@ run "development_topology" {
       "plain_text:DECRYPTED_MEDIA_BYTES_PER_DAY",
       "plain_text:SENDS_PER_DAY",
       "plain_text:SENDS_PER_MINUTE",
-      "plain_text:PROVIDER_APPROVED_SESSION_CAPACITY",
       "queue:CONNECTION_SETUP_PROVISIONING_QUEUE",
       "queue:INGESTION_QUEUE",
       "r2_bucket:DELETION_CAPSULES",
@@ -146,13 +144,9 @@ run "development_topology" {
       one([
         for binding in cloudflare_worker_version.api.bindings :
         binding.text if binding.name == "CLERK_ISSUER"
-      ]) == "https://clerk.dev.example.com" &&
-      one([
-        for binding in cloudflare_worker_version.api.bindings :
-        binding.text if binding.name == "PROVIDER_APPROVED_SESSION_CAPACITY"
-      ]) == "3"
+      ]) == "https://clerk.dev.example.com"
     )
-    error_message = "The API must receive exact same-environment identity and provider-capacity configuration."
+    error_message = "The API must receive exact same-environment identity configuration."
   }
 
   assert {
@@ -227,23 +221,22 @@ run "preview_topology" {
   }
 
   variables {
-    deployment_environment             = "preview"
-    cloudflare_account_id              = "22222222222222222222222222222222"
-    cloudflare_zone_id                 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-    api_hyperdrive_id                  = "33333333333333333333333333333333"
-    webhook_hyperdrive_id              = "44444444444444444444444444444444"
-    vercel_team_id                     = "team_previewvalidation"
-    api_hostname                       = "api.preview.example.com"
-    web_hostname                       = "app.preview.example.com"
-    clerk_issuer                       = "https://clerk.preview.example.com"
-    clerk_publishable_key              = "pk_test_Y2xlcmsucHJldmlldy5leGFtcGxlJA"
-    provider_approved_session_capacity = 3
-    mcp_requests_per_minute            = 60
-    mcp_requests_per_hour              = 600
-    read_message_records_per_day       = 10000
-    decrypted_media_bytes_per_day      = 268435456
-    sends_per_minute                   = 10
-    sends_per_day                      = 200
+    deployment_environment        = "preview"
+    cloudflare_account_id         = "22222222222222222222222222222222"
+    cloudflare_zone_id            = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    api_hyperdrive_id             = "33333333333333333333333333333333"
+    webhook_hyperdrive_id         = "44444444444444444444444444444444"
+    vercel_team_id                = "team_previewvalidation"
+    api_hostname                  = "api.preview.example.com"
+    web_hostname                  = "app.preview.example.com"
+    clerk_issuer                  = "https://clerk.preview.example.com"
+    clerk_publishable_key         = "pk_test_Y2xlcmsucHJldmlldy5leGFtcGxlJA"
+    mcp_requests_per_minute       = 60
+    mcp_requests_per_hour         = 600
+    read_message_records_per_day  = 10000
+    decrypted_media_bytes_per_day = 268435456
+    sends_per_minute              = 10
+    sends_per_day                 = 200
   }
 
   assert {
@@ -270,23 +263,22 @@ run "production_topology" {
   }
 
   variables {
-    deployment_environment             = "production"
-    cloudflare_account_id              = "33333333333333333333333333333333"
-    cloudflare_zone_id                 = "cccccccccccccccccccccccccccccccc"
-    api_hyperdrive_id                  = "55555555555555555555555555555555"
-    webhook_hyperdrive_id              = "66666666666666666666666666666666"
-    vercel_team_id                     = "team_productionvalidation"
-    api_hostname                       = "api.example.com"
-    web_hostname                       = "app.example.com"
-    clerk_issuer                       = "https://clerk.example.com"
-    clerk_publishable_key              = "pk_live_Y2xlcmsuZXhhbXBsZS5jb20k"
-    provider_approved_session_capacity = 3
-    mcp_requests_per_minute            = 60
-    mcp_requests_per_hour              = 600
-    read_message_records_per_day       = 10000
-    decrypted_media_bytes_per_day      = 268435456
-    sends_per_minute                   = 10
-    sends_per_day                      = 200
+    deployment_environment        = "production"
+    cloudflare_account_id         = "33333333333333333333333333333333"
+    cloudflare_zone_id            = "cccccccccccccccccccccccccccccccc"
+    api_hyperdrive_id             = "55555555555555555555555555555555"
+    webhook_hyperdrive_id         = "66666666666666666666666666666666"
+    vercel_team_id                = "team_productionvalidation"
+    api_hostname                  = "api.example.com"
+    web_hostname                  = "app.example.com"
+    clerk_issuer                  = "https://clerk.example.com"
+    clerk_publishable_key         = "pk_live_Y2xlcmsuZXhhbXBsZS5jb20k"
+    mcp_requests_per_minute       = 60
+    mcp_requests_per_hour         = 600
+    read_message_records_per_day  = 10000
+    decrypted_media_bytes_per_day = 268435456
+    sends_per_minute              = 10
+    sends_per_day                 = 200
   }
 
   assert {
@@ -379,23 +371,22 @@ run "reject_same_web_and_api_origin" {
   }
 
   variables {
-    deployment_environment             = "production"
-    cloudflare_account_id              = "33333333333333333333333333333333"
-    cloudflare_zone_id                 = "cccccccccccccccccccccccccccccccc"
-    api_hyperdrive_id                  = "55555555555555555555555555555555"
-    webhook_hyperdrive_id              = "66666666666666666666666666666666"
-    vercel_team_id                     = "team_productionvalidation"
-    api_hostname                       = "app.example.com"
-    web_hostname                       = "app.example.com"
-    clerk_issuer                       = "https://clerk.example.com"
-    clerk_publishable_key              = "pk_live_Y2xlcmsuZXhhbXBsZS5jb20k"
-    provider_approved_session_capacity = 3
-    mcp_requests_per_minute            = 60
-    mcp_requests_per_hour              = 600
-    read_message_records_per_day       = 10000
-    decrypted_media_bytes_per_day      = 268435456
-    sends_per_minute                   = 10
-    sends_per_day                      = 200
+    deployment_environment        = "production"
+    cloudflare_account_id         = "33333333333333333333333333333333"
+    cloudflare_zone_id            = "cccccccccccccccccccccccccccccccc"
+    api_hyperdrive_id             = "55555555555555555555555555555555"
+    webhook_hyperdrive_id         = "66666666666666666666666666666666"
+    vercel_team_id                = "team_productionvalidation"
+    api_hostname                  = "app.example.com"
+    web_hostname                  = "app.example.com"
+    clerk_issuer                  = "https://clerk.example.com"
+    clerk_publishable_key         = "pk_live_Y2xlcmsuZXhhbXBsZS5jb20k"
+    mcp_requests_per_minute       = 60
+    mcp_requests_per_hour         = 600
+    read_message_records_per_day  = 10000
+    decrypted_media_bytes_per_day = 268435456
+    sends_per_minute              = 10
+    sends_per_day                 = 200
   }
 
   expect_failures = [vercel_project.web]

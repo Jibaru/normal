@@ -26,10 +26,6 @@ export class PersonalAccountNotAccessible extends Data.TaggedError(
   "PersonalAccountNotAccessible",
 ) {}
 
-export class PersonalAccountCapacityUnavailable extends Data.TaggedError(
-  "PersonalAccountCapacityUnavailable",
-) {}
-
 export interface PersonalAccountPersistenceService {
   readonly create: (input: {
     readonly clerkUserId: string;
@@ -37,18 +33,15 @@ export interface PersonalAccountPersistenceService {
     readonly keyVersion: number;
     readonly kmsKeyId: string;
     readonly personalAccountId: string;
-    readonly providerApprovedSessionCapacity: number;
   }) => Effect.Effect<
-    | {
-        readonly admissionState: "active";
-        readonly created: boolean;
-        readonly messageRetentionDays: number;
-        readonly personalAccountId: string;
-        readonly storedMediaLimitBytes: number;
-        readonly whatsappConnectionLimit: number;
-      }
-    | { readonly admissionState: "capacity_unavailable" }
-    | null,
+    {
+      readonly admissionState: "active";
+      readonly created: boolean;
+      readonly messageRetentionDays: number;
+      readonly personalAccountId: string;
+      readonly storedMediaLimitBytes: number;
+      readonly whatsappConnectionLimit: number;
+    } | null,
     PersonalAccountPersistenceError
   >;
   readonly resolve: (clerkUserId: string) => Effect.Effect<
@@ -78,21 +71,11 @@ export const PersonalAccountIdentifiers =
     "@whatsapp-mcp/api/PersonalAccountIdentifiers",
   );
 
-export interface PersonalAccountCapacityConfigService {
-  readonly providerApprovedSessionCapacity: number;
-}
-
-export const PersonalAccountCapacityConfig =
-  Context.GenericTag<PersonalAccountCapacityConfigService>(
-    "@whatsapp-mcp/api/PersonalAccountCapacityConfig",
-  );
-
 export type PersonalAccountRequirements =
   | EnvelopeEncryption
   | HumanIdentityService
   | PersonalAccountIdentifiersService
   | PersonalAccountPersistenceService
-  | PersonalAccountCapacityConfigService
   | SafeTelemetryService;
 
 interface ActiveBootstrapResult {
@@ -110,13 +93,11 @@ export const bootstrapPersonalAccount = (
 ): Effect.Effect<
   BootstrapResult,
   | EncryptionError
-  | PersonalAccountCapacityUnavailable
   | PersonalAccountNotAccessible
   | PersonalAccountPersistenceError,
   | EnvelopeEncryption
   | PersonalAccountIdentifiersService
   | PersonalAccountPersistenceService
-  | PersonalAccountCapacityConfigService
 > =>
   Effect.gen(function* () {
     const persistence = yield* PersonalAccountPersistence;
@@ -130,8 +111,6 @@ export const bootstrapPersonalAccount = (
         whatsappConnectionLimit: resolved.whatsappConnectionLimit,
       } as const;
     }
-    const capacity = yield* PersonalAccountCapacityConfig;
-
     const identifiers = yield* PersonalAccountIdentifiers;
     const personalAccountId =
       resolved?.admissionState === "active"
@@ -148,13 +127,10 @@ export const bootstrapPersonalAccount = (
       keyVersion: envelope.keyVersion,
       kmsKeyId: envelope.kmsKeyId,
       personalAccountId,
-      providerApprovedSessionCapacity: capacity.providerApprovedSessionCapacity,
     });
     if (result === null) {
       return yield* Effect.fail(new PersonalAccountNotAccessible());
     }
-    if (result.admissionState === "capacity_unavailable")
-      return yield* Effect.fail(new PersonalAccountCapacityUnavailable());
     return {
       admissionState: "active",
       messageRetentionDays: result.messageRetentionDays,

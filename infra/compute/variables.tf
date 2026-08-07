@@ -101,16 +101,6 @@ variable "clerk_publishable_key" {
   }
 }
 
-variable "provider_approved_session_capacity" {
-  description = "Vendor-approved provider session ceiling reserved in three-session Personal Account entitlements."
-  type        = number
-
-  validation {
-    condition     = var.provider_approved_session_capacity >= 3 && floor(var.provider_approved_session_capacity) == var.provider_approved_session_capacity
-    error_message = "provider_approved_session_capacity must be an integer of at least three."
-  }
-}
-
 variable "mcp_requests_per_minute" {
   description = "Approved authoritative MCP request reservations allowed in an exact rolling minute."
   type        = number

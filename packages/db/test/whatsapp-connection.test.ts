@@ -60,7 +60,6 @@ describe("WhatsApp Connection repository", () => {
         keyVersion: 1,
         kmsKeyId: "arn:aws:kms:us-east-1:111122223333:key/content-root-key",
         personalAccountId: accountId,
-        providerApprovedSessionCapacity: 6,
       });
       expect(account).toMatchObject({
         admissionState: "active",

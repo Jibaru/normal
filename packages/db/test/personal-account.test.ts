@@ -49,7 +49,6 @@ describe("Personal Account repository", () => {
         keyVersion: 1,
         kmsKeyId: "arn:aws:kms:us-east-1:111122223333:key/content-root-key",
         personalAccountId: accountId,
-        providerApprovedSessionCapacity: 3,
       }),
     ).resolves.toEqual({
       admissionState: "active",
@@ -74,7 +73,6 @@ describe("Personal Account repository", () => {
         keyVersion: 1,
         kmsKeyId: "arn:aws:kms:us-east-1:111122223333:key/content-root-key",
         personalAccountId: "10000000-0000-4000-8000-000000000011",
-        providerApprovedSessionCapacity: 3,
       }),
     ).resolves.toEqual({
       admissionState: "active",
@@ -96,7 +94,6 @@ describe("Personal Account repository", () => {
         keyVersion: 1,
         kmsKeyId: "arn:aws:kms:us-east-1:111122223333:key/content-root-key",
         personalAccountId: accountId,
-        providerApprovedSessionCapacity: 3_000_000_000,
       }),
     ).resolves.toMatchObject({
       admissionState: "active",
@@ -113,7 +110,6 @@ describe("Personal Account repository", () => {
       keyVersion: 1,
       kmsKeyId: "arn:aws:kms:us-east-1:111122223333:key/content-root-key",
       personalAccountId: accountId,
-      providerApprovedSessionCapacity: 3,
     });
     await expect(
       repository.prepareDeletion({
@@ -137,7 +133,6 @@ describe("Personal Account repository", () => {
         keyVersion: 1,
         kmsKeyId: "arn:aws:kms:us-east-1:111122223333:key/content-root-key",
         personalAccountId: "10000000-0000-4000-8000-000000000011",
-        providerApprovedSessionCapacity: 3,
       }),
     ).resolves.toBeNull();
   });
@@ -150,7 +145,6 @@ describe("Personal Account repository", () => {
       keyVersion: 1,
       kmsKeyId: "arn:aws:kms:us-east-1:111122223333:key/content-root-key",
       personalAccountId: accountId,
-      providerApprovedSessionCapacity: 3,
     });
 
     await expect(
@@ -217,7 +211,6 @@ describe("Personal Account repository", () => {
       keyVersion: 1,
       kmsKeyId: "arn:aws:kms:us-east-1:111122223333:key/content-root-key",
       personalAccountId: accountId,
-      providerApprovedSessionCapacity: 3,
     });
     await repository.prepareDeletion({
       clerkUserId: "user_purge123",
@@ -360,7 +353,7 @@ describe("Personal Account repository", () => {
     ).toEqual([{ count: 502 }]);
   });
 
-  test("does not persist an applicant when provider capacity is exhausted", async () => {
+  test("admits another Clerk User without reserving provider capacity", async () => {
     const repository = makePersonalAccountRepository(provider);
     await repository.create({
       clerkUserId: "user_admitted",
@@ -368,7 +361,6 @@ describe("Personal Account repository", () => {
       keyVersion: 1,
       kmsKeyId: "arn:aws:kms:us-east-1:111122223333:key/content-root-key",
       personalAccountId: accountId,
-      providerApprovedSessionCapacity: 3,
     });
 
     const first = await repository.create({
@@ -377,7 +369,6 @@ describe("Personal Account repository", () => {
       keyVersion: 1,
       kmsKeyId: "arn:aws:kms:us-east-1:111122223333:key/content-root-key",
       personalAccountId: "10000000-0000-4000-8000-000000000011",
-      providerApprovedSessionCapacity: 3,
     });
     const replay = await repository.create({
       clerkUserId: "user_capacityexhausted",
@@ -385,20 +376,19 @@ describe("Personal Account repository", () => {
       keyVersion: 1,
       kmsKeyId: "arn:aws:kms:us-east-1:111122223333:key/content-root-key",
       personalAccountId: "10000000-0000-4000-8000-000000000012",
-      providerApprovedSessionCapacity: 3,
     });
 
-    expect(first).toEqual({ admissionState: "capacity_unavailable" });
-    expect(replay).toEqual({ admissionState: "capacity_unavailable" });
+    expect(first).toMatchObject({ admissionState: "active", created: true });
+    expect(replay).toMatchObject({ admissionState: "active", created: false });
     await expect(
       repository.resolve("user_capacityexhausted"),
-    ).resolves.toBeNull();
+    ).resolves.toMatchObject({ admissionState: "active" });
 
     const persisted = await database.query<{ count: number }>(
       `SELECT count(*)::integer AS count
        FROM public.clerk_identities
        WHERE clerk_user_id = 'user_capacityexhausted'`,
     );
-    expect(persisted.rows).toEqual([{ count: 0 }]);
+    expect(persisted.rows).toEqual([{ count: 1 }]);
   });
 });

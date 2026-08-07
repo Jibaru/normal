@@ -71,7 +71,6 @@ jobs:
           NEON_BRANCH_ID: ${{ vars.NEON_BRANCH_ID }}
           OAUTH_ISSUER: ${{ vars.API_ORIGIN }}
           OAUTH_RESOURCE: ${{ vars.API_ORIGIN }}/mcp
-          PROVIDER_APPROVED_SESSION_CAPACITY: ${{ vars.PROVIDER_APPROVED_SESSION_CAPACITY }}
           READ_MESSAGE_RECORDS_PER_DAY: ${{ vars.READ_MESSAGE_RECORDS_PER_DAY }}
           SENDS_PER_DAY: ${{ vars.SENDS_PER_DAY }}
           SENDS_PER_MINUTE: ${{ vars.SENDS_PER_MINUTE }}

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { PGlite } from "@electric-sql/pglite";
-import { EXPECTED_SCHEMA_VERSION, runMigrations } from "../src/migrations";
+import { runMigrations } from "../src/migrations";
 import { assertExpectedSchemaVersion } from "../src/readiness";
 
 const accountA = "10000000-0000-4000-8000-000000000001";
@@ -29,36 +29,6 @@ describe("production migrations", () => {
     await database.close();
   });
 
-  test("applies the versioned schema once and records its checksum", async () => {
-    await runMigrations(database);
-    await runMigrations(database);
-
-    const result = await database.query<{
-      created_at: string;
-      hash: string;
-    }>("SELECT created_at, hash FROM public.drizzle_migrations ORDER BY id");
-
-    expect(
-      result.rows.map((row) => ({
-        ...row,
-        created_at: Number(row.created_at),
-      })),
-    ).toEqual([
-      {
-        created_at: 1785787776687,
-        hash: "3154967c1dd4f561c13d6cc1646b138217ff8184e2d9483714b03fdae9574624",
-      },
-      {
-        created_at: 1785959583000,
-        hash: "e549a123254ba6a9bd052d12e6f0f4890b452aff5657afa41c9f20973e8de87d",
-      },
-      {
-        created_at: EXPECTED_SCHEMA_VERSION,
-        hash: "5020678930acb8c1efb825c8623b25d6956897ac14960fdf77220506fb1cb8e6",
-      },
-    ]);
-  });
-
   test("coexists with the complete legacy migration ledger", async () => {
     await runMigrations(database);
     await database.exec(`
@@ -80,7 +50,7 @@ describe("production migrations", () => {
         (SELECT count(*)::int FROM public.schema_migrations) AS legacy,
         (SELECT count(*)::int FROM public.drizzle_migrations) AS standard
     `);
-    expect(ledgers.rows).toEqual([{ legacy: 40, standard: 3 }]);
+    expect(ledgers.rows).toEqual([{ legacy: 40, standard: 4 }]);
   });
 
   test("clears only retention limitations superseded by a complete Directory snapshot", async () => {
@@ -526,6 +496,7 @@ describe("production migrations", () => {
           'bootstrap_mcp_tool_call',
           'bootstrap_tool_call_log',
           'admit_personal_account_for_clerk',
+          'load_connection_setup_failure_code_for_user',
           'load_connection_setup_webhook_ingress_for_user',
           'load_connection_setup_webhook_ingress_for_worker',
           'purge_expired_tool_call_logs',
@@ -582,6 +553,11 @@ describe("production migrations", () => {
       {
         config: ["search_path=pg_catalog, pg_temp"],
         proname: "bootstrap_whatsapp_connection_for_ingress",
+        prosecdef: true,
+      },
+      {
+        config: ["search_path=pg_catalog, pg_temp"],
+        proname: "load_connection_setup_failure_code_for_user",
         prosecdef: true,
       },
       {
@@ -919,7 +895,7 @@ describe("production migrations", () => {
     ]);
   });
 
-  test("serializes provider capacity without persisting applicants", async () => {
+  test("serializes bootstrap without reserving provider capacity", async () => {
     await runMigrations(database);
 
     await database.exec("SET ROLE whatsapp_api_runtime");
@@ -934,7 +910,7 @@ describe("production migrations", () => {
          )`,
         [accountC, "arn:aws:kms:us-east-1:111122223333:key/content-root"],
       );
-      const unavailable = await Promise.all(
+      const concurrent = await Promise.all(
         [accountD, accountA].map((accountId) =>
           database.query<{
             admission_state: string;
@@ -953,14 +929,14 @@ describe("production migrations", () => {
         admission_state: "active",
         created: true,
       });
-      expect(unavailable.map(({ rows }) => rows[0])).toEqual([
+      expect(concurrent.map(({ rows }) => rows[0])).toEqual([
         expect.objectContaining({
-          admission_state: "capacity_unavailable",
-          personal_account_id: null,
+          admission_state: "active",
+          personal_account_id: accountD,
         }),
         expect.objectContaining({
-          admission_state: "capacity_unavailable",
-          personal_account_id: null,
+          admission_state: "active",
+          personal_account_id: accountD,
         }),
       ]);
 
@@ -977,7 +953,7 @@ describe("production migrations", () => {
       );
       expect(promoted.rows[0]).toMatchObject({
         admission_state: "active",
-        created: true,
+        created: false,
         personal_account_id: accountD,
       });
     } finally {

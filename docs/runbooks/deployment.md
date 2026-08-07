@@ -210,11 +210,8 @@ exact `https://<api_hostname>` origin. Record the exact issuer and publishable
 key in the protected `.tfvars` file as `clerk_issuer` and
 `clerk_publishable_key`. The browser configuration fixes the template name as
 `whatsapp-api`. Set the Clerk session token custom claims to the same `aud`
-value so consent approval carries the session-bound `fva` claim. Record the written
-vendor-approved session ceiling as the required
-`provider_approved_session_capacity` integer; there is no default, and one
-admitted Personal Account reserves three sessions. Record the approved
-authoritative MCP request limits as the required positive integers
+value so consent approval carries the session-bound `fva` claim. Record the
+approved authoritative MCP request limits as the required positive integers
 `mcp_requests_per_minute` and `mcp_requests_per_hour`; there are no defaults,
 and the hour value must be at least the minute value. Record reviewed positive
 `sends_per_minute` and `sends_per_day` limits as well. Copy the template's PEM
@@ -266,8 +263,7 @@ API Worker/custom domain, one private provider-control Worker, disabled
 service binding. The API version must inherit `CLERK_JWT_KEY` and the OAuth
 protocol-encryption key, and receive exact Clerk audience, authorized-party,
 OAuth issuer/resource, reviewed client-registry, and
-`PROVIDER_APPROVED_SESSION_CAPACITY`, `MCP_REQUESTS_PER_MINUTE`, and
-`MCP_REQUESTS_PER_HOUR` text bindings;
+`MCP_REQUESTS_PER_MINUTE` and `MCP_REQUESTS_PER_HOUR` text bindings;
 provider-control must receive none of them. The Vercel project must
 receive only the public Clerk key and JWT template name. It must also contain
 four private R2 buckets with disabled
@@ -557,7 +553,6 @@ export MCP_REQUESTS_PER_MINUTE="$(sed -n 's/^[[:space:]]*mcp_requests_per_minute
 export MCP_REQUESTS_PER_HOUR="$(sed -n 's/^[[:space:]]*mcp_requests_per_hour[[:space:]]*=[[:space:]]*\\([0-9][0-9]*\\)[[:space:]]*$/\\1/p' "$TFVARS_PATH")"
 export SENDS_PER_MINUTE="$(sed -n 's/^[[:space:]]*sends_per_minute[[:space:]]*=[[:space:]]*\\([0-9][0-9]*\\)[[:space:]]*$/\\1/p' "$TFVARS_PATH")"
 export SENDS_PER_DAY="$(sed -n 's/^[[:space:]]*sends_per_day[[:space:]]*=[[:space:]]*\\([0-9][0-9]*\\)[[:space:]]*$/\\1/p' "$TFVARS_PATH")"
-export PROVIDER_APPROVED_SESSION_CAPACITY="$(sed -n 's/^[[:space:]]*provider_approved_session_capacity[[:space:]]*=[[:space:]]*\\([0-9][0-9]*\\)[[:space:]]*$/\\1/p' "$TFVARS_PATH")"
 bun scripts/render-api-wrangler.ts \
   apps/api/.wrangler/production.jsonc \
   "$DEPLOYMENT_ENVIRONMENT"
@@ -568,7 +563,7 @@ unset CLOUDFLARE_HYPERDRIVE_ID CLOUDFLARE_OAUTH_KV_ID NEON_BRANCH_ID \
   CLOUDFLARE_WEBHOOK_HYPERDRIVE_ID CLERK_API_AUDIENCE \
   CLERK_AUTHORIZED_PARTY CLERK_ISSUER \
   MCP_REQUESTS_PER_HOUR MCP_REQUESTS_PER_MINUTE OAUTH_ISSUER OAUTH_RESOURCE \
-  PROVIDER_APPROVED_SESSION_CAPACITY SENDS_PER_DAY SENDS_PER_MINUTE
+  SENDS_PER_DAY SENDS_PER_MINUTE
 export VERCEL_ORG_ID="$(tofu -chdir=infra/compute output -raw vercel_team_id)"
 export VERCEL_PROJECT_ID="$(tofu -chdir=infra/compute output -raw vercel_project_id)"
 vercel deploy --prod --yes --cwd apps/web
@@ -1179,9 +1174,9 @@ under the production recovery authority.
 ## External rollout gates
 
 Clerk Waitlist mode controls private-beta applicant approval. The API has no
-second onboarding gate: a User who can authenticate is already approved. Neon
-still fails closed without creating a Personal Account when the provider's
-approved session capacity cannot reserve that account's full entitlement.
+second onboarding gate: a User who can authenticate is already approved and
+can bootstrap a Personal Account. Provider availability is managed internally
+and evaluated only when a Connection Setup provisions a WhatsApp Connection.
 
 The monthly and quarterly schedules in
 `.github/workflows/recovery-drills.yml` call the production recovery automation

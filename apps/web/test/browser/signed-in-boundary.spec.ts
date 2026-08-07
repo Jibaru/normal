@@ -359,13 +359,27 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   ]);
 });
 
-test("shows temporary unavailability when provider capacity is exhausted", async ({
+test("bootstraps another Clerk User and shows provider capacity failure during Connection Setup", async ({
   page,
   request,
 }) => {
   await page.route("https://api.example.test/**", async (route) => {
     const original = route.request();
     const localUrl = new URL(original.url());
+    if (
+      original.method() === "GET" &&
+      /^\/v1\/connection-setups\/cst_[A-Za-z0-9_-]{21}\/qr$/u.test(
+        localUrl.pathname,
+      )
+    ) {
+      await route.fulfill({
+        body: JSON.stringify({ error: "provider_capacity_unavailable" }),
+        contentType: "application/json",
+        headers: { "access-control-allow-origin": webOrigin },
+        status: 409,
+      });
+      return;
+    }
     localUrl.protocol = "http:";
     localUrl.hostname = "127.0.0.1";
     localUrl.port = apiPort;
@@ -389,15 +403,17 @@ test("shows temporary unavailability when provider capacity is exhausted", async
   });
   await installClerkBrowser(page, {
     signedIn: true,
-    token: "signed-capacity-exhausted-user",
+    token: "signed-second-test-user",
   });
   await page.goto("/dashboard");
 
-  await expect(
-    page.getByText(
-      "Your Personal Account is temporarily unavailable. Please try again.",
-    ),
-  ).toBeVisible();
+  await page.getByRole("link", { name: "WhatsApp Connections" }).click();
+  await page.getByRole("button", { name: "Register WhatsApp Number" }).click();
+  await page.getByLabel("WhatsApp Number").fill("+1 (555) 012-3456");
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(page.getByTestId("connection-setup-status")).toHaveText(
+    "WhatsApp Connection capacity is temporarily unavailable. Please try again later.",
+  );
 });
 
 test("keeps the Personal Account usable when MCP Authorization listing is unavailable", async ({

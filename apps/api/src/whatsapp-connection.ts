@@ -181,11 +181,10 @@ type SetupObservation =
       readonly image: Uint8Array;
     }
   | {
-      readonly outcome:
-        | "connecting"
-        | "pending"
-        | "provisioning_failed"
-        | "provisioning_quarantined";
+      readonly outcome: "connecting" | "pending" | "provisioning_quarantined";
+    }
+  | {
+      readonly outcome: "provider_capacity_unavailable" | "provisioning_failed";
     };
 
 type LifecycleObservation =
@@ -389,6 +388,12 @@ export const observeConnectionSetup = (
       return { connection: loaded.connection, outcome: "connected" };
     }
     if (loaded.outcome !== "provisioned") {
+      if (
+        loaded.outcome === "provisioning_failed" &&
+        loaded.failureCode === "source_rejected"
+      ) {
+        return { outcome: "provider_capacity_unavailable" };
+      }
       return { outcome: loaded.outcome };
     }
 
@@ -906,6 +911,7 @@ export const createWhatsAppConnectionHandler =
               case "pending":
                 return stateResponse(observation.outcome, browserOrigin);
               case "provisioning_failed":
+              case "provider_capacity_unavailable":
               case "provisioning_quarantined":
                 return jsonResponse(
                   { error: observation.outcome },

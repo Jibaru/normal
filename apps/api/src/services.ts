@@ -109,6 +109,7 @@ export interface ConnectionSetupQrCompletedEvent {
     | "connected"
     | "connecting"
     | "pending"
+    | "provider_capacity_unavailable"
     | "provisioning_failed"
     | "provisioning_quarantined"
     | "qr_available";

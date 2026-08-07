@@ -519,11 +519,6 @@ resource "cloudflare_worker_version" "api" {
       type = "plain_text"
     },
     {
-      name = "PROVIDER_APPROVED_SESSION_CAPACITY"
-      text = tostring(var.provider_approved_session_capacity)
-      type = "plain_text"
-    },
-    {
       name = "MCP_REQUESTS_PER_MINUTE"
       text = tostring(var.mcp_requests_per_minute)
       type = "plain_text"

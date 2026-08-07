@@ -63,6 +63,7 @@ const makeHarness = (
   options: {
     readonly disconnectFailureState?: "connected" | "degraded" | "disconnected";
     readonly identityValid?: boolean;
+    readonly initialFailureCode?: string;
     readonly initialSetupState?:
       | "activated"
       | "pending"
@@ -224,7 +225,12 @@ const makeHarness = (
                     webhookIngressId: "30000000-0000-4000-8000-000000000041",
                   },
                 }
-              : { outcome: setupState },
+              : setupState === "provisioning_failed"
+                ? {
+                    failureCode: options.initialFailureCode ?? "unavailable",
+                    outcome: "provisioning_failed" as const,
+                  }
+                : { outcome: setupState },
       ),
   };
 
@@ -460,6 +466,21 @@ describe("WhatsApp Connection HTTP boundary", () => {
 
     expect(response.status).toBe(202);
     expect(response.headers.get("x-connection-setup-state")).toBe("pending");
+    expect(harness.providerCalls).toEqual([]);
+  });
+
+  test("reports a definitive provider rejection as temporary Connection capacity unavailability", async () => {
+    const harness = makeHarness({
+      initialFailureCode: "source_rejected",
+      initialSetupState: "provisioning_failed",
+    });
+
+    const response = await harness.handler(request(qrEndpoint));
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: "provider_capacity_unavailable",
+    });
     expect(harness.providerCalls).toEqual([]);
   });
 
