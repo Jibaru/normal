@@ -942,7 +942,7 @@ export const createOAuthHandler = (
         authorization_servers: [options.configuration.issuer],
         bearer_methods_supported: ["header"],
         resource: options.configuration.resource,
-        resource_name: "WhatsApp MCP",
+        resource_name: "Normal",
         scopes_supported: [...OAUTH_SCOPES],
       },
       scopesSupported: [...OAUTH_SCOPES],

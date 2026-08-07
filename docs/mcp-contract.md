@@ -1,6 +1,6 @@
 # MCP Contract
 
-This document defines the public launch contract for the WhatsApp MCP server. Provider payloads, provider identifiers, and internal database identifiers never appear in this contract.
+This document defines the public launch contract for the Normal MCP server. Provider payloads, provider identifiers, and internal database identifiers never appear in this contract.
 
 ## Common Rules
 

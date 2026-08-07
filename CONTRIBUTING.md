@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve WhatsApp MCP. This project handles private communications, so small changes can affect authorization, retention, deletion, and recovery. A good contribution is focused, tested at the right boundary, and clear about its security and data lifecycle impact.
+Thanks for helping improve Normal. This project handles private communications, so small changes can affect authorization, retention, deletion, and recovery. A good contribution is focused, tested at the right boundary, and clear about its security and data lifecycle impact.
 
 ## Before you start
 
@@ -8,7 +8,7 @@ For a bug fix or a small documentation improvement, you can usually start with a
 
 For a new feature, public contract change, database design change, or infrastructure change, open an issue first. Describe the user problem and the constraints before investing in an implementation. This gives maintainers a chance to confirm the direction and point you to the relevant architecture decisions.
 
-Do not open a public issue for a security vulnerability. Use [GitHub private vulnerability reporting](https://github.com/cuevaio/whatsapp-mcp/security/advisories/new) instead.
+Do not open a public issue for a security vulnerability. Use [GitHub private vulnerability reporting](https://github.com/cuevaio/normal/security/advisories/new) instead.
 
 ## Understand the project
 
@@ -26,8 +26,8 @@ Use the exact domain terms from `CONTEXT.md`. For example, use Personal Account 
 You need Bun 1.3.14, OpenTofu, and Chromium for the complete verification suite.
 
 ```sh
-git clone https://github.com/cuevaio/whatsapp-mcp.git
-cd whatsapp-mcp
+git clone https://github.com/cuevaio/normal.git
+cd normal
 bun install --frozen-lockfile
 bun x playwright install --with-deps chromium
 ```

@@ -28,7 +28,7 @@ function Footer() {
       <Link className="wordmark" href="/">
         Normal<span aria-hidden="true">.</span>
       </Link>
-      <p>WhatsApp MCP, on your terms.</p>
+      <p>Normal, on your terms.</p>
       <a href={contactUrl} rel="noreferrer" target="_blank">
         Contact now
       </a>
@@ -150,7 +150,7 @@ export function ResourcePage({
               Tell us about your workflow and the MCP Client you want to use.
             </p>
             <a href={contactUrl} rel="noreferrer" target="_blank">
-              Book a WhatsApp MCP call <ArrowRight aria-hidden="true" />
+              Book a Normal call <ArrowRight aria-hidden="true" />
             </a>
           </div>
         </section>

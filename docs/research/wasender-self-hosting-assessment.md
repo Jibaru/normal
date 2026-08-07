@@ -78,7 +78,7 @@ The legal gate must therefore produce two analyses rather than blending terms: o
 
 The current codebase has the right five-capability architectural boundary, but it does not have runtime provider selection. `@whatsapp-mcp/wasender` exposes five independent capabilities and prevents raw provider values from crossing them: [I1] [I2]
 
-| Capability | Current `whatsapp-mcp` replacement requirement |
+| Capability | Current `normal` replacement requirement |
 | --- | --- |
 | `SessionLifecycle` | Deterministic provisioning marker; create, connect, QR observation, reconciliation, duplicate quarantine, and deletion; protected per-session authority; no blind repeat of lifecycle writes. |
 | `SessionDirectory` | Complete or explicitly partial contact and joined-group observations; stable protected routing locators; phone/JID/LID handling without guessing that a LID is a phone number. The current contract does not expose group participant membership. |
@@ -86,7 +86,7 @@ The current codebase has the right five-capability architectural boundary, but i
 | `MediaRetrieval` | Protected source values, bounded metadata, streamed download, size and timeout enforcement, and discard/restart from byte zero after a partial failure. |
 | `WebhookNormalization` | Authenticated delivery handling outside the capability; normalization of current message upsert/edit/delete and send evidence, contact/group observations, and session state; independently classified batch items; stable deduplication identities and opaque versions. The current normalized types do not expose mentions or participant-change events. |
 
-Those are the production-replacement parity gates for this repository. The adjacent Normal POC is evidence about a possible broader product, not part of the current `whatsapp-mcp` contract. It additionally uses outbound and inbound mentions, connected-account phone-JID/LID self-identities, and group participant add/remove/promote/demote events. Those values are absent from `TextSending`, `NormalizedMessageUpsert`, account observation, and the reviewed Wasender normalizer's supported event set. [I2] [I6] [I7] [I8]
+Those are the production-replacement parity gates for this repository. The adjacent Normal POC is evidence about a possible broader product, not part of the current `normal` contract. It additionally uses outbound and inbound mentions, connected-account phone-JID/LID self-identities, and group participant add/remove/promote/demote events. Those values are absent from `TextSending`, `NormalizedMessageUpsert`, account observation, and the reviewed Wasender normalizer's supported event set. [I2] [I6] [I7] [I8]
 
 If product owners approve that broader scope, implement it as a separately tracked bounded extension to `TextSending`, account observation within `SessionDirectory` or `SessionLifecycle`, and `WebhookNormalization`. Do not silently make optional Normal POC behavior a core replacement gate, add a sixth capability, or build a generic plugin system before that decision.
 

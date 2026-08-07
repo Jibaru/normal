@@ -1,4 +1,4 @@
-# WhatsApp MCP Platform
+# Normal
 
 This context defines the shared language for a personal platform that exposes a connected WhatsApp account to approved AI clients.
 

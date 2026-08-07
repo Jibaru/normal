@@ -21,7 +21,7 @@ describe("API Worker entrypoint", () => {
       authorization_servers: ["https://api.example.test"],
       bearer_methods_supported: ["header"],
       resource: "https://api.example.test/mcp",
-      resource_name: "WhatsApp MCP",
+      resource_name: "Normal",
       scopes_supported: [
         "connections:read",
         "directory:read",

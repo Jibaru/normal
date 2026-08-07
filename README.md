@@ -1,6 +1,6 @@
-# WhatsApp MCP
+# Normal
 
-WhatsApp MCP is a personal platform that lets approved AI clients work with a connected WhatsApp account through the Model Context Protocol.
+Normal is a personal platform that lets approved AI clients work with a connected WhatsApp account through the Model Context Protocol.
 
 Each User owns one Personal Account. A Personal Account can hold up to three WhatsApp Connections and can grant each MCP Client access to an explicit set of Connections and capabilities. Read access and send access are separate permissions. Every outbound message requires confirmation in the MCP Client.
 

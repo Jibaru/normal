@@ -3,9 +3,9 @@ import { getContentPages } from "../content";
 import { CollectionPage } from "../seo-pages";
 
 export const metadata: Metadata = {
-  title: "WhatsApp MCP guides | Normal",
+  title: "Normal guides",
   description:
-    "Learn how WhatsApp MCP works, connect your MCP Client, choose permissions, and understand privacy and retention.",
+    "Learn how Normal works, connect your MCP Client, choose permissions, and understand privacy and retention.",
   alternates: { canonical: "/guides" },
 };
 

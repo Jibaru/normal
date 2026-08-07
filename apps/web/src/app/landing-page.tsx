@@ -420,14 +420,14 @@ export function LandingPage() {
             Tell us about your workflow, your MCP Client, and what you want
             Normal to help with.
           </p>
-          <ContactButton inverse>Book a WhatsApp MCP call</ContactButton>
+          <ContactButton inverse>Book a Normal call</ContactButton>
         </div>
       </section>
 
       <footer className="landing-footer landing-shell">
         <div className="landing-footer-brand">
           <Wordmark />
-          <p>WhatsApp MCP, on your terms.</p>
+          <p>Normal, on your terms.</p>
         </div>
         <nav aria-label="Use case links" className="landing-footer-links">
           <strong>Use cases</strong>
@@ -441,7 +441,7 @@ export function LandingPage() {
         <nav aria-label="Guide links" className="landing-footer-links">
           <strong>Guides</strong>
           <a href="/guides">All guides</a>
-          <a href="/guides/what-is-whatsapp-mcp">What is WhatsApp MCP?</a>
+          <a href="/guides/what-is-whatsapp-mcp">What is Normal?</a>
           <a href="/guides/connect-whatsapp-to-claude">Connect to Claude</a>
           <a href="/guides/whatsapp-mcp-privacy">Privacy and control</a>
         </nav>

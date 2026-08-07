@@ -11,7 +11,7 @@ const faqs = [
   {
     answer:
       "MCP is a standard that lets compatible AI applications use external tools and context. Normal provides those tools for your connected WhatsApp account.",
-    question: "What is WhatsApp MCP?",
+    question: "What is Normal?",
   },
   {
     answer:

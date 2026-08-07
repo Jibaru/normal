@@ -89,6 +89,6 @@ export async function getContentPage(
 }
 
 export const collectionLabels: Record<ContentCollection, string> = {
-  guides: "WhatsApp MCP guides",
+  guides: "Normal guides",
   "use-cases": "WhatsApp AI use cases",
 };

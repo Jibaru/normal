@@ -36,7 +36,7 @@ const claudeSteps: ReadonlyArray<GuideStep> = [
   {
     title: "Enable it in a chat",
     description:
-      "Open Search and tools in Claude, then enable the WhatsApp MCP tools you want to use.",
+      "Open Search and tools in Claude, then enable the Normal tools you want to use.",
   },
 ];
 
@@ -52,7 +52,7 @@ const chatGptSteps: ReadonlyArray<GuideStep> = [
   },
   {
     title: "Paste the server URL",
-    description: "Use the WhatsApp MCP URL below and keep OAuth enabled.",
+    description: "Use the Normal MCP server URL below and keep OAuth enabled.",
   },
   {
     title: "Choose access",
@@ -62,7 +62,7 @@ const chatGptSteps: ReadonlyArray<GuideStep> = [
   {
     title: "Start a new chat",
     description:
-      "Enable WhatsApp MCP from the tools menu. ChatGPT will ask you to confirm before it sends a message.",
+      "Enable Normal from the tools menu. ChatGPT will ask you to confirm before it sends a message.",
   },
 ];
 
@@ -166,7 +166,7 @@ function GuideCard({
               </p>
               {index === 2 ? (
                 <div className="mt-4 divide-y overflow-hidden rounded-xl border bg-muted/25">
-                  <CopyValue label="Connector name" value="WhatsApp MCP" />
+                  <CopyValue label="Connector name" value="Normal" />
                   <CopyValue label="Server URL" value={serverUrl} />
                 </div>
               ) : null}
@@ -196,7 +196,7 @@ export function McpConnectionGuides({ serverUrl }: McpConnectionGuidesProps) {
           id="connect-mcp-clients"
           className="mt-1 text-2xl font-semibold tracking-tight"
         >
-          Connect WhatsApp MCP to Claude or ChatGPT
+          Connect Normal to Claude or ChatGPT
         </h2>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
           Add the server once, then choose the exact WhatsApp Connections and

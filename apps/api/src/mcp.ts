@@ -2615,7 +2615,7 @@ export const createMcpRequestHandler =
 
     const factory = () => {
       const server = new McpServer({
-        name: "WhatsApp MCP",
+        name: "Normal",
         version: "0.1.0",
       });
       if (hasMessagesRead) {

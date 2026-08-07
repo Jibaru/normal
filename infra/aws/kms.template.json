@@ -1,6 +1,6 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
-  "Description": "KMS roots and isolated IAM authorities for WhatsApp MCP envelope encryption",
+  "Description": "KMS roots and isolated IAM authorities for Normal envelope encryption",
   "Parameters": {
     "DeploymentEnvironment": {
       "AllowedValues": ["development", "preview", "production"],
@@ -329,7 +329,7 @@
       "Type": "AWS::KMS::Key",
       "Properties": {
         "Description": {
-          "Fn::Sub": "WhatsApp MCP ${DeploymentEnvironment} Personal Account content root"
+          "Fn::Sub": "Normal ${DeploymentEnvironment} Personal Account content root"
         },
         "Enabled": true,
         "EnableKeyRotation": true,
@@ -518,7 +518,7 @@
       "Type": "AWS::KMS::Key",
       "Properties": {
         "Description": {
-          "Fn::Sub": "WhatsApp MCP ${DeploymentEnvironment} Deletion Capsule root"
+          "Fn::Sub": "Normal ${DeploymentEnvironment} Deletion Capsule root"
         },
         "Enabled": true,
         "EnableKeyRotation": true,
