@@ -483,6 +483,91 @@ describe("MCP tool repository", () => {
     ).resolves.toBeNull();
   });
 
+  test("expires Pending Send Content by the WhatsApp Connection Message Retention Policy", async () => {
+    await database.query(
+      `INSERT INTO public.directory_contact_projections (
+         personal_account_id, whatsapp_connection_id, as_of, stale, partial
+       ) VALUES ($1, '20000000-0000-4000-8000-000000000030', $2, false, false)`,
+      [accountId, observedAt],
+    );
+    await database.query(
+      `INSERT INTO public.directory_contacts (
+         personal_account_id, whatsapp_connection_id, public_id,
+         provider_identity_index, provider_identity_ciphertext_version,
+         provider_identity_key_version, provider_identity_nonce,
+         provider_identity_ciphertext, display_name_sort, active,
+         received_at
+       ) VALUES (
+         $1, '20000000-0000-4000-8000-000000000030',
+         'ctc_123456789012345678930', $2, 1, 1,
+         decode(repeat('11', 12), 'hex'), decode(repeat('12', 32), 'hex'),
+         '', true, $3
+       )`,
+      [accountId, `di1_${"A".repeat(43)}`, observedAt],
+    );
+    const encrypt = async () => ({
+      ciphertext: new Uint8Array(32).fill(20),
+      keyVersion: 1,
+      nonce: new Uint8Array(12).fill(21),
+    });
+    const input = {
+      ...authorization,
+      auditLogId: "50000000-0000-4000-8000-000000000091",
+      connectionPublicId: connectionA,
+      fingerprint: `sf1_${"C".repeat(43)}`,
+      hourRequestLimit: 100,
+      idempotencyKey: "123456789012345678941",
+      minuteRequestLimit: 100,
+      observedAt,
+      pendingExpiresAt: new Date("2026-08-07T12:00:00.000Z"),
+      recipientPublicId: "ctc_123456789012345678930",
+      sendDailyLimit: 100,
+      sendId: "60000000-0000-4000-8000-000000000091",
+      sendPerMinuteLimit: 100,
+      sendPublicId: "snd_123456789012345678941",
+    } as const;
+    const expiryOf = async (sendId: string) => {
+      const rows = await database.query<{ expires_at: Date }>(
+        `SELECT expires_at FROM public.pending_send_contents
+         WHERE send_operation_id = $1`,
+        [sendId],
+      );
+      return rows.rows[0]?.expires_at.toISOString();
+    };
+
+    // A policy shorter than the seven-day cap decides the deadline. The owning
+    // Personal Account keeps its own default of 30 days.
+    await database.query(
+      `UPDATE public.whatsapp_connections SET message_retention_days = 1
+       WHERE public_id = $1`,
+      [connectionA],
+    );
+    expect(await sends.commit(input, encrypt)).toMatchObject({
+      outcome: "created",
+    });
+    expect(await expiryOf(input.sendId)).toBe("2026-08-01T12:00:00.000Z");
+
+    // Retain until deletion contributes no earlier deadline, so the seven-day
+    // cap still applies.
+    await database.query(
+      `UPDATE public.whatsapp_connections SET message_retention_days = NULL
+       WHERE public_id = $1`,
+      [connectionA],
+    );
+    const retained = {
+      ...input,
+      auditLogId: "50000000-0000-4000-8000-000000000092",
+      fingerprint: `sf1_${"D".repeat(43)}`,
+      idempotencyKey: "123456789012345678942",
+      sendId: "60000000-0000-4000-8000-000000000092",
+      sendPublicId: "snd_123456789012345678942",
+    } as const;
+    expect(await sends.commit(retained, encrypt)).toMatchObject({
+      outcome: "created",
+    });
+    expect(await expiryOf(retained.sendId)).toBe("2026-08-07T12:00:00.000Z");
+  });
+
   test("atomically expires unresolved leases and rejects late direct responses", async () => {
     await database.query(
       `INSERT INTO public.tool_call_logs (id,personal_account_id,mcp_authorization_id,tool_name,started_at,outcome,quota_reserved,expires_at)
