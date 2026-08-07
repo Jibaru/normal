@@ -208,7 +208,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await page.keyboard.press("Escape");
 
   await expect(page.getByLabel("WhatsApp Number")).toHaveCount(0);
-  await page.getByRole("button", { name: "New connection" }).click();
+  await page.getByRole("button", { name: "Register WhatsApp Number" }).click();
   const whatsappNumber = page.getByLabel("WhatsApp Number");
   const startConnectionSetup = page.getByRole("button", {
     name: "Continue",
@@ -359,7 +359,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   ]);
 });
 
-test("waitlists a signed-in User when private-beta capacity is exhausted", async ({
+test("shows temporary unavailability when provider capacity is exhausted", async ({
   page,
   request,
 }) => {
@@ -389,12 +389,14 @@ test("waitlists a signed-in User when private-beta capacity is exhausted", async
   });
   await installClerkBrowser(page, {
     signedIn: true,
-    token: "signed-waitlisted-user",
+    token: "signed-capacity-exhausted-user",
   });
   await page.goto("/dashboard");
 
   await expect(
-    page.getByText("You’re on the private beta waitlist."),
+    page.getByText(
+      "Your Personal Account is temporarily unavailable. Please try again.",
+    ),
   ).toBeVisible();
 });
 

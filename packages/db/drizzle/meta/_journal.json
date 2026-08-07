@@ -15,6 +15,13 @@
       "when": 1785959583000,
       "tag": "0001_allow_null_mcp_client_id",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786134619000,
+      "tag": "0002_delegate_waitlist_to_clerk",
+      "breakpoints": true
     }
   ]
 }

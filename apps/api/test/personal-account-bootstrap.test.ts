@@ -7,11 +7,11 @@ import {
 import { EnvelopeEncryptionService } from "../src/encryption/envelope";
 import {
   createPersonalAccountHandler,
+  PersonalAccountCapacityConfig,
   PersonalAccountIdentifiers,
   PersonalAccountPersistence,
   PersonalAccountPersistenceError,
   type PersonalAccountPersistenceService,
-  PrivateBetaConfig,
 } from "../src/personal-account";
 import { SafeTelemetry, type SafeTelemetryEvent } from "../src/services";
 
@@ -23,8 +23,6 @@ const makeHarness = (
   options: {
     readonly deleted?: boolean;
     readonly identityValid?: boolean;
-    readonly initiallyWaitlisted?: boolean;
-    readonly onboardingOpen?: boolean;
     readonly persistenceFailure?: boolean;
     readonly providerApprovedSessionCapacity?: number;
   } = {},
@@ -34,8 +32,6 @@ const makeHarness = (
     { readonly keyAvailable: boolean; readonly personalAccountId: string }
   >();
   const events: Array<SafeTelemetryEvent> = [];
-  const waitlistedUsers = new Set<string>();
-  if (options.initiallyWaitlisted) waitlistedUsers.add(clerkUserId);
   let generatedKeys = 0;
   let nextIdentifier = 0;
   let providerApprovedSessionCapacity =
@@ -59,10 +55,8 @@ const makeHarness = (
               };
             }
             if (accounts.size * 3 + 3 > input.providerApprovedSessionCapacity) {
-              waitlistedUsers.add(input.clerkUserId);
-              return { admissionState: "waitlisted" as const };
+              return { admissionState: "capacity_unavailable" as const };
             }
-            waitlistedUsers.delete(input.clerkUserId);
             accounts.set(input.clerkUserId, {
               keyAvailable: true,
               personalAccountId: input.personalAccountId,
@@ -81,9 +75,6 @@ const makeHarness = (
         ? Effect.fail(new PersonalAccountPersistenceError())
         : Effect.sync(() => {
             if (options.deleted) return null;
-            if (waitlistedUsers.has(requestedClerkUserId)) {
-              return { admissionState: "waitlisted" as const };
-            }
             const existing = accounts.get(requestedClerkUserId);
             return existing
               ? {
@@ -107,8 +98,7 @@ const makeHarness = (
       verifyRecently: () => Effect.die("not used"),
     }),
     Layer.succeed(PersonalAccountPersistence, persistence),
-    Layer.succeed(PrivateBetaConfig, {
-      onboardingOpen: options.onboardingOpen ?? true,
+    Layer.succeed(PersonalAccountCapacityConfig, {
       get providerApprovedSessionCapacity() {
         return providerApprovedSessionCapacity;
       },
@@ -155,7 +145,6 @@ const makeHarness = (
     setProviderApprovedSessionCapacity: (capacity: number) => {
       providerApprovedSessionCapacity = capacity;
     },
-    waitlistedUsers,
   };
 };
 
@@ -174,29 +163,20 @@ const bootstrapRequest = (
   });
 
 describe("Personal Account bootstrap HTTP boundary", () => {
-  test("fails external onboarding closed before creating keys when the launch gate is closed", async () => {
-    const harness = makeHarness({ onboardingOpen: false });
+  test("bootstraps a Clerk-approved User without a second onboarding gate", async () => {
+    const harness = makeHarness();
     const response = await harness.handler(bootstrapRequest());
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
-      admission: { state: "waitlisted" },
+      personal_account: {
+        state: "active",
+        message_retention_days: 30,
+        stored_media_limit_bytes: 5_368_709_120,
+        whatsapp_connection_limit: 3,
+      },
     });
-    expect(harness.generatedKeys()).toBe(0);
-    expect(harness.accounts.size).toBe(0);
-  });
-
-  test("keeps an existing waitlist entry closed without creating keys", async () => {
-    const harness = makeHarness({
-      initiallyWaitlisted: true,
-      onboardingOpen: false,
-    });
-    const response = await harness.handler(bootstrapRequest());
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({
-      admission: { state: "waitlisted" },
-    });
-    expect(harness.generatedKeys()).toBe(0);
-    expect(harness.waitlistedUsers.has(clerkUserId)).toBe(true);
+    expect(harness.generatedKeys()).toBe(1);
+    expect(harness.accounts.size).toBe(1);
   });
 
   test("creates once, recovers idempotently, and never returns an internal account identifier", async () => {
@@ -238,29 +218,25 @@ describe("Personal Account bootstrap HTTP boundary", () => {
     ]);
   });
 
-  test("returns one idempotent waitlist state and admits it when approved capacity grows", async () => {
-    const waitlistedRequest = new Request(endpoint, {
+  test("returns unavailable without persisting an applicant and admits a later retry when capacity grows", async () => {
+    const capacityExhaustedRequest = new Request(endpoint, {
       headers: {
         authorization: "Bearer signed-clerk-token",
         origin: browserOrigin,
       },
       method: "POST",
     });
-    const waitlistedHarness = makeHarness({
+    const capacityHarness = makeHarness({
       providerApprovedSessionCapacity: 0,
     });
-    const first = await waitlistedHarness.handler(waitlistedRequest);
-    const replay = await waitlistedHarness.handler(bootstrapRequest());
-    waitlistedHarness.setProviderApprovedSessionCapacity(3);
-    const promoted = await waitlistedHarness.handler(bootstrapRequest());
+    const first = await capacityHarness.handler(capacityExhaustedRequest);
+    const replay = await capacityHarness.handler(bootstrapRequest());
+    capacityHarness.setProviderApprovedSessionCapacity(3);
+    const promoted = await capacityHarness.handler(bootstrapRequest());
 
-    expect(first.status).toBe(200);
-    expect(await first.json()).toEqual({
-      admission: { state: "waitlisted" },
-    });
-    expect(await replay.json()).toEqual({
-      admission: { state: "waitlisted" },
-    });
+    expect(first.status).toBe(503);
+    expect(await first.json()).toEqual({ error: "unavailable" });
+    expect(await replay.json()).toEqual({ error: "unavailable" });
     expect(await promoted.json()).toEqual({
       personal_account: {
         state: "active",
@@ -269,20 +245,9 @@ describe("Personal Account bootstrap HTTP boundary", () => {
         whatsapp_connection_limit: 3,
       },
     });
-    expect(waitlistedHarness.accounts).toHaveLength(1);
-    expect(waitlistedHarness.waitlistedUsers).toEqual(new Set());
-    expect(waitlistedHarness.generatedKeys()).toBe(3);
-    expect(waitlistedHarness.events).toEqual([
-      {
-        event: "personal_account.bootstrap.completed",
-        outcome: "waitlisted",
-        service: "api",
-      },
-      {
-        event: "personal_account.bootstrap.completed",
-        outcome: "waitlisted",
-        service: "api",
-      },
+    expect(capacityHarness.accounts).toHaveLength(1);
+    expect(capacityHarness.generatedKeys()).toBe(3);
+    expect(capacityHarness.events).toEqual([
       {
         event: "personal_account.bootstrap.completed",
         outcome: "created",

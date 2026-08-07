@@ -148,19 +148,3 @@ export const personalAccountKeyEnvelopesInApp = publicSchema.table(
     ),
   ],
 );
-
-export const privateBetaWaitlistInAppPrivate = publicSchema.table(
-  "private_beta_waitlist",
-  {
-    clerkUserId: text("clerk_user_id").primaryKey().notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
-      .default(sql`transaction_timestamp()`)
-      .notNull(),
-  },
-  (_table) => [
-    check(
-      "private_beta_waitlist_clerk_user_id_check",
-      sql`clerk_user_id ~ '^user_[A-Za-z0-9]{1,64}$'::text`,
-    ),
-  ],
-);

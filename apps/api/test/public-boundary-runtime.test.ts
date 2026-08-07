@@ -12,7 +12,6 @@ import worker from "./support/public-boundary-worker";
 
 describe("public-boundary Worker harness", () => {
   test("keeps the production Worker entrypoint under the runtime harness", async () => {
-    expect(env.EXTERNAL_ONBOARDING_GATE).toBe("closed");
     const response = await exports.default.fetch(
       "https://api.example.test/health",
     );
@@ -304,21 +303,19 @@ describe("public-boundary Worker harness", () => {
     });
   });
 
-  test("returns the waitlist outcome through the signed-in public boundary", async () => {
+  test("returns unavailable when provider capacity is exhausted", async () => {
     const response = await exports.default.fetch(
       new Request("https://api.example.test/v1/personal-account/bootstrap", {
         headers: {
-          authorization: "Bearer signed-waitlisted-user",
+          authorization: "Bearer signed-capacity-exhausted-user",
           origin: "http://127.0.0.1:3000",
         },
         method: "POST",
       }),
     );
 
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({
-      admission: { state: "waitlisted" },
-    });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "unavailable" });
   });
 
   test("lists and revokes an MCP Authorization through the signed-in product boundary", async () => {

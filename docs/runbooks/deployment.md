@@ -669,15 +669,15 @@ User and bootstrap once. Confirm the browser sends `POST
 second account. Confirm the product states the three-Connection, 5 GB Stored
 Media, and default 30-day Message Retention Policy values returned from Neon.
 In a non-production environment, set capacity to exactly three, admit one
-designated User, and verify a second designated User receives the same
-private-beta waitlist state on retries without any provider-control lifecycle
-telemetry. Restore the approved value before further onboarding. A wrong
+designated User, and verify a second Clerk-approved User receives transient
+service unavailability on retries without persisted applicant state or any
+provider-control lifecycle telemetry. Restore the approved value before further onboarding. A wrong
 Origin, expired token, or token from another environment
 must produce the same not-found response. Do not copy a token into shell
 history, query tenant tables with an owner role, or log identifiers to prove
 this check. Safe telemetry may show only
-`personal_account.bootstrap.completed` with `created` on the first request,
-`recovered` on the retry, or `waitlisted` for the exhausted outcome.
+`personal_account.bootstrap.completed` with `created` on the first request or
+`recovered` on the retry. Capacity exhaustion emits no successful completion.
 
 Enter an explicitly international smoke-test WhatsApp Number in the signed-in
 product and start one Connection Setup. Confirm the browser sends `POST
@@ -1178,10 +1178,10 @@ under the production recovery authority.
 
 ## External rollout gates
 
-The source-controlled API binding `EXTERNAL_ONBOARDING_GATE` defaults to
-`closed`. While closed, an existing User can recover an existing Personal
-Account, but a new User receives the waitlist response before a tenant key is
-created. Do not open the binding manually from an individual check.
+Clerk Waitlist mode controls private-beta applicant approval. The API has no
+second onboarding gate: a User who can authenticate is already approved. Neon
+still fails closed without creating a Personal Account when the provider's
+approved session capacity cannot reserve that account's full entitlement.
 
 The monthly and quarterly schedules in
 `.github/workflows/recovery-drills.yml` call the production recovery automation
@@ -1199,11 +1199,10 @@ artifacts exist. It reruns the real deployed smoke and production bundle
 inspection and requires the exact environment attestations `approved` for
 numeric quotas, provider capacity, and Wasender governance terms. Evidence
 older than 35 days for the monthly drill or 100 days for the quarterly drill is
-rejected. The successful result authorizes a reviewed infrastructure change of
-`external_onboarding_gate = "open"`; it does not mutate infrastructure itself.
-Any missing artifact, secret, external approval, malformed report, failed
-check, missed four-hour RTO, missed five-minute Neon RPO, or nonzero deletion
-marker loss keeps onboarding closed.
+rejected. The successful result is release evidence; it does not mutate
+application admission state. Any missing artifact, secret, external approval,
+malformed report, failed check, missed four-hour RTO, missed five-minute Neon
+RPO, or nonzero deletion marker loss blocks the production launch decision.
 
 Evidence records achieved first-party monthly availability against the 99.5
 percent SLO separately from achieved Wasender and WhatsApp availability.

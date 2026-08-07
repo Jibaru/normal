@@ -26,6 +26,10 @@ export class PersonalAccountNotAccessible extends Data.TaggedError(
   "PersonalAccountNotAccessible",
 ) {}
 
+export class PersonalAccountCapacityUnavailable extends Data.TaggedError(
+  "PersonalAccountCapacityUnavailable",
+) {}
+
 export interface PersonalAccountPersistenceService {
   readonly create: (input: {
     readonly clerkUserId: string;
@@ -43,21 +47,19 @@ export interface PersonalAccountPersistenceService {
         readonly storedMediaLimitBytes: number;
         readonly whatsappConnectionLimit: number;
       }
-    | { readonly admissionState: "waitlisted" }
+    | { readonly admissionState: "capacity_unavailable" }
     | null,
     PersonalAccountPersistenceError
   >;
   readonly resolve: (clerkUserId: string) => Effect.Effect<
-    | {
-        readonly admissionState: "active";
-        readonly keyAvailable: boolean;
-        readonly messageRetentionDays: number;
-        readonly personalAccountId: string;
-        readonly storedMediaLimitBytes: number;
-        readonly whatsappConnectionLimit: number;
-      }
-    | { readonly admissionState: "waitlisted" }
-    | null,
+    {
+      readonly admissionState: "active";
+      readonly keyAvailable: boolean;
+      readonly messageRetentionDays: number;
+      readonly personalAccountId: string;
+      readonly storedMediaLimitBytes: number;
+      readonly whatsappConnectionLimit: number;
+    } | null,
     PersonalAccountPersistenceError
   >;
 }
@@ -76,21 +78,21 @@ export const PersonalAccountIdentifiers =
     "@whatsapp-mcp/api/PersonalAccountIdentifiers",
   );
 
-export interface PrivateBetaConfigService {
-  readonly onboardingOpen: boolean;
+export interface PersonalAccountCapacityConfigService {
   readonly providerApprovedSessionCapacity: number;
 }
 
-export const PrivateBetaConfig = Context.GenericTag<PrivateBetaConfigService>(
-  "@whatsapp-mcp/api/PrivateBetaConfig",
-);
+export const PersonalAccountCapacityConfig =
+  Context.GenericTag<PersonalAccountCapacityConfigService>(
+    "@whatsapp-mcp/api/PersonalAccountCapacityConfig",
+  );
 
 export type PersonalAccountRequirements =
   | EnvelopeEncryption
   | HumanIdentityService
   | PersonalAccountIdentifiersService
   | PersonalAccountPersistenceService
-  | PrivateBetaConfigService
+  | PersonalAccountCapacityConfigService
   | SafeTelemetryService;
 
 interface ActiveBootstrapResult {
@@ -101,24 +103,20 @@ interface ActiveBootstrapResult {
   readonly whatsappConnectionLimit: number;
 }
 
-interface WaitlistedBootstrapResult {
-  readonly admissionState: "waitlisted";
-  readonly outcome: "waitlisted";
-}
-
-type BootstrapResult = ActiveBootstrapResult | WaitlistedBootstrapResult;
+type BootstrapResult = ActiveBootstrapResult;
 
 export const bootstrapPersonalAccount = (
   clerkUserId: string,
 ): Effect.Effect<
   BootstrapResult,
   | EncryptionError
+  | PersonalAccountCapacityUnavailable
   | PersonalAccountNotAccessible
   | PersonalAccountPersistenceError,
   | EnvelopeEncryption
   | PersonalAccountIdentifiersService
   | PersonalAccountPersistenceService
-  | PrivateBetaConfigService
+  | PersonalAccountCapacityConfigService
 > =>
   Effect.gen(function* () {
     const persistence = yield* PersonalAccountPersistence;
@@ -132,13 +130,7 @@ export const bootstrapPersonalAccount = (
         whatsappConnectionLimit: resolved.whatsappConnectionLimit,
       } as const;
     }
-    const privateBeta = yield* PrivateBetaConfig;
-    if (!privateBeta.onboardingOpen && resolved?.admissionState !== "active") {
-      return {
-        admissionState: "waitlisted",
-        outcome: "waitlisted",
-      } as const;
-    }
+    const capacity = yield* PersonalAccountCapacityConfig;
 
     const identifiers = yield* PersonalAccountIdentifiers;
     const personalAccountId =
@@ -156,18 +148,13 @@ export const bootstrapPersonalAccount = (
       keyVersion: envelope.keyVersion,
       kmsKeyId: envelope.kmsKeyId,
       personalAccountId,
-      providerApprovedSessionCapacity:
-        privateBeta.providerApprovedSessionCapacity,
+      providerApprovedSessionCapacity: capacity.providerApprovedSessionCapacity,
     });
     if (result === null) {
       return yield* Effect.fail(new PersonalAccountNotAccessible());
     }
-    if (result.admissionState === "waitlisted") {
-      return {
-        admissionState: "waitlisted",
-        outcome: "waitlisted",
-      } as const;
-    }
+    if (result.admissionState === "capacity_unavailable")
+      return yield* Effect.fail(new PersonalAccountCapacityUnavailable());
     return {
       admissionState: "active",
       messageRetentionDays: result.messageRetentionDays,
@@ -247,28 +234,18 @@ export const createPersonalAccountHandler =
               ? notFound(browserOrigin)
               : jsonResponse({ error: "unavailable" }, 503, browserOrigin),
           onSuccess: (result) =>
-            result.admissionState === "waitlisted"
-              ? jsonResponse(
-                  {
-                    admission: {
-                      state: "waitlisted",
-                    },
-                  },
-                  200,
-                  browserOrigin,
-                )
-              : jsonResponse(
-                  {
-                    personal_account: {
-                      message_retention_days: result.messageRetentionDays,
-                      state: "active",
-                      stored_media_limit_bytes: result.storedMediaLimitBytes,
-                      whatsapp_connection_limit: result.whatsappConnectionLimit,
-                    },
-                  },
-                  200,
-                  browserOrigin,
-                ),
+            jsonResponse(
+              {
+                personal_account: {
+                  message_retention_days: result.messageRetentionDays,
+                  state: "active",
+                  stored_media_limit_bytes: result.storedMediaLimitBytes,
+                  whatsapp_connection_limit: result.whatsappConnectionLimit,
+                },
+              },
+              200,
+              browserOrigin,
+            ),
         }),
       ),
     );

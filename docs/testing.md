@@ -47,7 +47,7 @@ The Worker runtime suite proves:
 
 - the actual fetch boundary and CORS behavior;
 - deterministic identity, provider, clock, and identifier Layers;
-- active and exhausted private-beta admission outcomes;
+- active bootstrap and fail-closed provider-capacity exhaustion outcomes;
 - controlled external failure behavior;
 - KV and R2 persistence through real local bindings;
 - Queue publication and explicit consumer acknowledgement;

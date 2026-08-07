@@ -27,13 +27,11 @@ export interface ActivePersonalAccount {
   readonly whatsappConnectionLimit: number;
 }
 
-export interface WaitlistedPersonalAccount {
-  readonly admissionState: "waitlisted";
+export interface PersonalAccountCapacityUnavailable {
+  readonly admissionState: "capacity_unavailable";
 }
 
-export type ResolvedPersonalAccount =
-  | ActivePersonalAccount
-  | WaitlistedPersonalAccount;
+export type ResolvedPersonalAccount = ActivePersonalAccount;
 
 export interface CreatePersonalAccountInput {
   readonly clerkUserId: string;
@@ -72,7 +70,9 @@ export interface PersonalAccountRepository {
   readonly purgeExpiredDeletionRecords: (limit: number) => Promise<number>;
   readonly create: (
     input: CreatePersonalAccountInput,
-  ) => Promise<CreatedPersonalAccount | WaitlistedPersonalAccount | null>;
+  ) => Promise<
+    CreatedPersonalAccount | PersonalAccountCapacityUnavailable | null
+  >;
   readonly resolve: (
     clerkUserId: string,
   ) => Promise<ResolvedPersonalAccount | null>;
@@ -140,9 +140,10 @@ interface AdmissionRow extends Record<string, unknown> {
 
 const admissionState = (
   row: AdmissionRow | undefined,
-): "active" | "waitlisted" | null => {
+): "active" | "capacity_unavailable" | null => {
   if (row?.admission_state === "active") return "active";
-  if (row?.admission_state === "waitlisted") return "waitlisted";
+  if (row?.admission_state === "capacity_unavailable")
+    return "capacity_unavailable";
   return null;
 };
 
@@ -246,8 +247,8 @@ export const makePersonalAccountRepository = (
           )`,
         );
         const row = rows[0];
-        if (admissionState(row) === "waitlisted") {
-          return { admissionState: "waitlisted" as const };
+        if (admissionState(row) === "capacity_unavailable") {
+          return { admissionState: "capacity_unavailable" as const };
         }
         if (
           admissionState(row) !== "active" ||
@@ -275,9 +276,6 @@ export const makePersonalAccountRepository = (
           sql`SELECT * FROM public.resolve_personal_account_for_clerk(${clerkUserId})`,
         );
         const row = rows[0];
-        if (admissionState(row) === "waitlisted") {
-          return { admissionState: "waitlisted" as const };
-        }
         if (
           admissionState(row) !== "active" ||
           typeof row?.personal_account_id !== "string" ||

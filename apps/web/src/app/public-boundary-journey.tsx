@@ -74,13 +74,7 @@ export type PersonalAccountView =
   | "activity"
   | "settings";
 
-type JourneyState =
-  | "idle"
-  | "loading"
-  | "signed_out"
-  | "unavailable"
-  | "waitlisted"
-  | "ok";
+type JourneyState = "idle" | "loading" | "signed_out" | "unavailable" | "ok";
 
 type SetupState =
   | "cancelled"
@@ -1040,9 +1034,6 @@ export function PublicBoundaryJourney({
         return;
       }
       const body = (await response.json()) as {
-        readonly admission?: {
-          readonly state?: unknown;
-        };
         readonly personal_account?: {
           readonly message_retention_days?: unknown;
           readonly state?: unknown;
@@ -1050,10 +1041,6 @@ export function PublicBoundaryJourney({
           readonly whatsapp_connection_limit?: unknown;
         };
       };
-      if (body.admission?.state === "waitlisted") {
-        setState("waitlisted");
-        return;
-      }
       if (
         body.personal_account?.state !== "active" ||
         body.personal_account.message_retention_days !== 30 ||
@@ -1367,13 +1354,11 @@ export function PublicBoundaryJourney({
                 ? "Join the private-beta waitlist, or sign in if you’re approved."
                 : state === "ok"
                   ? "Personal Account ready"
-                  : state === "waitlisted"
-                    ? "You’re on the private-beta waitlist"
-                    : state === "loading"
-                      ? "Preparing your Personal Account…"
-                      : state === "unavailable"
-                        ? "Your Personal Account is temporarily unavailable. Please try again."
-                        : "Signed in. Continue to create or open your Personal Account."}
+                  : state === "loading"
+                    ? "Preparing your Personal Account…"
+                    : state === "unavailable"
+                      ? "Your Personal Account is temporarily unavailable. Please try again."
+                      : "Signed in. Continue to create or open your Personal Account."}
         </p>
       ) : state === "idle" || state === "loading" ? (
         <div className="flex flex-col gap-3">
@@ -1381,10 +1366,6 @@ export function PublicBoundaryJourney({
           <Skeleton className="h-5 w-40" />
           <Skeleton className="h-24 w-full" />
         </div>
-      ) : state === "waitlisted" ? (
-        <p aria-live="polite" className="text-sm text-muted-foreground">
-          You’re on the private beta waitlist.
-        </p>
       ) : state === "unavailable" ? (
         <p aria-live="polite" className="text-sm text-muted-foreground">
           Your Personal Account is temporarily unavailable. Please try again.
@@ -1864,7 +1845,9 @@ export function PublicBoundaryJourney({
               </p>
             </div>
             <Dialog>
-              <DialogTrigger render={<Button />}>New connection</DialogTrigger>
+              <DialogTrigger render={<Button />}>
+                Register WhatsApp Number
+              </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
                   <DialogTitle>New WhatsApp Connection</DialogTitle>

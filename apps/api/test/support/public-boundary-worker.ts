@@ -30,9 +30,9 @@ import {
   MessageRetentionPersistence,
 } from "../../src/message-retention";
 import {
+  PersonalAccountCapacityConfig,
   PersonalAccountIdentifiers,
   PersonalAccountPersistence,
-  PrivateBetaConfig,
 } from "../../src/personal-account";
 import { createProductionHandler } from "../../src/production";
 import {
@@ -200,8 +200,8 @@ const makeTestLayer = (
         if (authorization === "Bearer signed-test-user") {
           return Effect.succeed("user_test_public_boundary");
         }
-        if (authorization === "Bearer signed-waitlisted-user") {
-          return Effect.succeed("user_waitlisted_public_boundary");
+        if (authorization === "Bearer signed-capacity-exhausted-user") {
+          return Effect.succeed("user_capacity_exhausted_public_boundary");
         }
         return Effect.fail(new InvalidHumanIdentityRequest());
       },
@@ -225,15 +225,14 @@ const makeTestLayer = (
     Layer.succeed(PersonalAccountIdentifiers, {
       next: Effect.succeed("10000000-0000-4000-8000-000000000018"),
     }),
-    Layer.succeed(PrivateBetaConfig, {
-      onboardingOpen: true,
+    Layer.succeed(PersonalAccountCapacityConfig, {
       providerApprovedSessionCapacity: 3,
     }),
     Layer.succeed(PersonalAccountPersistence, {
       create: (input) =>
         Effect.sync(() => {
-          if (input.clerkUserId === "user_waitlisted_public_boundary") {
-            return { admissionState: "waitlisted" as const };
+          if (input.clerkUserId === "user_capacity_exhausted_public_boundary") {
+            return { admissionState: "capacity_unavailable" as const };
           }
           const existing = personalAccounts.get(input.clerkUserId);
           if (existing) {
@@ -258,9 +257,6 @@ const makeTestLayer = (
         }),
       resolve: (clerkUserId) =>
         Effect.sync(() => {
-          if (clerkUserId === "user_waitlisted_public_boundary") {
-            return { admissionState: "waitlisted" as const };
-          }
           const existing = personalAccounts.get(clerkUserId);
           return existing
             ? {

@@ -360,7 +360,7 @@ describe("Personal Account repository", () => {
     ).toEqual([{ count: 502 }]);
   });
 
-  test("creates and resolves one idempotent waitlist entry at capacity", async () => {
+  test("does not persist an applicant when provider capacity is exhausted", async () => {
     const repository = makePersonalAccountRepository(provider);
     await repository.create({
       clerkUserId: "user_admitted",
@@ -372,7 +372,7 @@ describe("Personal Account repository", () => {
     });
 
     const first = await repository.create({
-      clerkUserId: "user_waitlisted",
+      clerkUserId: "user_capacityexhausted",
       keyCiphertext: new Uint8Array([4, 5, 6]),
       keyVersion: 1,
       kmsKeyId: "arn:aws:kms:us-east-1:111122223333:key/content-root-key",
@@ -380,7 +380,7 @@ describe("Personal Account repository", () => {
       providerApprovedSessionCapacity: 3,
     });
     const replay = await repository.create({
-      clerkUserId: "user_waitlisted",
+      clerkUserId: "user_capacityexhausted",
       keyCiphertext: new Uint8Array([7, 8, 9]),
       keyVersion: 1,
       kmsKeyId: "arn:aws:kms:us-east-1:111122223333:key/content-root-key",
@@ -388,17 +388,17 @@ describe("Personal Account repository", () => {
       providerApprovedSessionCapacity: 3,
     });
 
-    expect(first).toEqual({ admissionState: "waitlisted" });
-    expect(replay).toEqual({ admissionState: "waitlisted" });
-    await expect(repository.resolve("user_waitlisted")).resolves.toEqual({
-      admissionState: "waitlisted",
-    });
+    expect(first).toEqual({ admissionState: "capacity_unavailable" });
+    expect(replay).toEqual({ admissionState: "capacity_unavailable" });
+    await expect(
+      repository.resolve("user_capacityexhausted"),
+    ).resolves.toBeNull();
 
     const persisted = await database.query<{ count: number }>(
       `SELECT count(*)::integer AS count
-       FROM public.private_beta_waitlist
-       WHERE clerk_user_id = 'user_waitlisted'`,
+       FROM public.clerk_identities
+       WHERE clerk_user_id = 'user_capacityexhausted'`,
     );
-    expect(persisted.rows).toEqual([{ count: 1 }]);
+    expect(persisted.rows).toEqual([{ count: 0 }]);
   });
 });

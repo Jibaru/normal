@@ -524,11 +524,6 @@ resource "cloudflare_worker_version" "api" {
       type = "plain_text"
     },
     {
-      name = "EXTERNAL_ONBOARDING_GATE"
-      text = var.external_onboarding_gate
-      type = "plain_text"
-    },
-    {
       name = "MCP_REQUESTS_PER_MINUTE"
       text = tostring(var.mcp_requests_per_minute)
       type = "plain_text"

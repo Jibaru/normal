@@ -112,7 +112,6 @@ run "development_topology" {
       "plain_text:CLERK_ISSUER",
       "plain_text:AWS_KMS_REGION",
       "plain_text:DEPLOYMENT_ENVIRONMENT",
-      "plain_text:EXTERNAL_ONBOARDING_GATE",
       "plain_text:OAUTH_ISSUER",
       "plain_text:OAUTH_RESOURCE",
       "plain_text:MCP_REQUESTS_PER_HOUR",

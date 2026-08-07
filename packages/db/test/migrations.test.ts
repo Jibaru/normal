@@ -49,8 +49,12 @@ describe("production migrations", () => {
         hash: "3154967c1dd4f561c13d6cc1646b138217ff8184e2d9483714b03fdae9574624",
       },
       {
-        created_at: EXPECTED_SCHEMA_VERSION,
+        created_at: 1785959583000,
         hash: "e549a123254ba6a9bd052d12e6f0f4890b452aff5657afa41c9f20973e8de87d",
+      },
+      {
+        created_at: EXPECTED_SCHEMA_VERSION,
+        hash: "5020678930acb8c1efb825c8623b25d6956897ac14960fdf77220506fb1cb8e6",
       },
     ]);
   });
@@ -76,7 +80,7 @@ describe("production migrations", () => {
         (SELECT count(*)::int FROM public.schema_migrations) AS legacy,
         (SELECT count(*)::int FROM public.drizzle_migrations) AS standard
     `);
-    expect(ledgers.rows).toEqual([{ legacy: 40, standard: 2 }]);
+    expect(ledgers.rows).toEqual([{ legacy: 40, standard: 3 }]);
   });
 
   test("clears only retention limitations superseded by a complete Directory snapshot", async () => {
@@ -915,7 +919,7 @@ describe("production migrations", () => {
     ]);
   });
 
-  test("serializes provider capacity, creates one idempotent waitlist entry, and promotes it when capacity grows", async () => {
+  test("serializes provider capacity without persisting applicants", async () => {
     await runMigrations(database);
 
     await database.exec("SET ROLE whatsapp_api_runtime");
@@ -930,7 +934,7 @@ describe("production migrations", () => {
          )`,
         [accountC, "arn:aws:kms:us-east-1:111122223333:key/content-root"],
       );
-      const waitlisted = await Promise.all(
+      const unavailable = await Promise.all(
         [accountD, accountA].map((accountId) =>
           database.query<{
             admission_state: string;
@@ -938,7 +942,7 @@ describe("production migrations", () => {
           }>(
             `SELECT *
              FROM public.admit_personal_account_for_clerk(
-               'user_waitlisted', $1, 1, $2, decode('c3d4', 'hex'), 3
+               'user_capacityexhausted', $1, 1, $2, decode('c3d4', 'hex'), 3
              )`,
             [accountId, "arn:aws:kms:us-east-1:111122223333:key/content-root"],
           ),
@@ -949,13 +953,13 @@ describe("production migrations", () => {
         admission_state: "active",
         created: true,
       });
-      expect(waitlisted.map(({ rows }) => rows[0])).toEqual([
+      expect(unavailable.map(({ rows }) => rows[0])).toEqual([
         expect.objectContaining({
-          admission_state: "waitlisted",
+          admission_state: "capacity_unavailable",
           personal_account_id: null,
         }),
         expect.objectContaining({
-          admission_state: "waitlisted",
+          admission_state: "capacity_unavailable",
           personal_account_id: null,
         }),
       ]);
@@ -967,7 +971,7 @@ describe("production migrations", () => {
       }>(
         `SELECT *
          FROM public.admit_personal_account_for_clerk(
-           'user_waitlisted', $1, 1, $2, decode('e5f6', 'hex'), 6
+            'user_capacityexhausted', $1, 1, $2, decode('e5f6', 'hex'), 6
          )`,
         [accountD, "arn:aws:kms:us-east-1:111122223333:key/content-root"],
       );
@@ -982,25 +986,21 @@ describe("production migrations", () => {
 
     const persisted = await database.query<{
       account_count: number;
-      waitlist_count: number;
+      identity_count: number;
     }>(`
       SELECT
         (SELECT count(*)::integer FROM public.personal_accounts) AS account_count,
-        (
-          SELECT count(*)::integer
-          FROM public.private_beta_waitlist
-          WHERE clerk_user_id = 'user_waitlisted'
-        ) AS waitlist_count
+        (SELECT count(*)::integer FROM public.clerk_identities) AS identity_count
     `);
     expect(persisted.rows).toEqual([
       {
         account_count: 2,
-        waitlist_count: 0,
+        identity_count: 2,
       },
     ]);
   });
 
-  test("does not recover, waitlist, or replace a deleting Personal Account", async () => {
+  test("does not recover or replace a deleting Personal Account", async () => {
     await runMigrations(database);
     await seedTenants(database);
     await database.query(
@@ -1039,7 +1039,7 @@ describe("production migrations", () => {
     expect(candidate.rows).toEqual([]);
   });
 
-  test("denies admission and waitlist data to the webhook runtime role", async () => {
+  test("denies Personal Account admission to the webhook runtime role", async () => {
     await runMigrations(database);
 
     await database.exec("SET ROLE whatsapp_webhook_runtime");
@@ -1057,12 +1057,14 @@ describe("production migrations", () => {
           ],
         ),
       ).rejects.toThrow();
-      await expect(
-        database.query("SELECT * FROM public.private_beta_waitlist"),
-      ).rejects.toThrow();
     } finally {
       await database.exec("RESET ROLE");
     }
+
+    const removedWaitlist = await database.query<{ table_name: string | null }>(
+      "SELECT to_regclass('public.private_beta_waitlist')::text AS table_name",
+    );
+    expect(removedWaitlist.rows).toEqual([{ table_name: null }]);
   });
 
   test("keeps a restored branch closed while locked markers and wall-clock expiry replay", async () => {

@@ -10,7 +10,6 @@ export default defineConfig({
         bindings: {
           ...sharedTestBindings,
           DEPLOYMENT_ENVIRONMENT: "production",
-          EXTERNAL_ONBOARDING_GATE: "closed",
           SMOKE_CHECK_SECRET:
             "3737373737373737373737373737373737373737373737373737373737373737",
         },

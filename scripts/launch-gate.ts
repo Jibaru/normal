@@ -49,12 +49,12 @@ export const runLaunchGate = async (
   });
   if (!result.open)
     throw new Error(
-      `external onboarding remains closed: ${result.blockers.join("; ")}`,
+      `production launch gate failed: ${result.blockers.join("; ")}`,
     );
   return result;
 };
 
 if (import.meta.main) {
   await runLaunchGate();
-  console.info(JSON.stringify({ external_onboarding_gate: "open" }));
+  console.info(JSON.stringify({ launch_gate: "passed" }));
 }
