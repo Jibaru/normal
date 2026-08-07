@@ -18,6 +18,7 @@ import {
 } from "../src/mcp-authorization";
 import {
   createOAuthHandler,
+  makeOAuthClientRegistryKv,
   type OAuthConfiguration,
   sealAuthorizationRequest,
 } from "../src/oauth";
@@ -166,6 +167,53 @@ const post = (path: string, body: unknown): Request =>
   });
 
 describe("explicit MCP Authorization consent HTTP boundary", () => {
+  test("retains a validated ChatGPT metadata client for refresh requests", async () => {
+    const clientId = "https://chatgpt.com/oauth/normal-connector/client.json";
+    const storedClient = {
+      clientId,
+      clientName: "ChatGPT",
+      redirectUris: ["https://chatgpt.com/connector/oauth/callback"],
+      tokenEndpointAuthMethod: "none",
+    };
+    const values = new Map([
+      [`client:${clientId}`, JSON.stringify(storedClient)],
+    ]);
+    const kv = makeOAuthClientRegistryKv(
+      {
+        delete: async (key) => {
+          values.delete(key);
+        },
+        get: async (key, options) => {
+          const value = values.get(key);
+          if (value === undefined) return null;
+          const wantsJson =
+            options === "json" ||
+            (typeof options === "object" &&
+              options !== null &&
+              (options as { readonly type?: unknown }).type === "json");
+          return wantsJson ? JSON.parse(value) : value;
+        },
+        put: async (key, value) => {
+          values.set(key, value);
+        },
+      },
+      configuration.clients,
+    );
+
+    expect(await kv.get(`client:${clientId}`, { type: "json" })).toEqual(
+      storedClient,
+    );
+
+    values.set(
+      `client:${clientId}`,
+      JSON.stringify({
+        ...storedClient,
+        redirectUris: ["https://attacker.example/callback"],
+      }),
+    );
+    expect(await kv.get(`client:${clientId}`, { type: "json" })).toBeNull();
+  });
+
   test("presents the allowlisted client, requested scopes, and current connections without preselecting authority", async () => {
     const harness = await makeHarness();
     const response = await harness.handler(

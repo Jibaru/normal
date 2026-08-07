@@ -48,6 +48,10 @@ const OAUTH_CLIENTS: ReadonlyArray<AllowlistedOAuthClient> = [
   },
 ];
 
+const chatGptFallbackRedirectUris = OAUTH_CLIENTS.find(
+  (client) => client.clientId === "chatgpt",
+)?.redirectUris ?? ["https://chatgpt.com/connector_platform_oauth_redirect"];
+
 const isChatGptClientMetadataId = (clientId: string): boolean => {
   try {
     const url = new URL(clientId);
@@ -501,7 +505,7 @@ const clientInfoFor = (client: AllowlistedOAuthClient): ClientInfo => ({
   tokenEndpointAuthMethod: "none",
 });
 
-const makeAllowlistedKv = (
+export const makeOAuthClientRegistryKv = (
   kv: OAuthKv,
   clients: ReadonlyArray<AllowlistedOAuthClient>,
 ): OAuthKv => {
@@ -513,16 +517,42 @@ const makeAllowlistedKv = (
       if (property === "get") {
         return async (key: string, options?: unknown) => {
           if (key.startsWith("client:")) {
-            const client = registry.get(key.slice("client:".length));
-            if (!client) {
-              return null;
-            }
+            const clientId = key.slice("client:".length);
+            const client = registry.get(clientId);
+            const stored =
+              client === undefined && isChatGptClientMetadataId(clientId)
+                ? await target.get(key, { type: "json" })
+                : null;
+            const dynamicClient =
+              typeof stored === "object" &&
+              stored !== null &&
+              !Array.isArray(stored) &&
+              (stored as Record<string, unknown>).clientId === clientId &&
+              (stored as Record<string, unknown>).tokenEndpointAuthMethod ===
+                "none" &&
+              Array.isArray((stored as Record<string, unknown>).redirectUris) &&
+              (
+                (stored as Record<string, unknown>)
+                  .redirectUris as ReadonlyArray<unknown>
+              ).length > 0 &&
+              (
+                (stored as Record<string, unknown>)
+                  .redirectUris as ReadonlyArray<unknown>
+              ).every(
+                (redirectUri) =>
+                  typeof redirectUri === "string" &&
+                  isChatGptRedirectUri(redirectUri),
+              )
+                ? stored
+                : null;
+            const trustedClient = client ?? dynamicClient;
+            if (!trustedClient) return null;
             const wantsJson =
               options === "json" ||
               (typeof options === "object" &&
                 options !== null &&
                 (options as { readonly type?: unknown }).type === "json");
-            return wantsJson ? client : JSON.stringify(client);
+            return wantsJson ? trustedClient : JSON.stringify(trustedClient);
           }
           return target.get(key, options);
         };
@@ -537,7 +567,10 @@ const makeAllowlistedEnvironment = (
   environment: OAuthEnvironment,
   clients: ReadonlyArray<AllowlistedOAuthClient>,
 ): OAuthEnvironment => {
-  const allowlistedKv = makeAllowlistedKv(environment.OAUTH_KV, clients);
+  const allowlistedKv = makeOAuthClientRegistryKv(
+    environment.OAUTH_KV,
+    clients,
+  );
   return new Proxy(environment, {
     get: (target, property) =>
       property === "OAUTH_KV" ? allowlistedKv : Reflect.get(target, property),
@@ -603,6 +636,14 @@ const makeAuthorizationHandler = (
         !environment.OAUTH_PROVIDER
       ) {
         throw new Error("invalid authorization request");
+      }
+
+      if (isChatGptClientMetadataId(client.clientId)) {
+        await options.environment.OAUTH_KV.put(
+          `client:${client.clientId}`,
+          JSON.stringify(clientInfoFor(client)),
+          { expirationTtl: 90 * 24 * 60 * 60 },
+        );
       }
 
       const parsed = await environment.OAUTH_PROVIDER.parseAuthRequest(request);
@@ -865,91 +906,94 @@ export const createOAuthHandler = (
     options.environment,
     options.configuration.clients,
   );
-  const provider = new OAuthProvider<OAuthEnvironment>({
-    accessTokenTTL: ACCESS_TOKEN_TTL_SECONDS,
-    allowImplicitFlow: false,
-    allowPlainPKCE: false,
-    apiHandler: {
-      fetch: async (request, environment, context) => {
-        const authorization = accessAuthorizationFrom(context);
-        if (authorization === null) return invalidAccessToken();
-        try {
-          if (!(await options.isAuthorizationActive(authorization))) {
+  const makeProvider = (clientIdMetadataDocumentEnabled: boolean) =>
+    new OAuthProvider<OAuthEnvironment>({
+      accessTokenTTL: ACCESS_TOKEN_TTL_SECONDS,
+      allowImplicitFlow: false,
+      allowPlainPKCE: false,
+      apiHandler: {
+        fetch: async (request, environment, context) => {
+          const authorization = accessAuthorizationFrom(context);
+          if (authorization === null) return invalidAccessToken();
+          try {
+            if (!(await options.isAuthorizationActive(authorization))) {
+              return invalidAccessToken();
+            }
+          } catch {
             return invalidAccessToken();
           }
-        } catch {
-          return invalidAccessToken();
-        }
-        return options.applicationHandler(request, environment, context);
-      },
-    },
-    apiRoute: options.configuration.resource,
-    authorizeEndpoint: `${options.configuration.issuer}/oauth/authorize`,
-    clientIdMetadataDocumentEnabled: true,
-    defaultHandler: makeAuthorizationHandler(options),
-    onError: (error) => {
-      options.telemetry({
-        code: error.code,
-        event: "oauth.protocol.request.failed",
-        service: "api",
-        status: error.status,
-      });
-    },
-    refreshTokenTTL: 90 * 24 * 60 * 60,
-    resourceMetadata: {
-      authorization_servers: [options.configuration.issuer],
-      bearer_methods_supported: ["header"],
-      resource: options.configuration.resource,
-      resource_name: "WhatsApp MCP",
-      scopes_supported: [...OAUTH_SCOPES],
-    },
-    scopesSupported: [...OAUTH_SCOPES],
-    tokenEndpoint: `${options.configuration.issuer}/oauth/token`,
-    tokenExchangeCallback: async (exchange) => {
-      const props =
-        typeof exchange.props === "object" &&
-        exchange.props !== null &&
-        !Array.isArray(exchange.props)
-          ? (exchange.props as Record<string, unknown>)
-          : {};
-      const authorizationId = props.authorizationId;
-      const clientId = props.clientId;
-      const oauthSubject = props.oauthSubject;
-      if (
-        typeof authorizationId !== "string" ||
-        !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
-          authorizationId,
-        ) ||
-        (clientId !== undefined &&
-          (typeof clientId !== "string" || clientId !== exchange.clientId)) ||
-        typeof oauthSubject !== "string" ||
-        !/^[A-Za-z0-9_-]{43}$/.test(oauthSubject) ||
-        exchange.userId !== oauthSubject ||
-        !(await options.isAuthorizationActive({
-          authorizationId,
-          clientId: exchange.clientId,
-          oauthSubject,
-        }))
-      ) {
-        throw new OAuthError("invalid_grant", {
-          description: "The MCP Authorization is not active.",
-        });
-      }
-      const tokenProperties = {
-        accessTokenTTL: ACCESS_TOKEN_TTL_SECONDS,
-        accessTokenProps: {
-          ...props,
-          clientId: exchange.clientId,
+          return options.applicationHandler(request, environment, context);
         },
-      };
-      return exchange.grantType === "authorization_code"
-        ? {
-            ...tokenProperties,
-            refreshTokenTTL: 90 * 24 * 60 * 60,
-          }
-        : tokenProperties;
-    },
-  });
+      },
+      apiRoute: options.configuration.resource,
+      authorizeEndpoint: `${options.configuration.issuer}/oauth/authorize`,
+      clientIdMetadataDocumentEnabled,
+      defaultHandler: makeAuthorizationHandler(options),
+      onError: (error) => {
+        options.telemetry({
+          code: error.code,
+          event: "oauth.protocol.request.failed",
+          service: "api",
+          status: error.status,
+        });
+      },
+      refreshTokenTTL: 90 * 24 * 60 * 60,
+      resourceMetadata: {
+        authorization_servers: [options.configuration.issuer],
+        bearer_methods_supported: ["header"],
+        resource: options.configuration.resource,
+        resource_name: "WhatsApp MCP",
+        scopes_supported: [...OAUTH_SCOPES],
+      },
+      scopesSupported: [...OAUTH_SCOPES],
+      tokenEndpoint: `${options.configuration.issuer}/oauth/token`,
+      tokenExchangeCallback: async (exchange) => {
+        const props =
+          typeof exchange.props === "object" &&
+          exchange.props !== null &&
+          !Array.isArray(exchange.props)
+            ? (exchange.props as Record<string, unknown>)
+            : {};
+        const authorizationId = props.authorizationId;
+        const clientId = props.clientId;
+        const oauthSubject = props.oauthSubject;
+        if (
+          typeof authorizationId !== "string" ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+            authorizationId,
+          ) ||
+          (clientId !== undefined &&
+            (typeof clientId !== "string" || clientId !== exchange.clientId)) ||
+          typeof oauthSubject !== "string" ||
+          !/^[A-Za-z0-9_-]{43}$/.test(oauthSubject) ||
+          exchange.userId !== oauthSubject ||
+          !(await options.isAuthorizationActive({
+            authorizationId,
+            clientId: exchange.clientId,
+            oauthSubject,
+          }))
+        ) {
+          throw new OAuthError("invalid_grant", {
+            description: "The MCP Authorization is not active.",
+          });
+        }
+        const tokenProperties = {
+          accessTokenTTL: ACCESS_TOKEN_TTL_SECONDS,
+          accessTokenProps: {
+            ...props,
+            clientId: exchange.clientId,
+          },
+        };
+        return exchange.grantType === "authorization_code"
+          ? {
+              ...tokenProperties,
+              refreshTokenTTL: 90 * 24 * 60 * 60,
+            }
+          : tokenProperties;
+      },
+    });
+  const provider = makeProvider(true);
+  const refreshProvider = makeProvider(false);
 
   return async (request, context) => {
     if (!isOAuthProviderRequest(request, options.configuration)) {
@@ -989,8 +1033,28 @@ export const createOAuthHandler = (
             observedAt: (options.now ?? (() => new Date()))(),
           },
           async () => {
+            if (isChatGptClientMetadataId(tokenRequest.clientId)) {
+              const cachedClient = await allowlistedEnvironment.OAUTH_KV.get(
+                `client:${tokenRequest.clientId}`,
+                { type: "json" },
+              );
+              if (cachedClient === null) {
+                await options.environment.OAUTH_KV.put(
+                  `client:${tokenRequest.clientId}`,
+                  JSON.stringify(
+                    clientInfoFor({
+                      clientClass: "chatgpt",
+                      clientId: tokenRequest.clientId,
+                      clientName: "ChatGPT",
+                      redirectUris: chatGptFallbackRedirectUris,
+                    }),
+                  ),
+                  { expirationTtl: 90 * 24 * 60 * 60 },
+                );
+              }
+            }
             const response = addNoStore(
-              await provider.fetch(
+              await refreshProvider.fetch(
                 providerRequest,
                 allowlistedEnvironment,
                 context,
