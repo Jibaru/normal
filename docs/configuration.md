@@ -140,7 +140,9 @@ provider fetches and validates that document, and every advertised redirect
 must also be HTTPS on `chatgpt.com`. ChatGPT metadata may identify the client as
 `none` or `private_key_jwt`; the API admits either reviewed shape as the same
 public PKCE client because the OAuth provider's CIMD token flow supports public
-clients only. Other token endpoint authentication methods fail closed. Failures
+clients only. Metadata discovery is limited to authorization admission; token
+exchange uses the validated normalized public-client record. Other token
+endpoint authentication methods fail closed. Failures
 return locally and never redirect. Claude uses only the exact
 `https://claude.ai/oauth/mcp-oauth-client-metadata` client ID, the exact
 `https://claude.ai/api/mcp/auth_callback` redirect, and the `none` token

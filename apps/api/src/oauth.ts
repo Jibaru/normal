@@ -1038,8 +1038,8 @@ export const createOAuthHandler = (
           : tokenProperties;
       },
     });
-  const provider = makeProvider(true);
-  const refreshProvider = makeProvider(false);
+  const authorizationProvider = makeProvider(true);
+  const tokenProvider = makeProvider(false);
 
   return async (request, context) => {
     if (!isOAuthProviderRequest(request, options.configuration)) {
@@ -1101,7 +1101,7 @@ export const createOAuthHandler = (
               }
             }
             const response = addNoStore(
-              await refreshProvider.fetch(
+              await tokenProvider.fetch(
                 providerRequest,
                 allowlistedEnvironment,
                 context,
@@ -1139,7 +1139,10 @@ export const createOAuthHandler = (
     }
 
     const response = addNoStore(
-      await provider.fetch(providerRequest, allowlistedEnvironment, context),
+      await (tokenRequest?.grantType === "authorization_code"
+        ? tokenProvider
+        : authorizationProvider
+      ).fetch(providerRequest, allowlistedEnvironment, context),
       options.configuration.issuer,
     );
     if (tokenRequest?.grantType !== "authorization_code") {

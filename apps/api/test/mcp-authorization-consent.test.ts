@@ -3,7 +3,7 @@ import type {
   OAuthHelpers,
 } from "@cloudflare/workers-oauth-provider";
 import { Effect, Layer, Redacted } from "effect";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   HumanIdentity,
   InvalidHumanIdentity,
@@ -168,6 +168,9 @@ const post = (path: string, body: unknown): Request =>
   });
 
 describe("explicit MCP Authorization consent HTTP boundary", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
   test("opens a sealed request for the reviewed Claude metadata client", async () => {
     const client = {
       clientClass: "claude",
@@ -457,8 +460,26 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
     expect(response.status).toBe(404);
   });
 
-  test("exchanges the approved code over real OAuth HTTP for a resource-bound one-hour token and refresh credential", async () => {
+  test("exchanges a ChatGPT metadata client code over real OAuth HTTP", async () => {
     const harness = await makeHarness();
+    const clientId = "https://chatgpt.com/oauth/i3RmSsEOeX9b/client.json";
+    const redirectUri = "https://chatgpt.com/connector/oauth/i3RmSsEOeX9b";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        expect(input.toString()).toBe(clientId);
+        return Response.json({
+          client_id: clientId,
+          client_name: "ChatGPT",
+          grant_types: ["authorization_code", "refresh_token"],
+          jwks_uri: "https://chatgpt.com/oauth/jwks.json",
+          redirect_uris: [redirectUri],
+          response_types: ["code"],
+          token_endpoint_auth_method: "private_key_jwt",
+          token_endpoint_auth_methods_supported: ["none", "private_key_jwt"],
+        });
+      }),
+    );
     const verifier = "v".repeat(64);
     const challengeBytes = new Uint8Array(
       await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)),
@@ -558,10 +579,10 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
     } as unknown as ExecutionContext;
     const authorize = new URL("https://api.example.test/oauth/authorize");
     authorize.search = new URLSearchParams({
-      client_id: "approved-client",
+      client_id: clientId,
       code_challenge: challenge,
       code_challenge_method: "S256",
-      redirect_uri: "https://client.example.test/callback",
+      redirect_uri: redirectUri,
       resource: "https://api.example.test/mcp",
       response_type: "code",
       scope: "connections:read messages:send",
@@ -608,11 +629,11 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
           code: code ?? "",
           code_verifier: verifier,
           grant_type: "authorization_code",
-          redirect_uri: "https://client.example.test/callback",
+          client_id: clientId,
+          redirect_uri: redirectUri,
           resource: "https://api.example.test/mcp",
         }),
         headers: {
-          authorization: `Basic ${btoa("approved-client:")}`,
           "content-type": "Application/X-Www-Form-Urlencoded; Charset=UTF-8",
         },
         method: "POST",
@@ -663,13 +684,15 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
         resource: "https://api.example.test/mcp",
       });
       if (clientAuthentication === "body") {
-        body.set("client_id", "approved-client");
+        body.set("client_id", clientId);
       }
       return new Request("https://api.example.test/oauth/token", {
         body,
         headers: {
           ...(clientAuthentication === "basic"
-            ? { authorization: `Basic ${btoa("approved-client:")}` }
+            ? {
+                authorization: `Basic ${btoa(`${encodeURIComponent(clientId)}:`)}`,
+              }
             : {}),
           "content-type": "application/x-www-form-urlencoded",
         },
@@ -722,7 +745,7 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
     const refreshResponse = await oauth(
       new Request("https://api.example.test/oauth/token", {
         body: new URLSearchParams({
-          client_id: "approved-client",
+          client_id: clientId,
           grant_type: "refresh_token",
           refresh_token: String(rotated.refresh_token),
           resource: "https://api.example.test/mcp",
