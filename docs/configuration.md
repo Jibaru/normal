@@ -129,14 +129,22 @@ metadata at `/.well-known/oauth-protected-resource` and its MCP-specific
 `/mcp` suffix. It advertises the API origin as issuer, the exact `/mcp`
 resource, S256-only PKCE, and the four MCP scopes. Implicit flow and dynamic
 client registration are disabled. Client ID Metadata Documents are enabled for
-ChatGPT and fetched with Cloudflare's strict-public global fetch protection.
+reviewed ChatGPT and Claude clients and fetched with Cloudflare's strict-public
+global fetch protection.
 
 Before consent, the API exactly matches `client_id`, `redirect_uri`,
 `resource`, response type, and PKCE against the source-defined client policy.
 Fixed clients use the local allowlist. A URL-shaped ChatGPT client ID must be an
 HTTPS `chatgpt.com` OAuth metadata document ending in `/client.json`; the OAuth
 provider fetches and validates that document, and every advertised redirect
-must also be HTTPS on `chatgpt.com`. Failures return locally and never redirect.
+must also be HTTPS on `chatgpt.com`. ChatGPT metadata may identify the client as
+`none` or `private_key_jwt`; the API admits either reviewed shape as the same
+public PKCE client because the OAuth provider's CIMD token flow supports public
+clients only. Other token endpoint authentication methods fail closed. Failures
+return locally and never redirect. Claude uses only the exact
+`https://claude.ai/oauth/mcp-oauth-client-metadata` client ID, the exact
+`https://claude.ai/api/mcp/auth_callback` redirect, and the `none` token
+endpoint authentication method.
 A valid request is parsed by Cloudflare's
 OAuth provider, AES-256-GCM encrypted, stored in OAuth KV for at most ten
 minutes under a SHA-256 lookup key, and handed to the web consent origin using
@@ -275,6 +283,7 @@ The public OAuth clients are defined in `apps/api/src/oauth.ts`:
 
 ```text
 Claude: client_id=claude, redirect_uri=https://claude.ai/api/mcp/auth_callback
+Claude CIMD: client_id=https://claude.ai/oauth/mcp-oauth-client-metadata, redirect_uri=https://claude.ai/api/mcp/auth_callback
 ChatGPT: client_id=chatgpt, redirect_uri=https://chatgpt.com/connector/oauth/djePJ1RTfjI5 or https://chatgpt.com/connector_platform_oauth_redirect
 ChatGPT CIMD: client_id=https://chatgpt.com/oauth/.../client.json, redirects supplied by that validated document on https://chatgpt.com
 ```

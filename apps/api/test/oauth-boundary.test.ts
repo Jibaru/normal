@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { createProductionHandler } from "../src/production";
 import { validEnvironment } from "./support/production";
 
@@ -51,6 +51,10 @@ const environmentWithInspectableKv = () => {
 };
 
 describe("production OAuth boundary", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   test("publishes authorization-server metadata for the exact issuer", async () => {
     const response = await createProductionHandler(validEnvironment())(
       new Request(
@@ -170,6 +174,93 @@ describe("production OAuth boundary", () => {
       expect(response.status).toBe(302);
     },
   );
+
+  test("admits a ChatGPT metadata client that prefers private key JWT", async () => {
+    const clientId = "https://chatgpt.com/oauth/i3RmSsEOeX9b/client.json";
+    const redirectUri = "https://chatgpt.com/connector/oauth/i3RmSsEOeX9b";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        expect(input.toString()).toBe(clientId);
+        return Response.json({
+          client_id: clientId,
+          client_name: "ChatGPT",
+          grant_types: ["authorization_code", "refresh_token"],
+          jwks_uri: "https://chatgpt.com/oauth/jwks.json",
+          redirect_uris: [redirectUri],
+          response_types: ["code"],
+          token_endpoint_auth_method: "private_key_jwt",
+          token_endpoint_auth_methods_supported: ["none", "private_key_jwt"],
+        });
+      }),
+    );
+    const { environment, values } = environmentWithInspectableKv();
+    const response = await createProductionHandler(environment)(
+      new Request(
+        authorizationUrl({
+          client_id: clientId,
+          redirect_uri: redirectUri,
+          scope: "connections:read directory:read messages:read messages:send",
+        }),
+        { redirect: "manual" },
+      ),
+    );
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toContain("/oauth/consent");
+    expect(
+      JSON.parse(values.get(`client:${clientId}`) ?? "null"),
+    ).toMatchObject({
+      clientId,
+      redirectUris: [redirectUri],
+      tokenEndpointAuthMethod: "none",
+    });
+  });
+
+  test("admits the reviewed Claude metadata client", async () => {
+    const clientId = "https://claude.ai/oauth/mcp-oauth-client-metadata";
+    const redirectUri = "https://claude.ai/api/mcp/auth_callback";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        expect(input.toString()).toBe(clientId);
+        return Response.json({
+          client_id: clientId,
+          client_name: "Claude",
+          client_uri: "https://claude.ai",
+          grant_types: [
+            "authorization_code",
+            "refresh_token",
+            "urn:ietf:params:oauth:grant-type:jwt-bearer",
+          ],
+          redirect_uris: [redirectUri],
+          response_types: ["code"],
+          token_endpoint_auth_method: "none",
+        });
+      }),
+    );
+    const { environment, values } = environmentWithInspectableKv();
+    const response = await createProductionHandler(environment)(
+      new Request(
+        authorizationUrl({
+          client_id: clientId,
+          redirect_uri: redirectUri,
+          scope: "connections:read directory:read messages:read messages:send",
+        }),
+        { redirect: "manual" },
+      ),
+    );
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toContain("/oauth/consent");
+    expect(
+      JSON.parse(values.get(`client:${clientId}`) ?? "null"),
+    ).toMatchObject({
+      clientId,
+      redirectUris: [redirectUri],
+      tokenEndpointAuthMethod: "none",
+    });
+  });
 
   test.each([
     ["malformed", { response_type: "" }],

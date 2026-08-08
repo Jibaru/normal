@@ -20,6 +20,7 @@ import {
   createOAuthHandler,
   makeOAuthClientRegistryKv,
   type OAuthConfiguration,
+  openAuthorizationRequest,
   sealAuthorizationRequest,
 } from "../src/oauth";
 
@@ -167,6 +168,40 @@ const post = (path: string, body: unknown): Request =>
   });
 
 describe("explicit MCP Authorization consent HTTP boundary", () => {
+  test("opens a sealed request for the reviewed Claude metadata client", async () => {
+    const client = {
+      clientClass: "claude",
+      clientId: "https://claude.ai/oauth/mcp-oauth-client-metadata",
+      clientName: "Claude",
+      redirectUris: ["https://claude.ai/api/mcp/auth_callback"],
+    };
+    const request: AuthRequest = {
+      ...oauthRequest,
+      clientId: client.clientId,
+      redirectUri: client.redirectUris[0] ?? "",
+    };
+    const values = new Map<string, string>();
+    const kv = {
+      delete: async (key: string) => {
+        values.delete(key);
+      },
+      get: async (key: string) => values.get(key) ?? null,
+      put: async (key: string, value: string) => {
+        values.set(key, value);
+      },
+    };
+    const handoff = await sealAuthorizationRequest(
+      request,
+      client,
+      configuration,
+      kv,
+    );
+
+    await expect(
+      openAuthorizationRequest(handoff, configuration, kv),
+    ).resolves.toMatchObject({ client, request });
+  });
+
   test("retains a validated ChatGPT metadata client for refresh requests", async () => {
     const clientId = "https://chatgpt.com/oauth/normal-connector/client.json";
     const storedClient = {

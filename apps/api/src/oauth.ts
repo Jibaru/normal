@@ -51,6 +51,9 @@ const OAUTH_CLIENTS: ReadonlyArray<AllowlistedOAuthClient> = [
 const chatGptFallbackRedirectUris = OAUTH_CLIENTS.find(
   (client) => client.clientId === "chatgpt",
 )?.redirectUris ?? ["https://chatgpt.com/connector_platform_oauth_redirect"];
+const CLAUDE_METADATA_CLIENT_ID =
+  "https://claude.ai/oauth/mcp-oauth-client-metadata";
+const CLAUDE_REDIRECT_URI = "https://claude.ai/api/mcp/auth_callback";
 
 const isChatGptClientMetadataId = (clientId: string): boolean => {
   try {
@@ -87,27 +90,66 @@ const isChatGptRedirectUri = (redirectUri: string): boolean => {
   }
 };
 
-const loadDynamicChatGptClient = async (
+const isSupportedChatGptTokenEndpointAuthMethod = (method: string): boolean =>
+  method === "none" || method === "private_key_jwt";
+
+interface DynamicOAuthClientPolicy {
+  readonly clientClass: string;
+  readonly clientName: string;
+  readonly fallbackRedirectUris: ReadonlyArray<string>;
+  readonly isRedirectUri: (redirectUri: string) => boolean;
+  readonly isTokenEndpointAuthMethodSupported: (method: string) => boolean;
+}
+
+const dynamicOAuthClientPolicyFor = (
+  clientId: string,
+): DynamicOAuthClientPolicy | undefined => {
+  if (isChatGptClientMetadataId(clientId)) {
+    return {
+      clientClass: "chatgpt",
+      clientName: "ChatGPT",
+      fallbackRedirectUris: chatGptFallbackRedirectUris,
+      isRedirectUri: isChatGptRedirectUri,
+      isTokenEndpointAuthMethodSupported:
+        isSupportedChatGptTokenEndpointAuthMethod,
+    };
+  }
+  if (clientId === CLAUDE_METADATA_CLIENT_ID) {
+    return {
+      clientClass: "claude",
+      clientName: "Claude",
+      fallbackRedirectUris: [CLAUDE_REDIRECT_URI],
+      isRedirectUri: (redirectUri) => redirectUri === CLAUDE_REDIRECT_URI,
+      isTokenEndpointAuthMethodSupported: (method) => method === "none",
+    };
+  }
+  return undefined;
+};
+
+const loadDynamicOAuthClient = async (
   clientId: string,
   helpers: OAuthHelpers,
 ): Promise<AllowlistedOAuthClient | undefined> => {
-  if (!isChatGptClientMetadataId(clientId)) return undefined;
+  const policy = dynamicOAuthClientPolicyFor(clientId);
+  if (!policy) return undefined;
   const metadata = await helpers.lookupClient(clientId);
   if (
     !metadata ||
     metadata.clientId !== clientId ||
-    metadata.tokenEndpointAuthMethod !== "none" ||
+    !policy.isTokenEndpointAuthMethodSupported(
+      metadata.tokenEndpointAuthMethod,
+    ) ||
     metadata.redirectUris.length === 0 ||
     metadata.redirectUris.some(
-      (redirectUri) => !isChatGptRedirectUri(redirectUri),
+      (redirectUri) => !policy.isRedirectUri(redirectUri),
     )
   ) {
     return undefined;
   }
   return {
-    clientClass: "chatgpt",
+    clientClass: policy.clientClass,
     clientId,
-    clientName: "ChatGPT",
+    clientName: policy.clientName,
     redirectUris: metadata.redirectUris,
   };
 };
@@ -448,18 +490,21 @@ export const openAuthorizationRequest = async (
       candidate.clientClass === opened.clientClass &&
       candidate.clientName === opened.clientName,
   );
+  const dynamicPolicy =
+    typeof opened.clientId === "string"
+      ? dynamicOAuthClientPolicyFor(opened.clientId)
+      : undefined;
   const dynamicClient =
-    opened.clientClass === "chatgpt" &&
-    opened.clientName === "ChatGPT" &&
-    typeof opened.clientId === "string" &&
-    isChatGptClientMetadataId(opened.clientId) &&
+    dynamicPolicy &&
+    opened.clientClass === dynamicPolicy.clientClass &&
+    opened.clientName === dynamicPolicy.clientName &&
     isAuthRequest(opened.request) &&
     opened.request.clientId === opened.clientId &&
-    isChatGptRedirectUri(opened.request.redirectUri)
+    dynamicPolicy.isRedirectUri(opened.request.redirectUri)
       ? ({
-          clientClass: "chatgpt",
+          clientClass: dynamicPolicy.clientClass,
           clientId: opened.clientId,
-          clientName: "ChatGPT",
+          clientName: dynamicPolicy.clientName,
           redirectUris: [opened.request.redirectUri],
         } satisfies AllowlistedOAuthClient)
       : undefined;
@@ -519,8 +564,9 @@ export const makeOAuthClientRegistryKv = (
           if (key.startsWith("client:")) {
             const clientId = key.slice("client:".length);
             const client = registry.get(clientId);
+            const dynamicPolicy = dynamicOAuthClientPolicyFor(clientId);
             const stored =
-              client === undefined && isChatGptClientMetadataId(clientId)
+              client === undefined && dynamicPolicy
                 ? await target.get(key, { type: "json" })
                 : null;
             const dynamicClient =
@@ -541,7 +587,7 @@ export const makeOAuthClientRegistryKv = (
               ).every(
                 (redirectUri) =>
                   typeof redirectUri === "string" &&
-                  isChatGptRedirectUri(redirectUri),
+                  dynamicPolicy?.isRedirectUri(redirectUri) === true,
               )
                 ? stored
                 : null;
@@ -614,7 +660,7 @@ const makeAuthorizationHandler = (
           (candidate) => candidate.clientId === clientId,
         ) ??
         (clientId && environment.OAUTH_PROVIDER
-          ? await loadDynamicChatGptClient(clientId, environment.OAUTH_PROVIDER)
+          ? await loadDynamicOAuthClient(clientId, environment.OAUTH_PROVIDER)
           : undefined);
       clientClass = client?.clientClass;
       if (
@@ -638,7 +684,7 @@ const makeAuthorizationHandler = (
         throw new Error("invalid authorization request");
       }
 
-      if (isChatGptClientMetadataId(client.clientId)) {
+      if (dynamicOAuthClientPolicyFor(client.clientId)) {
         await options.environment.OAUTH_KV.put(
           `client:${client.clientId}`,
           JSON.stringify(clientInfoFor(client)),
@@ -748,7 +794,7 @@ const parseTokenRequest = async (
       (!configuration.clients.some(
         (candidate) => candidate.clientId === clientId,
       ) &&
-        !isChatGptClientMetadataId(clientId))
+        !dynamicOAuthClientPolicyFor(clientId))
     ) {
       return null;
     }
@@ -1018,9 +1064,7 @@ export const createOAuthHandler = (
         options.configuration.clients.find(
           (candidate) => candidate.clientId === tokenRequest.clientId,
         )?.clientClass ??
-        (isChatGptClientMetadataId(tokenRequest.clientId)
-          ? "chatgpt"
-          : undefined);
+        dynamicOAuthClientPolicyFor(tokenRequest.clientId)?.clientClass;
       if (oauthSubject === null) {
         return oauthTokenError("invalid_grant", 400);
       }
@@ -1033,7 +1077,10 @@ export const createOAuthHandler = (
             observedAt: (options.now ?? (() => new Date()))(),
           },
           async () => {
-            if (isChatGptClientMetadataId(tokenRequest.clientId)) {
+            const dynamicPolicy = dynamicOAuthClientPolicyFor(
+              tokenRequest.clientId,
+            );
+            if (dynamicPolicy) {
               const cachedClient = await allowlistedEnvironment.OAUTH_KV.get(
                 `client:${tokenRequest.clientId}`,
                 { type: "json" },
@@ -1043,10 +1090,10 @@ export const createOAuthHandler = (
                   `client:${tokenRequest.clientId}`,
                   JSON.stringify(
                     clientInfoFor({
-                      clientClass: "chatgpt",
+                      clientClass: dynamicPolicy.clientClass,
                       clientId: tokenRequest.clientId,
-                      clientName: "ChatGPT",
-                      redirectUris: chatGptFallbackRedirectUris,
+                      clientName: dynamicPolicy.clientName,
+                      redirectUris: dynamicPolicy.fallbackRedirectUris,
                     }),
                   ),
                   { expirationTtl: 90 * 24 * 60 * 60 },
