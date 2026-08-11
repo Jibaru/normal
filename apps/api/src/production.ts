@@ -2347,6 +2347,10 @@ export const createProductionScheduledHandler =
       readonly processPendingStoredMedia?: (
         candidate: PendingStoredMediaCandidate,
       ) => Promise<void>;
+      readonly purgeExcludedRecipientHistory?: (
+        observedAt: string,
+        limit: number,
+      ) => Promise<number>;
       readonly purgeExpiredMessages?: (
         observedAt: string,
         limit: number,
@@ -2430,9 +2434,13 @@ export const createProductionScheduledHandler =
       );
       let removedCount = 0;
       while (true) {
-        const count = await makePgRecipientExclusionRepository(
-          connectionString,
-        ).purgeExcludedHistory({ limit: 500, observedAt });
+        const count = await (
+          dependencies.purgeExcludedRecipientHistory ??
+          ((value, limit) =>
+            makePgRecipientExclusionRepository(
+              connectionString,
+            ).purgeExcludedHistory({ limit, observedAt: value }))
+        )(observedAt, 500);
         removedCount += count;
         if (count < 500) break;
       }

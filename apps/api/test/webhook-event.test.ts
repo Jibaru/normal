@@ -408,6 +408,7 @@ describe("Webhook Event processing", () => {
       quarantinedCount: 2,
       service: "api",
       supersededCount: 0,
+      suppressedCount: 0,
     });
   });
 
@@ -533,6 +534,7 @@ describe("Webhook Event processing", () => {
       quarantinedCount: 0,
       service: "api",
       supersededCount: 0,
+      suppressedCount: 0,
     });
   });
 
@@ -685,6 +687,7 @@ describe("Webhook Event processing", () => {
       quarantinedCount: 0,
       service: "api",
       supersededCount: 0,
+      suppressedCount: 0,
     });
   });
 });
