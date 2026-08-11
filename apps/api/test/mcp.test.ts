@@ -362,7 +362,30 @@ const makeHarness = (
         observations.push("list");
         return Effect.succeed([
           {
-            displayName: null,
+            accountKey: {
+              ciphertext: "AQID",
+              keyVersion: 1,
+              kmsKeyId: "kms-content-root",
+              personalAccountId: "10000000-0000-4000-8000-000000000039",
+              version: 1 as const,
+            },
+            connectionId: "20000000-0000-4000-8000-000000000039",
+            connectionKey: {
+              accountKeyVersion: 1,
+              ciphertext: "AQID",
+              connectionId: "20000000-0000-4000-8000-000000000039",
+              keyVersion: 1,
+              nonce: "AQIDBAUGBwgJCgsM",
+              personalAccountId: "10000000-0000-4000-8000-000000000039",
+              version: 1 as const,
+            },
+            displayName: {
+              ciphertext: btoa("Personal WhatsApp"),
+              keyVersion: 1,
+              nonce: "AQIDBAUGBwgJCgsM",
+              version: 1 as const,
+            },
+            displayNameFallback: null,
             numberLastFour: "1234",
             publicId: "con_123456789012345678901",
             state: "connected" as const,
@@ -959,7 +982,7 @@ describe("stateless MCP list_connections boundary", () => {
       connections: [
         {
           connection_id: "con_123456789012345678901",
-          display_name: null,
+          display_name: "Personal WhatsApp",
           number_last_four: "1234",
           state: "connected",
           state_changed_at: "2026-07-30T12:00:00.000Z",

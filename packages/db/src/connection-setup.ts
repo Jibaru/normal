@@ -1,6 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { type Database, makeDatabase, withPgQueryConnection } from "./database";
 import {
+  connectionSetupKeyEnvelopesInApp,
   connectionSetupsInApp,
   personalAccountsInApp,
   whatsappNumberReservationsInApp,
@@ -36,20 +37,47 @@ export interface ConnectionSetupRecord {
     | "provisioning_quarantined";
 }
 
+export interface PersistedConnectionName {
+  readonly ciphertext: Uint8Array | null;
+  readonly fallback: string | null;
+  readonly keyVersion: number | null;
+  readonly nonce: Uint8Array | null;
+  readonly version: 1 | null;
+}
+
+export interface ConnectionSetupNameMaterial {
+  readonly accountKey: PreparedConnectionSetupAccountKey;
+  readonly name: PersistedConnectionName;
+  readonly setupKey: ConnectionSetupKey;
+}
+
+interface PreparedConnectionSetupAccountKey {
+  readonly ciphertext: string;
+  readonly keyVersion: number;
+  readonly kmsKeyId: string;
+  readonly personalAccountId: string;
+  readonly version: 1;
+}
+
+interface ConnectionSetupKey {
+  readonly accountKeyVersion: number;
+  readonly ciphertext: string;
+  readonly connectionId: string;
+  readonly keyVersion: number;
+  readonly nonce: string;
+  readonly personalAccountId: string;
+  readonly version: 1;
+}
+
 export type PreparedConnectionSetup =
   | {
-      readonly accountKey: {
-        readonly ciphertext: string;
-        readonly keyVersion: number;
-        readonly kmsKeyId: string;
-        readonly personalAccountId: string;
-        readonly version: 1;
-      };
+      readonly accountKey: PreparedConnectionSetupAccountKey;
       readonly outcome: "unbound";
       readonly whatsappConnectionLimit: number;
     }
   | {
       readonly outcome: "replay";
+      readonly nameMaterial: ConnectionSetupNameMaterial;
       readonly setup: ConnectionSetupRecord;
     }
   | { readonly outcome: "idempotency_conflict" };
@@ -61,11 +89,15 @@ export interface PrepareConnectionSetupInput {
 }
 
 export interface StartConnectionSetupInput {
-  readonly accountKeyVersion: number;
+  readonly accountKey: PreparedConnectionSetupAccountKey;
   readonly connectionKeyCiphertext: Uint8Array;
   readonly connectionKeyNonce: Uint8Array;
   readonly connectionKeyVersion: number;
   readonly createdAt: string;
+  readonly displayNameCiphertext: Uint8Array;
+  readonly displayNameCiphertextNonce: Uint8Array;
+  readonly displayNameCiphertextVersion: number;
+  readonly displayNameKeyVersion: number;
   readonly idempotencyKey: string;
   readonly numberCiphertext: Uint8Array;
   readonly numberCiphertextNonce: Uint8Array;
@@ -78,7 +110,12 @@ export interface StartConnectionSetupInput {
 
 export type StartedConnectionSetup =
   | {
-      readonly outcome: "created" | "replay";
+      readonly outcome: "created";
+      readonly setup: ConnectionSetupRecord;
+    }
+  | {
+      readonly nameMaterial: ConnectionSetupNameMaterial;
+      readonly outcome: "replay";
       readonly setup: ConnectionSetupRecord;
     }
   | {
@@ -321,6 +358,7 @@ interface SetupRow extends Record<string, unknown> {
   readonly created_at: unknown;
   readonly expires_at: unknown;
   readonly id: unknown;
+  readonly display_name?: unknown;
   readonly number_token?: unknown;
   readonly setup_created_at?: unknown;
   readonly setup_expires_at?: unknown;
@@ -352,6 +390,97 @@ const setupRecord = (
     return null;
   }
   return { createdAt, expiresAt, setupId, state };
+};
+
+const fallbackNamePattern =
+  /^(Bright|Calm|Clever|Kind|Lucky|Quiet|Swift|Warm) (Badger|Falcon|Fox|Otter|Panda|Robin|Tiger|Turtle)$/u;
+
+const loadNameMaterial = async (
+  db: Database,
+  accountKey: PreparedConnectionSetupAccountKey,
+  setupId: string,
+): Promise<ConnectionSetupNameMaterial> => {
+  const rows = await db
+    .select({
+      ciphertext: connectionSetupsInApp.displayNameCiphertext,
+      fallback: connectionSetupsInApp.displayNameFallback,
+      keyVersion: connectionSetupsInApp.displayNameKeyVersion,
+      nonce: connectionSetupsInApp.displayNameNonce,
+      version: connectionSetupsInApp.displayNameCiphertextVersion,
+      setupKeyAccountVersion:
+        connectionSetupKeyEnvelopesInApp.accountKeyVersion,
+      setupKeyCiphertext: connectionSetupKeyEnvelopesInApp.ciphertext,
+      setupKeyNonce: connectionSetupKeyEnvelopesInApp.nonce,
+      setupKeyVersion: connectionSetupKeyEnvelopesInApp.keyVersion,
+    })
+    .from(connectionSetupsInApp)
+    .innerJoin(
+      connectionSetupKeyEnvelopesInApp,
+      and(
+        eq(
+          connectionSetupKeyEnvelopesInApp.personalAccountId,
+          connectionSetupsInApp.personalAccountId,
+        ),
+        eq(
+          connectionSetupKeyEnvelopesInApp.connectionSetupId,
+          connectionSetupsInApp.id,
+        ),
+      ),
+    )
+    .where(
+      and(
+        eq(
+          connectionSetupsInApp.personalAccountId,
+          accountKey.personalAccountId,
+        ),
+        eq(connectionSetupsInApp.id, setupId),
+      ),
+    );
+  const row = rows[0];
+  const ciphertext = bytes(row?.ciphertext);
+  const nonce = bytes(row?.nonce);
+  const keyVersion = positiveInteger(row?.keyVersion);
+  const setupKeyAccountVersion = positiveInteger(row?.setupKeyAccountVersion);
+  const setupKeyCiphertext = bytes(row?.setupKeyCiphertext);
+  const setupKeyNonce = bytes(row?.setupKeyNonce);
+  const setupKeyVersion = positiveInteger(row?.setupKeyVersion);
+  const fallback = typeof row?.fallback === "string" ? row.fallback : null;
+  const encrypted =
+    row?.version === 1 &&
+    ciphertext !== null &&
+    nonce !== null &&
+    keyVersion !== null;
+  if (
+    setupKeyAccountVersion === null ||
+    setupKeyCiphertext === null ||
+    setupKeyNonce === null ||
+    setupKeyVersion === null ||
+    encrypted === (fallback !== null) ||
+    (fallback !== null && !fallbackNamePattern.test(fallback))
+  ) {
+    throw new Error("invalid persisted Connection Setup name");
+  }
+  return {
+    accountKey,
+    name: encrypted
+      ? { ciphertext, fallback: null, keyVersion, nonce, version: 1 }
+      : {
+          ciphertext: null,
+          fallback,
+          keyVersion: null,
+          nonce: null,
+          version: null,
+        },
+    setupKey: {
+      accountKeyVersion: setupKeyAccountVersion,
+      ciphertext: encodeBase64(setupKeyCiphertext),
+      connectionId: setupId,
+      keyVersion: setupKeyVersion,
+      nonce: encodeBase64(setupKeyNonce),
+      personalAccountId: accountKey.personalAccountId,
+      version: 1,
+    },
+  };
 };
 
 interface AccountRow extends Record<string, unknown> {
@@ -718,9 +847,21 @@ export const makeConnectionSetupRepository = (
           if (existingToken === null || setup === null) {
             throw new Error("invalid persisted Connection Setup");
           }
-          return sameBytes(existingToken, input.numberToken)
-            ? { outcome: "replay" as const, setup }
-            : { outcome: "idempotency_conflict" as const };
+          if (!sameBytes(existingToken, input.numberToken)) {
+            return { outcome: "idempotency_conflict" as const };
+          }
+          const accountKey = {
+            ciphertext: encodeBase64(accountKeyCiphertext),
+            keyVersion: accountKeyVersion,
+            kmsKeyId: row.kms_key_id,
+            personalAccountId: row.personal_account_id,
+            version: 1 as const,
+          };
+          return {
+            nameMaterial: await loadNameMaterial(db, accountKey, setup.setupId),
+            outcome: "replay" as const,
+            setup,
+          };
         }
 
         return {
@@ -802,7 +943,7 @@ export const makeConnectionSetupRepository = (
             ${input.personalAccountId}, ${input.setupId}, ${input.idempotencyKey},
             ${input.numberToken}, ${input.numberCiphertextVersion},
             ${input.numberKeyVersion}, ${input.numberCiphertextNonce},
-            ${input.numberCiphertext}, ${input.accountKeyVersion},
+            ${input.numberCiphertext}, ${input.accountKey.keyVersion},
             ${input.connectionKeyVersion}, ${input.connectionKeyNonce},
             ${input.connectionKeyCiphertext}, ${input.createdAt}
           )`,
@@ -816,6 +957,48 @@ export const makeConnectionSetupRepository = (
           return { outcome: row.outcome };
         }
         if (row?.outcome === "created" || row?.outcome === "replay") {
+          if (row.outcome === "created") {
+            const named = await db
+              .update(connectionSetupsInApp)
+              .set({
+                displayNameCiphertext: input.displayNameCiphertext,
+                displayNameCiphertextVersion:
+                  input.displayNameCiphertextVersion,
+                displayNameFallback: null,
+                displayNameKeyVersion: input.displayNameKeyVersion,
+                displayNameNonce: input.displayNameCiphertextNonce,
+              })
+              .where(
+                and(
+                  eq(
+                    connectionSetupsInApp.personalAccountId,
+                    input.personalAccountId,
+                  ),
+                  eq(connectionSetupsInApp.id, input.setupId),
+                ),
+              )
+              .returning({ id: connectionSetupsInApp.id });
+            if (named.length !== 1) {
+              throw new Error("Connection Setup name unavailable");
+            }
+          } else {
+            const persistedSetupId = row.setup_id;
+            if (typeof persistedSetupId !== "string") {
+              throw new Error("invalid replayed Connection Setup");
+            }
+            const setup = setupRecord(row, "setup_");
+            if (setup === null)
+              throw new Error("invalid Connection Setup result");
+            return {
+              nameMaterial: await loadNameMaterial(
+                db,
+                input.accountKey,
+                persistedSetupId,
+              ),
+              outcome: "replay" as const,
+              setup,
+            };
+          }
           const setup = setupRecord(row, "setup_");
           if (setup !== null) {
             return { outcome: row.outcome, setup };

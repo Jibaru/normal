@@ -122,6 +122,11 @@ export interface WhatsAppConnectionListCompletedEvent {
   readonly service: "api";
 }
 
+export interface WhatsAppConnectionRenameCompletedEvent {
+  readonly event: "whatsapp_connection.rename.completed";
+  readonly service: "api";
+}
+
 export interface WebhookIngressCompletedEvent {
   readonly event: "webhook_ingress.completed";
   readonly outcome:
@@ -448,7 +453,8 @@ export type SafeTelemetryEvent =
   | WhatsAppConnectionLifecycleCompletedEvent
   | WhatsAppConnectionDeletionCompletedEvent
   | WhatsAppConnectionDeletionDeadlineRiskEvent
-  | WhatsAppConnectionListCompletedEvent;
+  | WhatsAppConnectionListCompletedEvent
+  | WhatsAppConnectionRenameCompletedEvent;
 
 export const SafeTelemetry = Context.GenericTag<SafeTelemetry>(
   "@whatsapp-mcp/api/SafeTelemetry",

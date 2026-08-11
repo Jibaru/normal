@@ -3,6 +3,7 @@ import {
   canStartNewSend,
   connectionSideEffectAvailability,
   isWhatsAppConnectionState,
+  normalizeWhatsAppConnectionName,
   whatsappConnectionStates,
 } from "../src/whatsapp-connection";
 
@@ -40,5 +41,17 @@ describe("WhatsApp Connection state", () => {
         reason: state,
       });
     }
+  });
+
+  test("normalizes valid names and rejects empty, control, and oversized names", () => {
+    expect(normalizeWhatsAppConnectionName("  Cafe\u0301  ")).toBe("Café");
+    expect(normalizeWhatsAppConnectionName("   ")).toBeNull();
+    expect(normalizeWhatsAppConnectionName("Work\nWhatsApp")).toBeNull();
+    expect(normalizeWhatsAppConnectionName("Work\u200BWhatsApp")).toBeNull();
+    expect(normalizeWhatsAppConnectionName("😀".repeat(32))).toBe(
+      "😀".repeat(32),
+    );
+    expect(normalizeWhatsAppConnectionName("😀".repeat(33))).toBeNull();
+    expect(normalizeWhatsAppConnectionName("x".repeat(65))).toBeNull();
   });
 });

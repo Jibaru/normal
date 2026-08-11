@@ -341,7 +341,7 @@ const displayTime = (value: string): string =>
 type SetupCleanupState = "complete" | "pending" | "retrying";
 
 interface SafeWhatsAppConnection {
-  readonly displayName: string | null;
+  readonly displayName: string;
   readonly id: string;
   readonly numberSuffix: string;
   readonly state:
@@ -360,8 +360,8 @@ const decodeSafeWhatsAppConnection = (
   connection: Record<string, unknown>,
 ): SafeWhatsAppConnection | null => {
   if (
-    (connection.display_name !== null &&
-      typeof connection.display_name !== "string") ||
+    typeof connection.display_name !== "string" ||
+    connection.display_name.length === 0 ||
     typeof connection.id !== "string" ||
     !/^con_[A-Za-z0-9_-]{21}$/u.test(connection.id) ||
     typeof connection.number_suffix !== "string" ||
@@ -467,6 +467,17 @@ export function PublicBoundaryJourney({
   const [retentionStatus, setRetentionStatus] = useState<
     Readonly<Record<string, string>>
   >({});
+  const [connectionName, setConnectionName] = useState("");
+  const [nameDrafts, setNameDrafts] = useState<
+    Readonly<Record<string, string>>
+  >({});
+  const [nameStatus, setNameStatus] = useState<
+    Readonly<Record<string, string>>
+  >({});
+  const [savingNames, setSavingNames] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
+  const [setupDialogOpen, setSetupDialogOpen] = useState(false);
   const [reconnectQr, setReconnectQr] = useState<{
     readonly connectionId: string;
     readonly url: string;
@@ -478,6 +489,7 @@ export function PublicBoundaryJourney({
   >("idle");
   const setupIntent = useRef<{
     readonly idempotencyKey: string;
+    readonly name: string;
     readonly whatsappNumber: string;
   } | null>(null);
   const activeQrImageUrl = useRef<string | null>(null);
@@ -741,7 +753,74 @@ export function PublicBoundaryJourney({
         ]),
       ),
     );
+    setNameDrafts(
+      Object.fromEntries(
+        withPolicies.map((connection) => [
+          connection.id,
+          connection.displayName,
+        ]),
+      ),
+    );
     return true;
+  };
+
+  const renameConnection = async (connection: SafeWhatsAppConnection) => {
+    if (savingNames.has(connection.id)) return;
+    const name = nameDrafts[connection.id] ?? connection.displayName;
+    setSavingNames((current) => new Set(current).add(connection.id));
+    setNameStatus((current) => ({
+      ...current,
+      [connection.id]: "Saving name…",
+    }));
+    try {
+      const token = await getToken();
+      if (token === null) throw new Error("signed out");
+      const response = await fetch(
+        `${connectionsEndpoint}/${encodeURIComponent(connection.id)}/name`,
+        {
+          body: JSON.stringify({ name }),
+          headers: {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/json",
+          },
+          method: "PUT",
+        },
+      );
+      const body = (await response.json()) as {
+        readonly whatsapp_connection?: Record<string, unknown>;
+      };
+      const renamed =
+        body.whatsapp_connection === undefined
+          ? null
+          : decodeSafeWhatsAppConnection(body.whatsapp_connection);
+      if (!response.ok || renamed === null) throw new Error("rename failed");
+      setConnections((current) =>
+        current.map((candidate) =>
+          candidate.id === connection.id
+            ? { ...candidate, displayName: renamed.displayName }
+            : candidate,
+        ),
+      );
+      setNameDrafts((current) => ({
+        ...current,
+        [connection.id]: renamed.displayName,
+      }));
+      setNameStatus((current) => ({
+        ...current,
+        [connection.id]: "Name saved.",
+      }));
+    } catch {
+      setNameStatus((current) => ({
+        ...current,
+        [connection.id]: "Name could not be saved.",
+      }));
+    } finally {
+      setSavingNames((current) => {
+        const next = new Set(current);
+        next.delete(connection.id);
+        return next;
+      });
+    }
   };
 
   const updateRetention = async (connection: SafeWhatsAppConnection) => {
@@ -1177,10 +1256,12 @@ export function PublicBoundaryJourney({
     setSetupCleanupState(null);
 
     const intent =
-      setupIntent.current?.whatsappNumber === whatsappNumber
+      setupIntent.current?.whatsappNumber === whatsappNumber &&
+      setupIntent.current.name === connectionName
         ? setupIntent.current
         : {
             idempotencyKey: String(makeIdempotencyKey()),
+            name: connectionName,
             whatsappNumber,
           };
     setupIntent.current = intent;
@@ -1195,6 +1276,7 @@ export function PublicBoundaryJourney({
       const response = await fetch(connectionSetupEndpoint, {
         body: JSON.stringify({
           idempotency_key: intent.idempotencyKey,
+          name: intent.name,
           whatsapp_number: intent.whatsappNumber,
         }),
         headers: {
@@ -1307,6 +1389,7 @@ export function PublicBoundaryJourney({
           body.connection_setup.state === "expired")
       ) {
         setupIntent.current = null;
+        setSetupId(null);
         setSetupCleanupState(body.connection_setup.cleanup_state);
         setSetupState(body.connection_setup.state);
         return;
@@ -1847,7 +1930,27 @@ export function PublicBoundaryJourney({
                 Connection health, message history, and reconnect controls.
               </p>
             </div>
-            <Dialog>
+            <Dialog
+              onOpenChange={(open) => {
+                const durableActiveSetup =
+                  setupId !== null &&
+                  setupState !== "cancelled" &&
+                  setupState !== "expired" &&
+                  setupState !== "connected";
+                if (open || !durableActiveSetup) {
+                  setSetupDialogOpen(open);
+                }
+                if (!open && !durableActiveSetup && setupId !== null) {
+                  setupIntent.current = null;
+                  setConnectionName("");
+                  setSetupCleanupState(null);
+                  setSetupId(null);
+                  setSetupState("idle");
+                  setWhatsappNumber("");
+                }
+              }}
+              open={setupDialogOpen}
+            >
               <DialogTrigger render={<Button />}>
                 Register WhatsApp Number
               </DialogTrigger>
@@ -1862,12 +1965,35 @@ export function PublicBoundaryJourney({
                 <form className="flex flex-col gap-4" onSubmit={startSetup}>
                   <FieldGroup>
                     <Field>
+                      <FieldLabel htmlFor="connection-name">Name</FieldLabel>
+                      <Input
+                        autoComplete="off"
+                        disabled={setupState === "loading" || setupId !== null}
+                        id="connection-name"
+                        maxLength={64}
+                        onChange={(event) => {
+                          stopObserving();
+                          setConnectionName(event.target.value);
+                          setSetupCleanupState(null);
+                          setSetupId(null);
+                          setSetupState("idle");
+                        }}
+                        placeholder="Personal WhatsApp"
+                        required
+                        value={connectionName}
+                      />
+                      <FieldDescription>
+                        Use a name that helps you identify this WhatsApp
+                        Connection.
+                      </FieldDescription>
+                    </Field>
+                    <Field>
                       <FieldLabel htmlFor="whatsapp-number">
                         WhatsApp number
                       </FieldLabel>
                       <Input
                         autoComplete="tel"
-                        disabled={setupState === "loading"}
+                        disabled={setupState === "loading" || setupId !== null}
                         id="whatsapp-number"
                         inputMode="tel"
                         onChange={(event) => {
@@ -1998,7 +2124,7 @@ export function PublicBoundaryJourney({
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="truncate font-medium">
-                          {connection.displayName ?? "WhatsApp Connection"}
+                          {connection.displayName}
                         </p>
                         <Badge
                           className="capitalize"
@@ -2094,11 +2220,53 @@ export function PublicBoundaryJourney({
                       <DialogHeader>
                         <DialogTitle>Configure WhatsApp Connection</DialogTitle>
                         <DialogDescription>
-                          Choose how long to keep message history for the
-                          WhatsApp Connection ending {connection.numberSuffix}.
+                          Rename this WhatsApp Connection or choose how long to
+                          keep its message history.
                         </DialogDescription>
                       </DialogHeader>
                       <div className="flex flex-col gap-4">
+                        <Field>
+                          <FieldLabel htmlFor={`name-${connection.id}`}>
+                            Name
+                          </FieldLabel>
+                          <Input
+                            disabled={savingNames.has(connection.id)}
+                            id={`name-${connection.id}`}
+                            maxLength={64}
+                            onChange={(event) =>
+                              setNameDrafts((current) => ({
+                                ...current,
+                                [connection.id]: event.target.value,
+                              }))
+                            }
+                            required
+                            value={
+                              nameDrafts[connection.id] ??
+                              connection.displayName
+                            }
+                          />
+                          <Button
+                            disabled={
+                              savingNames.has(connection.id) ||
+                              (nameDrafts[connection.id] ??
+                                connection.displayName) ===
+                                connection.displayName ||
+                              (nameDrafts[connection.id] ?? "").trim()
+                                .length === 0
+                            }
+                            onClick={() => void renameConnection(connection)}
+                            type="button"
+                            variant="outline"
+                          >
+                            Save name
+                          </Button>
+                          <p
+                            aria-live="polite"
+                            className="text-sm text-muted-foreground"
+                          >
+                            {nameStatus[connection.id] ?? ""}
+                          </p>
+                        </Field>
                         <Field>
                           <FieldLabel htmlFor={`retention-${connection.id}`}>
                             Keep message history for

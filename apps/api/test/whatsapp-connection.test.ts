@@ -28,6 +28,7 @@ const connectionId = "con_000000000000000000041";
 const disconnectEndpoint = `${listEndpoint}/${connectionId}/disconnect`;
 const reconnectEndpoint = `${listEndpoint}/${connectionId}/reconnect`;
 const deleteEndpoint = `${listEndpoint}/${connectionId}/delete`;
+const nameEndpoint = `${listEndpoint}/${connectionId}/name`;
 const accountKey = {
   ciphertext: "AQID",
   keyVersion: 1,
@@ -76,7 +77,7 @@ const makeHarness = (
   const providerCalls: string[] = [];
   const encryptedPurposes: string[] = [];
   const connections: Array<{
-    displayName: null;
+    displayName: string;
     numberSuffix: string;
     publicId: string;
     state:
@@ -91,19 +92,33 @@ const makeHarness = (
   let disconnectFailed = false;
   let lifecycleClaimId: string | null = null;
   let setupState = options.initialSetupState ?? "provisioned";
+  let lastEncryptedName = "Personal WhatsApp";
   let deletionReceipt: {
     deletionMarkerId: string;
     publicId: string;
     requestedAt: string;
   } | null = null;
+  const protectedConnection = (connection: (typeof connections)[number]) => ({
+    accountKey,
+    connectionId: "20000000-0000-4000-8000-000000000041",
+    connectionKey: {
+      ...setupKey,
+      connectionId: "20000000-0000-4000-8000-000000000041",
+    },
+    displayName: { ciphertext: versionedCiphertext, fallback: null },
+    numberSuffix: connection.numberSuffix,
+    publicId: connection.publicId,
+    state: connection.state,
+    stateChangedAt: connection.stateChangedAt,
+  });
 
   const persistence: WhatsAppConnectionPersistenceService = {
     activate: (input) =>
       Effect.sync(() => {
         const existing = connections[0];
-        if (existing !== undefined) return existing;
+        if (existing !== undefined) return protectedConnection(existing);
         const connection = {
-          displayName: null,
+          displayName: "Personal WhatsApp",
           numberSuffix: input.numberSuffix,
           publicId: input.publicId,
           state: "connected" as const,
@@ -111,7 +126,7 @@ const makeHarness = (
         };
         connections.push(connection);
         setupState = "activated";
-        return connection;
+        return protectedConnection(connection);
       }),
     claimLifecycle: ({ action, claimId, clerkUserId, publicId, requestedAt }) =>
       Effect.sync(() => {
@@ -124,13 +139,13 @@ const makeHarness = (
         const target = action === "disconnect" ? "disconnected" : "connected";
         if (connection.state === target) {
           return {
-            connection: { ...connection },
+            connection: protectedConnection(connection),
             outcome: "complete" as const,
           };
         }
         if (lifecycleClaimId !== null) {
           return {
-            connection: { ...connection },
+            connection: protectedConnection(connection),
             outcome: "in_progress" as const,
           };
         }
@@ -139,7 +154,7 @@ const makeHarness = (
         connection.stateChangedAt = requestedAt;
         return {
           action,
-          connection: { ...connection },
+          connection: protectedConnection(connection),
           outcome: "claimed" as const,
           setupMarker: setupId,
         };
@@ -163,9 +178,31 @@ const makeHarness = (
           connection.state = state;
           connection.stateChangedAt = observedAt;
         }
-        return { ...connection };
+        return protectedConnection(connection);
       }),
-    list: () => Effect.succeed(connections),
+    list: () => Effect.succeed(connections.map(protectedConnection)),
+    loadForRename: ({ clerkUserId, publicId }) =>
+      Effect.sync(() => {
+        const connection = connections.find(
+          (candidate) =>
+            clerkUserId === "user_connectionowner" &&
+            candidate.publicId === publicId,
+        );
+        return connection === undefined
+          ? null
+          : protectedConnection(connection);
+      }),
+    rename: ({ clerkUserId, publicId }) =>
+      Effect.sync(() => {
+        const connection = connections.find(
+          (candidate) =>
+            clerkUserId === "user_connectionowner" &&
+            candidate.publicId === publicId,
+        );
+        if (connection === undefined) return null;
+        connection.displayName = lastEncryptedName;
+        return protectedConnection(connection);
+      }),
     prepareDeletion: ({ clerkUserId, publicId }) =>
       Effect.succeed(
         clerkUserId !== "user_connectionowner" || publicId !== connectionId
@@ -204,13 +241,15 @@ const makeHarness = (
           ? null
           : setupState === "activated"
             ? {
-                connection: connections[0] ?? {
-                  displayName: null,
-                  numberSuffix: "3456",
-                  publicId: "con_000000000000000000041",
-                  state: "connected" as const,
-                  stateChangedAt: "2026-07-31T12:04:00.000Z",
-                },
+                connection: protectedConnection(
+                  connections[0] ?? {
+                    displayName: "Personal WhatsApp",
+                    numberSuffix: "3456",
+                    publicId: "con_000000000000000000041",
+                    state: "connected" as const,
+                    stateChangedAt: "2026-07-31T12:04:00.000Z",
+                  },
+                ),
                 outcome: "activated" as const,
               }
             : setupState === "provisioned"
@@ -218,6 +257,10 @@ const makeHarness = (
                   outcome: "provisioned" as const,
                   setup: {
                     accountKey,
+                    displayName: {
+                      ciphertext: versionedCiphertext,
+                      fallback: null,
+                    },
                     numberCiphertext: versionedCiphertext,
                     personalAccountId: accountKey.personalAccountId,
                     setupId,
@@ -338,11 +381,22 @@ const makeHarness = (
           ? Effect.succeed(new TextEncoder().encode("+15550123456"))
           : context.fieldOrObjectPurpose === "provider-session-locator"
             ? Effect.succeed(new TextEncoder().encode(lifecycleSession.session))
-            : Effect.die("unexpected decryption"),
+            : context.fieldOrObjectPurpose === "display-name"
+              ? Effect.succeed(
+                  new TextEncoder().encode(
+                    context.entity === "connection-setup"
+                      ? "Personal WhatsApp"
+                      : (connections[0]?.displayName ?? lastEncryptedName),
+                  ),
+                )
+              : Effect.die("unexpected decryption"),
       decryptMany: () => Effect.die("not used"),
-      encrypt: ({ context }) =>
+      encrypt: ({ context, plaintext }) =>
         Effect.sync(() => {
           encryptedPurposes.push(context.fieldOrObjectPurpose);
+          if (context.fieldOrObjectPurpose === "display-name") {
+            lastEncryptedName = new TextDecoder().decode(plaintext);
+          }
           return {
             ciphertext: "Li8w",
             keyVersion: 1,
@@ -406,6 +460,17 @@ const request = (url: string, method = "GET") =>
     method,
   });
 
+const renameRequest = (name: unknown) =>
+  new Request(nameEndpoint, {
+    body: JSON.stringify({ name }),
+    headers: {
+      authorization: "Bearer signed-clerk-token",
+      "content-type": "application/json",
+      origin: browserOrigin,
+    },
+    method: "PUT",
+  });
+
 describe("WhatsApp Connection HTTP boundary", () => {
   test("streams current QR bytes without retaining or emitting them", async () => {
     const harness = makeHarness();
@@ -439,6 +504,7 @@ describe("WhatsApp Connection HTTP boundary", () => {
     expect(harness.connections).toHaveLength(1);
     expect(harness.providerCalls).toEqual(["reconcileSession"]);
     expect(harness.encryptedPurposes).toEqual([
+      "display-name",
       "provider-session-locator",
       "provider-session-authority",
       "webhook-identity-key",
@@ -448,7 +514,7 @@ describe("WhatsApp Connection HTTP boundary", () => {
     expect(JSON.parse(listedText)).toEqual({
       whatsapp_connections: [
         {
-          display_name: null,
+          display_name: "Personal WhatsApp",
           id: "con_000000000000000000041",
           number_suffix: "3456",
           state: "connected",
@@ -457,6 +523,26 @@ describe("WhatsApp Connection HTTP boundary", () => {
       ],
     });
     expect(listedText).not.toContain("session-authority");
+  });
+
+  test("renames an owned Connection and rejects invalid names", async () => {
+    const harness = makeHarness();
+    harness.scanQr();
+    await harness.handler(request(qrEndpoint));
+
+    const renamed = await harness.handler(renameRequest("  Work WhatsApp  "));
+    const invalid = await harness.handler(renameRequest("   "));
+
+    expect(renamed.status).toBe(200);
+    expect(await renamed.json()).toMatchObject({
+      whatsapp_connection: {
+        display_name: "Work WhatsApp",
+        id: connectionId,
+      },
+    });
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toEqual({ error: "invalid_request" });
+    expect(harness.connections[0]?.displayName).toBe("Work WhatsApp");
   });
 
   test("reports pending provisioning without invoking provider-control", async () => {

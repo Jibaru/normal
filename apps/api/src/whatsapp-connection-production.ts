@@ -58,6 +58,16 @@ export const makeWhatsAppConnectionPersistenceLayer = (
         try: () => getRepository().listForUser(clerkUserId),
         catch: persistenceError,
       }),
+    loadForRename: (input) =>
+      Effect.tryPromise({
+        try: () => getRepository().loadForUser(input),
+        catch: persistenceError,
+      }),
+    rename: (input) =>
+      Effect.tryPromise({
+        try: () => getRepository().rename(input),
+        catch: persistenceError,
+      }),
     loadSetup: (input) =>
       Effect.tryPromise({
         try: () => getRepository().loadSetupForActivation(input),

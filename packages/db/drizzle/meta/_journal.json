@@ -33,8 +33,15 @@
     {
       "idx": 4,
       "version": "7",
+      "when": 1786464000000,
+      "tag": "0004_name_whatsapp_connections",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
       "when": 1786471200000,
-      "tag": "0004_add_whatsapp_recipient_exclusions",
+      "tag": "0005_add_whatsapp_recipient_exclusions",
       "breakpoints": true
     }
   ]

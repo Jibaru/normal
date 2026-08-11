@@ -52,7 +52,7 @@ describe("makePublicObjectContract", () => {
       connections: [
         {
           connection_id: "con_123456789012345678901",
-          display_name: null,
+          display_name: "Personal WhatsApp",
           number_last_four: "1234",
           state: "connected",
           state_changed_at: "2026-07-30T12:00:00.000Z",

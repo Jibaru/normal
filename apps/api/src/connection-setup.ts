@@ -1,6 +1,7 @@
 import { IdempotencyKey } from "@whatsapp-mcp/contracts/handles";
 import type {
   CancelledConnectionSetup,
+  ConnectionSetupNameMaterial,
   PreparedConnectionSetup,
   StartConnectionSetupInput,
   StartedConnectionSetup,
@@ -9,12 +10,13 @@ import {
   connectionSetupExpiresAt,
   normalizeWhatsAppNumber,
 } from "@whatsapp-mcp/domain/connection-setup";
+import { normalizeWhatsAppConnectionName } from "@whatsapp-mcp/domain/whatsapp-connection";
 import { Context, Data, Effect, type Layer, Schema } from "effect";
 import {
   HumanIdentity,
   type HumanIdentityService,
 } from "./auth/human-identity";
-import { decodeBase64 } from "./base64-url";
+import { decodeBase64, encodeBase64 } from "./base64-url";
 import {
   ConnectionSetupProvisioningQueue,
   type ConnectionSetupProvisioningQueueError,
@@ -175,6 +177,7 @@ type ConnectionSetupOutcome =
 export const startConnectionSetup = (
   clerkUserId: string,
   idempotencyKey: string,
+  displayName: string,
   normalizedWhatsAppNumber: string,
 ): Effect.Effect<
   ConnectionSetupOutcome,
@@ -202,9 +205,54 @@ export const startConnectionSetup = (
     if (prepared === null) {
       return yield* Effect.fail(new ConnectionSetupNotAccessible());
     }
-    const result =
+    const matchesStoredName = (
+      material: ConnectionSetupNameMaterial,
+    ): Effect.Effect<boolean, EncryptionError, EnvelopeEncryption> =>
+      material.name.fallback !== null
+        ? Effect.succeed(material.name.fallback === displayName)
+        : Effect.gen(function* () {
+            if (
+              material.name.ciphertext === null ||
+              material.name.keyVersion === null ||
+              material.name.nonce === null ||
+              material.name.version === null
+            )
+              return false;
+            const encryption = yield* EnvelopeEncryptionService;
+            const plaintext = yield* encryption.decrypt({
+              accountKey: material.accountKey,
+              ciphertext: {
+                ciphertext: encodeBase64(material.name.ciphertext),
+                keyVersion: material.name.keyVersion,
+                nonce: encodeBase64(material.name.nonce),
+                version: material.name.version,
+              },
+              connectionKey: material.setupKey,
+              context: {
+                accountId: material.accountKey.personalAccountId,
+                connectionId: material.setupKey.connectionId,
+                entity: "connection-setup",
+                fieldOrObjectPurpose: "display-name",
+                recordId: material.setupKey.connectionId,
+              },
+            });
+            return (
+              new TextDecoder("utf-8", {
+                fatal: true,
+                ignoreBOM: false,
+              }).decode(plaintext) === displayName
+            );
+          });
+    if (
+      prepared.outcome === "replay" &&
+      !(yield* matchesStoredName(prepared.nameMaterial))
+    ) {
+      return { outcome: "idempotency_conflict" };
+    }
+    if (prepared.outcome === "idempotency_conflict") return prepared;
+    const result: ConnectionSetupOutcome =
       prepared.outcome !== "unbound"
-        ? prepared
+        ? { outcome: "replay", setup: prepared.setup }
         : yield* Effect.gen(function* () {
             const identifiers = yield* ConnectionSetupIdentifiers;
             const setupId = yield* identifiers.next;
@@ -233,13 +281,33 @@ export const startConnectionSetup = (
               },
               plaintext: new TextEncoder().encode(normalizedWhatsAppNumber),
             });
+            const displayNameCiphertext = yield* encryption.encrypt({
+              accountKey: prepared.accountKey,
+              connectionKey,
+              context: {
+                accountId: prepared.accountKey.personalAccountId,
+                connectionId: setupId,
+                entity: "connection-setup",
+                fieldOrObjectPurpose: "display-name",
+                recordId: setupId,
+              },
+              plaintext: new TextEncoder().encode(displayName),
+            });
 
-            return yield* persistence.start({
-              accountKeyVersion: connectionKey.accountKeyVersion,
+            const started = yield* persistence.start({
+              accountKey: prepared.accountKey,
               connectionKeyCiphertext: decodeBase64(connectionKey.ciphertext),
               connectionKeyNonce: decodeBase64(connectionKey.nonce),
               connectionKeyVersion: connectionKey.keyVersion,
               createdAt,
+              displayNameCiphertext: decodeBase64(
+                displayNameCiphertext.ciphertext,
+              ),
+              displayNameCiphertextNonce: decodeBase64(
+                displayNameCiphertext.nonce,
+              ),
+              displayNameCiphertextVersion: displayNameCiphertext.version,
+              displayNameKeyVersion: displayNameCiphertext.keyVersion,
               idempotencyKey,
               numberCiphertext: decodeBase64(numberCiphertext.ciphertext),
               numberCiphertextNonce: decodeBase64(numberCiphertext.nonce),
@@ -249,6 +317,13 @@ export const startConnectionSetup = (
               personalAccountId: prepared.accountKey.personalAccountId,
               setupId,
             });
+            if (
+              started.outcome === "replay" &&
+              !(yield* matchesStoredName(started.nameMaterial))
+            ) {
+              return { outcome: "idempotency_conflict" as const };
+            }
+            return started;
           });
     if ("setup" in result) {
       const queue = yield* ConnectionSetupProvisioningQueue;
@@ -323,6 +398,7 @@ const failureResponse = (failure: unknown, browserOrigin: string): Response =>
 const decodeRequest = async (
   request: Request,
 ): Promise<{
+  readonly displayName: string;
   readonly idempotencyKey: string;
   readonly normalizedWhatsAppNumber: string;
 } | null> => {
@@ -336,16 +412,18 @@ const decodeRequest = async (
     typeof value !== "object" ||
     value === null ||
     Array.isArray(value) ||
-    !hasExactKeys(value, ["idempotency_key", "whatsapp_number"])
+    !hasExactKeys(value, ["idempotency_key", "name", "whatsapp_number"])
   ) {
     return null;
   }
   const body = value as Record<string, unknown>;
+  const displayName = normalizeWhatsAppConnectionName(body.name);
   const normalizedWhatsAppNumber = normalizeWhatsAppNumber(
     body.whatsapp_number,
   );
   if (
     typeof body.idempotency_key !== "string" ||
+    displayName === null ||
     normalizedWhatsAppNumber === null
   ) {
     return null;
@@ -356,6 +434,7 @@ const decodeRequest = async (
     return null;
   }
   return {
+    displayName,
     idempotencyKey: body.idempotency_key,
     normalizedWhatsAppNumber,
   };
@@ -469,6 +548,7 @@ export const createConnectionSetupHandler =
         const result = yield* startConnectionSetup(
           clerkUserId,
           input.idempotencyKey,
+          input.displayName,
           input.normalizedWhatsAppNumber,
         );
         const telemetry = yield* SafeTelemetry;

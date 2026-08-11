@@ -22,6 +22,12 @@ export const whatsappConnectionsInApp = publicSchema.table(
     personalAccountId: uuid("personal_account_id").notNull(),
     webhookIngressId: uuid("webhook_ingress_id").notNull(),
     displayNameCiphertext: bytea("display_name_ciphertext"),
+    displayNameCiphertextVersion: smallint("display_name_ciphertext_version"),
+    displayNameKeyVersion: integer("display_name_key_version"),
+    displayNameNonce: bytea("display_name_nonce"),
+    displayNameFallback: text("display_name_fallback").default(
+      sql`public.random_whatsapp_connection_name()`,
+    ),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
       .default(sql`transaction_timestamp()`)
       .notNull(),
@@ -147,6 +153,10 @@ export const whatsappConnectionsInApp = publicSchema.table(
     check(
       "whatsapp_connections_number_suffix_check",
       sql`(number_suffix IS NULL) OR (number_suffix ~ '^[0-9]{4}$'::text)`,
+    ),
+    check(
+      "whatsapp_connections_display_name_storage_check",
+      sql`(display_name_fallback ~ '^(Bright|Calm|Clever|Kind|Lucky|Quiet|Swift|Warm) (Badger|Falcon|Fox|Otter|Panda|Robin|Tiger|Turtle)$' AND display_name_ciphertext_version IS NULL AND display_name_key_version IS NULL AND display_name_nonce IS NULL AND display_name_ciphertext IS NULL) OR (display_name_fallback IS NULL AND display_name_ciphertext_version = 1 AND display_name_key_version > 0 AND octet_length(display_name_nonce) = 12 AND octet_length(display_name_ciphertext) > 16)`,
     ),
     check(
       "whatsapp_connections_state_check",

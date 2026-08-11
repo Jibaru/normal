@@ -50,7 +50,7 @@ describe("production migrations", () => {
         (SELECT count(*)::int FROM public.schema_migrations) AS legacy,
         (SELECT count(*)::int FROM public.drizzle_migrations) AS standard
     `);
-    expect(ledgers.rows).toEqual([{ legacy: 40, standard: 5 }]);
+    expect(ledgers.rows).toEqual([{ legacy: 40, standard: 6 }]);
   });
 
   test("clears only retention limitations superseded by a complete Directory snapshot", async () => {
@@ -213,8 +213,8 @@ describe("production migrations", () => {
       await expect(
         database.query(
           `INSERT INTO public.whatsapp_connections
-            (personal_account_id, id, webhook_ingress_id, display_name_ciphertext)
-           VALUES ($1, $2, gen_random_uuid(), decode('01', 'hex'))`,
+            (personal_account_id, id, webhook_ingress_id, display_name_fallback)
+           VALUES ($1, $2, gen_random_uuid(), 'Bright Badger')`,
           [accountA, "20000000-0000-4000-8000-000000000003"],
         ),
       ).rejects.toThrow();
@@ -232,8 +232,8 @@ describe("production migrations", () => {
       await expect(
         database.query(
           `INSERT INTO public.whatsapp_connections
-            (personal_account_id, id, webhook_ingress_id, display_name_ciphertext)
-           VALUES ($1, $2, gen_random_uuid(), decode('01', 'hex'))`,
+            (personal_account_id, id, webhook_ingress_id, display_name_fallback)
+           VALUES ($1, $2, gen_random_uuid(), 'Calm Falcon')`,
           [accountB, "20000000-0000-4000-8000-000000000004"],
         ),
       ).rejects.toThrow();
@@ -1146,10 +1146,10 @@ const seedTenants = async (database: PGlite) => {
   );
   await database.query(
     `INSERT INTO public.whatsapp_connections
-      (personal_account_id, id, webhook_ingress_id, display_name_ciphertext)
+      (personal_account_id, id, webhook_ingress_id, display_name_fallback)
      VALUES
-      ($1, $2, $3, decode('01', 'hex')),
-      ($4, $5, gen_random_uuid(), decode('02', 'hex'))`,
+      ($1, $2, $3, 'Bright Badger'),
+      ($4, $5, gen_random_uuid(), 'Calm Falcon')`,
     [accountA, connectionA, ingressA, accountB, connectionB],
   );
 };

@@ -31,9 +31,9 @@ describe("Webhook Event ingress repository", () => {
     );
     await database.query(
       `INSERT INTO public.whatsapp_connections (
-        id, personal_account_id, webhook_ingress_id, display_name_ciphertext
+        id, personal_account_id, webhook_ingress_id, display_name_fallback
       )
-      VALUES ($1, $2, $3, decode('01', 'hex'))`,
+      VALUES ($1, $2, $3, 'Bright Badger')`,
       [connectionId, accountId, ingressId],
     );
     await database.query(
