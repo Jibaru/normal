@@ -117,6 +117,7 @@ for (const deployable of deployables) {
     const required = [
       "DELETION_MARKER_HMAC_SECRET",
       "NEON_BRANCH_ID",
+      "RECIPIENT_TRANSITION_HMAC_SECRET",
       "RESTORE_DATABASE_URL",
     ].sort();
     for (const [name, configuration] of configurations) {
@@ -151,6 +152,7 @@ for (const deployable of deployables) {
       "KMS_DELETION_COORDINATOR_KEY_ARN",
       "MCP_CURSOR_HMAC_SECRET",
       "OAUTH_PROTOCOL_ENCRYPTION_KEY",
+      "RECIPIENT_TRANSITION_HMAC_SECRET",
       "SEND_FINGERPRINT_HMAC_SECRET",
       "SMOKE_CHECK_SECRET",
       "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
@@ -381,6 +383,7 @@ for (const deployable of deployables) {
         `env.STORED_MEDIA (whatsapp-mcp-stored-media${workerSuffix})`,
         `env.DELETION_CAPSULES (whatsapp-mcp-deletion-capsules${workerSuffix})`,
         `env.DELETION_MARKERS (whatsapp-mcp-deletion-markers${workerSuffix})`,
+        `env.RECIPIENT_TRANSITIONS (whatsapp-mcp-recipient-transitions${workerSuffix})`,
       ];
       for (const binding of requiredBindings) {
         if (!output.includes(binding)) {
@@ -401,6 +404,7 @@ for (const deployable of deployables) {
     } else if (deployable === "restore-coordinator") {
       for (const binding of [
         `env.DELETION_MARKERS (whatsapp-mcp-deletion-markers${workerSuffix})`,
+        `env.RECIPIENT_TRANSITIONS (whatsapp-mcp-recipient-transitions${workerSuffix})`,
         `env.STORED_MEDIA (whatsapp-mcp-stored-media${workerSuffix})`,
         `env.WEBHOOK_INGRESS (whatsapp-mcp-webhook-ingress${workerSuffix})`,
       ]) {

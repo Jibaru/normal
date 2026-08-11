@@ -32,6 +32,7 @@ import {
   makePgPersonalAccountRepository,
   type PersonalAccountRepository,
 } from "@whatsapp-mcp/db/personal-account";
+import { makePgRecipientExclusionRepository } from "@whatsapp-mcp/db/recipient-exclusion";
 import { withPgRequestConnectionScope } from "@whatsapp-mcp/db/request-connection";
 import {
   type AtomicSendRepository,
@@ -185,6 +186,24 @@ import {
   PersonalAccountDeletionPersistenceError,
 } from "./personal-account-deletion";
 import { makeProviderControlLayers } from "./provider-control-production";
+import {
+  makeRecipientJournalStore,
+  type RecipientJournalBucket,
+} from "./recipient/journal";
+import {
+  openRecipientRecords,
+  openRecipientSearchIndex,
+} from "./recipient-directory";
+import {
+  createRecipientExclusionHandler,
+  isRecipientExclusionRequest,
+  RecipientExclusionClock,
+  RecipientExclusionPersistence,
+  RecipientExclusionPersistenceError,
+  type RecipientExclusionPersistenceService,
+  RecipientTransitionJournal,
+  type RecipientTransitionJournalService,
+} from "./recipient-exclusion";
 import { serializeSafeTelemetry } from "./safe-telemetry";
 import {
   importSendFingerprintKey,
@@ -247,6 +266,8 @@ export interface ApiEnvironment {
   readonly DELETION_CAPSULES?: unknown;
   readonly DELETION_MARKER_HMAC_SECRET?: string | undefined;
   readonly DELETION_MARKERS?: unknown;
+  readonly RECIPIENT_TRANSITION_HMAC_SECRET?: string | undefined;
+  readonly RECIPIENT_TRANSITIONS?: unknown;
   readonly DEPLOYMENT_ENVIRONMENT?: string | undefined;
   readonly HYPERDRIVE?:
     | {
@@ -479,6 +500,15 @@ const deletionMarkerHmacSecret = Config.redacted(
   }),
 );
 
+const recipientTransitionHmacSecret = Config.redacted(
+  "RECIPIENT_TRANSITION_HMAC_SECRET",
+).pipe(
+  Config.validate({
+    message: "RECIPIENT_TRANSITION_HMAC_SECRET must be a 32-byte hex secret",
+    validation: (value) => /^[a-f0-9]{64}$/iu.test(Redacted.value(value)),
+  }),
+);
+
 const whatsappNumberReservationHmacSecret = Config.redacted(
   "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
 ).pipe(
@@ -538,6 +568,11 @@ const validateCloudflareBindings = (
     ["DELETION_CAPSULES", environment.DELETION_CAPSULES, ["get", "put"]],
     ["DELETION_MARKERS", environment.DELETION_MARKERS, ["get", "list", "put"]],
     ["INGESTION_QUEUE", environment.INGESTION_QUEUE, ["send"]],
+    [
+      "RECIPIENT_TRANSITIONS",
+      environment.RECIPIENT_TRANSITIONS,
+      ["get", "list", "put"],
+    ],
     ["OAUTH_KV", environment.OAUTH_KV, ["delete", "get", "put"]],
     [
       "STORED_MEDIA",
@@ -1415,6 +1450,168 @@ const deletionLayer = (environment: ApiEnvironment) =>
     ),
   );
 
+const recipientExclusionLayer = (environment: ApiEnvironment) =>
+  Layer.mergeAll(
+    Layer.succeed(RecipientExclusionClock, {
+      now: Effect.sync(() => new Date().toISOString()),
+    }),
+    Layer.effect(
+      RecipientTransitionJournal,
+      Config.all({
+        application: productionConfig,
+        hmacSecret: recipientTransitionHmacSecret,
+      }).pipe(
+        Effect.map(({ application, hmacSecret }) => {
+          const store = makeRecipientJournalStore({
+            bucket: environment.RECIPIENT_TRANSITIONS as RecipientJournalBucket,
+            environment: application.environment,
+            hmacSecret,
+          });
+          return {
+            append: (input) =>
+              store.append(input).pipe(
+                Effect.mapError(() => new RecipientExclusionPersistenceError()),
+                Effect.asVoid,
+              ),
+          } satisfies RecipientTransitionJournalService;
+        }),
+        Effect.withConfigProvider(environmentConfigProvider(environment)),
+      ),
+    ),
+    Layer.effect(
+      RecipientExclusionPersistence,
+      Effect.gen(function* () {
+        const encryption = yield* EnvelopeEncryptionService;
+        const repository = () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string") {
+            throw new Error("database unavailable");
+          }
+          return makePgRecipientExclusionRepository(connectionString);
+        };
+        return {
+          finalize: (input) =>
+            Effect.tryPromise({
+              try: () => repository().finalizeTransition(input),
+              catch: () => new RecipientExclusionPersistenceError(),
+            }),
+          list: (input) =>
+            Effect.tryPromise({
+              try: async () => {
+                const client = repository();
+                const material = await client.loadDirectoryMaterial({
+                  clerkUserId: input.clerkUserId,
+                  connectionPublicId: input.connectionPublicId,
+                  kind: input.kind,
+                  observedAt: new Date().toISOString(),
+                });
+                if (material === null) return null;
+                return { client, material };
+              },
+              catch: () => new RecipientExclusionPersistenceError(),
+            }).pipe(
+              Effect.flatMap((loaded) =>
+                loaded === null
+                  ? Effect.succeed(null)
+                  : openRecipientSearchIndex({
+                      encryption,
+                      kind: input.kind,
+                      material: loaded.material,
+                      search: input.search,
+                    }).pipe(
+                      Effect.flatMap((searchIndex) =>
+                        Effect.tryPromise({
+                          try: async () => ({
+                            material: loaded.material,
+                            recipients:
+                              await loaded.client.listEncryptedRecipients({
+                                clerkUserId: input.clerkUserId,
+                                connectionPublicId: input.connectionPublicId,
+                                cursorPublicId: input.cursorPublicId,
+                                kind: input.kind,
+                                limit: input.limit,
+                                searchIndex,
+                              }),
+                          }),
+                          catch: () => new RecipientExclusionPersistenceError(),
+                        }),
+                      ),
+                    ),
+              ),
+            ),
+          open: (input) => openRecipientRecords({ ...input, encryption }),
+          prepare: (input) =>
+            Effect.tryPromise({
+              try: () => repository().prepareTransition(input),
+              catch: () => new RecipientExclusionPersistenceError(),
+            }),
+        } satisfies RecipientExclusionPersistenceService;
+      }),
+    ),
+  ).pipe(Layer.provide(encryptionLayer(environment)));
+
+// A transition that was prepared but never acknowledged is completed here, so
+// a crash between the Neon prepare and the journal append cannot leave a rule
+// in an uncertain state. Only counts reach telemetry.
+const recoverPreparedRecipientTransitions = async (
+  environment: ApiEnvironment,
+  connectionString: string,
+  observedAt: string,
+) => {
+  const journal = await Effect.runPromise(
+    Config.all({
+      application: productionConfig,
+      hmacSecret: recipientTransitionHmacSecret,
+    }).pipe(
+      Effect.map(({ application, hmacSecret }) =>
+        makeRecipientJournalStore({
+          bucket: environment.RECIPIENT_TRANSITIONS as RecipientJournalBucket,
+          environment: application.environment,
+          hmacSecret,
+        }),
+      ),
+      Effect.withConfigProvider(environmentConfigProvider(environment)),
+    ),
+  );
+  const repository = makePgRecipientExclusionRepository(connectionString);
+  const pending = await repository.listPendingTransitions({
+    limit: 100,
+    observedAt,
+  });
+  let recoveredCount = 0;
+  for (const transition of pending) {
+    await Effect.runPromise(
+      journal.append({
+        connectionId: transition.whatsappConnectionId,
+        effectiveAt: transition.effectiveAt,
+        excluded: transition.excluded,
+        purgeCutoffAt: transition.purgeCutoffAt,
+        recipientKind: transition.recipientKind,
+        recipientLocator: transition.recipientLocator,
+        transitionId: transition.transitionId,
+      }),
+    );
+    await repository.finalizeTransition({
+      clerkUserId: transition.clerkUserId,
+      connectionPublicId: transition.connectionPublicId,
+      observedAt,
+      recipientPublicId: transition.recipientPublicId,
+      transitionId: transition.transitionId,
+    });
+    recoveredCount += 1;
+  }
+  if (recoveredCount > 0) {
+    Effect.runSync(
+      safeTelemetry.emit({
+        event: "recipient_exclusion.recovery.completed",
+        outcome: "success",
+        recoveredCount,
+        service: "api",
+      }),
+    );
+  }
+};
+
 const safeTelemetry = {
   emit: (event: SafeTelemetryEvent) =>
     Effect.sync(() => console.info(serializeSafeTelemetry(event))).pipe(
@@ -1535,6 +1732,7 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     mcpAuthorizationPersistenceLayer(environment),
     mcpAuthorizationRuntimeLayer,
     messageRetentionLayer(environment),
+    recipientExclusionLayer(environment),
     makeWebhookIngressProductionLayer(environment),
     mcpToolPersistenceLayer(environment),
     mcpToolRuntimeLayer(environment),
@@ -1580,6 +1778,10 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     layer,
     environment.CLERK_AUTHORIZED_PARTY ?? "",
     retentionDayOptions(environment.MESSAGE_RETENTION_DAY_OPTIONS),
+  );
+  const recipientExclusionHandler = createRecipientExclusionHandler(
+    layer,
+    environment.CLERK_AUTHORIZED_PARTY ?? "",
   );
   const webhookIngressHandler = createWebhookIngressHandler(layer);
   const oauthConfiguration = Effect.runPromise(
@@ -1685,6 +1887,9 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
         }
         if (isWhatsAppConnectionRequest(nextRequest)) {
           return whatsAppConnectionHandler(nextRequest);
+        }
+        if (isRecipientExclusionRequest(nextRequest)) {
+          return recipientExclusionHandler(nextRequest);
         }
         if (isMessageRetentionRequest(nextRequest)) {
           return messageRetentionHandler(nextRequest);
@@ -2223,6 +2428,22 @@ export const createProductionScheduledHandler =
           service: "api",
         }),
       );
+      let removedCount = 0;
+      while (true) {
+        const count = await makePgRecipientExclusionRepository(
+          connectionString,
+        ).purgeExcludedHistory({ limit: 500, observedAt });
+        removedCount += count;
+        if (count < 500) break;
+      }
+      Effect.runSync(
+        safeTelemetry.emit({
+          event: "recipient_exclusion.cleanup.completed",
+          outcome: "success",
+          removedCount,
+          service: "api",
+        }),
+      );
       while (true) {
         const count = await (
           dependencies.purgeExpiredToolCallLogs ??
@@ -2410,6 +2631,11 @@ export const createProductionScheduledHandler =
         : async () => [])
     )(10);
     if (dependencies.makeRepository === undefined) {
+      await recoverPreparedRecipientTransitions(
+        environment,
+        connectionString,
+        observedAt,
+      );
       const storedMediaRepository =
         makePgStoredMediaRepository(connectionString);
       const objectDeletions =

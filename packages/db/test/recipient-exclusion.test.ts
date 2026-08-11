@@ -121,7 +121,6 @@ describe("WhatsApp Recipient Exclusion persistence", () => {
       clerkUserId,
       connectionPublicId,
       cursorPublicId: null,
-      cursorSortKey: null,
       kind: "contact",
       limit: 20,
       searchIndex: null,
@@ -130,13 +129,12 @@ describe("WhatsApp Recipient Exclusion persistence", () => {
       clerkUserId,
       connectionPublicId,
       cursorPublicId: null,
-      cursorSortKey: null,
       kind: "group",
       limit: 20,
       searchIndex: null,
     });
     expect(contacts).toMatchObject([
-      { excluded: false, publicId: contactPublicId, sortKey: "ada" },
+      { excluded: false, publicId: contactPublicId },
     ]);
     expect(groups).toMatchObject([{ excluded: true, publicId: groupPublicId }]);
   });
@@ -147,7 +145,6 @@ describe("WhatsApp Recipient Exclusion persistence", () => {
         clerkUserId: "user_other71",
         connectionPublicId,
         cursorPublicId: null,
-        cursorSortKey: null,
         kind: "contact",
         limit: 20,
         searchIndex: null,

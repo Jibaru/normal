@@ -9,6 +9,7 @@ locals {
   stored_media_bucket_name                 = "whatsapp-mcp-stored-media${local.environment_suffix}"
   deletion_capsules_bucket_name            = "whatsapp-mcp-deletion-capsules${local.environment_suffix}"
   deletion_markers_bucket_name             = "whatsapp-mcp-deletion-markers${local.environment_suffix}"
+  recipient_transitions_bucket_name        = "whatsapp-mcp-recipient-transitions${local.environment_suffix}"
   oauth_kv_namespace_name                  = "whatsapp-mcp-oauth${local.environment_suffix}"
   ingestion_queue_name                     = "whatsapp-mcp-ingestion${local.environment_suffix}"
   dead_letter_queue_name                   = "whatsapp-mcp-ingestion-dlq${local.environment_suffix}"
@@ -108,6 +109,36 @@ resource "cloudflare_r2_bucket_lock" "deletion_markers" {
       type = "Indefinite"
     }
   }]
+}
+
+resource "cloudflare_r2_bucket" "recipient_transitions" {
+  account_id    = var.cloudflare_account_id
+  name          = local.recipient_transitions_bucket_name
+  storage_class = "Standard"
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "cloudflare_r2_bucket_lock" "recipient_transitions" {
+  account_id  = var.cloudflare_account_id
+  bucket_name = cloudflare_r2_bucket.recipient_transitions.name
+
+  rules = [{
+    id      = "retain-recipient-transitions"
+    enabled = true
+    prefix  = ""
+    condition = {
+      type = "Indefinite"
+    }
+  }]
+}
+
+resource "cloudflare_r2_managed_domain" "recipient_transitions" {
+  account_id  = var.cloudflare_account_id
+  bucket_name = cloudflare_r2_bucket.recipient_transitions.name
+  enabled     = false
 }
 
 resource "cloudflare_r2_managed_domain" "webhook_ingress" {
@@ -359,7 +390,9 @@ resource "cloudflare_worker_version" "restore_coordinator" {
     { name = "RESTORE_DATABASE_URL", type = "inherit" },
     { name = "NEON_BRANCH_ID", type = "inherit" },
     { name = "DELETION_MARKER_HMAC_SECRET", type = "inherit" },
+    { name = "RECIPIENT_TRANSITION_HMAC_SECRET", type = "inherit" },
     { name = "DELETION_MARKERS", bucket_name = cloudflare_r2_bucket.deletion_markers.name, type = "r2_bucket" },
+    { name = "RECIPIENT_TRANSITIONS", bucket_name = cloudflare_r2_bucket.recipient_transitions.name, type = "r2_bucket" },
     { name = "STORED_MEDIA", bucket_name = cloudflare_r2_bucket.stored_media.name, type = "r2_bucket" },
     { name = "WEBHOOK_INGRESS", bucket_name = cloudflare_r2_bucket.webhook_ingress.name, type = "r2_bucket" }
   ]
@@ -493,6 +526,10 @@ resource "cloudflare_worker_version" "api" {
       type = "inherit"
     },
     {
+      name = "RECIPIENT_TRANSITION_HMAC_SECRET"
+      type = "inherit"
+    },
+    {
       name = "MCP_CURSOR_HMAC_SECRET"
       type = "inherit"
     },
@@ -590,6 +627,11 @@ resource "cloudflare_worker_version" "api" {
     {
       bucket_name = cloudflare_r2_bucket.deletion_markers.name
       name        = "DELETION_MARKERS"
+      type        = "r2_bucket"
+    },
+    {
+      bucket_name = cloudflare_r2_bucket.recipient_transitions.name
+      name        = "RECIPIENT_TRANSITIONS"
       type        = "r2_bucket"
     },
     {

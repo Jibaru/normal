@@ -150,6 +150,7 @@ export interface WebhookEventProcessingCompletedEvent {
   readonly quarantinedCount: number;
   readonly service: "api";
   readonly supersededCount: number;
+  readonly suppressedCount: number;
 }
 
 export interface WebhookEventDeadLetterCompletedEvent {
@@ -373,6 +374,34 @@ export interface MessageRetentionPurgeCompletedEvent {
   readonly service: "api";
 }
 
+export interface RecipientExclusionCleanupCompletedEvent {
+  readonly event: "recipient_exclusion.cleanup.completed";
+  readonly outcome: "success";
+  readonly removedCount: number;
+  readonly service: "api";
+}
+
+export interface RecipientExclusionListCompletedEvent {
+  readonly event: "recipient_exclusion.list.completed";
+  readonly outcome: "success";
+  readonly recipientCount: number;
+  readonly service: "api";
+}
+
+export interface RecipientExclusionRecoveryCompletedEvent {
+  readonly event: "recipient_exclusion.recovery.completed";
+  readonly outcome: "success";
+  readonly recoveredCount: number;
+  readonly service: "api";
+}
+
+export interface RecipientExclusionTransitionCompletedEvent {
+  readonly event: "recipient_exclusion.transition.completed";
+  readonly outcome: "conflict" | "success" | "unchanged";
+  readonly service: "api";
+  readonly transitionKind: "exclude" | "re_enable";
+}
+
 export interface SafeTelemetry {
   readonly emit: (event: SafeTelemetryEvent) => Effect.Effect<void>;
 }
@@ -403,6 +432,10 @@ export type SafeTelemetryEvent =
   | PersonalAccountDeletionDeadlineRiskEvent
   | ProviderDirectoryCompletedEvent
   | ProviderTextSendCompletedEvent
+  | RecipientExclusionCleanupCompletedEvent
+  | RecipientExclusionListCompletedEvent
+  | RecipientExclusionRecoveryCompletedEvent
+  | RecipientExclusionTransitionCompletedEvent
   | SendDispatchLeaseSweepCompletedEvent
   | StoredMediaContainerEvent
   | ToolCallLogReviewCompletedEvent

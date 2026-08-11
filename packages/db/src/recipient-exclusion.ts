@@ -51,7 +51,6 @@ export interface EncryptedRecipientRecord {
   readonly phoneCiphertext: RecipientDirectoryCiphertext | null;
   readonly publicId: string;
   readonly recordId: string;
-  readonly sortKey: string;
 }
 
 export interface PreparedRecipientTransition {
@@ -246,7 +245,6 @@ export const makeRecipientExclusionRepository = (
     readonly clerkUserId: string;
     readonly connectionPublicId: string;
     readonly cursorPublicId: string | null;
-    readonly cursorSortKey: string | null;
     readonly kind: RecipientKind;
     readonly limit: number;
     readonly searchIndex: string | null;
@@ -255,18 +253,15 @@ export const makeRecipientExclusionRepository = (
       const result = await makeDatabase(connection).execute(sql`
         SELECT * FROM public.list_whatsapp_recipient_directory(
           ${input.clerkUserId}, ${input.connectionPublicId}, ${input.kind},
-          ${input.searchIndex}, ${input.cursorSortKey}, ${input.cursorPublicId},
-          ${input.limit}
+          ${input.searchIndex}, ${input.cursorPublicId}, ${input.limit}
         )
       `);
       return result.map((row) => {
         const publicId = row.recipient_public_id;
         const recordId = row.record_id;
-        const sortKey = row.sort_key;
         if (
           typeof publicId !== "string" ||
           typeof recordId !== "string" ||
-          typeof sortKey !== "string" ||
           typeof row.recipient_excluded !== "boolean"
         ) {
           throw new Error("invalid WhatsApp Recipient Directory row");
@@ -277,7 +272,6 @@ export const makeRecipientExclusionRepository = (
           phoneCiphertext: ciphertext(row, "phone"),
           publicId,
           recordId,
-          sortKey,
         };
       });
     }),

@@ -12,13 +12,18 @@
     "required": [
       "RESTORE_DATABASE_URL",
       "NEON_BRANCH_ID",
-      "DELETION_MARKER_HMAC_SECRET"
+      "DELETION_MARKER_HMAC_SECRET",
+      "RECIPIENT_TRANSITION_HMAC_SECRET"
     ]
   },
   "r2_buckets": [
     {
       "binding": "DELETION_MARKERS",
       "bucket_name": "whatsapp-mcp-deletion-markers"
+    },
+    {
+      "binding": "RECIPIENT_TRANSITIONS",
+      "bucket_name": "whatsapp-mcp-recipient-transitions"
     },
     { "binding": "STORED_MEDIA", "bucket_name": "whatsapp-mcp-stored-media" },
     {
@@ -35,13 +40,18 @@
         "required": [
           "RESTORE_DATABASE_URL",
           "NEON_BRANCH_ID",
-          "DELETION_MARKER_HMAC_SECRET"
+          "DELETION_MARKER_HMAC_SECRET",
+          "RECIPIENT_TRANSITION_HMAC_SECRET"
         ]
       },
       "r2_buckets": [
         {
           "binding": "DELETION_MARKERS",
           "bucket_name": "whatsapp-mcp-deletion-markers-development"
+        },
+        {
+          "binding": "RECIPIENT_TRANSITIONS",
+          "bucket_name": "whatsapp-mcp-recipient-transitions-development"
         },
         {
           "binding": "STORED_MEDIA",
@@ -61,13 +71,18 @@
         "required": [
           "RESTORE_DATABASE_URL",
           "NEON_BRANCH_ID",
-          "DELETION_MARKER_HMAC_SECRET"
+          "DELETION_MARKER_HMAC_SECRET",
+          "RECIPIENT_TRANSITION_HMAC_SECRET"
         ]
       },
       "r2_buckets": [
         {
           "binding": "DELETION_MARKERS",
           "bucket_name": "whatsapp-mcp-deletion-markers-preview"
+        },
+        {
+          "binding": "RECIPIENT_TRANSITIONS",
+          "bucket_name": "whatsapp-mcp-recipient-transitions-preview"
         },
         {
           "binding": "STORED_MEDIA",
@@ -87,13 +102,18 @@
         "required": [
           "RESTORE_DATABASE_URL",
           "NEON_BRANCH_ID",
-          "DELETION_MARKER_HMAC_SECRET"
+          "DELETION_MARKER_HMAC_SECRET",
+          "RECIPIENT_TRANSITION_HMAC_SECRET"
         ]
       },
       "r2_buckets": [
         {
           "binding": "DELETION_MARKERS",
           "bucket_name": "whatsapp-mcp-deletion-markers"
+        },
+        {
+          "binding": "RECIPIENT_TRANSITIONS",
+          "bucket_name": "whatsapp-mcp-recipient-transitions"
         },
         {
           "binding": "STORED_MEDIA",

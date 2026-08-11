@@ -349,11 +349,11 @@ $function$;
 -- enforce exclusion separately.
 CREATE FUNCTION public.list_whatsapp_recipient_directory(
   verified_clerk_user_id text, requested_connection_public_id text,
-  requested_kind text, requested_search_index text, cursor_sort_key text,
-  cursor_public_id text, requested_limit integer
+  requested_kind text, requested_search_index text, cursor_public_id text,
+  requested_limit integer
 )
 RETURNS TABLE (
-  recipient_public_id text, sort_key text, record_id text,
+  recipient_public_id text, record_id text,
   display_name_ciphertext_version smallint, display_name_key_version integer,
   display_name_nonce bytea, display_name_ciphertext bytea,
   phone_ciphertext_version smallint, phone_key_version integer,
@@ -362,11 +362,11 @@ RETURNS TABLE (
 LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path = pg_catalog, public, public AS $function$
 #variable_conflict use_column
-DECLARE selected_account_id uuid; selected_connection_id uuid;
+DECLARE
+  selected_account_id uuid; selected_connection_id uuid; cursor_sort_key text;
 BEGIN
   IF requested_kind NOT IN ('contact', 'group')
-    OR requested_limit < 1 OR requested_limit > 101
-    OR (cursor_sort_key IS NULL) <> (cursor_public_id IS NULL) THEN
+    OR requested_limit < 1 OR requested_limit > 101 THEN
     RAISE EXCEPTION 'invalid recipient directory query';
   END IF;
   SELECT accounts.id, connections.id INTO selected_account_id, selected_connection_id
@@ -382,9 +382,18 @@ BEGIN
       AND requested_search_index !~ '^di1_[A-Za-z0-9_-]{43}$' THEN
       RAISE EXCEPTION 'invalid recipient directory search index';
     END IF;
+    -- The opaque contact handle carries the whole page boundary, so no
+    -- normalized name material ever leaves the database.
+    IF cursor_public_id IS NOT NULL THEN
+      SELECT contacts.display_name_sort INTO cursor_sort_key
+      FROM public.directory_contacts contacts
+      WHERE contacts.personal_account_id = selected_account_id
+        AND contacts.whatsapp_connection_id = selected_connection_id
+        AND contacts.public_id = cursor_public_id;
+      IF cursor_sort_key IS NULL THEN RETURN; END IF;
+    END IF;
     RETURN QUERY
-      SELECT contacts.public_id, contacts.display_name_sort,
-        contacts.provider_identity_index::text,
+      SELECT contacts.public_id, contacts.provider_identity_index::text,
         contacts.display_name_ciphertext_version, contacts.display_name_key_version,
         contacts.display_name_nonce, contacts.display_name_ciphertext,
         contacts.phone_ciphertext_version, contacts.phone_key_version,
@@ -414,7 +423,7 @@ BEGIN
     RAISE EXCEPTION 'invalid recipient directory search index';
   END IF;
   RETURN QUERY
-    SELECT groups.public_id, ''::text, groups.id::text,
+    SELECT groups.public_id, groups.id::text,
       groups.display_name_ciphertext_version, groups.display_name_key_version,
       groups.display_name_nonce, groups.display_name_ciphertext,
       NULL::smallint, NULL::integer, NULL::bytea, NULL::bytea,
@@ -672,7 +681,7 @@ REVOKE ALL ON FUNCTION
   public.apply_whatsapp_recipient_exclusion_purge(uuid,uuid,text,text,timestamptz,timestamptz),
   public.purge_excluded_recipient_history(timestamptz,integer),
   public.load_recipient_directory_material(text,text,timestamptz),
-  public.list_whatsapp_recipient_directory(text,text,text,text,text,text,integer),
+  public.list_whatsapp_recipient_directory(text,text,text,text,text,integer),
   public.prepare_whatsapp_recipient_exclusion(text,text,text,boolean,boolean,text),
   public.finalize_whatsapp_recipient_exclusion(text,text,text,uuid,timestamptz),
   public.list_pending_whatsapp_recipient_exclusions(timestamptz,integer) FROM PUBLIC;
@@ -680,7 +689,7 @@ REVOKE ALL ON FUNCTION
 GRANT EXECUTE ON FUNCTION
   public.purge_excluded_recipient_history(timestamptz,integer),
   public.load_recipient_directory_material(text,text,timestamptz),
-  public.list_whatsapp_recipient_directory(text,text,text,text,text,text,integer),
+  public.list_whatsapp_recipient_directory(text,text,text,text,text,integer),
   public.prepare_whatsapp_recipient_exclusion(text,text,text,boolean,boolean,text),
   public.finalize_whatsapp_recipient_exclusion(text,text,text,uuid,timestamptz),
   public.list_pending_whatsapp_recipient_exclusions(timestamptz,integer)
