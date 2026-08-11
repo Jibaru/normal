@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   bigint,
   check,
+  customType,
   foreignKey,
   index,
   integer,
@@ -16,6 +17,10 @@ import {
 import { bytea, publicSchema } from "./common";
 import { whatsappConnectionsInApp } from "./connections";
 import { webhookEventsInApp } from "./webhooks";
+
+const messageSearchToken = customType<{ data: string }>({
+  dataType: () => "message_search_token",
+});
 
 export const whatsappConversationsInApp = publicSchema.table(
   "whatsapp_conversations",
@@ -138,6 +143,8 @@ export const storedMessagesInApp = publicSchema.table(
       withTimezone: true,
       mode: "string",
     }),
+    messageSearchIndexVersion: smallint("message_search_index_version"),
+    messageSearchTokens: messageSearchToken("message_search_tokens").array(),
   },
   (table) => [
     index("stored_messages_chronological_read").using(
@@ -237,6 +244,79 @@ export const storedMessagesInApp = publicSchema.table(
     check(
       "stored_messages_content_lifecycle",
       sql`((deleted_at IS NULL) AND (content_expired_at IS NULL) AND (content_type IS NOT NULL) AND (content_ciphertext_version IS NOT NULL) AND (content_key_version IS NOT NULL) AND (content_nonce IS NOT NULL) AND (content_ciphertext IS NOT NULL)) OR (((deleted_at IS NOT NULL) OR (content_expired_at IS NOT NULL)) AND (content_type IS NULL) AND (content_ciphertext_version IS NULL) AND (content_key_version IS NULL) AND (content_nonce IS NULL) AND (content_ciphertext IS NULL))`,
+    ),
+    check(
+      "stored_messages_message_search_tuple",
+      sql`((message_search_index_version IS NULL) AND (message_search_tokens IS NULL)) OR ((message_search_index_version = 1) AND (message_search_tokens IS NOT NULL) AND (array_position(message_search_tokens, NULL) IS NULL))`,
+    ),
+    check(
+      "stored_messages_message_search_lifecycle",
+      sql`((deleted_at IS NULL) AND (content_expired_at IS NULL)) OR ((message_search_index_version IS NULL) AND (message_search_tokens IS NULL))`,
+    ),
+    index("stored_messages_message_search_v1")
+      .using("gin", table.messageSearchTokens)
+      .where(
+        sql`message_search_index_version = 1 AND deleted_at IS NULL AND content_expired_at IS NULL`,
+      ),
+  ],
+);
+
+export const messageSearchBackfillCoverageInApp = publicSchema.table(
+  "message_search_backfill_coverage",
+  {
+    personalAccountId: uuid("personal_account_id").notNull(),
+    whatsappConnectionId: uuid("whatsapp_connection_id").notNull(),
+    indexVersion: smallint("index_version").default(1).notNull(),
+    state: text().default("pending").notNull(),
+    searchableFrom: timestamp("searchable_from", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    cursorSentAt: timestamp("cursor_sent_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    cursorMessageId: uuid("cursor_message_id"),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+      .default(sql`transaction_timestamp()`)
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [
+        table.personalAccountId,
+        table.whatsappConnectionId,
+        table.indexVersion,
+      ],
+      name: "message_search_backfill_coverage_pkey",
+    }),
+    foreignKey({
+      columns: [table.whatsappConnectionId, table.personalAccountId],
+      foreignColumns: [
+        whatsappConnectionsInApp.id,
+        whatsappConnectionsInApp.personalAccountId,
+      ],
+      name: "message_search_backfill_coverage_connection_fk",
+    }).onDelete("cascade"),
+    pgPolicy("message_search_backfill_coverage_tenant", {
+      as: "permissive",
+      for: "all",
+      to: ["public"],
+      using: sql`personal_account_id = nullif(current_setting('public.personal_account_id', true), '')::uuid`,
+      withCheck: sql`personal_account_id = nullif(current_setting('public.personal_account_id', true), '')::uuid`,
+    }),
+    check("message_search_backfill_coverage_version", sql`index_version = 1`),
+    check(
+      "message_search_backfill_coverage_state",
+      sql`state IN ('pending', 'complete')`,
+    ),
+    check(
+      "message_search_backfill_coverage_cursor",
+      sql`(cursor_sent_at IS NULL) = (cursor_message_id IS NULL)`,
+    ),
+    check(
+      "message_search_backfill_coverage_complete",
+      sql`state <> 'complete' OR (cursor_sent_at IS NULL AND cursor_message_id IS NULL)`,
     ),
   ],
 );

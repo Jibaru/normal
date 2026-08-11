@@ -42,6 +42,7 @@ export interface SendProviderMaterial extends SendEncryptionMaterial {
   readonly authority: SendCiphertext;
   readonly contactPhone?: SendCiphertext | null;
   readonly identityKey: SendCiphertext;
+  readonly messageSearchKey: SendCiphertext;
   readonly recipient: SendCiphertext;
   readonly recipientType: "contact" | "group";
   readonly recipientRecordId: string;
@@ -119,6 +120,10 @@ export interface AtomicSendRepository {
       readonly conversationPublicId: string;
       readonly messageId: string;
       readonly messagePublicId: string;
+      readonly messageSearch: {
+        readonly indexVersion: 1;
+        readonly tokens: ReadonlyArray<string>;
+      };
     };
   }) => Promise<SendReceiptRecord>;
 }
@@ -571,6 +576,11 @@ export const makePgAtomicSendRepository = (
               keyVersion: integer(row.identity_key_version),
               nonce: bytes(row.identity_nonce),
             },
+            messageSearchKey: {
+              ciphertext: bytes(row.message_search_key_ciphertext),
+              keyVersion: integer(row.message_search_key_version),
+              nonce: bytes(row.message_search_key_nonce),
+            },
             contactPhone:
               recipientType === "contact" &&
               recipientRow.phone_ciphertext !== null &&
@@ -907,6 +917,9 @@ export const makePgAtomicSendRepository = (
             contentKeyVersion: input.storedMessage.content.keyVersion,
             contentNonce: input.storedMessage.content.nonce,
             contentCiphertext: input.storedMessage.content.ciphertext,
+            messageSearchIndexVersion:
+              input.storedMessage.messageSearch.indexVersion,
+            messageSearchTokens: [...input.storedMessage.messageSearch.tokens],
             receivedAt: input.changedAt.toISOString(),
             webhookItemIdentity: null,
           })

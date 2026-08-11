@@ -36,6 +36,13 @@
       "when": 1786464000000,
       "tag": "0004_name_whatsapp_connections",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786467600000,
+      "tag": "0005_add_message_search_foundation",
+      "breakpoints": true
     }
   ]
 }

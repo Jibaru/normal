@@ -155,6 +155,10 @@ export interface ActivateWhatsAppConnectionInput {
   readonly locatorCiphertextVersion: number;
   readonly locatorKeyVersion: number;
   readonly locatorNonce: Uint8Array;
+  readonly messageSearchKeyCiphertext: Uint8Array;
+  readonly messageSearchKeyCiphertextVersion: number;
+  readonly messageSearchKeyVersion: number;
+  readonly messageSearchKeyNonce: Uint8Array;
   readonly numberSuffix: string;
   readonly personalAccountId: string;
   readonly publicId: string;
@@ -806,6 +810,29 @@ export const makeWhatsAppConnectionRepository = (
               eq(whatsappConnectionsInApp.connectionSetupId, input.setupId),
             ),
           );
+        await db.execute(sql`
+          WITH installed AS (
+            UPDATE public.whatsapp_connection_secrets
+            SET message_search_key_ciphertext_version = ${input.messageSearchKeyCiphertextVersion},
+                message_search_key_version = ${input.messageSearchKeyVersion},
+                message_search_key_nonce = ${input.messageSearchKeyNonce},
+                message_search_key_ciphertext = ${input.messageSearchKeyCiphertext},
+                updated_at = ${input.connectedAt}
+            WHERE personal_account_id = ${input.personalAccountId}
+              AND whatsapp_connection_id = ${input.connectionId}
+              AND message_search_key_ciphertext IS NULL
+            RETURNING personal_account_id, whatsapp_connection_id
+          ), covered AS (
+            INSERT INTO public.message_search_backfill_coverage (
+              personal_account_id, whatsapp_connection_id, index_version,
+              state, searchable_from, updated_at
+            ) SELECT
+              personal_account_id, whatsapp_connection_id, 1,
+              'complete', ${input.connectedAt}, ${input.connectedAt}
+            FROM installed ON CONFLICT DO NOTHING
+          )
+          SELECT 1
+        `);
         const winnerPublicId = rows[0]?.public_id;
         if (typeof winnerPublicId !== "string") {
           throw new Error("WhatsApp Connection activation unavailable");
@@ -818,6 +845,25 @@ export const makeWhatsAppConnectionRepository = (
         if (record === null) {
           throw new Error("WhatsApp Connection activation unavailable");
         }
+        await db.execute(sql`
+          INSERT INTO public.message_search_backfill_coverage (
+            personal_account_id,
+            whatsapp_connection_id,
+            index_version,
+            state,
+            searchable_from,
+            updated_at
+          ) VALUES (
+            ${input.personalAccountId},
+            ${record.connectionId},
+            1,
+            'complete',
+            ${record.stateChangedAt},
+            ${record.stateChangedAt}
+          )
+          ON CONFLICT (personal_account_id, whatsapp_connection_id, index_version)
+          DO NOTHING
+        `);
         return record;
       });
     }),

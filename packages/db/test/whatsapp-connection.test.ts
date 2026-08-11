@@ -148,6 +148,10 @@ describe("WhatsApp Connection repository", () => {
     locatorCiphertextVersion: 1,
     locatorKeyVersion: 1,
     locatorNonce: new Uint8Array(12).fill(17),
+    messageSearchKeyCiphertext: new Uint8Array(48).fill(22),
+    messageSearchKeyCiphertextVersion: 1,
+    messageSearchKeyVersion: 1,
+    messageSearchKeyNonce: new Uint8Array(12).fill(23),
     numberSuffix: "3456",
     personalAccountId: accountA,
     publicId,
@@ -224,6 +228,39 @@ describe("WhatsApp Connection repository", () => {
     const repository = makeWhatsAppConnectionRepository(provider);
 
     const first = await repository.activate(activationInput);
+    const storedSearchKey = await database.query<Record<string, unknown>>(
+      `SELECT message_search_key_ciphertext_version, message_search_key_version,
+        octet_length(message_search_key_nonce) AS nonce_bytes,
+        octet_length(message_search_key_ciphertext) AS ciphertext_bytes
+       FROM public.whatsapp_connection_secrets
+       WHERE personal_account_id=$1 AND whatsapp_connection_id=$2`,
+      [accountA, connectionId],
+    );
+    expect(storedSearchKey.rows).toEqual([
+      {
+        ciphertext_bytes: 48,
+        message_search_key_ciphertext_version: 1,
+        message_search_key_version: 1,
+        nonce_bytes: 12,
+      },
+    ]);
+    const searchCoverage = await database.query<Record<string, unknown>>(
+      `SELECT state, searchable_from
+       FROM public.message_search_backfill_coverage
+       WHERE personal_account_id=$1 AND whatsapp_connection_id=$2`,
+      [accountA, connectionId],
+    );
+    expect(searchCoverage.rows).toEqual([
+      {
+        searchable_from: new Date(connectedAt),
+        state: "complete",
+      },
+    ]);
+    await database.query(
+      `DELETE FROM public.message_search_backfill_coverage
+       WHERE personal_account_id=$1 AND whatsapp_connection_id=$2`,
+      [accountA, connectionId],
+    );
     const replay = await repository.activate({
       ...activationInput,
       connectionKeyCiphertext: new Uint8Array(32).fill(26),
@@ -243,6 +280,18 @@ describe("WhatsApp Connection repository", () => {
       stateChangedAt: connectedAt,
     });
     expect(replay).toEqual(first);
+    const replayCoverage = await database.query<Record<string, unknown>>(
+      `SELECT whatsapp_connection_id, state
+       FROM public.message_search_backfill_coverage
+       WHERE personal_account_id=$1`,
+      [accountA],
+    );
+    expect(replayCoverage.rows).toEqual([
+      {
+        state: "complete",
+        whatsapp_connection_id: connectionId,
+      },
+    ]);
 
     const counts = await database.query<{
       connection_count: number;

@@ -127,14 +127,20 @@ describe("Webhook Event repository", () => {
          credential_ciphertext,
          credential_ciphertext_version,
          credential_key_version,
-         credential_nonce
+         credential_nonce,
+         message_search_key_ciphertext_version,
+         message_search_key_version,
+         message_search_key_nonce,
+         message_search_key_ciphertext
        )
        VALUES (
          $1, $2,
          decode(repeat('05', 32), 'hex'),
          1,
          1,
-         decode(repeat('06', 12), 'hex')
+          decode(repeat('06', 12), 'hex'),
+          1, 1, decode(repeat('08', 12), 'hex'),
+          decode(repeat('07', 32), 'hex')
        )`,
       [accountId, connectionId],
     );
@@ -196,6 +202,12 @@ describe("Webhook Event repository", () => {
         ciphertext: "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=",
         keyVersion: 1,
         nonce: "BgYGBgYGBgYGBgYG",
+        version: 1,
+      },
+      messageSearchKey: {
+        ciphertext: "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
+        keyVersion: 1,
+        nonce: "CAgICAgICAgICAgI",
         version: 1,
       },
     });
@@ -486,6 +498,7 @@ describe("Webhook Event repository", () => {
           conversationPublicId: "cvs_000000000000000000050",
           messageId: "90000000-0000-4000-8000-000000000050",
           messagePublicId: "msg_000000000000000000050",
+          messageSearch: { indexVersion: 1, tokens: [] },
         };
       }),
     ).toBe("applied");
@@ -856,6 +869,7 @@ describe("Webhook Event repository", () => {
       messageId: "60000000-0000-4000-8000-000000000044",
       messageIdentity,
       messagePublicId: "msg_000000000000000000044",
+      messageSearch: { indexVersion: 1 as const, tokens: [] },
       media: {
         id: "70000000-0000-4000-8000-000000000044",
         publicId: "med_000000000000000000044",
@@ -889,6 +903,7 @@ describe("Webhook Event repository", () => {
           },
           itemIdentity: itemIdentity("older-edit"),
           messageIdentity,
+          messageSearch: { indexVersion: 1, tokens: [] },
         },
         compareVersions,
       ),
@@ -906,6 +921,7 @@ describe("Webhook Event repository", () => {
           },
           itemIdentity: itemIdentity("edit"),
           messageIdentity,
+          messageSearch: { indexVersion: 1, tokens: [] },
         },
         compareVersions,
       ),

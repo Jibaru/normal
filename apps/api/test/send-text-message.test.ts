@@ -81,6 +81,7 @@ describe("atomic send workflow", () => {
           ...material,
           authority: protectedValue(storedAuthority),
           identityKey: protectedValue("x".repeat(32)),
+          messageSearchKey: protectedValue("s".repeat(32)),
           recipient: protectedValue(groupRecipientRoute),
           recipientRecordId: `di1_${"G".repeat(43)}`,
           recipientType: "group",
@@ -103,9 +104,11 @@ describe("atomic send workflow", () => {
           new TextEncoder().encode(
             context.fieldOrObjectPurpose === "webhook-identity-key"
               ? "x".repeat(32)
-              : context.fieldOrObjectPurpose === "provider-session-authority"
-                ? storedAuthority
-                : groupRecipientRoute,
+              : context.fieldOrObjectPurpose === "message-search-key"
+                ? "s".repeat(32)
+                : context.fieldOrObjectPurpose === "provider-session-authority"
+                  ? storedAuthority
+                  : groupRecipientRoute,
           ),
         ),
       decryptMany: () => Effect.die("unused"),
@@ -182,6 +185,7 @@ describe("atomic send workflow", () => {
       authority: protectedValue(storedAuthority),
       contactPhone: protectedValue("+15551234567"),
       identityKey: protectedValue("x".repeat(32)),
+      messageSearchKey: protectedValue("s".repeat(32)),
       recipient: protectedValue(`wi1_${"r".repeat(43)}`),
       recipientRecordId: `di1_${"B".repeat(43)}`,
       recipientType: "contact",
@@ -312,6 +316,7 @@ describe("atomic send workflow", () => {
           ...material,
           authority: protectedValue(storedAuthority),
           identityKey: protectedValue("x".repeat(32)),
+          messageSearchKey: protectedValue("s".repeat(32)),
           recipient: protectedValue(recipientRoute),
           recipientRecordId: `di1_${"B".repeat(43)}`,
           recipientType: "contact",
@@ -334,9 +339,11 @@ describe("atomic send workflow", () => {
           new TextEncoder().encode(
             context.fieldOrObjectPurpose === "webhook-identity-key"
               ? "x".repeat(32)
-              : context.fieldOrObjectPurpose === "provider-session-authority"
-                ? storedAuthority
-                : recipientRoute,
+              : context.fieldOrObjectPurpose === "message-search-key"
+                ? "s".repeat(32)
+                : context.fieldOrObjectPurpose === "provider-session-authority"
+                  ? storedAuthority
+                  : recipientRoute,
           ),
         ),
       decryptMany: () => Effect.die("unused"),
@@ -404,6 +411,13 @@ describe("atomic send workflow", () => {
           contentType: "text",
           conversationPublicId: "cvs_123456789012345678951",
           messagePublicId: "msg_123456789012345678951",
+          messageSearch: {
+            indexVersion: 1,
+            tokens: [
+              expect.stringMatching(/^msi1_[A-Za-z0-9_-]{43}$/u),
+              expect.stringMatching(/^msi1_[A-Za-z0-9_-]{43}$/u),
+            ],
+          },
         }),
       }),
     );
@@ -539,6 +553,7 @@ describe("atomic send workflow", () => {
           ...material,
           authority: protectedValue(storedAuthority),
           identityKey: protectedValue("x".repeat(32)),
+          messageSearchKey: protectedValue("s".repeat(32)),
           recipient: protectedValue(recipientRoute),
           recipientRecordId: `di1_${"B".repeat(43)}`,
           recipientType: "contact",
@@ -591,6 +606,7 @@ describe("atomic send workflow", () => {
             ...material,
             authority: protectedValue(storedAuthority),
             identityKey: protectedValue("x".repeat(32)),
+            messageSearchKey: protectedValue("s".repeat(32)),
             recipient: protectedValue(recipientRoute),
             recipientRecordId: `di1_${"B".repeat(43)}`,
             recipientType: "contact" as const,

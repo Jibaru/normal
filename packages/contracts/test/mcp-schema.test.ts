@@ -6,6 +6,7 @@ import {
   ListContactsOutputContract,
   ListGroupsOutputContract,
   makePublicObjectContract,
+  SearchMessagesOutputContract,
   SendTextMessageOutputContract,
 } from "../src/mcp-schema";
 
@@ -212,6 +213,46 @@ describe("makePublicObjectContract", () => {
       ListChatsOutputContract.decodeUnknown({
         ...output,
         chats: [{ ...output.chats[0], phone: "5550199" }],
+      }),
+    ).toThrow();
+  });
+
+  test("validates the closed compact search_messages result", () => {
+    const output = {
+      messages: [
+        {
+          message_id: "msg_123456789012345678901",
+          conversation_id: "cvs_123456789012345678901",
+          sent_at: "2026-07-30T11:58:00Z",
+          direction: "inbound",
+          content_type: "image",
+          text: "Your flight confirmation is attached.",
+          text_truncated: false,
+          text_total_utf8_bytes: 37,
+          edited_at: null,
+        },
+      ],
+      size_limited: false,
+      has_more: false,
+      next_cursor: null,
+      coverage: {
+        history_starts_at: "2026-07-01T00:00:00Z",
+        history_start_reason: "retention_policy",
+        searchable_history_starts_at: null,
+        index_version: "v1",
+        backfill_complete: false,
+        partial: true,
+        partial_reasons: ["index_backfill"],
+        gaps: [],
+      },
+    } as const;
+    expect(
+      SearchMessagesOutputContract.decodeUnknown(output) as unknown,
+    ).toEqual(output);
+    expect(() =>
+      SearchMessagesOutputContract.decodeUnknown({
+        ...output,
+        messages: [{ ...output.messages[0], resource_uri: "must-not-escape" }],
       }),
     ).toThrow();
   });

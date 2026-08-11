@@ -302,7 +302,8 @@ export interface McpToolCallCompletedEvent {
     | "get_send_status"
     | "send_text_message"
     | "list_chats"
-    | "read_messages";
+    | "read_messages"
+    | "search_messages";
 }
 
 export interface ToolCallLogReviewCompletedEvent {
@@ -378,6 +379,12 @@ export interface MessageRetentionPurgeCompletedEvent {
   readonly service: "api";
 }
 
+export interface MessageSearchBackfillCompletedEvent {
+  readonly event: "message_search.backfill.completed";
+  readonly outcome: "failed" | "success";
+  readonly service: "api";
+}
+
 export interface SafeTelemetry {
   readonly emit: (event: SafeTelemetryEvent) => Effect.Effect<void>;
 }
@@ -399,6 +406,7 @@ export type SafeTelemetryEvent =
   | McpToolCallCompletedEvent
   | MessageRetentionPolicyUpdateCompletedEvent
   | MessageRetentionPurgeCompletedEvent
+  | MessageSearchBackfillCompletedEvent
   | OAuthAuthorizationDecisionCompletedEvent
   | OAuthAuthorizationRequestCompletedEvent
   | OAuthProtocolRequestFailedEvent

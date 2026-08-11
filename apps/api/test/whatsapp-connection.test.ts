@@ -508,6 +508,7 @@ describe("WhatsApp Connection HTTP boundary", () => {
       "provider-session-locator",
       "provider-session-authority",
       "webhook-identity-key",
+      "message-search-key",
     ]);
     expect(listed.status).toBe(200);
     const listedText = await listed.text();

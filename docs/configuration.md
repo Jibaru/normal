@@ -83,6 +83,30 @@ at most a nullable display name plus the final four phone digits. A projection
 older than ten minutes is reported as stale even if the last provider read had
 succeeded.
 
+Stored Message exact-word search adds no deployment environment secret. Each
+WhatsApp Connection owns a dedicated random 32-byte message-search key wrapped
+through the existing Personal Account and Connection KMS hierarchy. The key is
+purpose-specific and must not be derived from or reused as a Directory,
+webhook, provider-reference, cursor, send-fingerprint, reservation, deletion,
+or content-encryption key. The versioned full HMAC-SHA-256 tokens are bound to
+the internal Connection identifier, so equal words cannot be correlated across
+Connections from Neon alone.
+
+`search_messages` requires `messages:read`, reserves from the same
+`READ_MESSAGE_RECORDS_PER_DAY` quota as `read_messages`, and uses the existing
+authoritative MCP minute and hour request quotas. Its query is limited to 256
+Unicode scalar values and eight unique normalized terms; result limits default
+to and cannot exceed 20. Plaintext queries, normalized terms, HMAC values,
+message text, and snippets are prohibited from Tool Call Logs, telemetry,
+traces, database logs, cursor payloads, and error details. Cursor binding uses
+only a domain-separated keyed query digest. During bounded newest-to-oldest
+application backfill, responses expose the indexed coverage boundary and
+remain partial until all eligible retained Stored Messages are covered. Search
+key rotation or tokenizer changes require a distinct version and tracked
+backfill rather than a configuration switch or mixed-version reads.
+Backfill telemetry contains only `message_search.backfill.completed`, the API
+service name, and an allowlisted `success` or `failed` outcome.
+
 The API Worker receives `PROVIDER_CONTROL`, `HYPERDRIVE`,
 `WEBHOOK_HYPERDRIVE`, `OAUTH_KV`, `WEBHOOK_INGRESS`, `STORED_MEDIA`,
 `DELETION_CAPSULES`, `DELETION_MARKERS`, the `INGESTION_QUEUE` producer

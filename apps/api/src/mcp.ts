@@ -26,6 +26,8 @@ import {
   ListGroupsOutputContract,
   type ReadMessagesOutput,
   ReadMessagesOutputContract,
+  type SearchMessagesOutput,
+  SearchMessagesOutputContract,
   type SendTextMessageOutput,
   SendTextMessageOutputContract,
 } from "@whatsapp-mcp/contracts/mcp-schema";
@@ -43,6 +45,7 @@ import type {
   McpToolGroupPage,
   McpToolGroupSearchMaterial,
   McpToolMessagePage,
+  McpToolMessageSearchPage,
   McpToolName,
   McpToolSendStatusRecord,
   RejectToolCallResult,
@@ -74,6 +77,12 @@ import {
   importGroupDirectoryIndexKey,
   normalizeGroupDisplayName,
 } from "./group-privacy";
+import {
+  importMessageSearchIndexKey,
+  messageSearchIndexesForQuery,
+  validateMessageSearchQuery,
+  verifyMessageSearchCandidate,
+} from "./message-search-privacy";
 import {
   type McpToolCallCompletedEvent,
   SafeTelemetry,
@@ -186,7 +195,21 @@ export interface McpToolPersistenceService {
     | null,
     McpToolPersistenceError
   >;
-  readonly completeMessageRead: (
+  readonly searchMessages?: (
+    input: McpAccessAuthorization & {
+      readonly connectionPublicId: string;
+      readonly conversationPublicId: string | null;
+      readonly cursorSentAt: string | null;
+      readonly cursorPublicId: string | null;
+      readonly direction: "all" | "inbound" | "outbound";
+      readonly after: string | null;
+      readonly before: string | null;
+      readonly limit: number;
+      readonly observedAt: Date;
+      readonly searchTokens: ReadonlyArray<string> | null;
+    },
+  ) => Effect.Effect<McpToolMessageSearchPage | null, McpToolPersistenceError>;
+  readonly completeMessageRecordRead: (
     input: McpAccessAuthorization & {
       readonly auditLogId: string;
       readonly authorizationContextEstablished?: true;
@@ -238,7 +261,10 @@ export interface McpToolPersistenceService {
       readonly errorCode: string;
       readonly observedAt: Date;
       readonly sendPublicId?: string;
-      readonly toolName: "list_connections" | "list_contacts";
+      readonly toolName:
+        | "list_connections"
+        | "list_contacts"
+        | "search_messages";
     },
   ) => Effect.Effect<RejectToolCallResult, McpToolPersistenceError>;
 }
@@ -521,6 +547,8 @@ const listChatsDescription =
   "List WhatsApp Conversations with observed Stored Message activity, including the current contact or group name and direct-chat phone number when available, without message snippets or unread state. Use its conversation_id with read_messages.";
 const readMessagesDescription =
   "Read a chronological page of observed Stored Messages and traverse toward older retained history with honest history-window and Ingestion Gap metadata. Get conversation_id from list_chats, not list_groups.";
+const searchMessagesDescription =
+  "Search exact normalized words in retained Stored Message text and captions within one selected WhatsApp Connection. Results are newest first, not relevance ranked.";
 const ListGroupsInput = z
   .object({
     connection_id: z.string().regex(/^con_[A-Za-z0-9_-]{21}$/u),
@@ -660,6 +688,99 @@ const GetSendStatusInput = z
 const GetSendStatusOutputSchema = SendTextMessageOutputSchema.omit({
   idempotent_replay: true,
 });
+const SearchMessagesInput = z
+  .object({
+    connection_id: z.string().regex(/^con_[A-Za-z0-9_-]{21}$/u),
+    query: z.string().refine((value) => {
+      try {
+        validateMessageSearchQuery(value);
+        return true;
+      } catch {
+        return false;
+      }
+    }, "query must contain 1 to 256 Unicode scalar values and 1 to 8 normalized terms"),
+    conversation_id: z
+      .string()
+      .regex(/^cvs_[A-Za-z0-9_-]{21}$/u)
+      .optional(),
+    direction: z.enum(["all", "inbound", "outbound"]).default("all"),
+    after: z.iso.datetime().optional(),
+    before: z.iso.datetime().optional(),
+    limit: z.number().int().min(1).max(20).default(20),
+    cursor: z.string().min(1).max(4_096).optional(),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.after === undefined ||
+      value.before === undefined ||
+      new Date(value.after) < new Date(value.before),
+    {
+      message: "after must be earlier than before",
+    },
+  );
+const ingestionGapSchema = z
+  .object({
+    starts_at: z.iso.datetime(),
+    ends_at: z.iso.datetime().nullable(),
+    cause: z.enum([
+      "connection_unavailable",
+      "webhook_configuration",
+      "ingress_failure",
+      "processing_failure",
+      "restore_loss",
+    ]),
+  })
+  .strict();
+const SearchMessagesOutputSchema = z
+  .object({
+    messages: z
+      .array(
+        z
+          .object({
+            message_id: z.string().regex(/^msg_[A-Za-z0-9_-]{21}$/u),
+            conversation_id: z.string().regex(/^cvs_[A-Za-z0-9_-]{21}$/u),
+            sent_at: z.iso.datetime(),
+            direction: z.enum(["inbound", "outbound"]),
+            content_type: z.enum([
+              "text",
+              "image",
+              "audio",
+              "video",
+              "document",
+              "sticker",
+              "unknown",
+            ]),
+            text: z.string().nullable(),
+            text_truncated: z.boolean(),
+            text_total_utf8_bytes: z.number().int().nonnegative().nullable(),
+            edited_at: z.iso.datetime().nullable(),
+          })
+          .strict(),
+      )
+      .max(20),
+    size_limited: z.boolean(),
+    has_more: z.boolean(),
+    next_cursor: z.string().min(1).nullable(),
+    coverage: z
+      .object({
+        history_starts_at: z.iso.datetime(),
+        history_start_reason: z.enum([
+          "connection_started",
+          "retention_policy",
+        ]),
+        searchable_history_starts_at: z.iso.datetime().nullable(),
+        index_version: z.literal("v1"),
+        backfill_complete: z.boolean(),
+        partial: z.boolean(),
+        partial_reasons: z
+          .array(z.enum(["index_backfill", "ingestion_gap"]))
+          .max(2),
+        gaps: z.array(ingestionGapSchema),
+      })
+      .strict(),
+  })
+  .strict();
 
 const buildListConnectionsResult = makeSuccessResultBuilder(
   ListConnectionsOutputContract,
@@ -680,6 +801,9 @@ const buildGetSendStatusResult = makeSuccessResultBuilder(
 const buildListChatsResult = makeSuccessResultBuilder(ListChatsOutputContract);
 const buildReadMessagesResult = makeSuccessResultBuilder(
   ReadMessagesOutputContract,
+);
+const buildSearchMessagesResult = makeSuccessResultBuilder(
+  SearchMessagesOutputContract,
 );
 
 const auditUnavailable = () =>
@@ -2569,7 +2693,7 @@ const readMessages = (
       output = fitted;
     }
     const completion = yield* persistence
-      .completeMessageRead({
+      .completeMessageRecordRead({
         ...authorization,
         auditLogId,
         dailyRecordLimit,
@@ -2607,6 +2731,435 @@ const readMessages = (
             ],
       ),
     );
+  }).pipe(Effect.catchAll(() => Effect.succeed(auditUnavailable())));
+
+const messageSearchQueryDigest = (
+  key: CryptoKey,
+  terms: ReadonlyArray<string>,
+) =>
+  Effect.tryPromise({
+    try: async () => {
+      const document = new TextEncoder().encode(
+        `normal.message-search.cursor\0v1\0${JSON.stringify(terms)}`,
+      );
+      return encodeBase64(
+        new Uint8Array(await crypto.subtle.sign("HMAC", key, document)),
+      );
+    },
+    catch: () => new McpToolPersistenceError(),
+  });
+
+const searchMessages = (
+  authorization: McpAccessAuthorization,
+  input: z.infer<typeof SearchMessagesInput>,
+  hourLimit: number,
+  minuteLimit: number,
+  dailyRecordLimit: number,
+) =>
+  Effect.gen(function* () {
+    const clock = yield* McpToolClock;
+    const identifiers = yield* McpToolIdentifiers;
+    const persistence = yield* McpToolPersistence;
+    const encryption = yield* EnvelopeEncryptionService;
+    const codec = yield* McpCursorCodec;
+    const signing = yield* McpCursorSigning;
+    const startedAt = yield* clock.now;
+    const query = validateMessageSearchQuery(input.query);
+    const queryDigest = yield* messageSearchQueryDigest(
+      signing.key,
+      query.terms,
+    );
+    const context: CursorContext = {
+      authorizationId: authorization.authorizationId,
+      connectionId: input.connection_id as CursorContext["connectionId"],
+      filters: {
+        query_digest: queryDigest,
+        conversation_id: input.conversation_id ?? null,
+        direction: input.direction,
+        after: input.after ?? null,
+        before: input.before ?? null,
+        index_version: "v1",
+      },
+      pageSize: input.limit,
+      sortVersion: "message-search-sent-v1",
+      tool: "search_messages",
+    };
+    let cursorSentAt: string | null = null;
+    let cursorPublicId: string | null = null;
+    if (input.cursor !== undefined) {
+      const decoded = yield* codec
+        .decode({
+          context,
+          cursor: input.cursor,
+          nowEpochSeconds: Math.floor(startedAt.valueOf() / 1000),
+        })
+        .pipe(Effect.either);
+      if (
+        decoded._tag === "Left" ||
+        decoded.right.length !== 2 ||
+        typeof decoded.right[0] !== "string" ||
+        typeof decoded.right[1] !== "string"
+      ) {
+        const rejected = yield* persistence
+          .rejectToolCall({
+            ...authorization,
+            auditLogId: yield* identifiers.nextAuditLogId,
+            connectionPublicId: input.connection_id,
+            errorCode: "invalid_cursor",
+            observedAt: startedAt,
+            toolName: "search_messages",
+          })
+          .pipe(Effect.either);
+        if (rejected._tag === "Left") {
+          yield* emitToolCompletion(
+            "search_messages",
+            "audit_unavailable",
+            undefined,
+            "audit_completion",
+          );
+          return auditUnavailable();
+        }
+        if (rejected.right === "authorization_denied") {
+          yield* emitToolCompletion("search_messages", "authorization_denied");
+          return authorizationDenied();
+        }
+        yield* emitToolCompletion("search_messages", "invalid_cursor");
+        return invalidCursor();
+      }
+      cursorSentAt = decoded.right[0];
+      cursorPublicId = decoded.right[1];
+    }
+    const auditLogId = yield* identifiers.nextAuditLogId;
+    const begun = yield* persistence
+      .beginToolCall({
+        ...authorization,
+        auditLogId,
+        connectionPublicId: input.connection_id,
+        hourLimit,
+        minuteLimit,
+        observedAt: startedAt,
+        toolName: "search_messages",
+      })
+      .pipe(Effect.either);
+    if (begun._tag === "Left") {
+      yield* emitToolCompletion(
+        "search_messages",
+        "audit_unavailable",
+        undefined,
+        "query",
+      );
+      return auditUnavailable();
+    }
+    if (begun.right.outcome === "authorization_denied") {
+      yield* emitToolCompletion("search_messages", "authorization_denied");
+      return authorizationDenied();
+    }
+    if (begun.right.outcome === "rate_limited") {
+      yield* emitToolCompletion("search_messages", "rate_limited");
+      return rateLimited(begun.right.retryAfterSeconds, begun.right.resetsAt);
+    }
+    const fail = (
+      code: "authorization_denied" | "rate_limited" | "service_unavailable",
+      resetsAt?: Date,
+      stage?: McpToolFailureStage,
+    ) =>
+      Effect.gen(function* () {
+        const completed = yield* persistence
+          .completeToolCall({
+            auditLogId,
+            completedAt: yield* clock.now,
+            errorCode: code,
+            outcome:
+              code === "authorization_denied"
+                ? "authorization_denied"
+                : "execution_error",
+            resultCount: null,
+          })
+          .pipe(Effect.either);
+        if (completed._tag === "Left") {
+          yield* emitToolCompletion(
+            "search_messages",
+            "audit_unavailable",
+            undefined,
+            "audit_completion",
+          );
+          return auditUnavailable();
+        }
+        yield* emitToolCompletion(
+          "search_messages",
+          code === "authorization_denied"
+            ? "authorization_denied"
+            : code === "rate_limited"
+              ? "rate_limited"
+              : "service_unavailable",
+          undefined,
+          stage,
+        );
+        if (code === "authorization_denied") return authorizationDenied();
+        if (code === "rate_limited") {
+          const reset =
+            resetsAt ??
+            new Date(
+              Date.UTC(
+                startedAt.getUTCFullYear(),
+                startedAt.getUTCMonth(),
+                startedAt.getUTCDate() + 1,
+              ),
+            );
+          return rateLimited(
+            Math.max(
+              0,
+              Math.ceil((reset.valueOf() - startedAt.valueOf()) / 1000),
+            ),
+            reset,
+          );
+        }
+        return serviceUnavailable();
+      });
+    if (persistence.searchMessages === undefined)
+      return yield* fail("service_unavailable", undefined, "configuration");
+
+    // Key use starts only after the durable Tool Call Log reservation above.
+    const searchInput = {
+      ...authorization,
+      connectionPublicId: input.connection_id,
+      conversationPublicId: input.conversation_id ?? null,
+      cursorSentAt,
+      cursorPublicId,
+      direction: input.direction,
+      after: input.after ?? null,
+      before: input.before ?? null,
+      limit: input.limit,
+      observedAt: startedAt,
+    } as const;
+    const material = yield* persistence
+      .searchMessages({ ...searchInput, searchTokens: null })
+      .pipe(Effect.either);
+    if (material._tag === "Left")
+      return yield* fail("service_unavailable", undefined, "query");
+    if (material.right === null) return yield* fail("authorization_denied");
+    const internalConnectionId = material.right.connectionKey.connectionId;
+    const keyBytes = yield* encryption
+      .decrypt({
+        accountKey: material.right.accountKey,
+        connectionKey: material.right.connectionKey,
+        ciphertext: material.right.messageSearchKey,
+        context: {
+          accountId: material.right.accountKey.personalAccountId,
+          connectionId: material.right.connectionKey.connectionId,
+          entity: "whatsapp-connection",
+          fieldOrObjectPurpose: "message-search-key",
+          recordId: material.right.connectionKey.connectionId,
+        },
+      })
+      .pipe(Effect.either);
+    if (keyBytes._tag === "Left")
+      return yield* fail("service_unavailable", undefined, "decryption");
+    const tokens = yield* Effect.acquireUseRelease(
+      Effect.succeed(keyBytes.right),
+      (bytes) =>
+        importMessageSearchIndexKey(bytes).pipe(
+          Effect.flatMap((key) =>
+            messageSearchIndexesForQuery(key, internalConnectionId, query),
+          ),
+        ),
+      (bytes) => Effect.sync(() => bytes.fill(0)),
+    ).pipe(Effect.either);
+    if (tokens._tag === "Left")
+      return yield* fail("service_unavailable", undefined, "decryption");
+    const loaded = yield* persistence
+      .searchMessages({ ...searchInput, searchTokens: tokens.right })
+      .pipe(Effect.either);
+    if (loaded._tag === "Left")
+      return yield* fail("service_unavailable", undefined, "query");
+    if (loaded.right === null) return yield* fail("authorization_denied");
+    const page = loaded.right;
+    const plaintexts = yield* encryption
+      .decryptMany({
+        accountKey: page.accountKey,
+        connectionKey: page.connectionKey,
+        items: page.messages.map((message) => ({
+          ciphertext: message.content,
+          context: {
+            accountId: page.accountKey.personalAccountId,
+            connectionId: page.connectionKey.connectionId,
+            entity: "stored-message",
+            fieldOrObjectPurpose: "content",
+            recordId: message.messageIdentity,
+          },
+        })),
+      })
+      .pipe(Effect.either);
+    if (plaintexts._tag === "Left")
+      return yield* fail("service_unavailable", undefined, "decryption");
+    const decoded = yield* Effect.acquireUseRelease(
+      Effect.succeed(plaintexts.right),
+      (values) =>
+        Effect.try({
+          try: () => {
+            const decoder = new TextDecoder("utf-8", {
+              fatal: true,
+              ignoreBOM: false,
+            });
+            return page.messages.map((message, index) => {
+              const value = values[index];
+              if (value === undefined) throw new Error("missing candidate");
+              const content = JSON.parse(decoder.decode(value)) as {
+                readonly text?: unknown;
+              };
+              if (
+                content === null ||
+                (content.text !== null && typeof content.text !== "string")
+              )
+                throw new Error("invalid candidate");
+              const text = content.text as string | null;
+              if (text === null || !verifyMessageSearchCandidate(text, query))
+                throw new Error("inconsistent candidate");
+              return {
+                message_id: message.publicId,
+                conversation_id: message.conversationPublicId,
+                sent_at: message.sentAt,
+                direction: message.direction,
+                content_type: message.contentType,
+                text,
+                text_truncated: false,
+                text_total_utf8_bytes: new TextEncoder().encode(text)
+                  .byteLength,
+                edited_at: message.editedAt ?? null,
+              };
+            });
+          },
+          catch: () => new McpToolPersistenceError(),
+        }),
+      (values) =>
+        Effect.sync(() => {
+          for (const value of values) value.fill(0);
+        }),
+    ).pipe(Effect.either);
+    if (decoded._tag === "Left")
+      return yield* fail("service_unavailable", undefined, "decryption");
+    const gaps = page.coverage.gaps.map((gap) => ({
+      starts_at: gap.startsAt,
+      ends_at: gap.endsAt,
+      cause: gap.cause,
+    }));
+    const makeOutput = (
+      messages: typeof decoded.right,
+      nextCursor: string | null,
+      sizeLimited: boolean,
+    ): SearchMessagesOutput => {
+      const reasons: Array<"index_backfill" | "ingestion_gap"> = [];
+      if (!page.coverage.backfillComplete) reasons.push("index_backfill");
+      if (gaps.length > 0) reasons.push("ingestion_gap");
+      return SearchMessagesOutputContract.decodeUnknown({
+        messages,
+        size_limited: sizeLimited,
+        has_more: page.hasMore || messages.length < decoded.right.length,
+        next_cursor: nextCursor,
+        coverage: {
+          history_starts_at: page.coverage.historyStartsAt,
+          history_start_reason: page.coverage.historyStartReason,
+          searchable_history_starts_at: page.coverage.searchableHistoryStartsAt,
+          index_version: "v1",
+          backfill_complete: page.coverage.backfillComplete,
+          partial: reasons.length > 0,
+          partial_reasons: reasons,
+          gaps,
+        },
+      });
+    };
+    const encoder = new TextEncoder();
+    const cursorFor = (messages: typeof decoded.right) =>
+      Effect.gen(function* () {
+        const oldest = messages.at(-1);
+        if (
+          oldest === undefined ||
+          (!page.hasMore && messages.length === decoded.right.length)
+        )
+          return null;
+        return yield* codec.encode({
+          boundary: [oldest.sent_at, oldest.message_id],
+          context,
+          expiresAtEpochSeconds: Math.floor(startedAt.valueOf() / 1000) + 900,
+        });
+      });
+    let selected = decoded.right;
+    let output: SearchMessagesOutput | null = null;
+    while (selected.length > 0) {
+      const cursor = yield* cursorFor(selected).pipe(Effect.either);
+      if (cursor._tag === "Left")
+        return yield* fail("service_unavailable", undefined, "output");
+      const candidate = makeOutput(
+        selected,
+        cursor.right,
+        page.sizeLimited || selected.length < decoded.right.length,
+      );
+      if (
+        encoder.encode(JSON.stringify(candidate)).byteLength <= 32_768 ||
+        selected.length === 1
+      ) {
+        output = candidate;
+        break;
+      }
+      selected = selected.slice(0, -1);
+    }
+    output ??= makeOutput([], null, page.sizeLimited);
+    if (encoder.encode(JSON.stringify(output)).byteLength > 65_536) {
+      const only = selected[0];
+      if (only === undefined || only.text === null)
+        return yield* fail("service_unavailable", undefined, "output");
+      const scalars = Array.from(only.text);
+      let low = 0;
+      let high = scalars.length;
+      let fitted: SearchMessagesOutput | null = null;
+      while (low <= high) {
+        const middle = Math.floor((low + high) / 2);
+        const candidate = makeOutput(
+          [
+            {
+              ...only,
+              text: scalars.slice(0, middle).join(""),
+              text_truncated: middle < scalars.length,
+            },
+          ],
+          output.next_cursor,
+          true,
+        );
+        if (encoder.encode(JSON.stringify(candidate)).byteLength <= 65_536) {
+          fitted = candidate;
+          low = middle + 1;
+        } else high = middle - 1;
+      }
+      if (fitted === null)
+        return yield* fail("service_unavailable", undefined, "output");
+      output = fitted;
+    }
+    const completion = yield* persistence
+      .completeMessageRecordRead({
+        ...authorization,
+        auditLogId,
+        dailyRecordLimit,
+        observedAt: yield* clock.now,
+        resultCount: output.messages.length,
+      })
+      .pipe(Effect.either);
+    if (completion._tag === "Left") {
+      yield* emitToolCompletion(
+        "search_messages",
+        "audit_unavailable",
+        undefined,
+        "audit_completion",
+      );
+      return auditUnavailable();
+    }
+    if (completion.right.outcome === "record_quota_exhausted")
+      return yield* fail("rate_limited", completion.right.resetsAt);
+    yield* emitToolCompletion(
+      "search_messages",
+      "success",
+      output.messages.length,
+    );
+    return buildSearchMessagesResult(output);
   }).pipe(Effect.catchAll(() => Effect.succeed(auditUnavailable())));
 
 export const createMcpRequestHandler =
@@ -2955,6 +3508,31 @@ export const createMcpRequestHandler =
         },
       );
       server.registerTool(
+        "search_messages",
+        {
+          annotations: { readOnlyHint: true },
+          description: searchMessagesDescription,
+          inputSchema: SearchMessagesInput,
+          outputSchema: SearchMessagesOutputSchema,
+          title: "Search WhatsApp Messages",
+        },
+        async (input) => {
+          const result = await Effect.runPromise(
+            searchMessages(
+              authorization,
+              input,
+              options.hourLimit,
+              options.minuteLimit,
+              options.readMessageDailyRecordLimit ?? 10_000,
+            ).pipe(Effect.provide(options.layer)),
+          );
+          return {
+            ...result,
+            content: result.content.map((block) => ({ ...block })),
+          } as CallToolResult;
+        },
+      );
+      server.registerTool(
         "list_groups",
         {
           description: listGroupsDescription,
@@ -3103,6 +3681,18 @@ export const createMcpRequestHandler =
               target: "draft-2020-12",
             }),
             title: "Read WhatsApp Messages",
+          });
+          tools.push({
+            annotations: { readOnlyHint: true },
+            description: searchMessagesDescription,
+            inputSchema: z.toJSONSchema(SearchMessagesInput, {
+              target: "draft-2020-12",
+            }),
+            name: "search_messages",
+            outputSchema: z.toJSONSchema(SearchMessagesOutputSchema, {
+              target: "draft-2020-12",
+            }),
+            title: "Search WhatsApp Messages",
           });
         }
         server.server.setRequestHandler("tools/list", () => ({

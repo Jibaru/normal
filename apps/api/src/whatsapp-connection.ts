@@ -365,110 +365,136 @@ const activate = (
     const connectionId = yield* identifiers.nextConnectionId;
     const publicId = yield* identifiers.nextPublicId;
     const webhookIdentityKey = yield* identifiers.nextWebhookIdentityKey;
-    if (webhookIdentityKey.byteLength !== 32) {
+    const messageSearchKey = crypto.getRandomValues(new Uint8Array(32));
+    if (
+      webhookIdentityKey.byteLength !== 32 ||
+      messageSearchKey.byteLength !== 32
+    ) {
       return yield* Effect.fail(new WhatsAppConnectionActivationError());
     }
-    return yield* withZeroedBytes(webhookIdentityKey, (identityKeyPlaintext) =>
-      Effect.gen(function* () {
-        const clock = yield* WhatsAppConnectionClock;
-        const connectedAt = yield* clock.now;
-        const encryption = yield* EnvelopeEncryptionService;
-        const connectionKey = yield* encryption.createConnectionKey({
-          accountId: setup.personalAccountId,
-          accountKey: setup.accountKey,
-          connectionId,
-          keyVersion: 1,
-        });
-        const displayName = yield* revealSetupName(setup);
-        const displayNameCiphertext = yield* encryptConnectionValue(
-          setup,
-          connectionId,
-          connectionKey,
-          "display-name",
-          new TextEncoder().encode(displayName),
-        );
-        const numberBytes = yield* encryption.decrypt({
-          accountKey: setup.accountKey,
-          ciphertext: setup.numberCiphertext,
-          connectionKey: setup.setupKey,
-          context: {
-            accountId: setup.personalAccountId,
-            connectionId: setup.setupId,
-            entity: "connection-setup",
-            fieldOrObjectPurpose: "whatsapp-number",
-            recordId: setup.setupId,
-          },
-        });
-
-        return yield* withZeroedBytes(numberBytes, (numberPlaintext) =>
+    return yield* withZeroedBytes(
+      messageSearchKey,
+      (messageSearchKeyPlaintext) =>
+        withZeroedBytes(webhookIdentityKey, (identityKeyPlaintext) =>
           Effect.gen(function* () {
-            const number = new TextDecoder().decode(numberPlaintext);
-            const numberSuffix = number.slice(-4);
-            if (
-              !/^\+[1-9]\d{7,14}$/u.test(number) ||
-              !/^[0-9]{4}$/u.test(numberSuffix)
-            ) {
-              return yield* Effect.fail(
-                new WhatsAppConnectionActivationError(),
-              );
-            }
-            const locator = yield* encryptConnectionValue(
-              setup,
+            const clock = yield* WhatsAppConnectionClock;
+            const connectedAt = yield* clock.now;
+            const encryption = yield* EnvelopeEncryptionService;
+            const connectionKey = yield* encryption.createConnectionKey({
+              accountId: setup.personalAccountId,
+              accountKey: setup.accountKey,
               connectionId,
-              connectionKey,
-              "provider-session-locator",
-              new TextEncoder().encode(providerSession.session),
-            );
-            const authority = yield* encryptConnectionValue(
-              setup,
-              connectionId,
-              connectionKey,
-              "provider-session-authority",
-              new TextEncoder().encode(providerSession.authority),
-            );
-            const identityKey = yield* encryptConnectionValue(
-              setup,
-              connectionId,
-              connectionKey,
-              "webhook-identity-key",
-              identityKeyPlaintext,
-            );
-            const persistence = yield* WhatsAppConnectionPersistence;
-            const persisted = yield* persistence.activate({
-              accountKeyVersion: connectionKey.accountKeyVersion,
-              authorityCiphertext: decodeBase64(authority.ciphertext),
-              authorityCiphertextVersion: authority.version,
-              authorityKeyVersion: authority.keyVersion,
-              authorityNonce: decodeBase64(authority.nonce),
-              connectionId,
-              connectionKeyCiphertext: decodeBase64(connectionKey.ciphertext),
-              connectionKeyNonce: decodeBase64(connectionKey.nonce),
-              connectionKeyVersion: connectionKey.keyVersion,
-              connectedAt,
-              displayNameCiphertext: decodeBase64(
-                displayNameCiphertext.ciphertext,
-              ),
-              displayNameCiphertextVersion: displayNameCiphertext.version,
-              displayNameKeyVersion: displayNameCiphertext.keyVersion,
-              displayNameNonce: decodeBase64(displayNameCiphertext.nonce),
-              locatorCiphertext: decodeBase64(locator.ciphertext),
-              locatorCiphertextVersion: locator.version,
-              locatorKeyVersion: locator.keyVersion,
-              locatorNonce: decodeBase64(locator.nonce),
-              numberSuffix,
-              personalAccountId: setup.personalAccountId,
-              publicId,
-              setupId: setup.setupId,
-              webhookIngressId: setup.webhookIngressId,
-              webhookSecretCiphertext: decodeBase64(identityKey.ciphertext),
-              webhookSecretCiphertextVersion: identityKey.version,
-              webhookSecretKeyVersion: identityKey.keyVersion,
-              webhookSecretNonce: decodeBase64(identityKey.nonce),
+              keyVersion: 1,
             });
-            return yield* revealConnection(persisted);
+            const displayName = yield* revealSetupName(setup);
+            const displayNameCiphertext = yield* encryptConnectionValue(
+              setup,
+              connectionId,
+              connectionKey,
+              "display-name",
+              new TextEncoder().encode(displayName),
+            );
+            const numberBytes = yield* encryption.decrypt({
+              accountKey: setup.accountKey,
+              ciphertext: setup.numberCiphertext,
+              connectionKey: setup.setupKey,
+              context: {
+                accountId: setup.personalAccountId,
+                connectionId: setup.setupId,
+                entity: "connection-setup",
+                fieldOrObjectPurpose: "whatsapp-number",
+                recordId: setup.setupId,
+              },
+            });
+
+            return yield* withZeroedBytes(numberBytes, (numberPlaintext) =>
+              Effect.gen(function* () {
+                const number = new TextDecoder().decode(numberPlaintext);
+                const numberSuffix = number.slice(-4);
+                if (
+                  !/^\+[1-9]\d{7,14}$/u.test(number) ||
+                  !/^[0-9]{4}$/u.test(numberSuffix)
+                ) {
+                  return yield* Effect.fail(
+                    new WhatsAppConnectionActivationError(),
+                  );
+                }
+                const locator = yield* encryptConnectionValue(
+                  setup,
+                  connectionId,
+                  connectionKey,
+                  "provider-session-locator",
+                  new TextEncoder().encode(providerSession.session),
+                );
+                const authority = yield* encryptConnectionValue(
+                  setup,
+                  connectionId,
+                  connectionKey,
+                  "provider-session-authority",
+                  new TextEncoder().encode(providerSession.authority),
+                );
+                const identityKey = yield* encryptConnectionValue(
+                  setup,
+                  connectionId,
+                  connectionKey,
+                  "webhook-identity-key",
+                  identityKeyPlaintext,
+                );
+                const protectedMessageSearchKey = yield* encryptConnectionValue(
+                  setup,
+                  connectionId,
+                  connectionKey,
+                  "message-search-key",
+                  messageSearchKeyPlaintext,
+                );
+                const persistence = yield* WhatsAppConnectionPersistence;
+                const persisted = yield* persistence.activate({
+                  accountKeyVersion: connectionKey.accountKeyVersion,
+                  authorityCiphertext: decodeBase64(authority.ciphertext),
+                  authorityCiphertextVersion: authority.version,
+                  authorityKeyVersion: authority.keyVersion,
+                  authorityNonce: decodeBase64(authority.nonce),
+                  connectionId,
+                  connectionKeyCiphertext: decodeBase64(
+                    connectionKey.ciphertext,
+                  ),
+                  connectionKeyNonce: decodeBase64(connectionKey.nonce),
+                  connectionKeyVersion: connectionKey.keyVersion,
+                  connectedAt,
+                  displayNameCiphertext: decodeBase64(
+                    displayNameCiphertext.ciphertext,
+                  ),
+                  displayNameCiphertextVersion: displayNameCiphertext.version,
+                  displayNameKeyVersion: displayNameCiphertext.keyVersion,
+                  displayNameNonce: decodeBase64(displayNameCiphertext.nonce),
+                  locatorCiphertext: decodeBase64(locator.ciphertext),
+                  locatorCiphertextVersion: locator.version,
+                  locatorKeyVersion: locator.keyVersion,
+                  locatorNonce: decodeBase64(locator.nonce),
+                  messageSearchKeyCiphertext: decodeBase64(
+                    protectedMessageSearchKey.ciphertext,
+                  ),
+                  messageSearchKeyCiphertextVersion:
+                    protectedMessageSearchKey.version,
+                  messageSearchKeyVersion: protectedMessageSearchKey.keyVersion,
+                  messageSearchKeyNonce: decodeBase64(
+                    protectedMessageSearchKey.nonce,
+                  ),
+                  numberSuffix,
+                  personalAccountId: setup.personalAccountId,
+                  publicId,
+                  setupId: setup.setupId,
+                  webhookIngressId: setup.webhookIngressId,
+                  webhookSecretCiphertext: decodeBase64(identityKey.ciphertext),
+                  webhookSecretCiphertextVersion: identityKey.version,
+                  webhookSecretKeyVersion: identityKey.keyVersion,
+                  webhookSecretNonce: decodeBase64(identityKey.nonce),
+                });
+                return yield* revealConnection(persisted);
+              }),
+            );
           }),
-        );
-      }),
+        ),
     );
   });
 

@@ -42,6 +42,10 @@ import {
   groupNamePrefixIndexes,
   importGroupDirectoryIndexKey,
 } from "./group-privacy";
+import {
+  importMessageSearchIndexKey,
+  messageSearchIndexesForText,
+} from "./message-search-privacy";
 import { hasExactKeys } from "./record";
 import {
   SafeTelemetry,
@@ -451,6 +455,7 @@ const processItems = (
   normalizer: WebhookNormalization,
   items: ReadonlyArray<NormalizedWebhookItem>,
   indexKey: CryptoKey,
+  messageSearchKey: CryptoKey,
 ) =>
   Effect.gen(function* () {
     const persistence = yield* WebhookEventPersistence;
@@ -599,6 +604,11 @@ const processItems = (
         continue;
       }
       if (item.kind === "message_edit") {
+        const messageSearchTokens = yield* messageSearchIndexesForText(
+          messageSearchKey,
+          message.whatsapp_connection_id,
+          item.content.text ?? "",
+        );
         const plaintext = new TextEncoder().encode(
           JSON.stringify({
             text: item.content.text,
@@ -640,6 +650,7 @@ const processItems = (
             itemIdentity: item.itemIdentity,
             itemIndex: item.itemIndex,
             messageIdentity: item.messageIdentity,
+            messageSearch: { indexVersion: 1, tokens: messageSearchTokens },
             personalAccountId: message.personal_account_id,
             receivedAt: message.received_at,
             whatsappConnectionId: message.whatsapp_connection_id,
@@ -720,6 +731,11 @@ const processItems = (
         continue;
       }
       if (item.kind === "message_upsert") {
+        const messageSearchTokens = yield* messageSearchIndexesForText(
+          messageSearchKey,
+          message.whatsapp_connection_id,
+          item.content.text ?? "",
+        );
         const recipientKind = item.recipientKind ?? "direct";
         const recipientLocator =
           recipientKind === "group"
@@ -826,6 +842,7 @@ const processItems = (
             messageId: crypto.randomUUID(),
             messageIdentity: item.messageIdentity,
             messagePublicId,
+            messageSearch: { indexVersion: 1, tokens: messageSearchTokens },
             media:
               mediaId === null ||
               mediaPublicId === null ||
@@ -938,12 +955,23 @@ const processItems = (
                 fatal: true,
                 ignoreBOM: false,
               }).decode(plaintext);
+              const messageSearchTokens = await Effect.runPromise(
+                messageSearchIndexesForText(
+                  messageSearchKey,
+                  message.whatsapp_connection_id,
+                  text,
+                ),
+              );
               const content = new TextEncoder().encode(
                 JSON.stringify({ mediaSource: null, text }),
               );
               try {
                 return {
                   ...storedIdentifiers,
+                  messageSearch: {
+                    indexVersion: 1 as const,
+                    tokens: messageSearchTokens,
+                  },
                   content: await Effect.runPromise(
                     encryption.encrypt({
                       accountKey: material.accountKey,
@@ -1076,12 +1104,33 @@ const processMessage = (message: WebhookEventQueueMessage) =>
               payload: payloadBytes,
               receivedAt: message.received_at,
             });
-            const counts = yield* processItems(
-              message,
-              material,
-              normalizer,
-              delivery.items,
-              indexKey,
+            const messageSearchKeyBytes = yield* encryption.decrypt({
+              accountKey: material.accountKey,
+              ciphertext: material.messageSearchKey,
+              connectionKey: material.connectionKey,
+              context: {
+                accountId: message.personal_account_id,
+                connectionId: message.whatsapp_connection_id,
+                entity: "whatsapp-connection",
+                fieldOrObjectPurpose: "message-search-key",
+                recordId: message.whatsapp_connection_id,
+              },
+            });
+            const counts = yield* withZeroedBytes(
+              messageSearchKeyBytes,
+              (searchKeyBytes) =>
+                Effect.gen(function* () {
+                  const messageSearchKey =
+                    yield* importMessageSearchIndexKey(searchKeyBytes);
+                  return yield* processItems(
+                    message,
+                    material,
+                    normalizer,
+                    delivery.items,
+                    indexKey,
+                    messageSearchKey,
+                  );
+                }),
             );
             const clock = yield* WebhookEventClock;
             yield* persistence.complete({

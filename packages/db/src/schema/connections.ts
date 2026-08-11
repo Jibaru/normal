@@ -268,6 +268,12 @@ export const whatsappConnectionSecretsInApp = publicSchema.table(
     credentialCiphertextVersion: smallint("credential_ciphertext_version"),
     credentialKeyVersion: integer("credential_key_version"),
     credentialNonce: bytea("credential_nonce"),
+    messageSearchKeyCiphertextVersion: smallint(
+      "message_search_key_ciphertext_version",
+    ),
+    messageSearchKeyVersion: integer("message_search_key_version"),
+    messageSearchKeyNonce: bytea("message_search_key_nonce"),
+    messageSearchKeyCiphertext: bytea("message_search_key_ciphertext"),
   },
   (table) => [
     foreignKey({
@@ -304,6 +310,10 @@ export const whatsappConnectionSecretsInApp = publicSchema.table(
     check(
       "whatsapp_connection_secret_envelope_complete",
       sql`((credential_ciphertext_version IS NULL) AND (credential_key_version IS NULL) AND (credential_nonce IS NULL)) OR ((credential_ciphertext_version IS NOT NULL) AND (credential_key_version IS NOT NULL) AND (credential_nonce IS NOT NULL) AND (octet_length(credential_ciphertext) > 16)))) NOT VALID`,
+    ),
+    check(
+      "whatsapp_connection_secrets_message_search_key_complete",
+      sql`((message_search_key_ciphertext_version IS NULL) AND (message_search_key_version IS NULL) AND (message_search_key_nonce IS NULL) AND (message_search_key_ciphertext IS NULL)) OR ((message_search_key_ciphertext_version = 1) AND (message_search_key_version > 0) AND (octet_length(message_search_key_nonce) = 12) AND (octet_length(message_search_key_ciphertext) > 16))`,
     ),
   ],
 );

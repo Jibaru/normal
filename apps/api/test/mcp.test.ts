@@ -5,6 +5,7 @@ import type {
   McpToolChatPage,
   McpToolGroupPage,
   McpToolMessagePage,
+  McpToolMessageSearchPage,
 } from "@whatsapp-mcp/db/mcp-tool";
 import { Effect, Layer } from "effect";
 import { describe, expect, test } from "vitest";
@@ -30,6 +31,9 @@ const authorization = {
   clientId: "approved-client",
   oauthSubject: "A".repeat(43),
 } as const;
+const defaultCursorSigningKey = await Effect.runPromise(
+  importCursorSigningKey(new Uint8Array(32).fill(17)),
+);
 
 const jsonRpcRequest = (
   method: string,
@@ -131,6 +135,8 @@ const makeHarness = (
     >;
     readonly groupPage?: McpToolGroupPage | null;
     readonly messagePage?: McpToolMessagePage;
+    readonly messageSearchPage?: McpToolMessageSearchPage;
+    readonly messageSearchHasMore?: boolean;
     readonly cursorKey?: CryptoKey;
     readonly sendResult?: SendTextMessageResult;
     readonly sendStatusNotFound?: boolean;
@@ -149,6 +155,7 @@ const makeHarness = (
     readonly searchIndex: string | null;
     readonly searchKind: "name" | "phone" | null;
   }> = [];
+  const messageSearchQueries: Array<ReadonlyArray<string> | null> = [];
   const layer = Layer.mergeAll(
     Layer.succeed(McpToolClock, {
       now: Effect.succeed(new Date("2026-07-31T12:00:00.000Z")),
@@ -248,7 +255,8 @@ const makeHarness = (
             : input.toolName === "get_send_status"
               ? "messages:send"
               : input.toolName === "list_chats" ||
-                  input.toolName === "read_messages"
+                  input.toolName === "read_messages" ||
+                  input.toolName === "search_messages"
                 ? "messages:read"
                 : "directory:read";
         if (
@@ -271,7 +279,7 @@ const makeHarness = (
           ? Effect.fail(new McpToolPersistenceError())
           : Effect.void;
       },
-      completeMessageRead: (input) => {
+      completeMessageRecordRead: (input) => {
         observations.push(`complete-message-read:${input.resultCount}`);
         return Effect.succeed({ outcome: "success" as const });
       },
@@ -520,6 +528,75 @@ const makeHarness = (
           },
         });
       },
+      searchMessages: (input) => {
+        messageSearchQueries.push(input.searchTokens);
+        const page = overrides.messageSearchPage ?? {
+          accountKey: {
+            ciphertext: "AQI=",
+            keyVersion: 1,
+            kmsKeyId: "kms-content-root",
+            personalAccountId: "10000000-0000-4000-8000-000000000030",
+            version: 1 as const,
+          },
+          connectionKey: {
+            accountKeyVersion: 1,
+            ciphertext: "AQI=",
+            connectionId: "20000000-0000-4000-8000-000000000030",
+            keyVersion: 1,
+            nonce: "AQIDBAUGBwgJCgsM",
+            personalAccountId: "10000000-0000-4000-8000-000000000030",
+            version: 1 as const,
+          },
+          messageSearchKey: {
+            ciphertext: btoa(
+              String.fromCharCode(...new Uint8Array(32).fill(7)),
+            ),
+            keyVersion: 1,
+            nonce: "AQIDBAUGBwgJCgsM",
+            version: 1 as const,
+          },
+          messages:
+            input.searchTokens === null
+              ? []
+              : [
+                  {
+                    publicId: "msg_222222222222222222222",
+                    messageIdentity: `wi1_${"B".repeat(43)}`,
+                    conversationPublicId: "cvs_123456789012345678901",
+                    sentAt: "2026-07-31T11:59:00.000Z",
+                    direction: "inbound" as const,
+                    contentType: "text" as const,
+                    content: {
+                      ciphertext: btoa(
+                        JSON.stringify({
+                          text: "INVOICE, flight confirmation",
+                        }),
+                      ),
+                      keyVersion: 1,
+                      nonce: "AQIDBAUGBwgJCgsM",
+                      version: 1 as const,
+                    },
+                    editedAt: null,
+                  },
+                ],
+          hasMore: overrides.messageSearchHasMore ?? false,
+          sizeLimited: false,
+          coverage: {
+            historyStartsAt: "2026-07-01T00:00:00.000Z",
+            historyStartReason: "retention_policy" as const,
+            searchableHistoryStartsAt: "2026-07-10T00:00:00.000Z",
+            backfillComplete: false,
+            gaps: [
+              {
+                startsAt: "2026-07-12T03:00:00.000Z",
+                endsAt: "2026-07-12T03:08:00.000Z",
+                cause: "connection_unavailable" as const,
+              },
+            ],
+          },
+        };
+        return Effect.succeed(page);
+      },
       listGroups: (input) => {
         observations.push("list-groups");
         if (input.searchIndex !== null) {
@@ -671,7 +748,9 @@ const makeHarness = (
         const requiredScope =
           input.toolName === "list_connections"
             ? "connections:read"
-            : "directory:read";
+            : input.toolName === "search_messages"
+              ? "messages:read"
+              : "directory:read";
         return Effect.succeed(
           overrides.scopes !== undefined &&
             !overrides.scopes.includes(requiredScope)
@@ -681,7 +760,7 @@ const makeHarness = (
       },
     }),
     Layer.succeed(McpCursorSigning, {
-      key: overrides.cursorKey ?? ({} as CryptoKey),
+      key: overrides.cursorKey ?? defaultCursorSigningKey,
     }),
     Layer.succeed(SafeTelemetry, {
       emit: (event) =>
@@ -702,6 +781,7 @@ const makeHarness = (
     }),
     observations,
     contactQueries,
+    messageSearchQueries,
     telemetry,
   };
 };
@@ -749,6 +829,14 @@ describe("stateless MCP list_connections boundary", () => {
             conversation_id: "cvs_123456789012345678901",
           },
           name: "read_messages",
+          scope: "messages:read",
+        },
+        {
+          arguments: {
+            connection_id: "con_123456789012345678901",
+            query: "invoice",
+          },
+          name: "search_messages",
           scope: "messages:read",
         },
         {
@@ -815,7 +903,7 @@ describe("stateless MCP list_connections boundary", () => {
             "authorization_denied",
           );
         } else {
-          expect(result.result.structuredContent?.error_code).toBe(
+          expect(result.result.structuredContent?.error_code, tool.name).toBe(
             "authorization_denied",
           );
         }
@@ -864,7 +952,13 @@ describe("stateless MCP list_connections boundary", () => {
       authorization,
     );
     expect(await omittedResponse.json()).toMatchObject({
-      result: { tools: [{ name: "list_chats" }, { name: "read_messages" }] },
+      result: {
+        tools: [
+          { name: "list_chats" },
+          { name: "read_messages" },
+          { name: "search_messages" },
+        ],
+      },
     });
   });
 
@@ -896,7 +990,13 @@ describe("stateless MCP list_connections boundary", () => {
 
     expect(response.status).toBe(200);
     expect(await responseJson(response)).toMatchObject({
-      result: { tools: [{ name: "list_chats" }, { name: "read_messages" }] },
+      result: {
+        tools: [
+          { name: "list_chats" },
+          { name: "read_messages" },
+          { name: "search_messages" },
+        ],
+      },
     });
   });
 
@@ -941,6 +1041,7 @@ describe("stateless MCP list_connections boundary", () => {
             tools: [
               expect.objectContaining({ name: "list_chats" }),
               expect.objectContaining({ name: "read_messages" }),
+              expect.objectContaining({ name: "search_messages" }),
             ],
           }),
         }),
@@ -1706,6 +1807,76 @@ describe("list_chats MCP boundary", () => {
   });
 });
 
+describe("search_messages MCP boundary", () => {
+  test("normalizes exact terms, verifies plaintext, exposes partial coverage, and binds cursors without query material", async () => {
+    const cursorKey = await Effect.runPromise(
+      importCursorSigningKey(new Uint8Array(32).fill(19)),
+    );
+    const harness = makeHarness({
+      cursorKey,
+      messageSearchHasMore: true,
+      scopes: ["messages:read"],
+    });
+    const response = await harness.handler(
+      jsonRpcRequest("tools/call", {
+        arguments: {
+          connection_id: "con_123456789012345678901",
+          query: "confirmation INVOICE!",
+          limit: 1,
+        },
+        name: "search_messages",
+      }),
+      {},
+      executionContext,
+      authorization,
+    );
+    const body = (await responseJson(response)) as {
+      result: { structuredContent: Record<string, unknown> };
+    };
+    expect(body.result.structuredContent).toMatchObject({
+      messages: [
+        {
+          message_id: "msg_222222222222222222222",
+          text: "INVOICE, flight confirmation",
+        },
+      ],
+      has_more: true,
+      coverage: {
+        backfill_complete: false,
+        partial: true,
+        partial_reasons: ["index_backfill", "ingestion_gap"],
+      },
+    });
+    expect(harness.observations.indexOf("begin")).toBeLessThan(
+      harness.observations.indexOf("decrypt-many"),
+    );
+    expect(harness.messageSearchQueries[0]).toBeNull();
+    expect(harness.messageSearchQueries[1]).toHaveLength(2);
+    expect(JSON.stringify(harness.messageSearchQueries)).not.toContain(
+      "invoice",
+    );
+
+    const cursor = body.result.structuredContent.next_cursor as string;
+    const rejected = (await responseJson(
+      await harness.handler(
+        jsonRpcRequest("tools/call", {
+          arguments: {
+            connection_id: "con_123456789012345678901",
+            query: "different",
+            limit: 1,
+            cursor,
+          },
+          name: "search_messages",
+        }),
+        {},
+        executionContext,
+        authorization,
+      ),
+    )) as { result: { structuredContent: { error_code: string } } };
+    expect(rejected.result.structuredContent.error_code).toBe("invalid_cursor");
+  });
+});
+
 describe("read_messages MCP boundary", () => {
   test("returns Deleted Message Tombstones without content while retaining the record", async () => {
     const harness = makeHarness({ scopes: ["messages:read"], tombstone: true });
@@ -1896,6 +2067,7 @@ describe("read_messages MCP boundary", () => {
     expect(body.result.tools.map((tool) => tool.name)).toEqual([
       "list_chats",
       "read_messages",
+      "search_messages",
     ]);
   });
 

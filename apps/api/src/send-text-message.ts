@@ -21,6 +21,10 @@ import type {
   VersionedCiphertext,
 } from "./encryption/envelope";
 import type { SendTextMessageResult, SendTextMessageService } from "./mcp";
+import {
+  importMessageSearchIndexKey,
+  messageSearchIndexesForText,
+} from "./message-search-privacy";
 
 const encoder = new TextEncoder();
 const envelope = (value: {
@@ -320,6 +324,34 @@ export const makeAtomicSendTextMessageService = (
                         messageId: crypto.randomUUID(),
                         messagePublicId: makeMessageId(),
                       };
+                      const messageSearchKeyBytes = await Effect.runPromise(
+                        options.encryption.decrypt({
+                          ...opened,
+                          ciphertext: envelope(provider.messageSearchKey),
+                          context: {
+                            accountId: provider.accountKey.personalAccountId,
+                            connectionId: provider.connectionKey.connectionId,
+                            entity: "whatsapp-connection",
+                            fieldOrObjectPurpose: "message-search-key",
+                            recordId: provider.connectionKey.connectionId,
+                          },
+                        }),
+                      );
+                      let messageSearchTokens: ReadonlyArray<string>;
+                      try {
+                        const messageSearchKey = await Effect.runPromise(
+                          importMessageSearchIndexKey(messageSearchKeyBytes),
+                        );
+                        messageSearchTokens = await Effect.runPromise(
+                          messageSearchIndexesForText(
+                            messageSearchKey,
+                            provider.connectionKey.connectionId,
+                            input.text,
+                          ),
+                        );
+                      } finally {
+                        messageSearchKeyBytes.fill(0);
+                      }
                       const plaintext = encoder.encode(
                         JSON.stringify({ mediaSource: null, text: input.text }),
                       );
@@ -350,6 +382,10 @@ export const makeAtomicSendTextMessageService = (
                           nonce: decodeBase64(protectedContent.nonce),
                         },
                         contentType: "text" as const,
+                        messageSearch: {
+                          indexVersion: 1 as const,
+                          tokens: messageSearchTokens,
+                        },
                         ...identifiers,
                       };
                     })(),

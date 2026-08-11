@@ -54,6 +54,7 @@ export const safeTelemetryFieldsByEvent = {
   "mcp_authorization.management.completed": [...common, "operation", "outcome"],
   "message_retention.policy_update.completed": [...common, "outcome"],
   "message_retention.purge.completed": [...common, "purgedCount"],
+  "message_search.backfill.completed": [...common, "outcome"],
   "oauth.authorization.decision.completed": [
     ...common,
     "clientClass",

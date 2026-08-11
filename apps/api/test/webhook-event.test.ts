@@ -43,6 +43,7 @@ const storedCiphertext = encoder.encode(
   }),
 );
 const identityKey = new Uint8Array(32).fill(33);
+const messageSearchKey = new Uint8Array(32).fill(41);
 const incidentReference = "50000000-0000-4000-8000-000000000033";
 
 const material: WebhookEventProcessingMaterial = {
@@ -66,6 +67,12 @@ const material: WebhookEventProcessingMaterial = {
     ciphertext: "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=",
     keyVersion: 1,
     nonce: "BgYGBgYGBgYGBgYG",
+    version: 1,
+  },
+  messageSearchKey: {
+    ciphertext: "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
+    keyVersion: 1,
+    nonce: "CAgICAgICAgICAgI",
     version: 1,
   },
 };
@@ -208,6 +215,10 @@ const makeHarness = (options: HarnessOptions = {}) => {
           expect(input.media?.source.ciphertext).not.toContain(
             "provider-media-key",
           );
+          expect(input.messageSearch.tokens).toEqual([
+            expect.stringMatching(/^msi1_[A-Za-z0-9_-]{43}$/u),
+          ]);
+          expect(JSON.stringify(input.messageSearch)).not.toContain("hello");
           return "applied" as const;
         }),
       projectStoredMessageEdit: (input, compareVersions) =>
@@ -215,6 +226,12 @@ const makeHarness = (options: HarnessOptions = {}) => {
           calls.push("project-message-edit");
           expect(input.editedAt).toBe("2026-07-31T12:09:30.000Z");
           expect(input.content.ciphertext).not.toContain("edited text");
+          expect(input.messageSearch.tokens).toHaveLength(2);
+          expect(input.messageSearch.tokens).toEqual(
+            expect.arrayContaining([
+              expect.stringMatching(/^msi1_[A-Za-z0-9_-]{43}$/u),
+            ]),
+          );
           expect(
             await compareVersions("wv1.test.signature", "wv1.test.signature"),
           ).toBe("equal");
@@ -287,7 +304,9 @@ const makeHarness = (options: HarnessOptions = {}) => {
           ? Effect.fail(new EncryptionError({ operation: "decrypt" }))
           : context.fieldOrObjectPurpose === "webhook-identity-key"
             ? Effect.succeed(identityKey.slice())
-            : Effect.succeed(new Uint8Array(message.payload_bytes)),
+            : context.fieldOrObjectPurpose === "message-search-key"
+              ? Effect.succeed(messageSearchKey.slice())
+              : Effect.succeed(new Uint8Array(message.payload_bytes)),
       decryptMany: () => Effect.die("not used"),
       encrypt: ({ plaintext }) =>
         Effect.succeed({
