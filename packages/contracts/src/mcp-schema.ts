@@ -255,3 +255,61 @@ export const ReadMessagesOutputContract = makePublicObjectContract({
   ),
 });
 export type ReadMessagesOutput = typeof ReadMessagesOutputContract.schema.Type;
+
+const IngestionGap = Schema.Struct({
+  starts_at: UtcTimestamp,
+  ends_at: Schema.NullOr(UtcTimestamp),
+  cause: Schema.Literal(
+    "connection_unavailable",
+    "webhook_configuration",
+    "ingress_failure",
+    "processing_failure",
+    "restore_loss",
+  ),
+});
+
+export const SearchMessagesOutputContract = makePublicObjectContract({
+  messages: Schema.Array(
+    Schema.Struct({
+      message_id: MessageId,
+      conversation_id: ConversationId,
+      sent_at: UtcTimestamp,
+      direction: Schema.Literal("inbound", "outbound"),
+      content_type: Schema.Literal(
+        "text",
+        "image",
+        "audio",
+        "video",
+        "document",
+        "sticker",
+        "unknown",
+      ),
+      text: Schema.NullOr(Schema.String),
+      text_truncated: Schema.Boolean,
+      text_total_utf8_bytes: Schema.NullOr(
+        Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+      ),
+      edited_at: Schema.NullOr(UtcTimestamp),
+    }),
+  ).pipe(Schema.maxItems(20)),
+  size_limited: Schema.Boolean,
+  has_more: Schema.Boolean,
+  next_cursor: Schema.NullOr(Schema.String.pipe(Schema.minLength(1))),
+  coverage: Schema.Struct({
+    history_starts_at: UtcTimestamp,
+    history_start_reason: Schema.Literal(
+      "connection_started",
+      "retention_policy",
+    ),
+    searchable_history_starts_at: Schema.NullOr(UtcTimestamp),
+    index_version: Schema.Literal("v1"),
+    backfill_complete: Schema.Boolean,
+    partial: Schema.Boolean,
+    partial_reasons: Schema.Array(
+      Schema.Literal("index_backfill", "ingestion_gap"),
+    ).pipe(Schema.maxItems(2)),
+    gaps: Schema.Array(IngestionGap),
+  }),
+});
+export type SearchMessagesOutput =
+  typeof SearchMessagesOutputContract.schema.Type;

@@ -70,7 +70,8 @@ export type McpToolName =
   | "send_text_message"
   | "get_send_status"
   | "list_chats"
-  | "read_messages";
+  | "read_messages"
+  | "search_messages";
 
 export interface McpStoredMediaReadMaterial {
   readonly accountKey: McpToolMessagePage["accountKey"];
@@ -142,6 +143,39 @@ export interface McpToolMessagePage {
       | "processing_failure"
       | "restore_loss";
   }>;
+}
+
+export interface McpToolMessageSearchPage {
+  readonly accountKey: AccountKeyEnvelope;
+  readonly connectionKey: ConnectionKeyEnvelope;
+  readonly messageSearchKey: McpToolDirectoryCiphertext;
+  readonly messages: ReadonlyArray<
+    Omit<
+      Pick<
+        McpToolMessageRecord,
+        | "content"
+        | "contentType"
+        | "direction"
+        | "editedAt"
+        | "messageIdentity"
+        | "publicId"
+        | "sentAt"
+      >,
+      "content"
+    > & {
+      readonly content: McpToolDirectoryCiphertext;
+      readonly conversationPublicId: string;
+    }
+  >;
+  readonly hasMore: boolean;
+  readonly sizeLimited: boolean;
+  readonly coverage: {
+    readonly historyStartsAt: string;
+    readonly historyStartReason: "connection_started" | "retention_policy";
+    readonly searchableHistoryStartsAt: string | null;
+    readonly backfillComplete: boolean;
+    readonly gaps: McpToolMessagePage["gaps"];
+  };
 }
 
 export interface McpToolChatRecord {
@@ -362,7 +396,21 @@ export interface McpToolRepository {
     | { readonly outcome: "record_quota_exhausted"; readonly resetsAt: Date }
     | null
   >;
-  readonly completeMessageRead: (
+  readonly searchMessages: (
+    input: McpAccessAuthorization & {
+      readonly connectionPublicId: string;
+      readonly conversationPublicId: string | null;
+      readonly cursorSentAt: string | null;
+      readonly cursorPublicId: string | null;
+      readonly direction: "all" | "inbound" | "outbound";
+      readonly after: string | null;
+      readonly before: string | null;
+      readonly limit: number;
+      readonly observedAt: Date;
+      readonly searchTokens: ReadonlyArray<string> | null;
+    },
+  ) => Promise<McpToolMessageSearchPage | null>;
+  readonly completeMessageRecordRead: (
     input: McpAccessAuthorization & {
       readonly auditLogId: string;
       readonly authorizationContextEstablished?: true;
@@ -404,7 +452,10 @@ export interface McpToolRepository {
       readonly errorCode: string;
       readonly observedAt: Date;
       readonly sendPublicId?: string;
-      readonly toolName: "list_connections" | "list_contacts";
+      readonly toolName:
+        | "list_connections"
+        | "list_contacts"
+        | "search_messages";
     },
   ) => Promise<RejectToolCallResult>;
 }
@@ -865,7 +916,7 @@ const requiredScope = (toolName: McpToolName): McpAuthorizationScope =>
       ? "messages:send"
       : toolName === "list_chats"
         ? "messages:read"
-        : toolName === "read_messages"
+        : toolName === "read_messages" || toolName === "search_messages"
           ? "messages:read"
           : "directory:read";
 
@@ -1987,7 +2038,293 @@ export const makeMcpToolRepository = (
         };
       }),
     ),
-  completeMessageRead: (input) =>
+  searchMessages: (input) =>
+    provider.withConnection((connection) =>
+      withTransaction(connection, async () => {
+        const db = makeDatabase(connection);
+        if (
+          !/^con_[A-Za-z0-9_-]{21}$/u.test(input.connectionPublicId) ||
+          (input.conversationPublicId !== null &&
+            !/^cvs_[A-Za-z0-9_-]{21}$/u.test(input.conversationPublicId)) ||
+          !Number.isSafeInteger(input.limit) ||
+          input.limit < 1 ||
+          input.limit > 20 ||
+          (input.searchTokens !== null &&
+            (input.searchTokens.length < 1 ||
+              input.searchTokens.length > 8 ||
+              new Set(input.searchTokens).size !== input.searchTokens.length ||
+              input.searchTokens.some(
+                (token) => !/^msi1_[A-Za-z0-9_-]{43}$/u.test(token),
+              ))) ||
+          (input.cursorSentAt === null) !== (input.cursorPublicId === null) ||
+          (input.cursorPublicId !== null &&
+            !/^msg_[A-Za-z0-9_-]{21}$/u.test(input.cursorPublicId)) ||
+          (input.direction !== "all" &&
+            input.direction !== "inbound" &&
+            input.direction !== "outbound")
+        )
+          throw new Error("invalid MCP message search");
+        if ((await enterAuthorizationContext(connection, input, true)) === null)
+          return null;
+        const materialResult = await db.execute<Record<string, unknown>>(sql`
+          SELECT connections.personal_account_id, connections.id AS connection_id,
+            connections.created_at AS connection_created_at, connections.message_retention_days,
+            account_keys.key_version AS account_key_version, account_keys.kms_key_id AS account_kms_key_id,
+            account_keys.ciphertext AS account_key_ciphertext,
+            connection_keys.account_key_version AS connection_key_account_version,
+            connection_keys.key_version AS connection_key_version, connection_keys.nonce AS connection_key_nonce,
+            connection_keys.ciphertext AS connection_key_ciphertext,
+            secrets.message_search_key_ciphertext_version, secrets.message_search_key_version,
+            secrets.message_search_key_nonce, secrets.message_search_key_ciphertext,
+            coverage.state AS coverage_state, coverage.searchable_from
+          FROM public.mcp_authorizations authorizations
+          JOIN public.mcp_authorization_connections selected
+            ON selected.personal_account_id=authorizations.personal_account_id
+            AND selected.mcp_authorization_id=authorizations.id
+          JOIN public.whatsapp_connections connections
+            ON connections.personal_account_id=selected.personal_account_id
+            AND connections.id=selected.whatsapp_connection_id
+          JOIN public.personal_accounts accounts ON accounts.id=connections.personal_account_id AND accounts.state='active'
+          JOIN public.personal_account_key_envelopes account_keys
+            ON account_keys.personal_account_id=connections.personal_account_id AND account_keys.unavailable_at IS NULL
+          JOIN public.whatsapp_connection_key_envelopes connection_keys
+            ON connection_keys.personal_account_id=connections.personal_account_id
+            AND connection_keys.whatsapp_connection_id=connections.id
+            AND connection_keys.account_key_version=account_keys.key_version AND connection_keys.unavailable_at IS NULL
+          JOIN public.whatsapp_connection_secrets secrets
+            ON secrets.personal_account_id=connections.personal_account_id
+            AND secrets.whatsapp_connection_id=connections.id
+            AND secrets.message_search_key_version=connection_keys.key_version
+          JOIN public.message_search_backfill_coverage coverage
+            ON coverage.personal_account_id=connections.personal_account_id
+            AND coverage.whatsapp_connection_id=connections.id AND coverage.index_version=1
+          WHERE authorizations.id=${input.authorizationId}
+            AND authorizations.oauth_subject=${input.oauthSubject}
+            AND authorizations.state='active' AND authorizations.revoked_at IS NULL
+            AND authorizations.absolute_expires_at>${input.observedAt}
+            AND (${input.clientId ?? null}::text IS NULL OR authorizations.client_id=${input.clientId ?? null})
+            AND 'messages:read'=ANY(authorizations.scopes)
+            AND connections.public_id=${input.connectionPublicId} AND connections.state<>'deleting'
+            AND (${input.conversationPublicId}::text IS NULL OR EXISTS (
+              SELECT 1 FROM public.whatsapp_conversations conversations
+              WHERE conversations.personal_account_id=connections.personal_account_id
+                AND conversations.whatsapp_connection_id=connections.id
+                AND conversations.public_id=${input.conversationPublicId}
+            ))
+        `);
+        const row = materialResult[0];
+        const accountId =
+          typeof row?.personal_account_id === "string"
+            ? row.personal_account_id
+            : null;
+        const connectionId =
+          typeof row?.connection_id === "string" ? row.connection_id : null;
+        const connectionStarted = timestamp(row?.connection_created_at);
+        const accountCiphertext = bytes(row?.account_key_ciphertext);
+        const connectionCiphertext = bytes(row?.connection_key_ciphertext);
+        const connectionNonce = bytes(row?.connection_key_nonce);
+        const searchCiphertext = bytes(row?.message_search_key_ciphertext);
+        const searchNonce = bytes(row?.message_search_key_nonce);
+        if (
+          accountId === null ||
+          connectionId === null ||
+          connectionStarted === null ||
+          typeof row?.account_kms_key_id !== "string" ||
+          accountCiphertext === null ||
+          connectionCiphertext === null ||
+          connectionNonce?.byteLength !== 12 ||
+          searchCiphertext === null ||
+          searchNonce?.byteLength !== 12
+        )
+          return null;
+        const retentionDays =
+          row?.message_retention_days === null
+            ? null
+            : positiveInteger(row?.message_retention_days);
+        const retentionStart =
+          retentionDays === null
+            ? connectionStarted
+            : new Date(input.observedAt.valueOf() - retentionDays * 86_400_000);
+        const historyStart =
+          retentionStart > connectionStarted
+            ? retentionStart
+            : connectionStarted;
+        const storedSearchableFrom =
+          row.searchable_from === null ? null : timestamp(row.searchable_from);
+        const searchableFrom =
+          storedSearchableFrom === null
+            ? null
+            : new Date(
+                Math.max(
+                  storedSearchableFrom.valueOf(),
+                  historyStart.valueOf(),
+                ),
+              ).toISOString();
+        const searchTokenArray =
+          input.searchTokens === null
+            ? sql`NULL::public.message_search_token[]`
+            : sql`ARRAY[${sql.join(
+                input.searchTokens.map((token) => sql`${token}`),
+                sql`, `,
+              )}]::public.message_search_token[]`;
+        const rows =
+          input.searchTokens === null
+            ? []
+            : await db.execute<Record<string, unknown>>(sql`
+          SELECT messages.public_id, messages.message_identity, messages.sent_at, messages.direction,
+            messages.content_type, messages.content_key_version, messages.content_nonce,
+            messages.content_ciphertext, messages.edited_at, conversations.public_id AS conversation_public_id
+          FROM public.stored_messages messages
+          JOIN public.whatsapp_conversations conversations
+            ON conversations.personal_account_id=messages.personal_account_id
+            AND conversations.whatsapp_connection_id=messages.whatsapp_connection_id
+            AND conversations.id=messages.conversation_id
+          WHERE messages.personal_account_id=${accountId} AND messages.whatsapp_connection_id=${connectionId}
+            AND NOT public.whatsapp_recipient_excluded(
+              conversations.personal_account_id, conversations.whatsapp_connection_id,
+              CASE WHEN conversations.kind = 'group' THEN 'group' ELSE 'contact' END,
+              conversations.recipient_locator
+            )
+            AND messages.message_search_index_version=1
+            AND messages.message_search_tokens @> ${searchTokenArray}
+            AND messages.deleted_at IS NULL AND messages.content_expired_at IS NULL
+            AND messages.sent_at >= ${historyStart}
+            AND (${searchableFrom}::timestamptz IS NULL OR messages.sent_at >= ${searchableFrom})
+            AND (${input.conversationPublicId}::text IS NULL OR conversations.public_id=${input.conversationPublicId})
+            AND (${input.direction}='all' OR messages.direction=${input.direction})
+            AND (${input.after}::timestamptz IS NULL OR messages.sent_at >= ${input.after})
+            AND (${input.before}::timestamptz IS NULL OR messages.sent_at < ${input.before})
+            AND (${input.cursorSentAt}::timestamptz IS NULL OR messages.sent_at < ${input.cursorSentAt}
+              OR (messages.sent_at=${input.cursorSentAt} AND messages.public_id < ${input.cursorPublicId}))
+          ORDER BY messages.sent_at DESC, messages.public_id DESC LIMIT ${input.limit + 1}
+        `);
+        const candidates = rows.slice(0, input.limit);
+        const returned: Array<Record<string, unknown>> = [];
+        let encryptedBytes = 0;
+        for (const candidate of candidates) {
+          const ciphertext = bytes(candidate.content_ciphertext);
+          if (ciphertext === null)
+            throw new Error("invalid message search candidate");
+          if (
+            returned.length > 0 &&
+            encryptedBytes + ciphertext.byteLength > 24_000
+          )
+            break;
+          returned.push(candidate);
+          encryptedBytes += ciphertext.byteLength;
+        }
+        const searchedUntil = input.before ?? input.observedAt.toISOString();
+        const lower =
+          input.after === null
+            ? historyStart.toISOString()
+            : new Date(
+                Math.max(
+                  historyStart.valueOf(),
+                  new Date(input.after).valueOf(),
+                ),
+              ).toISOString();
+        const gapRows = await db
+          .select({
+            starts_at: ingestionGapsInApp.startsAt,
+            ends_at: ingestionGapsInApp.endsAt,
+            cause: ingestionGapsInApp.cause,
+          })
+          .from(ingestionGapsInApp)
+          .where(
+            and(
+              eq(ingestionGapsInApp.personalAccountId, accountId),
+              eq(ingestionGapsInApp.whatsappConnectionId, connectionId),
+              lte(ingestionGapsInApp.startsAt, searchedUntil),
+              or(
+                isNull(ingestionGapsInApp.endsAt),
+                gte(ingestionGapsInApp.endsAt, lower),
+              ),
+            ),
+          );
+        return {
+          accountKey: {
+            ciphertext: base64(accountCiphertext),
+            keyVersion: Number(row.account_key_version),
+            kmsKeyId: row.account_kms_key_id,
+            personalAccountId: accountId,
+            version: 1,
+          },
+          connectionKey: {
+            accountKeyVersion: Number(row.connection_key_account_version),
+            ciphertext: base64(connectionCiphertext),
+            connectionId,
+            keyVersion: Number(row.connection_key_version),
+            nonce: base64(connectionNonce),
+            personalAccountId: accountId,
+            version: 1,
+          },
+          messageSearchKey: {
+            ciphertext: base64(searchCiphertext),
+            keyVersion: Number(row.message_search_key_version),
+            nonce: base64(searchNonce),
+            version: 1,
+          },
+          messages: returned.map((message) => {
+            const ciphertext = bytes(message.content_ciphertext);
+            const nonce = bytes(message.content_nonce);
+            const sentAt = timestampString(message.sent_at);
+            const editedAt =
+              message.edited_at === null
+                ? null
+                : timestampString(message.edited_at);
+            if (
+              typeof message.public_id !== "string" ||
+              typeof message.message_identity !== "string" ||
+              typeof message.conversation_public_id !== "string" ||
+              sentAt === null ||
+              ciphertext === null ||
+              nonce?.byteLength !== 12 ||
+              (message.direction !== "inbound" &&
+                message.direction !== "outbound") ||
+              typeof message.content_type !== "string"
+            )
+              throw new Error("invalid message search candidate");
+            return {
+              publicId: message.public_id,
+              messageIdentity: message.message_identity,
+              conversationPublicId: message.conversation_public_id,
+              sentAt,
+              direction: message.direction,
+              contentType:
+                message.content_type as McpToolMessageRecord["contentType"],
+              content: {
+                ciphertext: base64(ciphertext),
+                keyVersion: Number(message.content_key_version),
+                nonce: base64(nonce),
+                version: 1,
+              },
+              editedAt,
+            };
+          }),
+          hasMore:
+            rows.length > candidates.length ||
+            returned.length < candidates.length,
+          sizeLimited: returned.length < candidates.length,
+          coverage: {
+            historyStartsAt: historyStart.toISOString(),
+            historyStartReason:
+              retentionDays !== null &&
+              historyStart.valueOf() === retentionStart.valueOf()
+                ? "retention_policy"
+                : "connection_started",
+            searchableHistoryStartsAt: searchableFrom,
+            backfillComplete: row.coverage_state === "complete",
+            gaps: gapRows.map((gap) => ({
+              startsAt: timestampString(gap.starts_at) as string,
+              endsAt:
+                gap.ends_at === null ? null : timestampString(gap.ends_at),
+              cause: gap.cause as McpToolMessagePage["gaps"][number]["cause"],
+            })),
+          },
+        };
+      }),
+    ),
+  completeMessageRecordRead: (input) =>
     provider.withConnection((connection) =>
       withTransaction(connection, async () => {
         const db = makeDatabase(connection);
@@ -2017,7 +2354,7 @@ export const makeMcpToolRepository = (
             SELECT coalesce(sum(logs.result_count), 0)::int AS count
             FROM public.tool_call_logs logs
             JOIN locked_account ON locked_account.id = logs.personal_account_id
-            WHERE logs.tool_name = 'read_messages'
+            WHERE logs.tool_name IN ('read_messages', 'search_messages')
               AND logs.outcome = 'success'
               AND logs.started_at >= date_trunc(
                 'day', ${input.observedAt}::timestamptz AT TIME ZONE 'UTC'
@@ -2042,7 +2379,7 @@ export const makeMcpToolRepository = (
               AND logs.id = ${input.auditLogId}
               AND logs.personal_account_id = ${accountContext}
               AND logs.mcp_authorization_id = ${input.authorizationId}
-              AND logs.tool_name = 'read_messages'
+               AND logs.tool_name IN ('read_messages', 'search_messages')
               AND logs.outcome = 'started'
             RETURNING logs.id
           )
@@ -2473,7 +2810,7 @@ export const makeMcpToolRepository = (
                   (${input.outcome} = 'execution_error' AND (
                     logs.outcome = 'started'
                     OR (
-                      logs.tool_name = 'read_messages'
+                       logs.tool_name IN ('read_messages', 'search_messages')
                       AND logs.outcome = 'success'
                     )
                   ))

@@ -1081,17 +1081,19 @@ const makeTestLayer = (
                 )
               : context.fieldOrObjectPurpose === "webhook-identity-key"
                 ? Effect.succeed(new Uint8Array(32).fill(18))
-                : context.fieldOrObjectPurpose === "original-request"
-                  ? Effect.sync(() => {
-                      const payload = encryptedWebhookPayloads.get(
-                        context.recordId,
-                      );
-                      if (payload === undefined) {
-                        throw new Error("missing encrypted test payload");
-                      }
-                      return payload.slice();
-                    })
-                  : Effect.die("not used"),
+                : context.fieldOrObjectPurpose === "message-search-key"
+                  ? Effect.succeed(new Uint8Array(32).fill(19))
+                  : context.fieldOrObjectPurpose === "original-request"
+                    ? Effect.sync(() => {
+                        const payload = encryptedWebhookPayloads.get(
+                          context.recordId,
+                        );
+                        if (payload === undefined) {
+                          throw new Error("missing encrypted test payload");
+                        }
+                        return payload.slice();
+                      })
+                    : Effect.die("not used"),
       decryptMany: () => Effect.die("not used"),
       encrypt: ({ context, plaintext }) =>
         Effect.sync(() => {
@@ -1312,6 +1314,12 @@ const makeTestLayer = (
                   version: 1 as const,
                 },
                 identityKey: {
+                  ciphertext: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcY",
+                  keyVersion: 1,
+                  nonce: "AQIDBAUGBwgJCgsM",
+                  version: 1 as const,
+                },
+                messageSearchKey: {
                   ciphertext: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcY",
                   keyVersion: 1,
                   nonce: "AQIDBAUGBwgJCgsM",

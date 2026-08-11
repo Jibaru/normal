@@ -67,6 +67,9 @@ export interface WebhookEventProcessingMaterial {
   readonly accountKey: AccountKeyEnvelope;
   readonly connectionKey: ConnectionKeyEnvelope;
   readonly identityKey: VersionedCiphertext;
+  // Preparation intentionally returns no material for pre-0005 Connections
+  // until bounded backfill has installed this independent key.
+  readonly messageSearchKey: VersionedCiphertext;
 }
 
 export interface PrepareWebhookEventInput {
@@ -178,6 +181,7 @@ export interface ProjectStoredMessageInput
   readonly messageIdentity: string;
   readonly messageId: string;
   readonly messagePublicId: string;
+  readonly messageSearch: MessageSearchIndex;
   readonly media?: {
     readonly id: string;
     readonly publicId: string;
@@ -208,6 +212,12 @@ export interface MaterializedPendingSend {
   readonly conversationPublicId: string;
   readonly messageId: string;
   readonly messagePublicId: string;
+  readonly messageSearch: MessageSearchIndex;
+}
+
+export interface MessageSearchIndex {
+  readonly indexVersion: 1;
+  readonly tokens: ReadonlyArray<string>;
 }
 
 export interface ProjectStoredMessageEditInput
@@ -216,6 +226,7 @@ export interface ProjectStoredMessageEditInput
   readonly contentType: ProjectStoredMessageInput["contentType"];
   readonly editedAt: string;
   readonly messageIdentity: string;
+  readonly messageSearch: MessageSearchIndex;
 }
 
 export interface ProjectStoredMessageDeletionInput
@@ -421,6 +432,10 @@ interface MaterialRow extends Record<string, unknown> {
   readonly identity_ciphertext_version: unknown;
   readonly identity_key_version: unknown;
   readonly identity_nonce: unknown;
+  readonly message_search_key_ciphertext: unknown;
+  readonly message_search_key_ciphertext_version: unknown;
+  readonly message_search_key_nonce: unknown;
+  readonly message_search_key_version: unknown;
 }
 
 const processingMaterial = (
@@ -445,6 +460,14 @@ const processingMaterial = (
   );
   const identityKeyVersion = positiveInteger(row.identity_key_version);
   const identityNonce = bytes(row.identity_nonce);
+  const messageSearchKeyCiphertext = bytes(row.message_search_key_ciphertext);
+  const messageSearchKeyCiphertextVersion = positiveInteger(
+    row.message_search_key_ciphertext_version,
+  );
+  const messageSearchKeyNonce = bytes(row.message_search_key_nonce);
+  const messageSearchKeyVersion = positiveInteger(
+    row.message_search_key_version,
+  );
   if (
     typeof row.account_kms_key_id !== "string" ||
     row.account_kms_key_id.length === 0 ||
@@ -457,7 +480,11 @@ const processingMaterial = (
     identityCiphertextVersion !== 1 ||
     identityKeyVersion === null ||
     identityNonce === null ||
-    identityCiphertext === null
+    identityCiphertext === null ||
+    messageSearchKeyCiphertextVersion !== 1 ||
+    messageSearchKeyVersion === null ||
+    messageSearchKeyNonce === null ||
+    messageSearchKeyCiphertext === null
   ) {
     throw new Error("invalid Webhook Event processing material");
   }
@@ -484,6 +511,26 @@ const processingMaterial = (
       nonce: encodeBase64(identityNonce),
       version: 1,
     },
+    messageSearchKey: {
+      ciphertext: encodeBase64(messageSearchKeyCiphertext),
+      keyVersion: messageSearchKeyVersion,
+      nonce: encodeBase64(messageSearchKeyNonce),
+      version: 1,
+    },
+  };
+};
+
+const messageSearchValues = (value: MessageSearchIndex) => {
+  if (
+    value.indexVersion !== 1 ||
+    value.tokens.some((token) => !/^msi1_[A-Za-z0-9_-]{43}$/u.test(token)) ||
+    new Set(value.tokens).size !== value.tokens.length
+  ) {
+    throw new Error("invalid Stored Message search index");
+  }
+  return {
+    messageSearchIndexVersion: 1,
+    messageSearchTokens: [...value.tokens],
   };
 };
 
@@ -1116,6 +1163,7 @@ export const makeWebhookEventRepository = (
               contentKeyVersion: projected.content.keyVersion,
               contentNonce: decodeNonce(projected.content),
               contentCiphertext: decodeCiphertext(projected.content),
+              ...messageSearchValues(projected.messageSearch),
               receivedAt: input.receivedAt,
               webhookItemIdentity: null,
             })
@@ -1936,6 +1984,7 @@ export const makeWebhookEventRepository = (
           contentKeyVersion: input.content.keyVersion,
           contentNonce: nonce,
           contentCiphertext: ciphertext,
+          ...messageSearchValues(input.messageSearch),
           providerOccurredAt: input.evidence.occurredAt,
           providerVersion: input.evidence.version,
           receivedAt: input.receivedAt,
@@ -2159,6 +2208,7 @@ export const makeWebhookEventRepository = (
             contentKeyVersion: input.content.keyVersion,
             contentNonce: nonce,
             contentCiphertext: ciphertext,
+            ...messageSearchValues(input.messageSearch),
             editedAt: input.editedAt,
             providerOccurredAt: input.evidence.occurredAt,
             providerVersion: input.evidence.version,
@@ -2275,6 +2325,8 @@ export const makeWebhookEventRepository = (
               contentKeyVersion: null,
               contentNonce: null,
               contentCiphertext: null,
+              messageSearchIndexVersion: null,
+              messageSearchTokens: null,
               deletedAt: input.deletedAt,
               providerOccurredAt: input.evidence.occurredAt,
               providerVersion: input.evidence.version,

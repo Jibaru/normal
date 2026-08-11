@@ -92,11 +92,14 @@ describe("MCP tool repository", () => {
     await database.query(
       `INSERT INTO public.whatsapp_connection_secrets (
          personal_account_id, whatsapp_connection_id, credential_ciphertext,
-         credential_ciphertext_version, credential_key_version, credential_nonce
+         credential_ciphertext_version, credential_key_version, credential_nonce,
+         message_search_key_ciphertext_version, message_search_key_version,
+         message_search_key_nonce, message_search_key_ciphertext
        ) VALUES (
          $1, '20000000-0000-4000-8000-000000000030',
          decode(repeat('05', 32), 'hex'), 1, 1,
-         decode(repeat('06', 12), 'hex')
+          decode(repeat('06', 12), 'hex'), 1, 1,
+          decode(repeat('11', 12), 'hex'), decode(repeat('12', 32), 'hex')
        )`,
       [accountId],
     );
@@ -451,6 +454,7 @@ describe("MCP tool repository", () => {
           conversationPublicId: "cvs_123456789012345678999",
           messageId: "80000000-0000-4000-8000-000000000099",
           messagePublicId: "msg_123456789012345678999",
+          messageSearch: { indexVersion: 1, tokens: [] },
         },
       }),
     ).resolves.toMatchObject({ status: "sent" });
@@ -1360,7 +1364,7 @@ describe("MCP tool repository", () => {
     ).resolves.toEqual([]);
   });
 
-  test("selects newest Stored Messages and atomically commits exact returned-record quota", async () => {
+  test("selects newest Stored Messages and atomically shares exact returned-record quota with search", async () => {
     const conversationId = "70000000-0000-4000-8000-000000000042";
     const conversationPublicId = "cvs_123456789012345678942";
     await database.query(
@@ -1469,7 +1473,7 @@ describe("MCP tool repository", () => {
       },
     });
     await expect(
-      repository.completeMessageRead({
+      repository.completeMessageRecordRead({
         ...authorization,
         auditLogId,
         authorizationContextEstablished: true,
@@ -1489,20 +1493,20 @@ describe("MCP tool repository", () => {
       "50000000-0000-4000-8000-000000000044",
     ] as const;
     await Promise.all(
-      concurrentAuditLogIds.map((concurrentAuditLogId) =>
+      concurrentAuditLogIds.map((concurrentAuditLogId, index) =>
         repository.beginToolCall({
           ...authorization,
           auditLogId: concurrentAuditLogId,
           hourLimit: 10,
           minuteLimit: 10,
           observedAt: readAt,
-          toolName: "read_messages",
+          toolName: index === 0 ? "read_messages" : "search_messages",
         }),
       ),
     );
     const completions = await Promise.all(
       concurrentAuditLogIds.map((concurrentAuditLogId) =>
-        repository.completeMessageRead({
+        repository.completeMessageRecordRead({
           ...authorization,
           auditLogId: concurrentAuditLogId,
           dailyRecordLimit: 2,
@@ -1525,6 +1529,122 @@ describe("MCP tool repository", () => {
     expect(concurrentLogs.rows).toEqual([
       { outcome: "started", result_count: null },
       { outcome: "success", result_count: 1 },
+    ]);
+  });
+
+  test("searches authorized indexed messages with AND semantics and deterministic filters", async () => {
+    const connectionId = "20000000-0000-4000-8000-000000000030";
+    const conversationId = "70000000-0000-4000-8000-000000000046";
+    const conversationPublicId = "cvs_123456789012345678946";
+    const tokenA = `msi1_${"A".repeat(43)}`;
+    const tokenB = `msi1_${"B".repeat(43)}`;
+    const readAt = new Date("2026-08-01T12:00:00Z");
+    await database.query(
+      "UPDATE public.whatsapp_connections SET created_at='2026-07-01T00:00:00Z' WHERE personal_account_id=$1 AND id=$2",
+      [accountId, connectionId],
+    );
+    await database.query(
+      "UPDATE public.mcp_authorizations SET scopes=ARRAY['messages:read']::text[] WHERE id=$1",
+      [authorizationId],
+    );
+    await database.query(
+      `UPDATE public.whatsapp_connection_secrets SET
+         message_search_key_ciphertext_version=1, message_search_key_version=1,
+         message_search_key_nonce=decode(repeat('21',12),'hex'),
+         message_search_key_ciphertext=decode(repeat('22',32),'hex')
+       WHERE personal_account_id=$1 AND whatsapp_connection_id=$2`,
+      [accountId, connectionId],
+    );
+    await database.query(
+      `INSERT INTO public.message_search_backfill_coverage
+       (personal_account_id, whatsapp_connection_id, index_version, state, searchable_from)
+       VALUES ($1,$2,1,'complete',$3)
+       ON CONFLICT (personal_account_id, whatsapp_connection_id, index_version)
+       DO UPDATE SET state='complete', searchable_from=excluded.searchable_from`,
+      [accountId, connectionId, "2026-07-01T00:00:00Z"],
+    );
+    await database.query(
+      `INSERT INTO public.whatsapp_conversations
+       (id, personal_account_id, whatsapp_connection_id, public_id, kind,
+        recipient_locator, recipient_public_id, last_activity_at, last_activity_direction)
+       VALUES ($1,$2,$3,$4,'direct',$5,'ctc_123456789012345678946',$6,'inbound')`,
+      [
+        conversationId,
+        accountId,
+        connectionId,
+        conversationPublicId,
+        `di1_${"F".repeat(43)}`,
+        "2026-07-31T12:02:00Z",
+      ],
+    );
+    for (const [suffix, sentAt, tokens] of [
+      ["5", "2026-07-31T12:02:00Z", [tokenA, tokenB]],
+      ["6", "2026-07-31T12:01:00Z", [tokenA]],
+    ] as const) {
+      await database.query(
+        `INSERT INTO public.stored_messages
+         (id, personal_account_id, whatsapp_connection_id, conversation_id,
+          public_id, message_identity, direction, sent_at, content_type,
+          content_ciphertext_version, content_key_version, content_nonce,
+          content_ciphertext, received_at, webhook_item_identity,
+          message_search_index_version, message_search_tokens)
+         VALUES ($1,$2,$3,$4,$5,$6,'inbound',$7,'text',1,1,
+          decode(repeat('11',12),'hex'),decode(repeat('12',32),'hex'),$7,$6,1,$8::public.message_search_token[])`,
+        [
+          `71000000-0000-4000-8000-00000000004${suffix}`,
+          accountId,
+          connectionId,
+          conversationId,
+          `msg_12345678901234567894${suffix}`,
+          `wi1_${suffix.repeat(43)}`,
+          sentAt,
+          `{${tokens.join(",")}}`,
+        ],
+      );
+    }
+    const auditLogId = "50000000-0000-4000-8000-000000000046";
+    await repository.beginToolCall({
+      ...authorization,
+      auditLogId,
+      connectionPublicId: connectionA,
+      hourLimit: 10,
+      minuteLimit: 10,
+      observedAt: readAt,
+      toolName: "search_messages",
+    });
+    const material = await repository.searchMessages({
+      ...authorization,
+      connectionPublicId: connectionA,
+      conversationPublicId,
+      cursorSentAt: null,
+      cursorPublicId: null,
+      direction: "all",
+      after: "2026-07-31T12:00:00Z",
+      before: "2026-08-01T00:00:00Z",
+      limit: 20,
+      observedAt: readAt,
+      searchTokens: null,
+    });
+    expect(material).toMatchObject({
+      messages: [],
+      coverage: { backfillComplete: true },
+      messageSearchKey: { keyVersion: 1 },
+    });
+    const result = await repository.searchMessages({
+      ...authorization,
+      connectionPublicId: connectionA,
+      conversationPublicId,
+      cursorSentAt: null,
+      cursorPublicId: null,
+      direction: "inbound",
+      after: "2026-07-31T12:00:00Z",
+      before: "2026-08-01T00:00:00Z",
+      limit: 20,
+      observedAt: readAt,
+      searchTokens: [tokenB, tokenA],
+    });
+    expect(result?.messages.map((message) => message.publicId)).toEqual([
+      "msg_123456789012345678945",
     ]);
   });
 

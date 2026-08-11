@@ -50,7 +50,7 @@ describe("production migrations", () => {
         (SELECT count(*)::int FROM public.schema_migrations) AS legacy,
         (SELECT count(*)::int FROM public.drizzle_migrations) AS standard
     `);
-    expect(ledgers.rows).toEqual([{ legacy: 40, standard: 6 }]);
+    expect(ledgers.rows).toEqual([{ legacy: 40, standard: 7 }]);
   });
 
   test("clears only retention limitations superseded by a complete Directory snapshot", async () => {
@@ -110,6 +110,142 @@ describe("production migrations", () => {
       );
       expect(complete.rows).toEqual([{ retention_limited: false }]);
     }
+  });
+
+  test("contains opaque message-search tokens and clears them with content lifecycle", async () => {
+    await runMigrations(database);
+    await seedTenants(database);
+    const tokenA = `msi1_${"A".repeat(43)}`;
+    const tokenB = `msi1_${"B".repeat(43)}`;
+    const conversationA = "40000000-0000-4000-8000-000000000001";
+    const conversationB = "40000000-0000-4000-8000-000000000002";
+    await database.query(
+      `INSERT INTO public.whatsapp_conversations
+        (id, personal_account_id, whatsapp_connection_id, public_id, kind,
+         recipient_locator, recipient_public_id, last_activity_at, last_activity_direction)
+       VALUES
+        ($1, $2, $3, 'cvs_000000000000000000001', 'direct',
+         $4, 'ctc_000000000000000000001', now(), 'inbound'),
+        ($5, $6, $7, 'cvs_000000000000000000002', 'direct',
+         $8, 'ctc_000000000000000000002', now(), 'inbound')`,
+      [
+        conversationA,
+        accountA,
+        connectionA,
+        `wi1_${"C".repeat(43)}`,
+        conversationB,
+        accountB,
+        connectionB,
+        `wi1_${"D".repeat(43)}`,
+      ],
+    );
+    await database.query(
+      `INSERT INTO public.stored_messages
+        (id, personal_account_id, whatsapp_connection_id, conversation_id,
+         public_id, message_identity, direction, sent_at, content_type,
+         content_ciphertext_version, content_key_version, content_nonce,
+         content_ciphertext, received_at, message_search_index_version,
+         message_search_tokens)
+       VALUES
+        ('50000000-0000-4000-8000-000000000001', $1, $2, $3,
+         'msg_000000000000000000001', $4, 'inbound', now(), 'text',
+         1, 1, decode(repeat('01', 12), 'hex'), decode(repeat('02', 32), 'hex'),
+         now(), 1, ARRAY[$5, $6]::public.message_search_token[]),
+        ('50000000-0000-4000-8000-000000000002', $7, $8, $9,
+         'msg_000000000000000000002', $10, 'inbound', now(), 'text',
+         1, 1, decode(repeat('03', 12), 'hex'), decode(repeat('04', 32), 'hex'),
+         now(), 1, ARRAY[$5]::public.message_search_token[])`,
+      [
+        accountA,
+        connectionA,
+        conversationA,
+        `wi1_${"E".repeat(43)}`,
+        tokenA,
+        tokenB,
+        accountB,
+        connectionB,
+        conversationB,
+        `wi1_${"F".repeat(43)}`,
+      ],
+    );
+    const searchIndex = await database.query<{ indexdef: string }>(
+      `SELECT indexdef FROM pg_indexes
+       WHERE schemaname='public' AND indexname='stored_messages_message_search_v1'`,
+    );
+    expect(searchIndex.rows[0]?.indexdef).toContain("USING gin");
+    expect(searchIndex.rows[0]?.indexdef).toContain(
+      "message_search_index_version = 1",
+    );
+
+    await database.exec("SET ROLE whatsapp_api_runtime");
+    try {
+      await database.query(
+        "SELECT set_config('public.personal_account_id', $1, false)",
+        [accountA],
+      );
+      const contained = await database.query<{ public_id: string }>(
+        `SELECT public_id FROM public.stored_messages
+         WHERE message_search_index_version=1
+           AND message_search_tokens @> ARRAY[$1,$2]::public.message_search_token[]`,
+        [tokenA, tokenB],
+      );
+      expect(contained.rows).toEqual([
+        { public_id: "msg_000000000000000000001" },
+      ]);
+      expect(
+        await database.query(
+          `SELECT public_id FROM public.stored_messages
+           WHERE message_search_tokens @> ARRAY[$1]::public.message_search_token[]`,
+          [tokenA],
+        ),
+      ).toMatchObject({ rows: [{ public_id: "msg_000000000000000000001" }] });
+
+      await database.query(
+        `UPDATE public.stored_messages SET message_search_tokens=ARRAY[$1]::public.message_search_token[]
+         WHERE public_id='msg_000000000000000000001'`,
+        [tokenB],
+      );
+      expect(
+        await database.query(
+          `SELECT count(*)::int AS count FROM public.stored_messages
+           WHERE message_search_tokens @> ARRAY[$1]::public.message_search_token[]`,
+          [tokenA],
+        ),
+      ).toMatchObject({ rows: [{ count: 0 }] });
+    } finally {
+      await database.exec("RESET ROLE");
+    }
+
+    await database.query(
+      `UPDATE public.stored_messages SET content_type=NULL,
+        content_ciphertext_version=NULL,content_key_version=NULL,
+        content_nonce=NULL,content_ciphertext=NULL,deleted_at=now()
+       WHERE public_id='msg_000000000000000000001'`,
+    );
+    const tombstone = await database.query<Record<string, unknown>>(
+      `SELECT message_search_index_version,message_search_tokens
+       FROM public.stored_messages WHERE public_id='msg_000000000000000000001'`,
+    );
+    expect(tombstone.rows).toEqual([
+      { message_search_index_version: null, message_search_tokens: null },
+    ]);
+
+    await database.query(
+      `UPDATE public.stored_messages SET content_type=NULL,
+        content_ciphertext_version=NULL,content_key_version=NULL,
+        content_nonce=NULL,content_ciphertext=NULL,content_expired_at=now()
+       WHERE public_id='msg_000000000000000000002'`,
+    );
+    expect(
+      await database.query(
+        `SELECT message_search_index_version,message_search_tokens
+         FROM public.stored_messages WHERE public_id='msg_000000000000000000002'`,
+      ),
+    ).toMatchObject({
+      rows: [
+        { message_search_index_version: null, message_search_tokens: null },
+      ],
+    });
   });
 
   test("exposes only the schema version needed by restricted readiness", async () => {

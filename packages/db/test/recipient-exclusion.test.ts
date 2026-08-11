@@ -647,6 +647,50 @@ describe("WhatsApp Recipient Exclusion persistence", () => {
     expect(recovered.rows).toEqual([{ excluded: true }]);
   });
 
+  test("drops the encrypted message search index for an excluded recipient", async () => {
+    await database.query(
+      `INSERT INTO public.whatsapp_conversations(id,personal_account_id,whatsapp_connection_id,
+        public_id,kind,recipient_locator,recipient_public_id,last_activity_at,last_activity_direction)
+       VALUES($1,$2,$3,'cvs_000000000000000000070','direct',$4,$5,'2026-07-01T00:00:00Z','inbound')`,
+      [
+        conversationId,
+        accountId,
+        connectionId,
+        contactLocator,
+        contactPublicId,
+      ],
+    );
+    await database.query(
+      `INSERT INTO public.stored_messages(id,personal_account_id,whatsapp_connection_id,conversation_id,
+        public_id,message_identity,direction,sent_at,content_type,content_ciphertext_version,
+        content_key_version,content_nonce,content_ciphertext,received_at,webhook_item_identity,
+        message_search_index_version,message_search_tokens)
+       VALUES($1,$2,$3,$4,'msg_000000000000000000070',$5,'inbound','2026-07-01T00:00:00Z','text',1,1,
+        decode(repeat('01',12),'hex'),decode(repeat('02',17),'hex'),'2026-07-01T00:00:00Z',$6,
+        1,ARRAY[$7]::public.message_search_token[])`,
+      [
+        messageId,
+        accountId,
+        connectionId,
+        conversationId,
+        `wi1_${"C".repeat(43)}`,
+        `wi1_${"D".repeat(43)}`,
+        `msi1_${"F".repeat(43)}`,
+      ],
+    );
+
+    await exclude(contactPublicId);
+    const indexed = await database.query<{
+      tokens: unknown;
+      version: number | null;
+    }>(
+      `SELECT message_search_tokens AS tokens, message_search_index_version AS version
+       FROM public.stored_messages`,
+    );
+    // Purged content must leave no searchable term behind.
+    expect(indexed.rows).toEqual([{ tokens: null, version: null }]);
+  });
+
   test("keeps restore replay closed until every prepared transition resolves", async () => {
     await repository().prepareTransition({
       clerkUserId,

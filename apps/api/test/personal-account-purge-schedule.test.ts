@@ -2,6 +2,48 @@ import { describe, expect, test, vi } from "vitest";
 import { createProductionScheduledHandler } from "../src/production";
 
 describe("Personal Account purge schedule", () => {
+  test("continues irreversible deletion maintenance when search backfill fails", async () => {
+    const purged = vi.fn(async () => undefined);
+    const events: Array<string> = [];
+    const info = vi.spyOn(console, "info").mockImplementation((event) => {
+      events.push(String(event));
+    });
+    const handler = createProductionScheduledHandler(
+      {
+        HYPERDRIVE: { connectionString: "test-connection-string" },
+        NEON_BRANCH_ID: "br-test",
+      },
+      {
+        makeGroupRepository: () => ({ claim: async () => [] }),
+        purgeExpiredMessages: async () => 0,
+        purgeExpiredToolCallLogs: async () => 0,
+        purgePersonalAccounts: purged,
+        retainWebhookSources: async () => undefined,
+        runMessageSearchBackfill: async () => {
+          throw new Error("malformed candidate");
+        },
+      },
+    );
+
+    try {
+      await handler({
+        cron: "0 * * * *",
+        scheduledTime: Date.parse("2026-08-04T00:00:00.000Z"),
+      } as ScheduledController);
+    } finally {
+      info.mockRestore();
+    }
+
+    expect(purged).toHaveBeenCalledWith("2026-08-04T00:00:00.000Z");
+    expect(events).toContain(
+      JSON.stringify({
+        event: "message_search.backfill.completed",
+        outcome: "failed",
+        service: "api",
+      }),
+    );
+  });
+
   test("reports deadline risk without emitting tenant identifiers", async () => {
     const marker = "c".repeat(64);
     const purges: Array<unknown> = [];
@@ -11,6 +53,7 @@ describe("Personal Account purge schedule", () => {
     });
     let candidatePage = 0;
     let expiryPage = 0;
+    const backfills: Array<string> = [];
     const handler = createProductionScheduledHandler(
       {
         HYPERDRIVE: { connectionString: "test-connection-string" },
@@ -42,6 +85,9 @@ describe("Personal Account purge schedule", () => {
         purgeExpiredMessages: async () => 0,
         purgeExpiredToolCallLogs: async () => 0,
         retainWebhookSources: async () => undefined,
+        runMessageSearchBackfill: async (observedAt) => {
+          backfills.push(observedAt);
+        },
       },
     );
 
@@ -60,6 +106,7 @@ describe("Personal Account purge schedule", () => {
         deletionMarkerId: marker,
       },
     ]);
+    expect(backfills).toEqual(["2026-08-04T00:00:00.000Z"]);
     expect(events).toContain(
       JSON.stringify({
         deadlineAt: "2026-08-04T01:00:00.000Z",

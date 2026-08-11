@@ -21,14 +21,14 @@ This document defines the public launch contract for the Normal MCP server. Prov
 | --- | --- |
 | `connections:read` | `list_connections` |
 | `directory:read` | `list_contacts`, `list_groups` |
-| `messages:read` | `list_chats`, `read_messages`, Stored Media resources |
+| `messages:read` | `list_chats`, `read_messages`, `search_messages`, Stored Media resources |
 | `messages:send` | `send_text_message`, `get_send_status` |
 
 Every tool is omitted from discovery when its scope is absent and rechecks the scope in its handler.
 
 ## Pagination
 
-`list_contacts`, `list_groups`, and `list_chats` accept `limit` from 1 through 50 with a default of 20 and an optional opaque `cursor`. Their outputs contain:
+`list_contacts`, `list_groups`, and `list_chats` accept `limit` from 1 through 50 with a default of 20 and an optional opaque `cursor`. `search_messages` has its narrower limit described below. Their outputs contain:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -250,6 +250,68 @@ Field rules:
 The compact success JSON targets at most 32 KiB before the required legacy text duplicate. The server returns fewer than `limit` records when necessary, sets `size_limited: true`, and derives `older_cursor` from the oldest record actually returned. It never splits one Stored Message across pages.
 
 If one normalized record alone exceeds the target, the server returns a Unicode-safe text prefix within a 64 KiB hard JSON cap, sets `text_truncated: true`, and reports the full `text_total_utf8_bytes`. The full ciphertext remains subject to Message Retention Policy, but the MVP exposes no separate full-text resource. Quota accounting uses the number of records actually returned.
+
+## `search_messages`
+
+Requires `messages:read`. It searches complete normalized words in the latest retained Stored Message text and media captions within one explicitly selected WhatsApp Connection. It does not search prior edits, Deleted Message Tombstones, filenames, sender or Directory metadata, reactions, or provider payloads.
+
+Input fields:
+
+| Field | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `connection_id` | `con_` handle | yes | Explicit selected WhatsApp Connection. |
+| `query` | string, 1-256 Unicode scalar values | yes | Exact-word query containing 1-8 unique normalized terms. |
+| `conversation_id` | `cvs_` handle | no | Restrict results to a WhatsApp Conversation owned by the selected connection. |
+| `direction` | `all`, `inbound`, or `outbound` | no | Direction filter; defaults to `all`. |
+| `after` | RFC 3339 string | no | Include Stored Messages with `sent_at` at or after this instant. |
+| `before` | RFC 3339 string | no | Include Stored Messages with `sent_at` before this instant. |
+| `limit` | integer 1-20 | no | Record count; defaults to and cannot exceed 20. |
+| `cursor` | string | no | Cursor from a prior call with identical bound inputs. |
+
+The decoded query must contain only Unicode scalar values and no more than 256 of them. Version `v1` applies NFKC, locale-independent Unicode lowercase mapping, and NFKC again, then treats maximal Letter-or-Number words continued by Letters, Marks, or Numbers as terms. Punctuation, symbols, separators, and controls are boundaries. A query that produces no terms or more than eight unique terms is invalid. Duplicate terms are removed. Every unique term must occur, but order and adjacency do not matter. Matching does not perform substring, prefix, phrase, stemming, morphology, synonym, fuzzy, or relevance search. If both time bounds are supplied, `after` must be earlier than `before`.
+
+Results sort newest first by `sent_at DESC, message_id DESC`. The cursor is short-lived and binds the MCP Authorization, tool, selected connection, optional conversation, direction, time bounds, limit, sort version, boundary tuple, index version, and a domain-separated keyed digest of the normalized query terms. Neither query text nor search-index tokens appear in the cursor.
+
+```json
+{
+  "messages": [
+    {
+      "message_id": "msg_b7Q...21-characters",
+      "conversation_id": "cvs_f9A...21-characters",
+      "sent_at": "2026-07-30T11:58:00Z",
+      "direction": "inbound",
+      "content_type": "image",
+      "text": "Your flight confirmation is attached.",
+      "text_truncated": false,
+      "text_total_utf8_bytes": 37,
+      "edited_at": null
+    }
+  ],
+  "size_limited": false,
+  "has_more": false,
+  "next_cursor": null,
+  "coverage": {
+    "history_starts_at": "2026-07-01T00:00:00Z",
+    "history_start_reason": "retention_policy",
+    "searchable_history_starts_at": "2026-07-10T00:00:00Z",
+    "index_version": "v1",
+    "backfill_complete": false,
+    "partial": true,
+    "partial_reasons": ["index_backfill", "ingestion_gap"],
+    "gaps": [
+      {
+        "starts_at": "2026-07-12T03:00:00Z",
+        "ends_at": "2026-07-12T03:08:00Z",
+        "cause": "connection_unavailable"
+      }
+    ]
+  }
+}
+```
+
+`searchable_history_starts_at` is the start of the contiguous retained interval currently covered by `index_version`, or `null` when no interval is searchable. `backfill_complete` is true only when that boundary has reached `history_starts_at`. `partial_reasons` contains `index_backfill` while retained history remains unindexed and `ingestion_gap` when a known Ingestion Gap intersects the searched time range; `partial` is true when either applies. Gap fields and causes follow `read_messages`. Coverage describes observed retained history and never certifies that the provider delivered every message.
+
+Each returned candidate is decrypted and verified against plaintext before release. Search results contain no Stored Media metadata, `resource_uri`, `resource_link`, provider URL, public URL, or binary content. Use `read_messages` with the returned Conversation context to access eligible Stored Media. The compact and hard JSON size rules from `read_messages` apply, and quota accounting uses records actually returned. `search_messages` shares `READ_MESSAGE_RECORDS_PER_DAY` with `read_messages`; request-frequency quotas are unchanged.
 
 ## Stored Media Resources
 

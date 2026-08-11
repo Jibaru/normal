@@ -28,6 +28,7 @@ import {
 import { makePgMcpAuthorizationRepository } from "@whatsapp-mcp/db/mcp-authorization";
 import { makePgMcpToolRepository } from "@whatsapp-mcp/db/mcp-tool";
 import { makePgMessageRetentionRepository } from "@whatsapp-mcp/db/message-retention";
+import { makePgMessageSearchRepository } from "@whatsapp-mcp/db/message-search";
 import {
   makePgPersonalAccountRepository,
   type PersonalAccountRepository,
@@ -57,7 +58,7 @@ import {
 import { Config, ConfigProvider, Data, Effect, Layer, Redacted } from "effect";
 import { makeClerkHumanIdentity } from "./auth/clerk";
 import { HumanIdentity } from "./auth/human-identity";
-import { decodeBase64, encodeBase64Url } from "./base64-url";
+import { decodeBase64, encodeBase64, encodeBase64Url } from "./base64-url";
 import { createCanaryHandler } from "./canary";
 import {
   ConnectionHealthClock,
@@ -166,6 +167,10 @@ import {
   MessageRetentionPersistenceError,
 } from "./message-retention";
 import {
+  importMessageSearchIndexKey,
+  messageSearchIndexesForText,
+} from "./message-search-privacy";
+import {
   accessAuthorizationFrom,
   createOAuthHandler,
   loadOAuthConfiguration,
@@ -229,6 +234,7 @@ import {
 import {
   handleWebhookDeadLetterBatch,
   handleWebhookEventBatch,
+  isWebhookEventQueueMessage,
 } from "./webhook-event";
 import {
   createWebhookIngressHandler,
@@ -1150,15 +1156,27 @@ const mcpToolPersistenceLayer = (environment: ApiEnvironment) =>
         },
         catch: () => new McpToolPersistenceError(),
       }),
-    completeMessageRead: (input) =>
+    searchMessages: (input) =>
       Effect.tryPromise({
         try: () => {
           const connectionString = environment.HYPERDRIVE?.connectionString;
           if (typeof connectionString !== "string")
             throw new Error("database unavailable");
-          return makePgMcpToolRepository(connectionString).completeMessageRead(
+          return makePgMcpToolRepository(connectionString).searchMessages(
             input,
           );
+        },
+        catch: () => new McpToolPersistenceError(),
+      }),
+    completeMessageRecordRead: (input) =>
+      Effect.tryPromise({
+        try: () => {
+          const connectionString = environment.HYPERDRIVE?.connectionString;
+          if (typeof connectionString !== "string")
+            throw new Error("database unavailable");
+          return makePgMcpToolRepository(
+            connectionString,
+          ).completeMessageRecordRead(input);
         },
         catch: () => new McpToolPersistenceError(),
       }),
@@ -2134,6 +2152,28 @@ export const createProductionQueueHandler =
         environment,
       );
       if (ingestionBatch.messages.length === 0) return;
+      const connectionString = environment.HYPERDRIVE?.connectionString;
+      if (typeof connectionString !== "string") {
+        throw new Error("message-search key installation unavailable");
+      }
+      const searchRepository = makePgMessageSearchRepository(connectionString);
+      const seenConnections = new Set<string>();
+      for (const queued of ingestionBatch.messages) {
+        if (!isWebhookEventQueueMessage(queued.body)) continue;
+        const candidate = {
+          personalAccountId: queued.body.personal_account_id,
+          whatsappConnectionId: queued.body.whatsapp_connection_id,
+        };
+        const identity = `${candidate.personalAccountId}:${candidate.whatsappConnectionId}`;
+        if (seenConnections.has(identity)) continue;
+        seenConnections.add(identity);
+        await ensureMessageSearchKey(
+          environment,
+          searchRepository,
+          candidate,
+          new Date().toISOString(),
+        );
+      }
       const layer = Layer.mergeAll(
         encryptionLayer(environment),
         telemetryLayer,
@@ -2385,6 +2425,209 @@ const groupDirectoryLayer = (environment: ApiEnvironment) =>
     }),
   );
 
+const ensureMessageSearchKey = async (
+  environment: ApiEnvironment,
+  repository: ReturnType<typeof makePgMessageSearchRepository>,
+  candidate: {
+    readonly personalAccountId: string;
+    readonly whatsappConnectionId: string;
+  },
+  installedAt: string,
+): Promise<void> => {
+  const material = await repository.loadEncryptionMaterial(candidate);
+  if (material === null || material.messageSearchKey !== null) return;
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const encryption = yield* EnvelopeEncryptionService;
+      const accountKey = {
+        ciphertext: encodeBase64(material.accountKey.ciphertext),
+        keyVersion: material.accountKey.keyVersion,
+        kmsKeyId: material.accountKey.kmsKeyId,
+        personalAccountId: candidate.personalAccountId,
+        version: 1 as const,
+      };
+      const connectionKey = {
+        accountKeyVersion: material.connectionKey.accountKeyVersion,
+        ciphertext: encodeBase64(material.connectionKey.ciphertext),
+        connectionId: candidate.whatsappConnectionId,
+        keyVersion: material.connectionKey.keyVersion,
+        nonce: encodeBase64(material.connectionKey.nonce),
+        personalAccountId: candidate.personalAccountId,
+        version: 1 as const,
+      };
+      const plaintext = crypto.getRandomValues(new Uint8Array(32));
+      const protectedKey = yield* Effect.acquireUseRelease(
+        Effect.succeed(plaintext),
+        (bytes) =>
+          encryption.encrypt({
+            accountKey,
+            connectionKey,
+            context: {
+              accountId: candidate.personalAccountId,
+              connectionId: candidate.whatsappConnectionId,
+              entity: "whatsapp-connection",
+              fieldOrObjectPurpose: "message-search-key",
+              recordId: candidate.whatsappConnectionId,
+            },
+            plaintext: bytes,
+          }),
+        (bytes) => Effect.sync(() => bytes.fill(0)),
+      );
+      yield* Effect.tryPromise(() =>
+        repository.installKey({
+          installedAt,
+          key: {
+            ciphertext: decodeBase64(protectedKey.ciphertext),
+            keyVersion: protectedKey.keyVersion,
+            nonce: decodeBase64(protectedKey.nonce),
+            version: 1,
+          },
+          ...candidate,
+        }),
+      );
+    }).pipe(Effect.provide(encryptionLayer(environment))),
+  );
+};
+
+const runMessageSearchBackfill = async (
+  environment: ApiEnvironment,
+  connectionString: string,
+  observedAt: string,
+): Promise<void> => {
+  const repository = makePgMessageSearchRepository(connectionString);
+  const connections = await repository.listPendingConnections(5);
+  for (const candidate of connections) {
+    await ensureMessageSearchKey(
+      environment,
+      repository,
+      candidate,
+      observedAt,
+    );
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const encryption = yield* EnvelopeEncryptionService;
+        const material = yield* Effect.tryPromise(() =>
+          repository.loadEncryptionMaterial(candidate),
+        );
+        if (material === null) return;
+        const accountKey = {
+          ciphertext: encodeBase64(material.accountKey.ciphertext),
+          keyVersion: material.accountKey.keyVersion,
+          kmsKeyId: material.accountKey.kmsKeyId,
+          personalAccountId: candidate.personalAccountId,
+          version: 1 as const,
+        };
+        const connectionKey = {
+          accountKeyVersion: material.connectionKey.accountKeyVersion,
+          ciphertext: encodeBase64(material.connectionKey.ciphertext),
+          connectionId: candidate.whatsappConnectionId,
+          keyVersion: material.connectionKey.keyVersion,
+          nonce: encodeBase64(material.connectionKey.nonce),
+          personalAccountId: candidate.personalAccountId,
+          version: 1 as const,
+        };
+        if (material.messageSearchKey === null) return;
+        const keyEnvelope = material.messageSearchKey;
+        const searchKeyBytes = yield* encryption.decrypt({
+          accountKey,
+          connectionKey,
+          ciphertext: {
+            ciphertext: encodeBase64(keyEnvelope.ciphertext),
+            keyVersion: keyEnvelope.keyVersion,
+            nonce: encodeBase64(keyEnvelope.nonce),
+            version: 1,
+          },
+          context: {
+            accountId: candidate.personalAccountId,
+            connectionId: candidate.whatsappConnectionId,
+            entity: "whatsapp-connection",
+            fieldOrObjectPurpose: "message-search-key",
+            recordId: candidate.whatsappConnectionId,
+          },
+        });
+        yield* Effect.acquireUseRelease(
+          Effect.succeed(searchKeyBytes),
+          (keyBytes) =>
+            Effect.gen(function* () {
+              const searchKey = yield* importMessageSearchIndexKey(keyBytes);
+              const batch = yield* Effect.tryPromise(() =>
+                repository.loadCandidates({ ...candidate, limit: 100 }),
+              );
+              const plaintexts = yield* encryption.decryptMany({
+                accountKey,
+                connectionKey,
+                items: batch.candidates.map((item) => ({
+                  ciphertext: {
+                    ciphertext: encodeBase64(item.content.ciphertext),
+                    keyVersion: item.content.keyVersion,
+                    nonce: encodeBase64(item.content.nonce),
+                    version: 1,
+                  },
+                  context: {
+                    accountId: candidate.personalAccountId,
+                    connectionId: candidate.whatsappConnectionId,
+                    entity: "stored-message",
+                    fieldOrObjectPurpose: "content",
+                    recordId: item.messageIdentity,
+                  },
+                })),
+              });
+              const indexed = yield* Effect.acquireUseRelease(
+                Effect.succeed(plaintexts),
+                (values) =>
+                  Effect.forEach(batch.candidates, (item, index) =>
+                    Effect.gen(function* () {
+                      const value = values[index];
+                      if (value === undefined)
+                        return yield* Effect.fail(
+                          new Error("missing backfill plaintext"),
+                        );
+                      const content = JSON.parse(
+                        new TextDecoder("utf-8", {
+                          fatal: true,
+                          ignoreBOM: false,
+                        }).decode(value),
+                      ) as { readonly text?: unknown };
+                      if (
+                        content === null ||
+                        (content.text !== null &&
+                          typeof content.text !== "string")
+                      )
+                        return yield* Effect.fail(
+                          new Error("invalid backfill plaintext"),
+                        );
+                      const tokens = yield* messageSearchIndexesForText(
+                        searchKey,
+                        candidate.whatsappConnectionId,
+                        (content.text as string | null) ?? "",
+                      );
+                      return {
+                        messageId: item.messageId,
+                        sentAt: item.sentAt,
+                        tokens,
+                      };
+                    }),
+                  ),
+                (values) =>
+                  Effect.sync(() => {
+                    for (const value of values) value.fill(0);
+                  }),
+              );
+              yield* Effect.tryPromise(() =>
+                repository.commitBatch({
+                  committedAt: observedAt,
+                  ...candidate,
+                  tokens: indexed,
+                }),
+              );
+            }),
+          (bytes) => Effect.sync(() => bytes.fill(0)),
+        );
+      }).pipe(Effect.provide(encryptionLayer(environment))),
+    );
+  }
+};
+
 export const createProductionScheduledHandler =
   (
     environment: ApiEnvironment,
@@ -2438,6 +2681,7 @@ export const createProductionScheduledHandler =
       readonly purgePersonalAccounts?: (observedAt: string) => Promise<void>;
       readonly now?: () => string;
       readonly retainWebhookSources?: (observedAt: string) => Promise<void>;
+      readonly runMessageSearchBackfill?: (observedAt: string) => Promise<void>;
       readonly sweepWebhookIngress?: (observedAt: string) => Promise<void>;
     } = {},
   ) =>
@@ -2513,21 +2757,25 @@ export const createProductionScheduledHandler =
       );
       await (
         dependencies.recoverRecipientExclusions ??
-        ((value) =>
-          recoverJournaledRecipientExclusions(
-            environment,
-            connectionString,
-            value,
-          ))
+        (dependencies.makeGroupRepository === undefined
+          ? (value) =>
+              recoverJournaledRecipientExclusions(
+                environment,
+                connectionString,
+                value,
+              )
+          : async () => undefined)
       )(observedAt);
       let removedCount = 0;
       while (true) {
         const count = await (
           dependencies.purgeExcludedRecipientHistory ??
-          ((value, limit) =>
-            makePgRecipientExclusionRepository(
-              connectionString,
-            ).purgeExcludedHistory({ limit, observedAt: value }))
+          (dependencies.makeGroupRepository === undefined
+            ? (value, limit) =>
+                makePgRecipientExclusionRepository(
+                  connectionString,
+                ).purgeExcludedHistory({ limit, observedAt: value })
+            : async () => 0)
         )(observedAt, 500);
         removedCount += count;
         if (count < 500) break;
@@ -2540,6 +2788,31 @@ export const createProductionScheduledHandler =
           service: "api",
         }),
       );
+      try {
+        await (
+          dependencies.runMessageSearchBackfill ??
+          (dependencies.makeGroupRepository === undefined
+            ? (value) =>
+                runMessageSearchBackfill(environment, connectionString, value)
+            : async () => undefined)
+        )(observedAt);
+        Effect.runSync(
+          safeTelemetry.emit({
+            event: "message_search.backfill.completed",
+            outcome: "success",
+            service: "api",
+          }),
+        );
+      } catch {
+        // Backfill is recoverable; irreversible deletion maintenance must continue.
+        Effect.runSync(
+          safeTelemetry.emit({
+            event: "message_search.backfill.completed",
+            outcome: "failed",
+            service: "api",
+          }),
+        );
+      }
       while (true) {
         const count = await (
           dependencies.purgeExpiredToolCallLogs ??
