@@ -124,10 +124,16 @@ export function RecipientExclusions({
   // a ref keeps the load effect from restarting in a loop.
   const tokenReader = useRef(getToken);
   tokenReader.current = getToken;
+  // Changing the connection, kind, or search starts another request. Only the
+  // newest one may write state, so an out-of-order response cannot replace the
+  // current page or append recipients from a different selection.
+  const requestGeneration = useRef(0);
 
   const load = useCallback(
     async (cursor: string | null) => {
       if (selectedConnectionId === null) return;
+      requestGeneration.current += 1;
+      const generation = requestGeneration.current;
       setListState("loading");
       try {
         const token = await tokenReader.current();
@@ -148,6 +154,7 @@ export function RecipientExclusions({
         if (!response.ok || decoded === null) {
           throw new Error("recipients unavailable");
         }
+        if (generation !== requestGeneration.current) return;
         setPage((current) =>
           cursor === null || current === null
             ? decoded
@@ -158,6 +165,7 @@ export function RecipientExclusions({
         );
         setListState("ok");
       } catch {
+        if (generation !== requestGeneration.current) return;
         setListState("unavailable");
       }
     },

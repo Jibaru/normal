@@ -83,7 +83,9 @@ export const processStoredMedia = async (options: {
   readonly input: StoredMediaProcessingInput;
   readonly persistence: StoredMediaProcessingPersistence;
   readonly retrieval: MediaRetrieval;
-}): Promise<"failed" | "quota_exceeded" | "ready" | "rejected"> => {
+}): Promise<
+  "failed" | "quota_exceeded" | "ready" | "rejected" | "suppressed"
+> => {
   const { input } = options;
   const context = {
     connectionId: input.whatsappConnectionId,
@@ -172,8 +174,14 @@ export const processStoredMedia = async (options: {
       sha256: hash.digest("hex"),
     });
     if (outcome !== "ready") {
+      // A losing upload is removed from object storage, including one that a
+      // WhatsApp Recipient Exclusion overtook while it was being processed.
       await options.deleteObject(input.objectKey);
-      return outcome === "quota_exceeded" ? "quota_exceeded" : "failed";
+      return outcome === "quota_exceeded"
+        ? "quota_exceeded"
+        : outcome === "recipient_excluded"
+          ? "suppressed"
+          : "failed";
     }
     return "ready";
   } catch (error) {

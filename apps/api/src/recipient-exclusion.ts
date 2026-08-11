@@ -312,14 +312,17 @@ const setExclusion = (
       });
       return yield* new RecipientExclusionConflict();
     }
+    // An unchanged request and a replayed acknowledged transition both
+    // already have their durable journal evidence.
     if (
       prepared.outcome === "unchanged" ||
+      prepared.outcome === "replayed" ||
       prepared.transitionId === null ||
       prepared.effectiveAt === null
     ) {
       yield* telemetry.emit({
         event: "recipient_exclusion.transition.completed",
-        outcome: "unchanged",
+        outcome: prepared.outcome === "replayed" ? "replayed" : "unchanged",
         service: "api",
         transitionKind: body.excluded ? "exclude" : "re_enable",
       });

@@ -56,7 +56,7 @@ export interface EncryptedRecipientRecord {
 export interface PreparedRecipientTransition {
   readonly effectiveAt: string | null;
   readonly excluded: boolean;
-  readonly outcome: "prepared" | "conflict" | "unchanged";
+  readonly outcome: "conflict" | "prepared" | "replayed" | "unchanged";
   readonly personalAccountId: string;
   readonly purgeCutoffAt: string | null;
   readonly recipientKind: RecipientKind;
@@ -297,6 +297,7 @@ export const makeRecipientExclusionRepository = (
       if (
         (row.outcome !== "prepared" &&
           row.outcome !== "conflict" &&
+          row.outcome !== "replayed" &&
           row.outcome !== "unchanged") ||
         typeof row.personal_account_id !== "string" ||
         typeof row.whatsapp_connection_id !== "string" ||

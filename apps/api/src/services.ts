@@ -397,7 +397,7 @@ export interface RecipientExclusionRecoveryCompletedEvent {
 
 export interface RecipientExclusionTransitionCompletedEvent {
   readonly event: "recipient_exclusion.transition.completed";
-  readonly outcome: "conflict" | "success" | "unchanged";
+  readonly outcome: "conflict" | "replayed" | "success" | "unchanged";
   readonly service: "api";
   readonly transitionKind: "exclude" | "re_enable";
 }

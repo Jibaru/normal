@@ -158,6 +158,34 @@ describe("WhatsApp Recipient Exclusion transition journal", () => {
     ]);
   });
 
+  test("rejects an object stored under a name other than its transition identity", async () => {
+    const { bucket, objects } = makeBucket();
+    const store = makeRecipientJournalStore({
+      bucket,
+      environment: "production",
+      hmacSecret: secret,
+    });
+    const appended = await Effect.runPromise(store.append(transition));
+    const body = objects.get(appended.objectKey) ?? "";
+    objects.delete(appended.objectKey);
+    objects.set(
+      appended.objectKey.replace(
+        transition.transitionId,
+        "30000000-0000-4000-8000-000000000099",
+      ),
+      body,
+    );
+    await expect(
+      Effect.runPromise(
+        store.enumerate({
+          connectionId,
+          recipientKind: "contact",
+          recipientLocator: contactLocator,
+        }),
+      ),
+    ).rejects.toThrow();
+  });
+
   test("rejects an exclusion recorded without a purge cutoff", async () => {
     const { bucket } = makeBucket();
     const store = makeRecipientJournalStore({

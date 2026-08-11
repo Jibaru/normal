@@ -312,11 +312,34 @@ const enterPersonalAccountContext = async (
   );
 };
 
+// The WhatsApp Connection row is the shared serialization point with a
+// WhatsApp Recipient Exclusion transition. Every projection that can create or
+// restore readable content takes it before checking suppression, so an
+// exclusion cannot commit its purge between the check and the write.
+const lockConnection = async (
+  db: Database,
+  input: WebhookItemBase,
+): Promise<void> => {
+  const locked = await db
+    .select({ id: whatsappConnectionsInApp.id })
+    .from(whatsappConnectionsInApp)
+    .where(
+      and(
+        eq(whatsappConnectionsInApp.personalAccountId, input.personalAccountId),
+        eq(whatsappConnectionsInApp.id, input.whatsappConnectionId),
+      ),
+    )
+    .for("update");
+  if (locked.length !== 1) {
+    throw new Error("Webhook Item projection target unavailable");
+  }
+};
+
 // A WhatsApp Recipient Exclusion is checked after the Webhook Item claims its
 // deduplication identity, so a suppressed item still cannot be reprocessed.
 const isObservationSuppressed = async (
   db: Database,
-  input: WebhookItemBase,
+  input: WebhookItemBase & { readonly itemIdentity: string },
   recipientKind: "contact" | "direct" | "group",
   recipientLocator: string,
 ): Promise<boolean> => {
@@ -327,7 +350,20 @@ const isObservationSuppressed = async (
       ${input.receivedAt}
     ) AS suppressed
   `);
-  return result[0]?.suppressed === true;
+  if (result[0]?.suppressed !== true) return false;
+  // The claimed Webhook Item keeps durable evidence that this delivery was
+  // seen and deliberately not projected.
+  await db
+    .update(webhookItemsInApp)
+    .set({ outcome: "suppressed" })
+    .where(
+      and(
+        eq(webhookItemsInApp.personalAccountId, input.personalAccountId),
+        eq(webhookItemsInApp.whatsappConnectionId, input.whatsappConnectionId),
+        eq(webhookItemsInApp.deduplicationIdentity, input.itemIdentity),
+      ),
+    );
+  return true;
 };
 
 const positiveInteger = (value: unknown): number | null => {
@@ -926,6 +962,7 @@ export const makeWebhookEventRepository = (
     provider.withConnection((connection) =>
       withTransaction(connection, async (db) => {
         await enterPersonalAccountContext(db, input.personalAccountId);
+        await lockConnection(db, input);
         const claimed = await db
           .insert(webhookItemsInApp)
           .values({
@@ -2042,6 +2079,7 @@ export const makeWebhookEventRepository = (
         const ciphertext = decodeCiphertext(input.content);
         const nonce = decodeNonce(input.content);
         await enterPersonalAccountContext(db, input.personalAccountId);
+        await lockConnection(db, input);
         if (!(await claimWebhookItem(db, input, "message_edit")))
           return "duplicate" as const;
         const edited = await db.execute<{ recipient_locator: unknown }>(sql`
@@ -2151,6 +2189,7 @@ export const makeWebhookEventRepository = (
     provider.withConnection((connection) =>
       withTransaction(connection, async (db) => {
         await enterPersonalAccountContext(db, input.personalAccountId);
+        await lockConnection(db, input);
         if (!(await claimWebhookItem(db, input, "message_delete")))
           return "duplicate" as const;
         if (

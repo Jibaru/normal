@@ -399,6 +399,187 @@ describe("WhatsApp Recipient Exclusion persistence", () => {
     }
   });
 
+  test("drains replayed Stored Media object deletions before restore readiness", async () => {
+    await database.query(
+      `INSERT INTO public.whatsapp_conversations(id,personal_account_id,whatsapp_connection_id,
+        public_id,kind,recipient_locator,recipient_public_id,last_activity_at,last_activity_direction)
+       VALUES($1,$2,$3,'cvs_000000000000000000070','direct',$4,$5,'2026-07-01T00:00:00Z','inbound')`,
+      [
+        conversationId,
+        accountId,
+        connectionId,
+        contactLocator,
+        contactPublicId,
+      ],
+    );
+    await database.query(
+      `INSERT INTO public.stored_messages(id,personal_account_id,whatsapp_connection_id,conversation_id,
+        public_id,message_identity,direction,sent_at,content_type,content_ciphertext_version,
+        content_key_version,content_nonce,content_ciphertext,received_at,webhook_item_identity)
+       VALUES($1,$2,$3,$4,'msg_000000000000000000070',$5,'inbound','2026-07-01T00:00:00Z','image',1,1,
+        decode(repeat('01',12),'hex'),decode(repeat('02',17),'hex'),'2026-07-01T00:00:00Z',$6)`,
+      [
+        messageId,
+        accountId,
+        connectionId,
+        conversationId,
+        `wi1_${"C".repeat(43)}`,
+        `wi1_${"D".repeat(43)}`,
+      ],
+    );
+    await database.query(
+      "UPDATE public.personal_accounts SET stored_media_used_bytes=100 WHERE id=$1",
+      [accountId],
+    );
+    await database.query(
+      `INSERT INTO public.stored_media(id,personal_account_id,whatsapp_connection_id,stored_message_id,
+        public_id,state,media_type,object_key,plaintext_size_bytes,sha256,metadata_ciphertext_version,
+        metadata_key_version,metadata_nonce,metadata_ciphertext)
+       VALUES('70000000-0000-4000-8000-000000000070',$1,$2,$3,'med_000000000000000000070','ready',
+        'image',$4,100,repeat('a',64),1,1,decode(repeat('03',12),'hex'),decode(repeat('04',17),'hex'))`,
+      [accountId, connectionId, messageId, mediaObjectKey],
+    );
+
+    await database.query(
+      "SELECT * FROM public.begin_restore_replay('br-exclusion-70','2026-08-13T00:00:00Z')",
+    );
+    await database.query(
+      `SELECT public.replay_whatsapp_recipient_exclusion(
+        $1,$2,'contact',$3,$4,true,'2026-08-12T00:00:00Z','2026-08-12T00:00:00Z',
+        '80000000-0000-4000-8000-000000000070','2026-08-13T00:00:00Z')`,
+      [accountId, connectionId, contactLocator, contactPublicId],
+    );
+    await database.query(
+      "SELECT public.purge_restore_expired('2026-08-13T00:00:00Z',1000)",
+    );
+    const queued = await database.query<{ bucket: string; object_key: string }>(
+      "SELECT * FROM public.list_restore_object_deletions(1000)",
+    );
+    expect(queued.rows).toEqual([
+      { bucket: "stored_media", object_key: mediaObjectKey },
+    ]);
+    await database.query(
+      "SELECT public.finish_restore_object_deletion('stored_media',$1)",
+      [mediaObjectKey],
+    );
+    await database.query(
+      "SELECT public.purge_excluded_recipient_history('2026-08-13T00:00:00Z',1000)",
+    );
+    await database.query(
+      "SELECT public.complete_restore_replay('br-exclusion-70','2026-08-13T00:00:00Z',0,0,0)",
+    );
+    const settled = await database.query<{
+      conversations: number;
+      media: number;
+      messages: number;
+      ready: boolean;
+      used: number;
+    }>(
+      `SELECT (SELECT count(*)::int FROM public.whatsapp_conversations) conversations,
+        (SELECT count(*)::int FROM public.stored_media) media,
+        (SELECT count(*)::int FROM public.stored_messages) messages,
+        (SELECT public.is_restore_ready('br-exclusion-70')) ready,
+        (SELECT stored_media_used_bytes::int FROM public.personal_accounts WHERE id=$1) used`,
+      [accountId],
+    );
+    expect(settled.rows).toEqual([
+      { conversations: 0, media: 0, messages: 0, ready: true, used: 0 },
+    ]);
+  });
+
+  test("replays an acknowledged transition for the same idempotency key", async () => {
+    const { prepared } = await exclude(contactPublicId);
+    const retry = await repository().prepareTransition({
+      clerkUserId,
+      connectionPublicId,
+      excluded: true,
+      // The retry still carries the original expected state, which is now
+      // stale, but the binding must replay the completed result instead.
+      expectedExcluded: false,
+      idempotencyKey: `idem-${contactPublicId}`,
+      recipientPublicId: contactPublicId,
+    });
+    expect(retry).toMatchObject({ excluded: true, outcome: "replayed" });
+    expect(retry?.transitionId).toBeNull();
+
+    const reEnable = await repository().prepareTransition({
+      clerkUserId,
+      connectionPublicId,
+      excluded: false,
+      expectedExcluded: true,
+      idempotencyKey: "idem-re-enable-00000001",
+      recipientPublicId: contactPublicId,
+    });
+    await repository().finalizeTransition({
+      clerkUserId,
+      connectionPublicId,
+      observedAt: "2026-08-12T00:00:00.000Z",
+      recipientPublicId: contactPublicId,
+      transitionId: reEnable?.transitionId ?? "",
+    });
+    // A much later retry of the original key must not re-exclude the
+    // recipient behind the User's back.
+    const delayed = await repository().prepareTransition({
+      clerkUserId,
+      connectionPublicId,
+      excluded: true,
+      expectedExcluded: false,
+      idempotencyKey: `idem-${contactPublicId}`,
+      recipientPublicId: contactPublicId,
+    });
+    expect(delayed).toMatchObject({ excluded: true, outcome: "replayed" });
+    const state = await database.query<{ excluded: boolean }>(
+      "SELECT excluded FROM public.whatsapp_recipient_exclusions",
+    );
+    expect(state.rows).toEqual([{ excluded: false }]);
+    expect(prepared.transitionId).not.toBeNull();
+  });
+
+  test("removes a Deleted Message Tombstone and its conversation", async () => {
+    await database.query(
+      `INSERT INTO public.whatsapp_conversations(id,personal_account_id,whatsapp_connection_id,
+        public_id,kind,recipient_locator,recipient_public_id,last_activity_at,last_activity_direction)
+       VALUES($1,$2,$3,'cvs_000000000000000000070','direct',$4,$5,'2026-07-01T00:00:00Z','inbound')`,
+      [
+        conversationId,
+        accountId,
+        connectionId,
+        contactLocator,
+        contactPublicId,
+      ],
+    );
+    await database.query(
+      `INSERT INTO public.stored_messages(id,personal_account_id,whatsapp_connection_id,conversation_id,
+        public_id,message_identity,direction,sent_at,received_at,webhook_item_identity,deleted_at)
+       VALUES($1,$2,$3,$4,'msg_000000000000000000070',$5,'inbound','2026-07-01T00:00:00Z',
+        '2026-07-01T00:00:00Z',$6,'2026-07-02T00:00:00Z')`,
+      [
+        messageId,
+        accountId,
+        connectionId,
+        conversationId,
+        `wi1_${"C".repeat(43)}`,
+        `wi1_${"D".repeat(43)}`,
+      ],
+    );
+
+    await exclude(contactPublicId);
+    expect(
+      await repository().purgeExcludedHistory({
+        limit: 100,
+        observedAt: "2026-08-11T00:00:00.000Z",
+      }),
+    ).toBe(2);
+    const remaining = await database.query<{
+      conversations: number;
+      messages: number;
+    }>(
+      `SELECT (SELECT count(*)::int FROM public.whatsapp_conversations) conversations,
+        (SELECT count(*)::int FROM public.stored_messages) messages`,
+    );
+    expect(remaining.rows).toEqual([{ conversations: 0, messages: 0 }]);
+  });
+
   test("keeps restore replay closed until every prepared transition resolves", async () => {
     await repository().prepareTransition({
       clerkUserId,

@@ -51,6 +51,47 @@ CREATE TABLE public.whatsapp_recipient_exclusions (
 );
 --> statement-breakpoint
 
+-- Replay protection for an acknowledged transition. Without it a retry after a
+-- lost response would see its own effect as a stale expected state, and a much
+-- later retry of the same key could prepare an unwanted new transition.
+CREATE TABLE public.whatsapp_recipient_exclusion_bindings (
+  personal_account_id uuid NOT NULL,
+  whatsapp_connection_id uuid NOT NULL,
+  recipient_kind text NOT NULL CHECK (recipient_kind IN ('contact', 'group')),
+  recipient_locator text NOT NULL CHECK (recipient_locator ~ '^(wi1|di1)_[A-Za-z0-9_-]{43}$'),
+  idempotency_key text NOT NULL CHECK (idempotency_key ~ '^[A-Za-z0-9._~-]{16,255}$'),
+  transition_id uuid NOT NULL,
+  resulting_excluded boolean NOT NULL,
+  effective_at timestamptz NOT NULL,
+  purge_cutoff_at timestamptz,
+  expires_at timestamptz NOT NULL,
+  PRIMARY KEY (
+    personal_account_id, whatsapp_connection_id, recipient_kind,
+    recipient_locator, idempotency_key
+  ),
+  FOREIGN KEY (personal_account_id, whatsapp_connection_id)
+    REFERENCES public.whatsapp_connections (personal_account_id, id) ON DELETE CASCADE
+);
+--> statement-breakpoint
+
+CREATE INDEX whatsapp_recipient_exclusion_bindings_expiry
+  ON public.whatsapp_recipient_exclusion_bindings (expires_at);
+--> statement-breakpoint
+
+ALTER TABLE public.whatsapp_recipient_exclusion_bindings ENABLE ROW LEVEL SECURITY;
+--> statement-breakpoint
+ALTER TABLE public.whatsapp_recipient_exclusion_bindings FORCE ROW LEVEL SECURITY;
+--> statement-breakpoint
+CREATE POLICY whatsapp_recipient_exclusion_bindings_tenant
+  ON public.whatsapp_recipient_exclusion_bindings
+  USING (personal_account_id = nullif(pg_catalog.current_setting('public.personal_account_id', true), '')::uuid)
+  WITH CHECK (personal_account_id = nullif(pg_catalog.current_setting('public.personal_account_id', true), '')::uuid);
+--> statement-breakpoint
+REVOKE ALL ON TABLE public.whatsapp_recipient_exclusion_bindings FROM PUBLIC;
+--> statement-breakpoint
+GRANT SELECT ON public.whatsapp_recipient_exclusion_bindings TO whatsapp_api_runtime;
+--> statement-breakpoint
+
 CREATE INDEX whatsapp_recipient_exclusions_pending ON public.whatsapp_recipient_exclusions
   (transition_prepared_at, transition_id)
   WHERE transition_id IS NOT NULL;
@@ -74,6 +115,14 @@ REVOKE ALL ON TABLE public.whatsapp_recipient_exclusions FROM PUBLIC;
 GRANT SELECT ON public.whatsapp_recipient_exclusions TO whatsapp_api_runtime;
 --> statement-breakpoint
 GRANT SELECT ON public.whatsapp_recipient_exclusions TO whatsapp_webhook_runtime;
+--> statement-breakpoint
+
+-- A Webhook Item that claimed its deduplication identity and was then withheld
+-- by a WhatsApp Recipient Exclusion is neither applied nor superseded.
+ALTER TABLE public.webhook_items DROP CONSTRAINT webhook_items_outcome_check;
+--> statement-breakpoint
+ALTER TABLE public.webhook_items ADD CONSTRAINT webhook_items_outcome_check
+  CHECK (outcome IN ('applied', 'quarantined', 'superseded', 'suppressed'));
 --> statement-breakpoint
 
 -- Read enforcement predicate. Invoker rights keep row level security in force
@@ -223,8 +272,10 @@ BEGIN
     AND messages.whatsapp_connection_id = conversations.whatsapp_connection_id
     AND messages.conversation_id = conversations.id
     AND messages.created_at <= cutoff_at
-    AND messages.content_expired_at IS NULL
-    AND messages.deleted_at IS NULL;
+    -- A Deleted Message Tombstone already holds no content, but it still
+    -- orders the WhatsApp Conversation and would reappear in chat lists after
+    -- a re-enable, so it is marked for permanent removal too.
+    AND messages.content_expired_at IS NULL;
   GET DIAGNOSTICS affected = ROW_COUNT; purged := purged + affected;
   RETURN purged;
 END
@@ -283,6 +334,10 @@ BEGIN
         AND messages.whatsapp_connection_id = conversations.whatsapp_connection_id
         AND messages.conversation_id = conversations.id
     );
+  GET DIAGNOSTICS affected = ROW_COUNT; removed := removed + affected;
+
+  DELETE FROM public.whatsapp_recipient_exclusion_bindings bindings
+  WHERE bindings.expires_at <= observed_at;
   GET DIAGNOSTICS affected = ROW_COUNT; removed := removed + affected;
   RETURN removed;
 END
@@ -481,6 +536,7 @@ DECLARE
   selected_account_id uuid; selected_connection_id uuid;
   selected_kind text; selected_locator text;
   current_rule public.whatsapp_recipient_exclusions%ROWTYPE;
+  replayed public.whatsapp_recipient_exclusion_bindings%ROWTYPE;
   prepared_at timestamptz := transaction_timestamp();
   new_transition_id uuid; new_cutoff timestamptz;
 BEGIN
@@ -522,6 +578,22 @@ BEGIN
     AND rules.recipient_kind = selected_kind
     AND rules.recipient_locator = selected_locator
   FOR UPDATE;
+
+  -- An acknowledged transition replays its recorded result, so a retry after a
+  -- lost response never re-evaluates expected state or starts a new transition.
+  FOR replayed IN
+    SELECT bindings.* FROM public.whatsapp_recipient_exclusion_bindings bindings
+    WHERE bindings.personal_account_id = selected_account_id
+      AND bindings.whatsapp_connection_id = selected_connection_id
+      AND bindings.recipient_kind = selected_kind
+      AND bindings.recipient_locator = selected_locator
+      AND bindings.idempotency_key = requested_idempotency_key
+  LOOP
+    RETURN QUERY SELECT 'replayed'::text, NULL::uuid, selected_account_id,
+      selected_connection_id, selected_kind, selected_locator,
+      replayed.resulting_excluded, replayed.effective_at, replayed.purge_cutoff_at;
+    RETURN;
+  END LOOP;
 
   IF current_rule.transition_id IS NOT NULL THEN
     IF current_rule.transition_idempotency_key = requested_idempotency_key THEN
@@ -627,6 +699,19 @@ BEGIN
     END IF;
     RETURN;
   END IF;
+
+  INSERT INTO public.whatsapp_recipient_exclusion_bindings (
+    personal_account_id, whatsapp_connection_id, recipient_kind,
+    recipient_locator, idempotency_key, transition_id, resulting_excluded,
+    effective_at, purge_cutoff_at, expires_at
+  ) VALUES (
+    selected_account_id, selected_connection_id, current_rule.recipient_kind,
+    current_rule.recipient_locator, current_rule.transition_idempotency_key,
+    current_rule.transition_id, current_rule.transition_excluded,
+    current_rule.transition_effective_at,
+    GREATEST(current_rule.purge_cutoff_at, current_rule.transition_purge_cutoff_at),
+    observed_at + interval '90 days'
+  ) ON CONFLICT DO NOTHING;
 
   UPDATE public.whatsapp_recipient_exclusions AS rules
   SET excluded = current_rule.transition_excluded,

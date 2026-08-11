@@ -258,19 +258,29 @@ export const readTransitions = async (
       prefix: `${journalPrefix}${prefix}/`,
     });
     for (const object of page.objects) {
+      const named = new RegExp(
+        `^recipient-transitions/v1/${prefix}/([0-9a-f-]{36})\\.json$`,
+        "u",
+      ).exec(object.key);
+      const namedTransitionId = named?.[1];
       if (
-        !new RegExp(
-          `^recipient-transitions/v1/${prefix}/[0-9a-f-]{36}\\.json$`,
-          "u",
-        ).test(object.key)
+        namedTransitionId === undefined ||
+        !uuidPattern.test(namedTransitionId)
       ) {
         throw operationError("enumerate-transitions");
       }
       const stored = await bucket.get(object.key);
       if (!stored) throw operationError("enumerate-transitions");
-      transitions.push(
-        parseTransition(await stored.text(), "enumerate-transitions"),
+      const transition = parseTransition(
+        await stored.text(),
+        "enumerate-transitions",
       );
+      // An object stored under a name other than its own transition identity
+      // is misplaced evidence, not authoritative state.
+      if (transition.transitionId !== namedTransitionId) {
+        throw operationError("enumerate-transitions");
+      }
+      transitions.push(transition);
     }
     if (page.truncated) {
       if (!page.cursor || seenCursors.has(page.cursor)) {
