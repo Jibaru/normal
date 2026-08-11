@@ -324,13 +324,22 @@ describe("WhatsApp Recipient Exclusion persistence", () => {
   });
 
   test("suppresses observations until a re-enable takes effect and keeps the purge cutoff", async () => {
+    const suppressedAt = async (receivedAt: string) => {
+      await database.query(
+        "SELECT set_config('public.personal_account_id',$1,false)",
+        [accountId],
+      );
+      const result = await database.query<{ suppressed: boolean }>(
+        `SELECT public.whatsapp_recipient_observation_suppressed($1,$2,'contact',$3,$4) AS suppressed`,
+        [accountId, connectionId, contactLocator, receivedAt],
+      );
+      return result.rows;
+    };
     const excluded = await exclude(contactPublicId);
     const effectiveAt = excluded.state?.effectiveAt ?? "";
-    const suppressed = await database.query<{ suppressed: boolean }>(
-      `SELECT public.whatsapp_recipient_observation_suppressed($1,$2,'contact',$3,$4) AS suppressed`,
-      [accountId, connectionId, contactLocator, "2026-08-12T00:00:00Z"],
-    );
-    expect(suppressed.rows).toEqual([{ suppressed: true }]);
+    expect(await suppressedAt("2026-08-12T00:00:00Z")).toEqual([
+      { suppressed: true },
+    ]);
 
     const reEnable = await repository().prepareTransition({
       clerkUserId,
@@ -355,16 +364,39 @@ describe("WhatsApp Recipient Exclusion persistence", () => {
       new Date(effectiveAt).valueOf(),
     );
 
-    const older = await database.query<{ suppressed: boolean }>(
-      `SELECT public.whatsapp_recipient_observation_suppressed($1,$2,'contact',$3,$4) AS suppressed`,
-      [accountId, connectionId, contactLocator, effectiveAt],
-    );
-    expect(older.rows).toEqual([{ suppressed: true }]);
-    const newer = await database.query<{ suppressed: boolean }>(
-      `SELECT public.whatsapp_recipient_observation_suppressed($1,$2,'contact',$3,$4) AS suppressed`,
-      [accountId, connectionId, contactLocator, "2027-01-01T00:00:00Z"],
-    );
-    expect(newer.rows).toEqual([{ suppressed: false }]);
+    expect(await suppressedAt(effectiveAt)).toEqual([{ suppressed: true }]);
+    expect(await suppressedAt("2027-01-01T00:00:00Z")).toEqual([
+      { suppressed: false },
+    ]);
+  });
+
+  test("refuses to answer the enforcement predicates outside the owning tenant context", async () => {
+    await exclude(contactPublicId);
+    await database.exec("SET ROLE whatsapp_api_runtime");
+    try {
+      await database.exec("BEGIN");
+      await database.query(
+        "SELECT set_config('public.personal_account_id',$1,true)",
+        [accountId],
+      );
+      const inContext = await database.query<{ excluded: boolean }>(
+        "SELECT public.whatsapp_recipient_excluded($1,$2,'contact',$3) AS excluded",
+        [accountId, connectionId, contactLocator],
+      );
+      expect(inContext.rows).toEqual([{ excluded: true }]);
+      await database.exec("ROLLBACK");
+
+      await database.exec("BEGIN");
+      expect(
+        database.query(
+          "SELECT public.whatsapp_recipient_excluded($1,$2,'contact',$3) AS excluded",
+          [accountId, connectionId, contactLocator],
+        ),
+      ).rejects.toThrow(/outside its Personal Account context/u);
+      await database.exec("ROLLBACK");
+    } finally {
+      await database.exec("RESET ROLE");
+    }
   });
 
   test("keeps restore replay closed until every prepared transition resolves", async () => {

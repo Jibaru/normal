@@ -72,6 +72,12 @@ authority values before network access. Its provider origin is fixed in the
 production adapter, so configuration cannot redirect credentials to another
 host or select a fake implementation.
 
+The read and ingestion enforcement predicates run with invoker rights so row
+level security stays in force, and they raise rather than answer when the
+transaction is not already in the recipient's own Personal Account context.
+A missing tenant context therefore fails the operation instead of reporting an
+excluded recipient as trackable.
+
 A WhatsApp Recipient Exclusion is a User-owned rule, so provider Directory
 reconciliation and webhook projection never write it. Its current state lives
 in a tenant-owned Neon relation under forced row level security, and every

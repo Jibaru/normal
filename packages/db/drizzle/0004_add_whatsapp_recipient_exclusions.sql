@@ -77,14 +77,21 @@ GRANT SELECT ON public.whatsapp_recipient_exclusions TO whatsapp_webhook_runtime
 --> statement-breakpoint
 
 -- Read enforcement predicate. Invoker rights keep row level security in force
--- for the runtime roles that select through it.
+-- for the runtime roles that select through it, so the predicate refuses to
+-- answer at all outside the recipient's own Personal Account context rather
+-- than reporting the recipient as trackable.
 CREATE FUNCTION public.whatsapp_recipient_excluded(
   requested_account_id uuid, requested_connection_id uuid,
   requested_kind text, requested_locator text
 )
-RETURNS boolean LANGUAGE sql STABLE STRICT
+RETURNS boolean LANGUAGE plpgsql STABLE STRICT
 SET search_path = pg_catalog, public, public AS $function$
-  SELECT EXISTS (
+BEGIN
+  IF nullif(pg_catalog.current_setting('public.personal_account_id', true), '')::uuid
+    IS DISTINCT FROM requested_account_id THEN
+    RAISE EXCEPTION 'recipient exclusion checked outside its Personal Account context';
+  END IF;
+  RETURN EXISTS (
     SELECT 1 FROM public.whatsapp_recipient_exclusions rules
     WHERE rules.personal_account_id = requested_account_id
       AND rules.whatsapp_connection_id = requested_connection_id
@@ -92,6 +99,7 @@ SET search_path = pg_catalog, public, public AS $function$
       AND rules.recipient_locator = requested_locator
       AND rules.excluded
   );
+END
 $function$;
 --> statement-breakpoint
 
@@ -101,9 +109,14 @@ CREATE FUNCTION public.whatsapp_recipient_observation_suppressed(
   requested_account_id uuid, requested_connection_id uuid,
   requested_kind text, requested_locator text, requested_received_at timestamptz
 )
-RETURNS boolean LANGUAGE sql STABLE STRICT
+RETURNS boolean LANGUAGE plpgsql STABLE STRICT
 SET search_path = pg_catalog, public, public AS $function$
-  SELECT EXISTS (
+BEGIN
+  IF nullif(pg_catalog.current_setting('public.personal_account_id', true), '')::uuid
+    IS DISTINCT FROM requested_account_id THEN
+    RAISE EXCEPTION 'recipient suppression checked outside its Personal Account context';
+  END IF;
+  RETURN EXISTS (
     SELECT 1 FROM public.whatsapp_recipient_exclusions rules
     WHERE rules.personal_account_id = requested_account_id
       AND rules.whatsapp_connection_id = requested_connection_id
@@ -114,6 +127,7 @@ SET search_path = pg_catalog, public, public AS $function$
         OR (rules.effective_at IS NOT NULL AND requested_received_at <= rules.effective_at)
       )
   );
+END
 $function$;
 --> statement-breakpoint
 
