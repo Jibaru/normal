@@ -210,6 +210,7 @@ describe("WhatsApp Recipient Exclusion HTTP boundary", () => {
       "?kind=contact&limit=51",
       "?kind=contact&cursor=grp_000000000000000000070",
       "?kind=contact&search=ab",
+      "?kind=contact&search=%2B15550123456",
     ]) {
       const response = await fixture.handler(get(query));
       expect([query, response.status]).toEqual([query, 400]);
@@ -274,6 +275,36 @@ describe("WhatsApp Recipient Exclusion HTTP boundary", () => {
     );
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ error: "unavailable" });
+    expect(fixture.finalized).toEqual([]);
+  });
+
+  test("reports an unchanged request without journalling a transition", async () => {
+    const fixture = harness({
+      prepared: {
+        effectiveAt: null,
+        excluded: false,
+        outcome: "unchanged",
+        personalAccountId: material.personalAccountId,
+        purgeCutoffAt: null,
+        recipientKind: "contact",
+        recipientLocator: `di1_${"A".repeat(43)}`,
+        transitionId: null,
+        whatsappConnectionId: material.whatsappConnectionId,
+      },
+    });
+    const response = await fixture.handler(
+      put({
+        excluded: false,
+        expected_excluded: false,
+        idempotency_key: "idem-0123456789abcdef",
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      exclusion: { effective_at: null, excluded: false },
+      recipient: { id: contactPublicId, kind: "contact" },
+    });
+    expect(fixture.journalled).toEqual([]);
     expect(fixture.finalized).toEqual([]);
   });
 

@@ -68,10 +68,12 @@ export const openRecipientSearchIndex = (input: {
                   input.search ?? "",
                 ),
               ),
-              // Product Settings searches display names only; a phone shaped
-              // query must not become a phone blind index lookup here.
-              Effect.map((result) =>
-                result.kind === "name" ? result.index : null,
+              // Product Settings searches display names only; a phone blind
+              // index lookup must not be reachable from this boundary.
+              Effect.flatMap((result) =>
+                result.kind === "name"
+                  ? Effect.succeed(result.index as string | null)
+                  : Effect.fail(persistenceError()),
               ),
             )
           : importGroupDirectoryIndexKey(bytes).pipe(

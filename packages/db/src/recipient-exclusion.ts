@@ -54,7 +54,7 @@ export interface EncryptedRecipientRecord {
 }
 
 export interface PreparedRecipientTransition {
-  readonly effectiveAt: string;
+  readonly effectiveAt: string | null;
   readonly excluded: boolean;
   readonly outcome: "prepared" | "conflict" | "unchanged";
   readonly personalAccountId: string;
@@ -309,7 +309,7 @@ export const makeRecipientExclusionRepository = (
         throw new Error("invalid WhatsApp Recipient Exclusion transition");
       }
       return {
-        effectiveAt: effectiveAt ?? new Date(0).toISOString(),
+        effectiveAt,
         excluded: row.recipient_excluded,
         outcome: row.outcome,
         personalAccountId: row.personal_account_id,

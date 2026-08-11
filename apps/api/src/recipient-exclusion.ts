@@ -176,8 +176,16 @@ const parseListQuery = (url: URL): ListQuery | "invalid" => {
   ) {
     return "invalid";
   }
-  const search = url.searchParams.get("search");
-  if (search !== null && (search.length < 3 || search.length > 64)) {
+  const rawSearch = url.searchParams.get("search");
+  const search = rawSearch === null ? null : rawSearch.trim();
+  // Product Settings searches display names only, so a phone shaped query is
+  // rejected rather than quietly widened to the whole Directory.
+  if (
+    search !== null &&
+    (search.startsWith("+") ||
+      [...search].length < 3 ||
+      [...search].length > 64)
+  ) {
     return "invalid";
   }
   return { cursorPublicId: cursor, kind, limit, search };
@@ -304,7 +312,11 @@ const setExclusion = (
       });
       return yield* new RecipientExclusionConflict();
     }
-    if (prepared.outcome === "unchanged" || prepared.transitionId === null) {
+    if (
+      prepared.outcome === "unchanged" ||
+      prepared.transitionId === null ||
+      prepared.effectiveAt === null
+    ) {
       yield* telemetry.emit({
         event: "recipient_exclusion.transition.completed",
         outcome: "unchanged",
