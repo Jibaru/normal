@@ -135,6 +135,7 @@ export const safeTelemetryFieldsByEvent = {
     "outcome",
   ],
   "whatsapp_connection.list.completed": [...common, "connectionCount"],
+  "whatsapp_connection.rename.completed": common,
 } as const satisfies Record<SafeTelemetryEvent["event"], ReadonlyArray<string>>;
 
 export class SafeTelemetryViolation extends Error {

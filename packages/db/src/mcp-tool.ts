@@ -47,7 +47,11 @@ export interface McpAccessAuthorization {
 }
 
 export interface McpToolConnectionRecord {
-  readonly displayName: string | null;
+  readonly accountKey: AccountKeyEnvelope;
+  readonly connectionId: string;
+  readonly connectionKey: ConnectionKeyEnvelope;
+  readonly displayName: McpToolDirectoryCiphertext | null;
+  readonly displayNameFallback: string | null;
   readonly numberLastFour: string | null;
   readonly publicId: string;
   readonly state:
@@ -453,6 +457,27 @@ const positiveInteger = (value: unknown): number | null =>
   typeof value === "number" && Number.isSafeInteger(value) && value > 0
     ? value
     : null;
+
+const persistedCiphertext = (
+  row: Record<string, unknown>,
+  prefix: string,
+): McpToolDirectoryCiphertext | null => {
+  const version = positiveInteger(row[`${prefix}_ciphertext_version`]);
+  const keyVersion = positiveInteger(row[`${prefix}_key_version`]);
+  const nonce = bytes(row[`${prefix}_nonce`]);
+  const ciphertext = bytes(row[`${prefix}_ciphertext`]);
+  return version === 1 &&
+    keyVersion !== null &&
+    nonce !== null &&
+    ciphertext !== null
+    ? {
+        ciphertext: base64(ciphertext),
+        keyVersion,
+        nonce: base64(nonce),
+        version: 1,
+      }
+    : null;
+};
 
 interface ParsedGroupKeyMaterial {
   readonly accountKey: McpToolGroupPage["accountKey"];
@@ -1157,46 +1182,70 @@ export const makeMcpToolRepository = (
         if (scopes === null || !scopes.includes("connections:read")) {
           return null;
         }
-        const result = await db
-          .select({
-            display_name: sql<null>`NULL::text`,
-            number_last_four: whatsappConnectionsInApp.numberSuffix,
-            public_id: whatsappConnectionsInApp.publicId,
-            state: whatsappConnectionsInApp.state,
-            state_changed_at: whatsappConnectionsInApp.stateChangedAt,
-          })
-          .from(mcpAuthorizationConnectionsInApp)
-          .innerJoin(
-            whatsappConnectionsInApp,
-            and(
-              eq(
-                whatsappConnectionsInApp.personalAccountId,
-                mcpAuthorizationConnectionsInApp.personalAccountId,
-              ),
-              eq(
-                whatsappConnectionsInApp.id,
-                mcpAuthorizationConnectionsInApp.whatsappConnectionId,
-              ),
-            ),
-          )
-          .where(
-            and(
-              eq(
-                mcpAuthorizationConnectionsInApp.mcpAuthorizationId,
-                input.authorizationId,
-              ),
-              ne(whatsappConnectionsInApp.state, "deleting"),
-            ),
-          )
-          .orderBy(
-            asc(whatsappConnectionsInApp.createdAt),
-            asc(whatsappConnectionsInApp.publicId),
-          );
+        const result = await db.execute<Record<string, unknown>>(sql`
+          SELECT
+            account_keys.ciphertext AS account_key_ciphertext,
+            account_keys.key_version AS account_key_version,
+            account_keys.kms_key_id AS account_kms_key_id,
+            connections.id AS connection_id,
+            connection_keys.account_key_version AS connection_key_account_version,
+            connection_keys.ciphertext AS connection_key_ciphertext,
+            connection_keys.nonce AS connection_key_nonce,
+            connection_keys.key_version AS connection_key_version,
+            connections.display_name_ciphertext AS display_name_ciphertext,
+            connections.display_name_ciphertext_version AS display_name_ciphertext_version,
+            connections.display_name_fallback AS display_name_fallback,
+            connections.display_name_key_version AS display_name_key_version,
+            connections.display_name_nonce AS display_name_nonce,
+            connections.personal_account_id AS personal_account_id,
+            connections.number_suffix AS number_last_four,
+            connections.public_id AS public_id,
+            connections.state AS state,
+            connections.state_changed_at AS state_changed_at
+          FROM public.mcp_authorization_connections AS selected
+          JOIN public.whatsapp_connections AS connections
+            ON connections.personal_account_id = selected.personal_account_id
+           AND connections.id = selected.whatsapp_connection_id
+          JOIN public.personal_account_key_envelopes AS account_keys
+            ON account_keys.personal_account_id = connections.personal_account_id
+           AND account_keys.unavailable_at IS NULL
+          JOIN public.whatsapp_connection_key_envelopes AS connection_keys
+            ON connection_keys.personal_account_id = connections.personal_account_id
+           AND connection_keys.whatsapp_connection_id = connections.id
+           AND connection_keys.unavailable_at IS NULL
+          WHERE selected.mcp_authorization_id = ${input.authorizationId}
+            AND connections.state <> 'deleting'
+          ORDER BY connections.created_at, connections.public_id
+        `);
         return result.map((row) => {
           const state = row.state;
           const stateChangedAt = timestampString(row.state_changed_at);
+          const accountCiphertext = bytes(row.account_key_ciphertext);
+          const accountVersion = positiveInteger(row.account_key_version);
+          const connectionKeyCiphertext = bytes(row.connection_key_ciphertext);
+          const connectionKeyNonce = bytes(row.connection_key_nonce);
+          const connectionKeyVersion = positiveInteger(
+            row.connection_key_version,
+          );
+          const connectionKeyAccountVersion = positiveInteger(
+            row.connection_key_account_version,
+          );
+          const displayName = persistedCiphertext(row, "display_name");
+          const displayNameFallback =
+            typeof row.display_name_fallback === "string"
+              ? row.display_name_fallback
+              : null;
           if (
-            row.display_name !== null ||
+            accountCiphertext === null ||
+            accountVersion === null ||
+            typeof row.account_kms_key_id !== "string" ||
+            typeof row.personal_account_id !== "string" ||
+            typeof row.connection_id !== "string" ||
+            connectionKeyCiphertext === null ||
+            connectionKeyNonce === null ||
+            connectionKeyVersion === null ||
+            connectionKeyAccountVersion === null ||
+            (displayName === null) === (displayNameFallback === null) ||
             (row.number_last_four !== null &&
               (typeof row.number_last_four !== "string" ||
                 !/^[0-9]{4}$/u.test(row.number_last_four))) ||
@@ -1212,7 +1261,25 @@ export const makeMcpToolRepository = (
             throw new Error("invalid persisted MCP WhatsApp Connection");
           }
           return {
-            displayName: null,
+            accountKey: {
+              ciphertext: base64(accountCiphertext),
+              keyVersion: accountVersion,
+              kmsKeyId: row.account_kms_key_id,
+              personalAccountId: row.personal_account_id,
+              version: 1 as const,
+            },
+            connectionId: row.connection_id,
+            connectionKey: {
+              accountKeyVersion: connectionKeyAccountVersion,
+              ciphertext: base64(connectionKeyCiphertext),
+              connectionId: row.connection_id,
+              keyVersion: connectionKeyVersion,
+              nonce: base64(connectionKeyNonce),
+              personalAccountId: row.personal_account_id,
+              version: 1 as const,
+            },
+            displayName,
+            displayNameFallback,
             numberLastFour: row.number_last_four,
             publicId: row.public_id,
             state,

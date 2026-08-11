@@ -701,7 +701,7 @@ screen-capture the QR image as deployment evidence.
 
 After scanning, confirm the next reconciled observation removes the QR image
 and the product lists exactly one WhatsApp Connection with a `con_` handle,
-nullable display name, four-digit number suffix, `connected` state, and
+required display name, four-digit number suffix, `connected` state, and
 state-change time. Repeat the QR observation and connection list reads; they
 must return the same Connection and must not create another connection key,
 webhook ingress identity, webhook secret, or provider session. Inspect safe

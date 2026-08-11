@@ -42,13 +42,13 @@ describe("MCP Authorization repository", () => {
     await database.query(
       `INSERT INTO public.whatsapp_connections (
           id, personal_account_id, webhook_ingress_id,
-          display_name_ciphertext, public_id, number_suffix
+          display_name_fallback, public_id, number_suffix
         ) VALUES
           ('20000000-0000-4000-8000-000000000027', $1,
-           '30000000-0000-4000-8000-000000000027', decode('01', 'hex'), $2,
+           '30000000-0000-4000-8000-000000000027', 'Bright Badger', $2,
            '3456'),
           ('20000000-0000-4000-8000-000000000028', $1,
-           '30000000-0000-4000-8000-000000000028', decode('02', 'hex'), $3,
+           '30000000-0000-4000-8000-000000000028', 'Calm Falcon', $3,
            '7890')`,
       [accountId, connectionA, connectionB],
     );
@@ -103,10 +103,10 @@ describe("MCP Authorization repository", () => {
     await database.query(
       `INSERT INTO public.whatsapp_connections (
          id, personal_account_id, webhook_ingress_id,
-         display_name_ciphertext, public_id
+         display_name_fallback, public_id
        ) VALUES (
          '20000000-0000-4000-8000-000000000029', $1,
-         '30000000-0000-4000-8000-000000000029', decode('03', 'hex'),
+         '30000000-0000-4000-8000-000000000029', 'Clever Fox',
          'con_123456789012345678903'
        )`,
       [accountId],

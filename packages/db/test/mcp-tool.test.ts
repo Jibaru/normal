@@ -51,22 +51,22 @@ describe("MCP tool repository", () => {
     );
     await database.query(
       `INSERT INTO public.whatsapp_connections (
-         id, personal_account_id, webhook_ingress_id,
-         display_name_ciphertext, public_id, number_suffix, state,
-         state_changed_at
-       ) VALUES
-         ('20000000-0000-4000-8000-000000000030', $1,
-          '30000000-0000-4000-8000-000000000030', NULL, $2, '1234',
-          'connected', $6),
-         ('20000000-0000-4000-8000-000000000031', $1,
-          '30000000-0000-4000-8000-000000000031', NULL, $3, '5678',
-          'deleting', $6),
-         ('20000000-0000-4000-8000-000000000032', $1,
-          '30000000-0000-4000-8000-000000000032', NULL, $4, '9012',
-          'connected', $6),
-         ('20000000-0000-4000-8000-000000000033', $1,
-          '30000000-0000-4000-8000-000000000033', NULL, $5, NULL,
-          'connecting', $6)`,
+          id, personal_account_id, webhook_ingress_id,
+          display_name_fallback, public_id, number_suffix, state,
+          state_changed_at
+        ) VALUES
+          ('20000000-0000-4000-8000-000000000030', $1,
+           '30000000-0000-4000-8000-000000000030', 'Bright Badger', $2, '1234',
+           'connected', $6),
+          ('20000000-0000-4000-8000-000000000031', $1,
+           '30000000-0000-4000-8000-000000000031', 'Calm Falcon', $3, '5678',
+           'deleting', $6),
+          ('20000000-0000-4000-8000-000000000032', $1,
+           '30000000-0000-4000-8000-000000000032', 'Clever Fox', $4, '9012',
+           'connected', $6),
+          ('20000000-0000-4000-8000-000000000033', $1,
+           '30000000-0000-4000-8000-000000000033', 'Kind Otter', $5, NULL,
+           'connecting', $6)`,
       [
         accountId,
         connectionA,
@@ -81,9 +81,12 @@ describe("MCP tool repository", () => {
          personal_account_id, whatsapp_connection_id, account_key_version,
          key_version, nonce, ciphertext
        ) VALUES (
-         $1, '20000000-0000-4000-8000-000000000030', 1, 1,
-         decode(repeat('03', 12), 'hex'), decode(repeat('04', 32), 'hex')
-       )`,
+          $1, '20000000-0000-4000-8000-000000000030', 1, 1,
+          decode(repeat('03', 12), 'hex'), decode(repeat('04', 32), 'hex')
+        ), (
+          $1, '20000000-0000-4000-8000-000000000033', 1, 1,
+          decode(repeat('07', 12), 'hex'), decode(repeat('08', 32), 'hex')
+        )`,
       [accountId],
     );
     await database.query(
@@ -185,21 +188,20 @@ describe("MCP tool repository", () => {
       outcome: "started",
     });
 
-    await expect(
-      repository.listConnections({
-        ...authorization,
-        observedAt,
-      }),
-    ).resolves.toEqual([
+    const listed = await repository.listConnections({
+      ...authorization,
+      observedAt,
+    });
+    expect(listed).toMatchObject([
       {
-        displayName: null,
+        displayNameFallback: expect.any(String),
         numberLastFour: "1234",
         publicId: connectionA,
         state: "connected",
         stateChangedAt: "2026-07-31T12:00:00.000Z",
       },
       {
-        displayName: null,
+        displayNameFallback: expect.any(String),
         numberLastFour: null,
         publicId: connectionWithoutSuffix,
         state: "connecting",

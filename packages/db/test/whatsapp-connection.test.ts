@@ -69,11 +69,21 @@ describe("WhatsApp Connection repository", () => {
 
     const setups = makeConnectionSetupRepository(provider);
     await setups.start({
-      accountKeyVersion: 1,
+      accountKey: {
+        ciphertext: "AQID",
+        keyVersion: 1,
+        kmsKeyId: "arn:aws:kms:us-east-1:111122223333:key/content-root-key",
+        personalAccountId: accountA,
+        version: 1,
+      },
       connectionKeyCiphertext: new Uint8Array(32).fill(3),
       connectionKeyNonce: new Uint8Array(12).fill(4),
       connectionKeyVersion: 1,
       createdAt,
+      displayNameCiphertext: new Uint8Array(32).fill(20),
+      displayNameCiphertextNonce: new Uint8Array(12).fill(21),
+      displayNameCiphertextVersion: 1,
+      displayNameKeyVersion: 1,
       idempotencyKey: "123456789012345678931",
       numberCiphertext: new Uint8Array(32).fill(5),
       numberCiphertextNonce: new Uint8Array(12).fill(6),
@@ -130,6 +140,10 @@ describe("WhatsApp Connection repository", () => {
     connectionKeyNonce: new Uint8Array(12).fill(15),
     connectionKeyVersion: 1,
     connectedAt,
+    displayNameCiphertext: new Uint8Array(32).fill(20),
+    displayNameCiphertextVersion: 1,
+    displayNameKeyVersion: 1,
+    displayNameNonce: new Uint8Array(12).fill(21),
     locatorCiphertext: new Uint8Array(32).fill(16),
     locatorCiphertextVersion: 1,
     locatorKeyVersion: 1,
@@ -212,13 +226,17 @@ describe("WhatsApp Connection repository", () => {
     const first = await repository.activate(activationInput);
     const replay = await repository.activate({
       ...activationInput,
+      connectionKeyCiphertext: new Uint8Array(32).fill(26),
+      connectionKeyNonce: new Uint8Array(12).fill(27),
       connectionId: "20000000-0000-4000-8000-000000000099",
+      displayNameCiphertext: new Uint8Array(32).fill(28),
+      displayNameNonce: new Uint8Array(12).fill(29),
       publicId: "con_000000000000000000099",
       webhookIngressId: "30000000-0000-4000-8000-000000000099",
     });
 
-    expect(first).toEqual({
-      displayName: null,
+    expect(first).toMatchObject({
+      displayName: { fallback: null },
       numberSuffix: "3456",
       publicId,
       state: "connected",
@@ -277,9 +295,11 @@ describe("WhatsApp Connection repository", () => {
     const repository = makeWhatsAppConnectionRepository(provider);
     await repository.activate(activationInput);
 
-    await expect(repository.listForUser("user_connectiona")).resolves.toEqual([
+    await expect(
+      repository.listForUser("user_connectiona"),
+    ).resolves.toMatchObject([
       {
-        displayName: null,
+        displayName: { fallback: null },
         numberSuffix: "3456",
         publicId,
         state: "connected",
@@ -297,6 +317,41 @@ describe("WhatsApp Connection repository", () => {
         AND column_name ILIKE '%qr%'
     `);
     expect(qrColumns.rows).toEqual([{ count: 0 }]);
+  });
+
+  test("renames only the owning User's non-deleting Connection", async () => {
+    const repository = makeWhatsAppConnectionRepository(provider);
+    await repository.activate(activationInput);
+
+    await expect(
+      repository.rename({
+        clerkUserId: "user_connectionb",
+        displayNameCiphertext: new Uint8Array(32).fill(22),
+        displayNameCiphertextVersion: 1,
+        displayNameKeyVersion: 1,
+        displayNameNonce: new Uint8Array(12).fill(23),
+        publicId,
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      repository.rename({
+        clerkUserId: "user_connectiona",
+        displayNameCiphertext: new Uint8Array(32).fill(24),
+        displayNameCiphertextVersion: 1,
+        displayNameKeyVersion: 1,
+        displayNameNonce: new Uint8Array(12).fill(25),
+        publicId,
+      }),
+    ).resolves.toMatchObject({
+      displayName: { fallback: null },
+      numberSuffix: "3456",
+      publicId,
+      state: "connected",
+      stateChangedAt: connectedAt,
+    });
+    await expect(
+      repository.listForUser("user_connectiona"),
+    ).resolves.toMatchObject([{ displayName: { fallback: null }, publicId }]);
   });
 
   test("makes Connection Deletion terminal and revokes keys and inventory atomically", async () => {
@@ -513,10 +568,10 @@ describe("WhatsApp Connection repository", () => {
       requestedAt: "2026-07-31T12:05:01.000Z",
     });
 
-    expect(disconnect).toEqual({
+    expect(disconnect).toMatchObject({
       action: "disconnect",
       connection: {
-        displayName: null,
+        displayName: { fallback: null },
         numberSuffix: "3456",
         publicId,
         state: "degraded",
@@ -708,11 +763,21 @@ describe("WhatsApp Connection repository", () => {
     ] as const) {
       await expect(
         setups.start({
-          accountKeyVersion: 1,
+          accountKey: {
+            ciphertext: "AQID",
+            keyVersion: 1,
+            kmsKeyId: "arn:aws:kms:us-east-1:111122223333:key/content-root-key",
+            personalAccountId: accountA,
+            version: 1,
+          },
           connectionKeyCiphertext: new Uint8Array(32).fill(token),
           connectionKeyNonce: new Uint8Array(12).fill(token),
           connectionKeyVersion: 1,
           createdAt,
+          displayNameCiphertext: new Uint8Array(32).fill(token + 2),
+          displayNameCiphertextNonce: new Uint8Array(12).fill(token + 3),
+          displayNameCiphertextVersion: 1,
+          displayNameKeyVersion: 1,
           idempotencyKey: `${index}3456789012345678931`,
           numberCiphertext: new Uint8Array(32).fill(token),
           numberCiphertextNonce: new Uint8Array(12).fill(token),

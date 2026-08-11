@@ -16,6 +16,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   let bootstrapRequests = 0;
   const setupBodies: Array<{
     readonly idempotency_key: string;
+    readonly name: string;
     readonly whatsapp_number: string;
   }> = [];
   let releaseFirstSetup: (() => void) | undefined;
@@ -209,6 +210,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
 
   await expect(page.getByLabel("WhatsApp Number")).toHaveCount(0);
   await page.getByRole("button", { name: "Register WhatsApp Number" }).click();
+  await page.getByLabel("Name", { exact: true }).fill("Personal WhatsApp");
   const whatsappNumber = page.getByLabel("WhatsApp Number");
   const startConnectionSetup = page.getByRole("button", {
     name: "Continue",
@@ -242,6 +244,15 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(page.getByTestId("whatsapp-connection")).toContainText(
     "connected",
   );
+  await expect(page.getByTestId("whatsapp-connection")).toContainText(
+    "Personal WhatsApp",
+  );
+  await page.getByRole("button", { name: "Register WhatsApp Number" }).click();
+  await expect(page.getByLabel("Name", { exact: true })).toBeEnabled();
+  await expect(page.getByLabel("Name", { exact: true })).toHaveValue("");
+  await expect(page.getByLabel("WhatsApp Number")).toBeEnabled();
+  await expect(page.getByLabel("WhatsApp Number")).toHaveValue("");
+  await page.getByRole("button", { name: "Close" }).click();
   const connection = page.getByTestId("whatsapp-connection");
   await connection
     .getByRole("button", {
@@ -255,6 +266,10 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   const retentionPolicy = configuration.getByRole("combobox", {
     name: "Keep message history for",
   });
+  await configuration.getByLabel("Name", { exact: true }).fill("Work WhatsApp");
+  await configuration.getByRole("button", { name: "Save name" }).click();
+  await expect(configuration).toContainText("Name saved.");
+  await expect(connection).toContainText("Work WhatsApp");
   await expect(retentionPolicy).toContainText("30 days");
   await retentionPolicy.click();
   await page.getByRole("option", { name: "7 days" }).click();
@@ -336,6 +351,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await resumedReconnect.getByRole("button", { name: "Close" }).click();
   expect(setupBodies).toHaveLength(1);
   expect(setupBodies[0]?.whatsapp_number).toBe("+1 (555) 012-3456");
+  expect(setupBodies[0]?.name).toBe("Personal WhatsApp");
   expect(setupBodies[0]?.idempotency_key).toMatch(/^[A-Za-z0-9_-]{21}$/);
   await page.getByRole("link", { name: "Settings" }).click();
   await expect(page).toHaveURL(/\/dashboard\/settings$/u);
@@ -409,6 +425,7 @@ test("bootstraps another Clerk User and shows provider capacity failure during C
 
   await page.getByRole("link", { name: "WhatsApp Connections" }).click();
   await page.getByRole("button", { name: "Register WhatsApp Number" }).click();
+  await page.getByLabel("Name", { exact: true }).fill("Personal WhatsApp");
   await page.getByLabel("WhatsApp Number").fill("+1 (555) 012-3456");
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await expect(page.getByTestId("connection-setup-status")).toHaveText(

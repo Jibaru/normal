@@ -47,6 +47,7 @@ import type {
   McpToolSendStatusRecord,
   RejectToolCallResult,
 } from "@whatsapp-mcp/db/mcp-tool";
+import { normalizeWhatsAppConnectionName } from "@whatsapp-mcp/domain/whatsapp-connection";
 import { createMcpHandler } from "agents/mcp/server";
 import { Context, Data, Effect, type Layer, Option } from "effect";
 import { z } from "zod";
@@ -370,7 +371,7 @@ const ListChatsOutputSchema = z
             conversation_id: z.string().regex(/^cvs_[A-Za-z0-9_-]{21}$/u),
             kind: z.enum(["direct", "group"]),
             recipient_id: z.string().regex(/^(ctc|grp)_[A-Za-z0-9_-]{21}$/u),
-            display_name: z.string().nullable(),
+            display_name: z.string().min(1).max(64),
             phone: z
               .string()
               .regex(/^\+[1-9][0-9]{6,14}$/u)
@@ -858,11 +859,79 @@ const listConnections = (
         : authorizationDenied();
     }
 
+    const encryption = yield* EnvelopeEncryptionService;
+    const revealed = yield* Effect.forEach(
+      loaded.right,
+      (connection) =>
+        connection.displayNameFallback !== null
+          ? Effect.succeed({
+              connection,
+              displayName: connection.displayNameFallback,
+            })
+          : connection.displayName === null
+            ? Effect.fail(
+                new EncryptionError({
+                  operation: "decrypt",
+                  stage: "ciphertext",
+                }),
+              )
+            : encryption
+                .decrypt({
+                  accountKey: connection.accountKey,
+                  ciphertext: connection.displayName,
+                  connectionKey: connection.connectionKey,
+                  context: {
+                    accountId: connection.accountKey.personalAccountId,
+                    connectionId: connection.connectionId,
+                    entity: "whatsapp-connection",
+                    fieldOrObjectPurpose: "display-name",
+                    recordId: connection.connectionId,
+                  },
+                })
+                .pipe(
+                  Effect.map((bytes) => ({
+                    connection,
+                    displayName: new TextDecoder("utf-8", {
+                      fatal: true,
+                      ignoreBOM: false,
+                    }).decode(bytes),
+                  })),
+                ),
+      { concurrency: 3 },
+    ).pipe(Effect.either);
+    if (
+      revealed._tag === "Left" ||
+      revealed.right.some(
+        ({ displayName }) =>
+          normalizeWhatsAppConnectionName(displayName) !== displayName,
+      )
+    ) {
+      const completedAt = yield* clock.now;
+      const completed = yield* persistence
+        .completeToolCall({
+          auditLogId,
+          completedAt,
+          errorCode: "service_unavailable",
+          outcome: "execution_error",
+          resultCount: null,
+        })
+        .pipe(Effect.either);
+      yield* emitToolCompletion(
+        "list_connections",
+        completed._tag === "Left" ? "audit_unavailable" : "service_unavailable",
+        undefined,
+        "decryption",
+      );
+      return completed._tag === "Left"
+        ? auditUnavailable()
+        : serviceUnavailable();
+    }
+
     const output: ListConnectionsOutput =
       ListConnectionsOutputContract.decodeUnknown({
-        connections: loaded.right.map((connection) => ({
+        connections: revealed.right.map(({ connection, displayName }) => ({
           connection_id: connection.publicId,
-          display_name: connection.displayName,
+          display_name: displayName,
           number_last_four: connection.numberLastFour,
           state: connection.state,
           state_changed_at: connection.stateChangedAt,

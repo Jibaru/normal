@@ -45,8 +45,8 @@ describe("Tool Call Log repository", () => {
     await database.query(
       `INSERT INTO public.whatsapp_connections (
          id, personal_account_id, webhook_ingress_id,
-         display_name_ciphertext, public_id
-       ) VALUES ($1, $2, $3, decode('01', 'hex'), $4)`,
+         display_name_fallback, public_id
+       ) VALUES ($1, $2, $3, 'Bright Badger', $4)`,
       [
         connectionId,
         accountId,
@@ -92,8 +92,8 @@ describe("Tool Call Log repository", () => {
     await database.query(
       `INSERT INTO public.whatsapp_connections (
          id, personal_account_id, webhook_ingress_id,
-         display_name_ciphertext, public_id
-       ) VALUES ($1, $2, $3, decode('01', 'hex'), $4)`,
+         display_name_fallback, public_id
+       ) VALUES ($1, $2, $3, 'Calm Falcon', $4)`,
       [
         otherConnectionId,
         otherAccountId,

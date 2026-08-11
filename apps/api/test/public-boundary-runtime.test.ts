@@ -75,6 +75,7 @@ describe("public-boundary Worker harness", () => {
       new Request("https://api.example.test/v1/connection-setups", {
         body: JSON.stringify({
           idempotency_key: "123456789012345678901",
+          name: "Personal WhatsApp",
           whatsapp_number: "+1 (555) 012-3456",
         }),
         headers: {
@@ -146,6 +147,7 @@ describe("public-boundary Worker harness", () => {
       new Request("https://api.example.test/v1/connection-setups", {
         body: JSON.stringify({
           idempotency_key: "223456789012345678901",
+          name: "Work WhatsApp",
           whatsapp_number: "+1 (555) 012-3457",
         }),
         headers: {
@@ -188,6 +190,7 @@ describe("public-boundary Worker harness", () => {
       new Request("https://api.example.test/v1/connection-setups", {
         body: JSON.stringify({
           idempotency_key: "323456789012345678901",
+          name: "Personal WhatsApp",
           whatsapp_number: "+1 (555) 012-3456",
         }),
         headers: {
@@ -262,7 +265,7 @@ describe("public-boundary Worker harness", () => {
     expect(await listed.json()).toEqual({
       whatsapp_connections: [
         {
-          display_name: null,
+          display_name: "Personal WhatsApp",
           id: "con_000000000000000000018",
           number_suffix: "3456",
           state: "connected",

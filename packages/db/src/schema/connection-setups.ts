@@ -22,6 +22,13 @@ export const connectionSetupsInApp = publicSchema.table(
     id: text().primaryKey().notNull(),
     personalAccountId: uuid("personal_account_id").notNull(),
     idempotencyKey: text("idempotency_key").notNull(),
+    displayNameCiphertextVersion: smallint("display_name_ciphertext_version"),
+    displayNameKeyVersion: integer("display_name_key_version"),
+    displayNameNonce: bytea("display_name_nonce"),
+    displayNameCiphertext: bytea("display_name_ciphertext"),
+    displayNameFallback: text("display_name_fallback").default(
+      sql`public.random_whatsapp_connection_name()`,
+    ),
     state: text().notNull(),
     numberCiphertextVersion: smallint("number_ciphertext_version").notNull(),
     numberKeyVersion: integer("number_key_version").notNull(),
@@ -108,6 +115,10 @@ export const connectionSetupsInApp = publicSchema.table(
     check(
       "connection_setups_idempotency_key_check",
       sql`idempotency_key ~ '^[A-Za-z0-9_-]{21}$'::text`,
+    ),
+    check(
+      "connection_setups_display_name_storage_check",
+      sql`(display_name_fallback ~ '^(Bright|Calm|Clever|Kind|Lucky|Quiet|Swift|Warm) (Badger|Falcon|Fox|Otter|Panda|Robin|Tiger|Turtle)$' AND display_name_ciphertext_version IS NULL AND display_name_key_version IS NULL AND display_name_nonce IS NULL AND display_name_ciphertext IS NULL) OR (display_name_fallback IS NULL AND display_name_ciphertext_version = 1 AND display_name_key_version > 0 AND octet_length(display_name_nonce) = 12 AND octet_length(display_name_ciphertext) > 16)`,
     ),
     check(
       "connection_setups_number_ciphertext_version_check",

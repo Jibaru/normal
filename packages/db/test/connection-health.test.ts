@@ -66,11 +66,21 @@ describe("connection health and Ingestion Gap repository", () => {
     });
     const setups = makeConnectionSetupRepository(provider);
     await setups.start({
-      accountKeyVersion: 1,
+      accountKey: {
+        ciphertext: "AQID",
+        keyVersion: 1,
+        kmsKeyId: "arn:aws:kms:us-east-1:111122223333:key/content-root-key",
+        personalAccountId: accountId,
+        version: 1,
+      },
       connectionKeyCiphertext: new Uint8Array(32).fill(3),
       connectionKeyNonce: new Uint8Array(12).fill(4),
       connectionKeyVersion: 1,
       createdAt: "2026-07-31T12:00:00.000Z",
+      displayNameCiphertext: new Uint8Array(32).fill(20),
+      displayNameCiphertextNonce: new Uint8Array(12).fill(21),
+      displayNameCiphertextVersion: 1,
+      displayNameKeyVersion: 1,
       idempotencyKey: "123456789012345678936",
       numberCiphertext: new Uint8Array(32).fill(5),
       numberCiphertextNonce: new Uint8Array(12).fill(6),
@@ -122,6 +132,10 @@ describe("connection health and Ingestion Gap repository", () => {
       connectionKeyNonce: new Uint8Array(12).fill(15),
       connectionKeyVersion: 1,
       connectedAt,
+      displayNameCiphertext: new Uint8Array(32).fill(20),
+      displayNameCiphertextVersion: 1,
+      displayNameKeyVersion: 1,
+      displayNameNonce: new Uint8Array(12).fill(21),
       locatorCiphertext: new Uint8Array(32).fill(16),
       locatorCiphertextVersion: 1,
       locatorKeyVersion: 1,

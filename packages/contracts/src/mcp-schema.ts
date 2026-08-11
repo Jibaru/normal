@@ -64,7 +64,10 @@ export const ListConnectionsOutputContract = makePublicObjectContract({
   connections: Schema.Array(
     Schema.Struct({
       connection_id: ConnectionId,
-      display_name: Schema.NullOr(Schema.String),
+      display_name: Schema.String.pipe(
+        Schema.minLength(1),
+        Schema.maxLength(64),
+      ),
       number_last_four: Schema.NullOr(
         Schema.String.pipe(Schema.pattern(/^[0-9]{4}$/)),
       ),

@@ -57,7 +57,7 @@ Requires `connections:read`. The input is an empty object. It returns only non-d
 }
 ```
 
-`display_name` and `number_last_four` are nullable. `state` is one of `connected`, `connecting`, `disconnected`, `reconnect_required`, or `degraded`. Deleting connections are immediately revoked and omitted.
+`display_name` is the User-chosen WhatsApp Connection name and is always present. `number_last_four` is nullable. `state` is one of `connected`, `connecting`, `disconnected`, `reconnect_required`, or `degraded`. Deleting connections are immediately revoked and omitted.
 
 ## `list_contacts`
 

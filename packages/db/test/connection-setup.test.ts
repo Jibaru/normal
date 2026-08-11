@@ -67,11 +67,21 @@ describe("Connection Setup repository", () => {
     idempotencyKey: string,
     numberToken: number,
   ) => ({
-    accountKeyVersion: 1,
+    accountKey: {
+      ciphertext: "AQID",
+      keyVersion: 1,
+      kmsKeyId: "arn:aws:kms:us-east-1:111122223333:key/content-root-key",
+      personalAccountId,
+      version: 1 as const,
+    },
     connectionKeyCiphertext: new Uint8Array(32).fill(numberToken),
     connectionKeyNonce: new Uint8Array(12).fill(numberToken),
     connectionKeyVersion: 1,
     createdAt,
+    displayNameCiphertext: new Uint8Array(32).fill(8),
+    displayNameCiphertextNonce: new Uint8Array(12).fill(9),
+    displayNameCiphertextVersion: 1,
+    displayNameKeyVersion: 1,
     idempotencyKey,
     numberCiphertext: new Uint8Array(32).fill(numberToken),
     numberCiphertextNonce: new Uint8Array(12).fill(numberToken),
@@ -123,24 +133,30 @@ describe("Connection Setup repository", () => {
     if (!("setup" in first)) {
       throw new Error("expected a created Connection Setup");
     }
-    expect(replay).toEqual({
+    expect(replay).toMatchObject({
       outcome: "replay",
       setup: first.setup,
     });
 
     const persisted = await database.query<{
       expires_at: Date;
+      plaintext_column_count: number;
+      plaintext_in_ciphertext: boolean;
       setup_count: number;
     }>(`
       SELECT
         count(*)::integer AS setup_count,
-        max(expires_at) AS expires_at
+        max(expires_at) AS expires_at,
+        bool_or(position(encode(convert_to('Personal WhatsApp', 'UTF8'), 'hex') in encode(display_name_ciphertext, 'hex')) > 0) AS plaintext_in_ciphertext,
+        (SELECT count(*)::integer FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'connection_setups' AND column_name = 'display_name') AS plaintext_column_count
       FROM public.connection_setups
     `);
     expect(persisted.rows[0]?.setup_count).toBe(1);
     expect(persisted.rows[0]?.expires_at).toEqual(
       new Date("2026-07-31T12:15:00.000Z"),
     );
+    expect(persisted.rows[0]?.plaintext_column_count).toBe(0);
+    expect(persisted.rows[0]?.plaintext_in_ciphertext).toBe(false);
   });
 
   test("rejects changed input, a globally reserved number, and excess retained Connections", async () => {

@@ -13,7 +13,10 @@ import type {
   WhatsAppConnectionLifecycleClaim,
   WhatsAppConnectionRecord,
 } from "@whatsapp-mcp/db/whatsapp-connection";
-import type { WhatsAppConnectionState } from "@whatsapp-mcp/domain/whatsapp-connection";
+import {
+  normalizeWhatsAppConnectionName,
+  type WhatsAppConnectionState,
+} from "@whatsapp-mcp/domain/whatsapp-connection";
 import { Context, Data, Effect, type Layer } from "effect";
 import {
   HumanIdentity,
@@ -38,6 +41,8 @@ const qrRoutePattern =
   /^\/v1\/connection-setups\/(cst_[A-Za-z0-9_-]{21})\/qr$/u;
 const lifecycleRoutePattern =
   /^\/v1\/whatsapp-connections\/(con_[A-Za-z0-9_-]{21})\/(disconnect|reconnect|delete)$/u;
+const nameRoutePattern =
+  /^\/v1\/whatsapp-connections\/(con_[A-Za-z0-9_-]{21})\/name$/u;
 
 export class WhatsAppConnectionPersistenceError extends Data.TaggedError(
   "WhatsAppConnectionPersistenceError",
@@ -55,6 +60,14 @@ export class WhatsAppConnectionActivationError extends Data.TaggedError(
   "WhatsAppConnectionActivationError",
 ) {}
 
+interface VisibleWhatsAppConnectionRecord {
+  readonly displayName: string;
+  readonly numberSuffix: string;
+  readonly publicId: string;
+  readonly state: WhatsAppConnectionState;
+  readonly stateChangedAt: string;
+}
+
 export interface WhatsAppConnectionPersistenceService {
   readonly activate: (
     input: ActivateWhatsAppConnectionInput,
@@ -66,6 +79,24 @@ export interface WhatsAppConnectionPersistenceService {
     clerkUserId: string,
   ) => Effect.Effect<
     ReadonlyArray<WhatsAppConnectionRecord>,
+    WhatsAppConnectionPersistenceError
+  >;
+  readonly rename: (input: {
+    readonly clerkUserId: string;
+    readonly displayNameCiphertext: Uint8Array;
+    readonly displayNameCiphertextVersion: number;
+    readonly displayNameKeyVersion: number;
+    readonly displayNameNonce: Uint8Array;
+    readonly publicId: string;
+  }) => Effect.Effect<
+    WhatsAppConnectionRecord | null,
+    WhatsAppConnectionPersistenceError
+  >;
+  readonly loadForRename: (input: {
+    readonly clerkUserId: string;
+    readonly publicId: string;
+  }) => Effect.Effect<
+    WhatsAppConnectionRecord | null,
     WhatsAppConnectionPersistenceError
   >;
   readonly prepareDeletion: (input: {
@@ -173,7 +204,7 @@ export type WhatsAppConnectionRequirements =
 type SetupObservation =
   | {
       readonly outcome: "connected";
-      readonly connection: WhatsAppConnectionRecord;
+      readonly connection: VisibleWhatsAppConnectionRecord;
     }
   | {
       readonly outcome: "qr_available";
@@ -190,12 +221,12 @@ type SetupObservation =
 type LifecycleObservation =
   | {
       readonly action: WhatsAppConnectionLifecycleAction;
-      readonly connection: WhatsAppConnectionRecord;
+      readonly connection: VisibleWhatsAppConnectionRecord;
       readonly outcome: "complete" | "in_progress" | "recovery_required";
     }
   | {
       readonly action: "reconnect";
-      readonly connection: WhatsAppConnectionRecord;
+      readonly connection: VisibleWhatsAppConnectionRecord;
       readonly expiresAt: string | null;
       readonly image: Uint8Array;
       readonly outcome: "qr_available";
@@ -210,6 +241,83 @@ const withZeroedBytes = <Value, Error, Requirements>(
       value.fill(0);
     }),
   );
+
+const revealConnection = (connection: WhatsAppConnectionRecord) =>
+  connection.displayName.fallback !== null
+    ? Effect.succeed({
+        displayName: connection.displayName.fallback,
+        numberSuffix: connection.numberSuffix,
+        publicId: connection.publicId,
+        state: connection.state,
+        stateChangedAt: connection.stateChangedAt,
+      })
+    : Effect.gen(function* () {
+        if (connection.displayName.ciphertext === null) {
+          return yield* Effect.fail(new WhatsAppConnectionActivationError());
+        }
+        const encryption = yield* EnvelopeEncryptionService;
+        const plaintext = yield* encryption.decrypt({
+          accountKey: connection.accountKey,
+          ciphertext: connection.displayName.ciphertext,
+          connectionKey: connection.connectionKey,
+          context: {
+            accountId: connection.accountKey.personalAccountId,
+            connectionId: connection.connectionId,
+            entity: "whatsapp-connection",
+            fieldOrObjectPurpose: "display-name",
+            recordId: connection.connectionId,
+          },
+        });
+        const displayName = new TextDecoder("utf-8", {
+          fatal: true,
+          ignoreBOM: false,
+        }).decode(plaintext);
+        if (normalizeWhatsAppConnectionName(displayName) !== displayName) {
+          return yield* Effect.fail(new WhatsAppConnectionActivationError());
+        }
+        return {
+          displayName,
+          numberSuffix: connection.numberSuffix,
+          publicId: connection.publicId,
+          state: connection.state,
+          stateChangedAt: connection.stateChangedAt,
+        };
+      });
+
+const revealSetupName = (
+  setup: Extract<
+    ConnectionSetupActivation,
+    { readonly outcome: "provisioned" }
+  >["setup"],
+) =>
+  setup.displayName.fallback !== null
+    ? Effect.succeed(setup.displayName.fallback)
+    : Effect.gen(function* () {
+        if (setup.displayName.ciphertext === null) {
+          return yield* Effect.fail(new WhatsAppConnectionActivationError());
+        }
+        const encryption = yield* EnvelopeEncryptionService;
+        const plaintext = yield* encryption.decrypt({
+          accountKey: setup.accountKey,
+          ciphertext: setup.displayName.ciphertext,
+          connectionKey: setup.setupKey,
+          context: {
+            accountId: setup.personalAccountId,
+            connectionId: setup.setupId,
+            entity: "connection-setup",
+            fieldOrObjectPurpose: "display-name",
+            recordId: setup.setupId,
+          },
+        });
+        const displayName = new TextDecoder("utf-8", {
+          fatal: true,
+          ignoreBOM: false,
+        }).decode(plaintext);
+        if (normalizeWhatsAppConnectionName(displayName) !== displayName) {
+          return yield* Effect.fail(new WhatsAppConnectionActivationError());
+        }
+        return displayName;
+      });
 
 const encryptConnectionValue = (
   setup: Extract<
@@ -271,6 +379,14 @@ const activate = (
           connectionId,
           keyVersion: 1,
         });
+        const displayName = yield* revealSetupName(setup);
+        const displayNameCiphertext = yield* encryptConnectionValue(
+          setup,
+          connectionId,
+          connectionKey,
+          "display-name",
+          new TextEncoder().encode(displayName),
+        );
         const numberBytes = yield* encryption.decrypt({
           accountKey: setup.accountKey,
           ciphertext: setup.numberCiphertext,
@@ -318,7 +434,7 @@ const activate = (
               identityKeyPlaintext,
             );
             const persistence = yield* WhatsAppConnectionPersistence;
-            return yield* persistence.activate({
+            const persisted = yield* persistence.activate({
               accountKeyVersion: connectionKey.accountKeyVersion,
               authorityCiphertext: decodeBase64(authority.ciphertext),
               authorityCiphertextVersion: authority.version,
@@ -329,6 +445,12 @@ const activate = (
               connectionKeyNonce: decodeBase64(connectionKey.nonce),
               connectionKeyVersion: connectionKey.keyVersion,
               connectedAt,
+              displayNameCiphertext: decodeBase64(
+                displayNameCiphertext.ciphertext,
+              ),
+              displayNameCiphertextVersion: displayNameCiphertext.version,
+              displayNameKeyVersion: displayNameCiphertext.keyVersion,
+              displayNameNonce: decodeBase64(displayNameCiphertext.nonce),
               locatorCiphertext: decodeBase64(locator.ciphertext),
               locatorCiphertextVersion: locator.version,
               locatorKeyVersion: locator.keyVersion,
@@ -343,6 +465,7 @@ const activate = (
               webhookSecretKeyVersion: identityKey.keyVersion,
               webhookSecretNonce: decodeBase64(identityKey.nonce),
             });
+            return yield* revealConnection(persisted);
           }),
         );
       }),
@@ -385,7 +508,10 @@ export const observeConnectionSetup = (
       return yield* Effect.fail(new WhatsAppConnectionNotAccessible());
     }
     if (loaded.outcome === "activated") {
-      return { connection: loaded.connection, outcome: "connected" };
+      return {
+        connection: yield* revealConnection(loaded.connection),
+        outcome: "connected",
+      };
     }
     if (loaded.outcome !== "provisioned") {
       if (
@@ -459,14 +585,7 @@ export const reconcileWhatsAppConnectionLifecycle = (
   clerkUserId: string,
   publicId: string,
   action: WhatsAppConnectionLifecycleAction,
-): Effect.Effect<
-  LifecycleObservation,
-  WhatsAppConnectionNotAccessible | WhatsAppConnectionPersistenceError,
-  | WhatsAppConnectionClockService
-  | WhatsAppConnectionIdentifiersService
-  | WhatsAppConnectionPersistenceService
-  | WhatsAppConnectionProviderService
-> =>
+) =>
   Effect.gen(function* () {
     const identifiers = yield* WhatsAppConnectionIdentifiers;
     const clock = yield* WhatsAppConnectionClock;
@@ -483,10 +602,11 @@ export const reconcileWhatsAppConnectionLifecycle = (
     if (claim === null) {
       return yield* Effect.fail(new WhatsAppConnectionNotAccessible());
     }
+    const claimedConnection = yield* revealConnection(claim.connection);
     if (claim.outcome !== "claimed") {
       return {
         action,
-        connection: claim.connection,
+        connection: claimedConnection,
         outcome: claim.outcome,
       };
     }
@@ -552,20 +672,21 @@ export const reconcileWhatsAppConnectionLifecycle = (
     }
 
     const observedAt = yield* clock.now;
-    const connection = yield* persistence.finishLifecycle({
+    const persistedConnection = yield* persistence.finishLifecycle({
       claimId,
       clerkUserId,
       observedAt,
       publicId,
       state,
     });
-    if (connection === null) {
+    if (persistedConnection === null) {
       return {
         action,
-        connection: claim.connection,
+        connection: claimedConnection,
         outcome: "in_progress",
-      };
+      } as const;
     }
+    const connection = yield* revealConnection(persistedConnection);
 
     if (
       action === "reconnect" &&
@@ -577,12 +698,12 @@ export const reconcileWhatsAppConnectionLifecycle = (
       });
       if (qr.ok && qr.value.state === "available") {
         return {
-          action,
+          action: "reconnect",
           connection,
           expiresAt: qr.value.expiresAt,
           image: qr.value.image,
           outcome: "qr_available",
-        };
+        } as const;
       }
     }
 
@@ -597,7 +718,7 @@ export const reconcileWhatsAppConnectionLifecycle = (
         : connection.state === "connecting"
           ? "in_progress"
           : "recovery_required",
-    };
+    } as const;
   });
 
 export const deleteWhatsAppConnection = (
@@ -658,8 +779,8 @@ export const deleteWhatsAppConnection = (
   });
 
 const corsHeaders = (browserOrigin: string) => ({
-  "access-control-allow-headers": "authorization",
-  "access-control-allow-methods": "GET,POST,OPTIONS",
+  "access-control-allow-headers": "authorization,content-type",
+  "access-control-allow-methods": "GET,POST,PUT,OPTIONS",
   "access-control-allow-origin": browserOrigin,
   vary: "Origin",
 });
@@ -729,13 +850,34 @@ const reconnectQrResponse = (
     status: 200,
   });
 
-const connectionJson = (connection: WhatsAppConnectionRecord) => ({
+const connectionJson = (connection: VisibleWhatsAppConnectionRecord) => ({
   display_name: connection.displayName,
   id: connection.publicId,
   number_suffix: connection.numberSuffix,
   state: connection.state,
   state_changed_at: connection.stateChangedAt,
 });
+
+const decodeNameRequest = async (request: Request): Promise<string | null> => {
+  let value: unknown;
+  try {
+    value = await request.json();
+  } catch {
+    return null;
+  }
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    !Object.hasOwn(value, "name") ||
+    Object.keys(value).length !== 1
+  ) {
+    return null;
+  }
+  return normalizeWhatsAppConnectionName(
+    (value as { readonly name: unknown }).name,
+  );
+};
 
 export const createWhatsAppConnectionHandler =
   (
@@ -746,10 +888,12 @@ export const createWhatsAppConnectionHandler =
     const url = new URL(request.url);
     const qrMatch = qrRoutePattern.exec(url.pathname);
     const lifecycleMatch = lifecycleRoutePattern.exec(url.pathname);
+    const nameMatch = nameRoutePattern.exec(url.pathname);
     if (
       (url.pathname !== CONNECTIONS_ROUTE &&
         qrMatch === null &&
-        lifecycleMatch === null) ||
+        lifecycleMatch === null &&
+        nameMatch === null) ||
       request.headers.get("origin") !== browserOrigin
     ) {
       return notFound();
@@ -761,16 +905,70 @@ export const createWhatsAppConnectionHandler =
       });
     }
     if (
-      (lifecycleMatch === null && request.method !== "GET") ||
-      (lifecycleMatch !== null && request.method !== "POST")
+      (lifecycleMatch !== null && request.method !== "POST") ||
+      (nameMatch !== null && request.method !== "PUT") ||
+      (lifecycleMatch === null &&
+        nameMatch === null &&
+        request.method !== "GET")
     ) {
       return notFound(browserOrigin);
+    }
+
+    const requestedName =
+      nameMatch === null ? null : await decodeNameRequest(request);
+    if (nameMatch !== null && requestedName === null) {
+      return jsonResponse({ error: "invalid_request" }, 400, browserOrigin);
     }
 
     return Effect.runPromise(
       Effect.gen(function* () {
         const identity = yield* HumanIdentity;
         const clerkUserId = yield* identity.verify(request);
+        if (nameMatch !== null && requestedName !== null) {
+          const publicId = nameMatch[1];
+          if (publicId === undefined) {
+            return yield* Effect.fail(new WhatsAppConnectionNotAccessible());
+          }
+          const persistence = yield* WhatsAppConnectionPersistence;
+          const material = yield* persistence.loadForRename({
+            clerkUserId,
+            publicId,
+          });
+          if (material === null) {
+            return yield* Effect.fail(new WhatsAppConnectionNotAccessible());
+          }
+          const encryption = yield* EnvelopeEncryptionService;
+          const protectedName = yield* encryption.encrypt({
+            accountKey: material.accountKey,
+            connectionKey: material.connectionKey,
+            context: {
+              accountId: material.accountKey.personalAccountId,
+              connectionId: material.connectionId,
+              entity: "whatsapp-connection",
+              fieldOrObjectPurpose: "display-name",
+              recordId: material.connectionId,
+            },
+            plaintext: new TextEncoder().encode(requestedName),
+          });
+          const persisted = yield* persistence.rename({
+            clerkUserId,
+            displayNameCiphertext: decodeBase64(protectedName.ciphertext),
+            displayNameCiphertextVersion: protectedName.version,
+            displayNameKeyVersion: protectedName.keyVersion,
+            displayNameNonce: decodeBase64(protectedName.nonce),
+            publicId,
+          });
+          if (persisted === null) {
+            return yield* Effect.fail(new WhatsAppConnectionNotAccessible());
+          }
+          const connection = yield* revealConnection(persisted);
+          const telemetry = yield* SafeTelemetry;
+          yield* telemetry.emit({
+            event: "whatsapp_connection.rename.completed",
+            service: "api",
+          });
+          return { connection, kind: "rename" as const };
+        }
         if (lifecycleMatch !== null) {
           const publicId = lifecycleMatch[1];
           const action = lifecycleMatch[2];
@@ -827,7 +1025,12 @@ export const createWhatsAppConnectionHandler =
           return { kind: "observation" as const, observation };
         }
         const persistence = yield* WhatsAppConnectionPersistence;
-        const connections = yield* persistence.list(clerkUserId);
+        const protectedConnections = yield* persistence.list(clerkUserId);
+        const connections = yield* Effect.forEach(
+          protectedConnections,
+          revealConnection,
+          { concurrency: 3 },
+        );
         const telemetry = yield* SafeTelemetry;
         yield* telemetry.emit({
           connectionCount: connections.length,
@@ -847,6 +1050,13 @@ export const createWhatsAppConnectionHandler =
               ? notFound(browserOrigin)
               : jsonResponse({ error: "unavailable" }, 503, browserOrigin),
           onSuccess: (result) => {
+            if (result.kind === "rename") {
+              return jsonResponse(
+                { whatsapp_connection: connectionJson(result.connection) },
+                200,
+                browserOrigin,
+              );
+            }
             if (result.kind === "deletion") {
               return jsonResponse(
                 {
@@ -930,6 +1140,7 @@ export const isWhatsAppConnectionRequest = (request: Request): boolean => {
   return (
     path === CONNECTIONS_ROUTE ||
     qrRoutePattern.test(path) ||
-    lifecycleRoutePattern.test(path)
+    lifecycleRoutePattern.test(path) ||
+    nameRoutePattern.test(path)
   );
 };

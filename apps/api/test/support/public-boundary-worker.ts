@@ -99,6 +99,7 @@ const personalAccounts = new Map<string, string>();
 const connectionSetups = new Map<
   string,
   {
+    readonly displayName: string;
     readonly numberToken: string;
     readonly setup: {
       readonly createdAt: string;
@@ -124,7 +125,7 @@ let providerConnectionState:
 let lifecycleClaimId: string | null = null;
 const retentionPolicies = new Map<string, number | null>();
 const whatsAppConnections: Array<{
-  displayName: null;
+  displayName: string;
   numberSuffix: string;
   publicId: string;
   state:
@@ -137,6 +138,43 @@ const whatsAppConnections: Array<{
 }> = [];
 const publishedWebhookMessages: WebhookIngressQueueMessage[] = [];
 const encryptedWebhookPayloads = new Map<string, Uint8Array>();
+const encryptedDisplayNames = new Map<string, string>();
+const testAccountKey = {
+  ciphertext: "AQID",
+  keyVersion: 1,
+  kmsKeyId: "arn:aws:kms:us-east-1:111122223333:key/test-content-root",
+  personalAccountId: "10000000-0000-4000-8000-000000000018",
+  version: 1 as const,
+};
+const testConnectionKey = (connectionId: string) => ({
+  accountKeyVersion: 1,
+  ciphertext: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcY",
+  connectionId,
+  keyVersion: 1,
+  nonce: "AQIDBAUGBwgJCgsM",
+  personalAccountId: testAccountKey.personalAccountId,
+  version: 1 as const,
+});
+const protectedTestConnection = (
+  connection: (typeof whatsAppConnections)[number],
+) => ({
+  accountKey: testAccountKey,
+  connectionId: "20000000-0000-4000-8000-000000000018",
+  connectionKey: testConnectionKey("20000000-0000-4000-8000-000000000018"),
+  displayName: {
+    ciphertext: {
+      ciphertext: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcY",
+      keyVersion: 1,
+      nonce: "AQIDBAUGBwgJCgsM",
+      version: 1 as const,
+    },
+    fallback: null,
+  },
+  numberSuffix: connection.numberSuffix,
+  publicId: connection.publicId,
+  state: connection.state,
+  stateChangedAt: connection.stateChangedAt,
+});
 const claimedWebhookItems = new Set<string>();
 const claimedWebhookEvents = new Set<string>();
 const deadLetteredWebhookEvents = new Set<string>();
@@ -527,7 +565,21 @@ const makeTestLayer = (
           const existing = connectionSetups.get(idempotencyKey);
           if (existing !== undefined) {
             return existing.numberToken === tokenKey(numberToken)
-              ? { outcome: "replay" as const, setup: existing.setup }
+              ? {
+                  nameMaterial: {
+                    accountKey: testAccountKey,
+                    name: {
+                      ciphertext: new Uint8Array(32).fill(1),
+                      fallback: null,
+                      keyVersion: 1,
+                      nonce: new Uint8Array(12).fill(2),
+                      version: 1 as const,
+                    },
+                    setupKey: testConnectionKey(existing.setup.setupId),
+                  },
+                  outcome: "replay" as const,
+                  setup: existing.setup,
+                }
               : { outcome: "idempotency_conflict" as const };
           }
           return {
@@ -548,7 +600,21 @@ const makeTestLayer = (
           const existing = connectionSetups.get(input.idempotencyKey);
           if (existing !== undefined) {
             return existing.numberToken === tokenKey(input.numberToken)
-              ? { outcome: "replay" as const, setup: existing.setup }
+              ? {
+                  nameMaterial: {
+                    accountKey: testAccountKey,
+                    name: {
+                      ciphertext: new Uint8Array(32).fill(1),
+                      fallback: null,
+                      keyVersion: 1,
+                      nonce: new Uint8Array(12).fill(2),
+                      version: 1 as const,
+                    },
+                    setupKey: testConnectionKey(existing.setup.setupId),
+                  },
+                  outcome: "replay" as const,
+                  setup: existing.setup,
+                }
               : { outcome: "idempotency_conflict" as const };
           }
           const setup = {
@@ -558,6 +624,8 @@ const makeTestLayer = (
             state: "provisioning_pending" as const,
           };
           connectionSetups.set(input.idempotencyKey, {
+            displayName:
+              encryptedDisplayNames.get(input.setupId) ?? "Test WhatsApp",
             numberToken: tokenKey(input.numberToken),
             setup,
           });
@@ -579,16 +647,19 @@ const makeTestLayer = (
       activate: (input) =>
         Effect.sync(() => {
           const existing = whatsAppConnections[0];
-          if (existing !== undefined) return existing;
+          if (existing !== undefined) return protectedTestConnection(existing);
           const connection = {
-            displayName: null,
+            displayName:
+              [...connectionSetups.values()].find(
+                ({ setup }) => setup.setupId === input.setupId,
+              )?.displayName ?? "Test WhatsApp",
             numberSuffix: input.numberSuffix,
             publicId: input.publicId,
             state: "connected" as const,
             stateChangedAt: input.connectedAt,
           };
           whatsAppConnections.push(connection);
-          return connection;
+          return protectedTestConnection(connection);
         }),
       claimLifecycle: ({
         action,
@@ -607,13 +678,13 @@ const makeTestLayer = (
           const target = action === "disconnect" ? "disconnected" : "connected";
           if (connection.state === target) {
             return {
-              connection: { ...connection },
+              connection: protectedTestConnection(connection),
               outcome: "complete" as const,
             };
           }
           if (lifecycleClaimId !== null) {
             return {
-              connection: { ...connection },
+              connection: protectedTestConnection(connection),
               outcome: "in_progress" as const,
             };
           }
@@ -623,7 +694,7 @@ const makeTestLayer = (
           connection.stateChangedAt = requestedAt;
           return {
             action,
-            connection: { ...connection },
+            connection: protectedTestConnection(connection),
             outcome: "claimed" as const,
             setupMarker: [...connectionSetups.values()][0]?.setup.setupId ?? "",
           };
@@ -653,14 +724,38 @@ const makeTestLayer = (
             connection.state = state;
             connection.stateChangedAt = observedAt;
           }
-          return { ...connection };
+          return protectedTestConnection(connection);
         }),
       list: (clerkUserId) =>
         Effect.succeed(
           clerkUserId === "user_test_public_boundary"
-            ? whatsAppConnections
+            ? whatsAppConnections.map(protectedTestConnection)
             : [],
         ),
+      loadForRename: ({ clerkUserId, publicId }) =>
+        Effect.sync(() => {
+          const connection = whatsAppConnections.find(
+            (candidate) =>
+              clerkUserId === "user_test_public_boundary" &&
+              candidate.publicId === publicId,
+          );
+          return connection === undefined
+            ? null
+            : protectedTestConnection(connection);
+        }),
+      rename: ({ clerkUserId, publicId }) =>
+        Effect.sync(() => {
+          const connection = whatsAppConnections.find(
+            (candidate) =>
+              clerkUserId === "user_test_public_boundary" &&
+              candidate.publicId === publicId,
+          );
+          if (connection === undefined) return null;
+          connection.displayName =
+            encryptedDisplayNames.get("20000000-0000-4000-8000-000000000018") ??
+            connection.displayName;
+          return protectedTestConnection(connection);
+        }),
       prepareDeletion: () => Effect.die("not used"),
       finishDeletion: () => Effect.die("not used"),
       loadSetup: ({ clerkUserId, setupId }) =>
@@ -672,7 +767,10 @@ const makeTestLayer = (
           if (!exists) return null;
           const connection = whatsAppConnections[0];
           if (connection !== undefined) {
-            return { connection, outcome: "activated" as const };
+            return {
+              connection: protectedTestConnection(connection),
+              outcome: "activated" as const,
+            };
           }
           return {
             outcome: "provisioned" as const,
@@ -684,6 +782,15 @@ const makeTestLayer = (
                   "arn:aws:kms:us-east-1:111122223333:key/test-content-root",
                 personalAccountId: "10000000-0000-4000-8000-000000000018",
                 version: 1 as const,
+              },
+              displayName: {
+                ciphertext: {
+                  ciphertext: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcY",
+                  keyVersion: 1,
+                  nonce: "AQIDBAUGBwgJCgsM",
+                  version: 1 as const,
+                },
+                fallback: null,
               },
               numberCiphertext: {
                 ciphertext: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcY",
@@ -801,28 +908,39 @@ const makeTestLayer = (
       decrypt: ({ context }) =>
         context.fieldOrObjectPurpose === "whatsapp-number"
           ? Effect.succeed(new TextEncoder().encode("+15550123456"))
-          : context.fieldOrObjectPurpose === "provider-session-authority"
+          : context.fieldOrObjectPurpose === "display-name"
             ? Effect.succeed(
                 new TextEncoder().encode(
-                  JSON.stringify({
-                    sessionCredential: "test-session-credential",
-                    webhookVerificationSecret: "test-webhook-secret",
-                  }),
+                  encryptedDisplayNames.get(context.recordId) ??
+                    [...connectionSetups.values()].find(
+                      ({ setup }) => setup.setupId === context.recordId,
+                    )?.displayName ??
+                    whatsAppConnections[0]?.displayName ??
+                    "Test WhatsApp",
                 ),
               )
-            : context.fieldOrObjectPurpose === "webhook-identity-key"
-              ? Effect.succeed(new Uint8Array(32).fill(18))
-              : context.fieldOrObjectPurpose === "original-request"
-                ? Effect.sync(() => {
-                    const payload = encryptedWebhookPayloads.get(
-                      context.recordId,
-                    );
-                    if (payload === undefined) {
-                      throw new Error("missing encrypted test payload");
-                    }
-                    return payload.slice();
-                  })
-                : Effect.die("not used"),
+            : context.fieldOrObjectPurpose === "provider-session-authority"
+              ? Effect.succeed(
+                  new TextEncoder().encode(
+                    JSON.stringify({
+                      sessionCredential: "test-session-credential",
+                      webhookVerificationSecret: "test-webhook-secret",
+                    }),
+                  ),
+                )
+              : context.fieldOrObjectPurpose === "webhook-identity-key"
+                ? Effect.succeed(new Uint8Array(32).fill(18))
+                : context.fieldOrObjectPurpose === "original-request"
+                  ? Effect.sync(() => {
+                      const payload = encryptedWebhookPayloads.get(
+                        context.recordId,
+                      );
+                      if (payload === undefined) {
+                        throw new Error("missing encrypted test payload");
+                      }
+                      return payload.slice();
+                    })
+                  : Effect.die("not used"),
       decryptMany: () => Effect.die("not used"),
       encrypt: ({ context, plaintext }) =>
         Effect.sync(() => {
@@ -831,6 +949,12 @@ const makeTestLayer = (
             context.fieldOrObjectPurpose === "original-request"
           ) {
             encryptedWebhookPayloads.set(context.recordId, plaintext.slice());
+          }
+          if (context.fieldOrObjectPurpose === "display-name") {
+            encryptedDisplayNames.set(
+              context.recordId,
+              new TextDecoder().decode(plaintext),
+            );
           }
           return {
             ciphertext: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcY",

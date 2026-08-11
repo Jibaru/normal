@@ -1,7 +1,7 @@
 import type { WhatsAppConnectionState } from "@whatsapp-mcp/domain/whatsapp-connection";
-import { and, asc, isNotNull, ne, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import { type Database, makeDatabase, withPgQueryConnection } from "./database";
-import { whatsappConnectionsInApp } from "./schema";
+import { connectionSetupsInApp, whatsappConnectionsInApp } from "./schema";
 import { withTransaction } from "./transaction";
 
 export interface WhatsAppConnectionConnection {
@@ -45,7 +45,13 @@ interface VersionedCiphertext {
 }
 
 export interface WhatsAppConnectionRecord {
-  readonly displayName: string | null;
+  readonly accountKey: AccountKeyEnvelope;
+  readonly connectionId: string;
+  readonly connectionKey: ConnectionKeyEnvelope;
+  readonly displayName: {
+    readonly ciphertext: VersionedCiphertext | null;
+    readonly fallback: string | null;
+  };
   readonly numberSuffix: string;
   readonly publicId: string;
   readonly state: WhatsAppConnectionState;
@@ -118,6 +124,10 @@ export type ConnectionSetupActivation =
       readonly outcome: "provisioned";
       readonly setup: {
         readonly accountKey: AccountKeyEnvelope;
+        readonly displayName: {
+          readonly ciphertext: VersionedCiphertext | null;
+          readonly fallback: string | null;
+        };
         readonly numberCiphertext: VersionedCiphertext;
         readonly personalAccountId: string;
         readonly setupId: string;
@@ -137,6 +147,10 @@ export interface ActivateWhatsAppConnectionInput {
   readonly connectionKeyNonce: Uint8Array;
   readonly connectionKeyVersion: number;
   readonly connectedAt: string;
+  readonly displayNameCiphertext: Uint8Array;
+  readonly displayNameCiphertextVersion: number;
+  readonly displayNameKeyVersion: number;
+  readonly displayNameNonce: Uint8Array;
   readonly locatorCiphertext: Uint8Array;
   readonly locatorCiphertextVersion: number;
   readonly locatorKeyVersion: number;
@@ -159,6 +173,18 @@ export interface WhatsAppConnectionRepository {
   readonly listForUser: (
     clerkUserId: string,
   ) => Promise<ReadonlyArray<WhatsAppConnectionRecord>>;
+  readonly loadForUser: (input: {
+    readonly clerkUserId: string;
+    readonly publicId: string;
+  }) => Promise<WhatsAppConnectionRecord | null>;
+  readonly rename: (input: {
+    readonly clerkUserId: string;
+    readonly displayNameCiphertext: Uint8Array;
+    readonly displayNameCiphertextVersion: number;
+    readonly displayNameKeyVersion: number;
+    readonly displayNameNonce: Uint8Array;
+    readonly publicId: string;
+  }) => Promise<WhatsAppConnectionRecord | null>;
   readonly prepareDeletion: (input: {
     readonly clerkUserId: string;
     readonly publicId: string;
@@ -271,12 +297,25 @@ const connectionStates = new Set<WhatsAppConnectionState>([
 ]);
 
 interface ConnectionRow extends Record<string, unknown> {
+  readonly account_key_ciphertext?: unknown;
+  readonly account_key_version?: unknown;
+  readonly account_kms_key_id?: unknown;
+  readonly connection_id?: unknown;
+  readonly connection_key_account_version?: unknown;
+  readonly connection_key_ciphertext?: unknown;
+  readonly connection_key_nonce?: unknown;
+  readonly connection_key_version?: unknown;
   readonly connection_display_name?: unknown;
   readonly connection_number_suffix?: unknown;
   readonly connection_public_id?: unknown;
   readonly connection_state?: unknown;
   readonly connection_state_changed_at?: unknown;
   readonly display_name?: unknown;
+  readonly display_name_ciphertext?: unknown;
+  readonly display_name_ciphertext_version?: unknown;
+  readonly display_name_fallback?: unknown;
+  readonly display_name_key_version?: unknown;
+  readonly display_name_nonce?: unknown;
   readonly number_suffix?: unknown;
   readonly public_id?: unknown;
   readonly state?: unknown;
@@ -434,13 +473,40 @@ const connectionRecord = (
   row: ConnectionRow | undefined,
   prefix = "",
 ): WhatsAppConnectionRecord | null => {
-  const displayName = row?.[`${prefix}display_name`];
+  const accountKeyCiphertext = bytes(row?.account_key_ciphertext);
+  const accountKeyVersion = positiveInteger(row?.account_key_version);
+  const connectionKeyAccountVersion = positiveInteger(
+    row?.connection_key_account_version,
+  );
+  const connectionKeyCiphertext = bytes(row?.connection_key_ciphertext);
+  const connectionKeyNonce = bytes(row?.connection_key_nonce);
+  const connectionKeyVersion = positiveInteger(row?.connection_key_version);
+  const connectionId = row?.connection_id;
+  const displayNameCiphertext = versionedCiphertext(
+    row?.display_name_ciphertext_version,
+    row?.display_name_key_version,
+    row?.display_name_nonce,
+    row?.display_name_ciphertext,
+  );
+  const displayNameFallback =
+    typeof row?.display_name_fallback === "string"
+      ? row.display_name_fallback
+      : null;
   const numberSuffix = row?.[`${prefix}number_suffix`];
   const publicId = row?.[`${prefix}public_id`];
   const state = row?.[`${prefix}state`];
   const stateChangedAt = timestamp(row?.[`${prefix}state_changed_at`]);
   if (
-    (displayName !== null && typeof displayName !== "string") ||
+    accountKeyCiphertext === null ||
+    accountKeyVersion === null ||
+    typeof row?.account_kms_key_id !== "string" ||
+    typeof row?.personal_account_id !== "string" ||
+    typeof connectionId !== "string" ||
+    connectionKeyAccountVersion === null ||
+    connectionKeyCiphertext === null ||
+    connectionKeyNonce === null ||
+    connectionKeyVersion === null ||
+    (displayNameCiphertext === null) === (displayNameFallback === null) ||
     typeof numberSuffix !== "string" ||
     !/^[0-9]{4}$/u.test(numberSuffix) ||
     typeof publicId !== "string" ||
@@ -452,7 +518,27 @@ const connectionRecord = (
     return null;
   }
   return {
-    displayName,
+    accountKey: {
+      ciphertext: encodeBase64(accountKeyCiphertext),
+      keyVersion: accountKeyVersion,
+      kmsKeyId: row.account_kms_key_id,
+      personalAccountId: row.personal_account_id,
+      version: 1,
+    },
+    connectionId,
+    connectionKey: {
+      accountKeyVersion: connectionKeyAccountVersion,
+      ciphertext: encodeBase64(connectionKeyCiphertext),
+      connectionId,
+      keyVersion: connectionKeyVersion,
+      nonce: encodeBase64(connectionKeyNonce),
+      personalAccountId: row.personal_account_id,
+      version: 1,
+    },
+    displayName: {
+      ciphertext: displayNameCiphertext,
+      fallback: displayNameFallback,
+    },
     numberSuffix,
     publicId,
     state: state as WhatsAppConnectionState,
@@ -462,9 +548,9 @@ const connectionRecord = (
 
 const lifecycleClaim = (
   row: LifecycleClaimRow | undefined,
+  connection: WhatsAppConnectionRecord | null,
 ): WhatsAppConnectionLifecycleClaim | null => {
   if (row === undefined) return null;
-  const connection = connectionRecord(row, "connection_");
   if (connection === null) {
     throw new Error("invalid WhatsApp Connection lifecycle claim");
   }
@@ -486,6 +572,62 @@ const lifecycleClaim = (
     outcome: "claimed",
     setupMarker: row.setup_marker,
   };
+};
+
+const authorizeUser = async (
+  db: Database,
+  clerkUserId: string,
+): Promise<string | null> => {
+  const rows = await db.execute<{ personal_account_id: unknown }>(
+    sql`SELECT public.load_whatsapp_connection_account(${clerkUserId}) AS personal_account_id`,
+  );
+  const personalAccountId = rows[0]?.personal_account_id;
+  if (typeof personalAccountId !== "string") return null;
+  await enterPersonalAccountContext(db, personalAccountId);
+  return personalAccountId;
+};
+
+const protectedConnectionSql = sql`
+  SELECT
+    account_keys.ciphertext AS account_key_ciphertext,
+    account_keys.key_version AS account_key_version,
+    account_keys.kms_key_id AS account_kms_key_id,
+    connections.id AS connection_id,
+    connection_keys.account_key_version AS connection_key_account_version,
+    connection_keys.ciphertext AS connection_key_ciphertext,
+    connection_keys.nonce AS connection_key_nonce,
+    connection_keys.key_version AS connection_key_version,
+    connections.display_name_ciphertext,
+    connections.display_name_ciphertext_version,
+    connections.display_name_fallback,
+    connections.display_name_key_version,
+    connections.display_name_nonce,
+    connections.number_suffix,
+    connections.personal_account_id,
+    connections.public_id,
+    connections.state,
+    connections.state_changed_at
+  FROM public.whatsapp_connections AS connections
+  JOIN public.personal_account_key_envelopes AS account_keys
+    ON account_keys.personal_account_id = connections.personal_account_id
+   AND account_keys.unavailable_at IS NULL
+   AND account_keys.ciphertext IS NOT NULL
+  JOIN public.whatsapp_connection_key_envelopes AS connection_keys
+    ON connection_keys.personal_account_id = connections.personal_account_id
+   AND connection_keys.whatsapp_connection_id = connections.id
+   AND connection_keys.unavailable_at IS NULL
+   AND connection_keys.ciphertext IS NOT NULL`;
+
+const loadConnection = async (
+  db: Database,
+  personalAccountId: string,
+  publicId: string,
+): Promise<WhatsAppConnectionRecord | null> => {
+  const rows = await db.execute<ConnectionRow>(sql`${protectedConnectionSql}
+    WHERE connections.personal_account_id = ${personalAccountId}
+      AND connections.public_id = ${publicId}
+      AND connections.state <> 'deleting'`);
+  return connectionRecord(rows[0]);
 };
 
 interface ActivationRow extends ConnectionRow {
@@ -559,6 +701,16 @@ const activation = (
     row.number_nonce,
     row.number_ciphertext,
   );
+  const displayNameCiphertext = versionedCiphertext(
+    row.display_name_ciphertext_version,
+    row.display_name_key_version,
+    row.display_name_nonce,
+    row.display_name_ciphertext,
+  );
+  const displayNameFallback =
+    typeof row.display_name_fallback === "string"
+      ? row.display_name_fallback
+      : null;
   if (
     row.outcome !== "provisioned" ||
     typeof row.personal_account_id !== "string" ||
@@ -570,6 +722,7 @@ const activation = (
     setupKeyNonce === null ||
     setupKeyCiphertext === null ||
     numberCiphertext === null ||
+    (displayNameCiphertext === null) === (displayNameFallback === null) ||
     typeof row.webhook_ingress_id !== "string" ||
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
       row.webhook_ingress_id,
@@ -586,6 +739,10 @@ const activation = (
         kmsKeyId: row.account_kms_key_id,
         personalAccountId: row.personal_account_id,
         version: 1,
+      },
+      displayName: {
+        ciphertext: displayNameCiphertext,
+        fallback: displayNameFallback,
       },
       numberCiphertext,
       personalAccountId: row.personal_account_id,
@@ -627,7 +784,37 @@ export const makeWhatsAppConnectionRepository = (
             ${input.webhookSecretCiphertext}
           )`,
         );
-        const record = connectionRecord(rows[0]);
+        if (rows.length === 0) {
+          throw new Error("WhatsApp Connection activation unavailable");
+        }
+        await db
+          .update(whatsappConnectionsInApp)
+          .set({
+            displayNameCiphertext: input.displayNameCiphertext,
+            displayNameCiphertextVersion: input.displayNameCiphertextVersion,
+            displayNameFallback: null,
+            displayNameKeyVersion: input.displayNameKeyVersion,
+            displayNameNonce: input.displayNameNonce,
+          })
+          .where(
+            and(
+              eq(
+                whatsappConnectionsInApp.personalAccountId,
+                input.personalAccountId,
+              ),
+              eq(whatsappConnectionsInApp.id, input.connectionId),
+              eq(whatsappConnectionsInApp.connectionSetupId, input.setupId),
+            ),
+          );
+        const winnerPublicId = rows[0]?.public_id;
+        if (typeof winnerPublicId !== "string") {
+          throw new Error("WhatsApp Connection activation unavailable");
+        }
+        const record = await loadConnection(
+          db,
+          input.personalAccountId,
+          winnerPublicId,
+        );
         if (record === null) {
           throw new Error("WhatsApp Connection activation unavailable");
         }
@@ -635,25 +822,43 @@ export const makeWhatsAppConnectionRepository = (
       });
     }),
   claimLifecycle: (input) =>
-    provider.withConnection(async (connection) => {
-      const rows = await makeDatabase(connection).execute<LifecycleClaimRow>(
-        sql`SELECT * FROM public.claim_whatsapp_connection_lifecycle(
+    provider.withConnection((connection) =>
+      withTransaction(connection, async () => {
+        const db = makeDatabase(connection);
+        const rows = await db.execute<LifecycleClaimRow>(
+          sql`SELECT * FROM public.claim_whatsapp_connection_lifecycle(
           ${input.clerkUserId}, ${input.publicId}, ${input.action},
           ${input.claimId}, ${input.requestedAt}
         )`,
-      );
-      return lifecycleClaim(rows[0]);
-    }),
+        );
+        const row = rows[0];
+        if (row === undefined) return null;
+        const personalAccountId = await authorizeUser(db, input.clerkUserId);
+        const protectedConnection =
+          personalAccountId === null
+            ? null
+            : await loadConnection(db, personalAccountId, input.publicId);
+        return lifecycleClaim(row, protectedConnection);
+      }),
+    ),
   finishLifecycle: (input) =>
-    provider.withConnection(async (connection) => {
-      const rows = await makeDatabase(connection).execute<ConnectionRow>(
-        sql`SELECT * FROM public.finish_whatsapp_connection_lifecycle(
+    provider.withConnection((connection) =>
+      withTransaction(connection, async () => {
+        const db = makeDatabase(connection);
+        const rows = await db.execute<ConnectionRow>(
+          sql`SELECT * FROM public.finish_whatsapp_connection_lifecycle(
           ${input.clerkUserId}, ${input.publicId}, ${input.claimId},
           ${input.state}, ${input.observedAt}
         )`,
-      );
-      return rows[0] === undefined ? null : connectionRecord(rows[0]);
-    }),
+        );
+        const row = rows[0];
+        if (row === undefined) return null;
+        const personalAccountId = await authorizeUser(db, input.clerkUserId);
+        return personalAccountId === null
+          ? null
+          : loadConnection(db, personalAccountId, input.publicId);
+      }),
+    ),
   prepareDeletion: (input) =>
     provider.withConnection(async (connection) => {
       const rows = await makeDatabase(connection).execute<DeletionRow>(
@@ -784,32 +989,13 @@ export const makeWhatsAppConnectionRepository = (
     provider.withConnection((connection) => {
       const db = makeDatabase(connection);
       return withTransaction(connection, async () => {
-        const loaded = await db.execute<{ personal_account_id: unknown }>(
-          sql`SELECT public.load_whatsapp_connection_account(${clerkUserId})
-              AS personal_account_id`,
-        );
-        const personalAccountId = loaded[0]?.personal_account_id;
-        if (typeof personalAccountId !== "string") return [];
-        await enterPersonalAccountContext(db, personalAccountId);
-        const result = await db
-          .select({
-            display_name: sql<null>`NULL::text`,
-            number_suffix: whatsappConnectionsInApp.numberSuffix,
-            public_id: whatsappConnectionsInApp.publicId,
-            state: whatsappConnectionsInApp.state,
-            state_changed_at: whatsappConnectionsInApp.stateChangedAt,
-          })
-          .from(whatsappConnectionsInApp)
-          .where(
-            and(
-              isNotNull(whatsappConnectionsInApp.numberSuffix),
-              ne(whatsappConnectionsInApp.state, "deleting"),
-            ),
-          )
-          .orderBy(
-            asc(whatsappConnectionsInApp.createdAt),
-            asc(whatsappConnectionsInApp.publicId),
-          );
+        const personalAccountId = await authorizeUser(db, clerkUserId);
+        if (personalAccountId === null) return [];
+        const result =
+          await db.execute<ConnectionRow>(sql`${protectedConnectionSql}
+          WHERE connections.number_suffix IS NOT NULL
+            AND connections.state <> 'deleting'
+          ORDER BY connections.created_at, connections.public_id`);
         return result.map((row) => {
           const record = connectionRecord(row);
           if (record === null) {
@@ -819,43 +1005,119 @@ export const makeWhatsAppConnectionRepository = (
         });
       });
     }),
-  loadSetupForActivation: (input) =>
-    provider.withConnection(async (connection) => {
+  loadForUser: (input) =>
+    provider.withConnection((connection) => {
       const db = makeDatabase(connection);
-      const rows = await db.execute<ActivationRow>(
-        sql`SELECT * FROM public.load_connection_setup_for_activation(
+      return withTransaction(connection, async () => {
+        const personalAccountId = await authorizeUser(db, input.clerkUserId);
+        return personalAccountId === null
+          ? null
+          : loadConnection(db, personalAccountId, input.publicId);
+      });
+    }),
+  rename: (input) =>
+    provider.withConnection((connection) => {
+      const db = makeDatabase(connection);
+      return withTransaction(connection, async () => {
+        const loaded = await db.execute<{ personal_account_id: unknown }>(
+          sql`SELECT public.load_whatsapp_connection_account(${input.clerkUserId})
+              AS personal_account_id`,
+        );
+        const personalAccountId = loaded[0]?.personal_account_id;
+        if (typeof personalAccountId !== "string") return null;
+        await enterPersonalAccountContext(db, personalAccountId);
+        const rows = await db
+          .update(whatsappConnectionsInApp)
+          .set({
+            displayNameCiphertext: input.displayNameCiphertext,
+            displayNameCiphertextVersion: input.displayNameCiphertextVersion,
+            displayNameFallback: null,
+            displayNameKeyVersion: input.displayNameKeyVersion,
+            displayNameNonce: input.displayNameNonce,
+            updatedAt: sql`transaction_timestamp()`,
+          })
+          .where(
+            and(
+              eq(whatsappConnectionsInApp.publicId, input.publicId),
+              ne(whatsappConnectionsInApp.state, "deleting"),
+            ),
+          )
+          .returning({ publicId: whatsappConnectionsInApp.publicId });
+        return rows.length === 1
+          ? loadConnection(db, personalAccountId, input.publicId)
+          : null;
+      });
+    }),
+  loadSetupForActivation: (input) =>
+    provider.withConnection((connection) =>
+      withTransaction(connection, async () => {
+        const db = makeDatabase(connection);
+        const rows = await db.execute<ActivationRow>(
+          sql`SELECT * FROM public.load_connection_setup_for_activation(
           ${input.clerkUserId}, ${input.setupId}, ${input.observedAt}
         )`,
-      );
-      let row = rows[0];
-      if (row?.outcome === "provisioning_failed") {
-        const failures = await db.execute<{ failure_code: unknown }>(
-          sql`SELECT public.load_connection_setup_failure_code_for_user(
+        );
+        let row = rows[0];
+        if (row?.outcome === "provisioning_failed") {
+          const failures = await db.execute<{ failure_code: unknown }>(
+            sql`SELECT public.load_connection_setup_failure_code_for_user(
             ${input.clerkUserId}, ${input.setupId}
           ) AS failure_code`,
-        );
-        const failureCode = failures[0]?.failure_code;
-        if (
-          typeof failureCode !== "string" ||
-          !/^[a-z][a-z0-9_]{0,63}$/u.test(failureCode)
-        ) {
-          throw new Error("invalid Connection Setup failure code");
+          );
+          const failureCode = failures[0]?.failure_code;
+          if (
+            typeof failureCode !== "string" ||
+            !/^[a-z][a-z0-9_]{0,63}$/u.test(failureCode)
+          ) {
+            throw new Error("invalid Connection Setup failure code");
+          }
+          return { failureCode, outcome: "provisioning_failed" };
         }
-        return { failureCode, outcome: "provisioning_failed" };
-      }
-      if (row?.outcome === "provisioned") {
-        const ingress = await db.execute<{ webhook_ingress_id: unknown }>(
-          sql`SELECT public.load_connection_setup_webhook_ingress_for_user(
+        if (row?.outcome === "provisioned") {
+          await authorizeUser(db, input.clerkUserId);
+          const ingress = await db.execute<{ webhook_ingress_id: unknown }>(
+            sql`SELECT public.load_connection_setup_webhook_ingress_for_user(
             ${input.clerkUserId}, ${input.setupId}
           ) AS webhook_ingress_id`,
-        );
-        row = {
-          ...row,
-          webhook_ingress_id: ingress[0]?.webhook_ingress_id,
-        };
-      }
-      return activation(input.setupId, row);
-    }),
+          );
+          row = {
+            ...row,
+            webhook_ingress_id: ingress[0]?.webhook_ingress_id,
+          };
+          const names = await db
+            .select({
+              display_name_ciphertext:
+                connectionSetupsInApp.displayNameCiphertext,
+              display_name_ciphertext_version:
+                connectionSetupsInApp.displayNameCiphertextVersion,
+              display_name_fallback: connectionSetupsInApp.displayNameFallback,
+              display_name_key_version:
+                connectionSetupsInApp.displayNameKeyVersion,
+              display_name_nonce: connectionSetupsInApp.displayNameNonce,
+            })
+            .from(connectionSetupsInApp)
+            .where(eq(connectionSetupsInApp.id, input.setupId));
+          row = { ...row, ...names[0] };
+        }
+        if (row?.outcome === "activated") {
+          const personalAccountId = await authorizeUser(db, input.clerkUserId);
+          if (
+            personalAccountId === null ||
+            typeof row.connection_public_id !== "string"
+          )
+            return null;
+          const connection = await loadConnection(
+            db,
+            personalAccountId,
+            row.connection_public_id,
+          );
+          if (connection === null)
+            throw new Error("invalid activated WhatsApp Connection");
+          return { connection, outcome: "activated" };
+        }
+        return activation(input.setupId, row);
+      }),
+    ),
 });
 
 const makePgConnectionProvider = (

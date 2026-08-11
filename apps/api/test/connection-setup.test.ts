@@ -60,6 +60,25 @@ const makeHarness = (
   const enqueuedSetups: Array<string> = [];
   let generated = 0;
   let retainedConnections = 0;
+  const nameMaterial = (setupId: string) => ({
+    accountKey,
+    name: {
+      ciphertext: new Uint8Array([17, 18, 19]),
+      fallback: null,
+      keyVersion: 1,
+      nonce: new Uint8Array(12).fill(20),
+      version: 1 as const,
+    },
+    setupKey: {
+      accountKeyVersion: 1,
+      ciphertext: "BAUG",
+      connectionId: setupId,
+      keyVersion: 1,
+      nonce: "BwgJCgsMDQ4PEA==",
+      personalAccountId: accountKey.personalAccountId,
+      version: 1 as const,
+    },
+  });
 
   const persistence: ConnectionSetupPersistenceService = {
     cancel: ({ clerkUserId, setupId }) =>
@@ -96,7 +115,11 @@ const makeHarness = (
             if (existing !== undefined) {
               return existing.numberToken ===
                 Buffer.from(numberToken).toString("hex")
-                ? { outcome: "replay" as const, setup: existing.setup }
+                ? {
+                    nameMaterial: nameMaterial(existing.setup.setupId),
+                    outcome: "replay" as const,
+                    setup: existing.setup,
+                  }
                 : { outcome: "idempotency_conflict" as const };
             }
             return {
@@ -113,7 +136,11 @@ const makeHarness = (
             const existing = bindings.get(input.idempotencyKey);
             if (existing !== undefined) {
               return existing.numberToken === token
-                ? { outcome: "replay" as const, setup: existing.setup }
+                ? {
+                    nameMaterial: nameMaterial(existing.setup.setupId),
+                    outcome: "replay" as const,
+                    setup: existing.setup,
+                  }
                 : { outcome: "idempotency_conflict" as const };
             }
             if (reservations.has(token)) {
@@ -181,11 +208,16 @@ const makeHarness = (
           version: 1 as const,
         }),
       createPersonalAccountKey: () => Effect.die("not used"),
-      decrypt: () => Effect.die("not used"),
+      decrypt: ({ context }) =>
+        context.fieldOrObjectPurpose === "display-name"
+          ? Effect.succeed(new TextEncoder().encode("Personal WhatsApp"))
+          : Effect.die("not used"),
       decryptMany: () => Effect.die("not used"),
-      encrypt: ({ plaintext }) =>
+      encrypt: ({ context, plaintext }) =>
         Effect.sync(() => {
-          encryptedNumbers.push(new TextDecoder().decode(plaintext));
+          if (context.fieldOrObjectPurpose === "whatsapp-number") {
+            encryptedNumbers.push(new TextDecoder().decode(plaintext));
+          }
           return {
             ciphertext: "ERIT",
             keyVersion: 1,
@@ -235,6 +267,7 @@ const setupRequest = (
   new Request(endpoint, {
     body: JSON.stringify({
       idempotency_key: key,
+      name: "Personal WhatsApp",
       whatsapp_number: whatsappNumber,
     }),
     headers: {

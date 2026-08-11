@@ -366,8 +366,9 @@ addresses, key identifiers, ciphertext, or profile data to this event.
 ## Connection Setup creation
 
 The signed-in browser creates a fresh 21-character NanoID idempotency key for
-each WhatsApp Number intent and retains it for exact transport retries. It sends
-the key and explicitly international number directly to `POST
+each named WhatsApp Number intent and retains it for exact transport retries. It
+sends the key, a required 1-64 character WhatsApp Connection name, and the
+explicitly international number directly to `POST
 /v1/connection-setups`; the response does not echo either value. The API
 accepts only the configured browser Origin and a valid audience-bound Clerk
 token, removes permitted visual formatting from the number, and validates the
@@ -378,9 +379,14 @@ platform-wide 32-byte token from the normalized number. This key and token are
 separate from the future connection-scoped Directory phone indexes. Neon
 serializes each Personal Account's setup transaction, binds one browser key to
 one token, enforces the three retained Connection/setup slots, and rejects a
-token already reserved anywhere on the platform. The normalized number is
-encrypted with a setup-scoped data key wrapped by the Personal Account key;
-Neon stores no plaintext number.
+token already reserved anywhere on the platform. The normalized number and
+User-chosen name are independently encrypted with a setup-scoped data key
+wrapped by the Personal Account key. Their authenticated contexts use the
+Connection Setup identifier as both connection and record, with
+`whatsapp-number` and `display-name` purposes. Neon stores neither value in
+plaintext. Exact idempotent replay decrypts the stored name after ownership has
+been established and compares normalized plaintext; randomized ciphertext is
+never used as an equality fingerprint.
 
 The committed row begins in `provisioning_pending` and expires exactly 15
 minutes after creation. It is the durable provisioning intent consumed by the
@@ -495,14 +501,27 @@ Setup to `activated`, and persists:
   connection;
 - the provider-neutral locator and per-session authority re-encrypted under
   the connection; and
+- the User-chosen name decrypted from the Connection Setup and re-encrypted
+  under the connection key with `whatsapp-connection` / `display-name`
+  authenticated context; and
 - only the last four digits of the normalized WhatsApp Number as queryable
   display metadata.
+
+The owning User can later rename a non-deleting WhatsApp Connection with `PUT
+/v1/whatsapp-connections/{connection_id}/name`. Names are normalized, limited
+to 64 characters, tenant-scoped by RLS, removed by Connection or Personal
+Account Deletion, and restored with the owning connection. Browser and MCP
+lists decrypt names only after their respective User or grant authorization.
+Migration 0004 gives existing Connections and incomplete Setups generated
+adjective-animal fallback names; an XOR constraint makes those recognizable
+fallbacks mutually exclusive with the complete ciphertext tuple. A fallback
+Setup is converted to connection ciphertext during activation.
 
 The stable product state vocabulary is `connected`, `connecting`,
 `disconnected`, `reconnect_required`, `degraded`, and `deleting`. Only
 `connected` permits a later new Send Operation. The product reads
 `GET /v1/whatsapp-connections` without pagination and receives only the opaque
-handle, nullable display name, number suffix, normalized state, and state-change
+handle, required display name, number suffix, normalized state, and state-change
 time. Provider identifiers, credentials, webhook material, setup identifiers,
 full numbers, key metadata, and ciphertext never enter that response.
 

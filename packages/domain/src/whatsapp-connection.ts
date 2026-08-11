@@ -9,6 +9,24 @@ export const whatsappConnectionStates = [
 
 export type WhatsAppConnectionState = (typeof whatsappConnectionStates)[number];
 
+export const normalizeWhatsAppConnectionName = (
+  value: unknown,
+): string | null => {
+  if (typeof value !== "string") return null;
+  const name = value.trim().normalize("NFC");
+  const containsControlCharacter = [...name].some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 31 || (codePoint >= 127 && codePoint <= 159);
+  });
+  const containsFormatControl = /\p{Cf}/u.test(name);
+  return name.length > 0 &&
+    name.length <= 64 &&
+    !containsControlCharacter &&
+    !containsFormatControl
+    ? name
+    : null;
+};
+
 export const isWhatsAppConnectionState = (
   value: unknown,
 ): value is WhatsAppConnectionState =>

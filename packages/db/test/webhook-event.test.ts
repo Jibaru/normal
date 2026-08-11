@@ -77,14 +77,15 @@ describe("Webhook Event repository", () => {
       `INSERT INTO public.whatsapp_connections (
          id,
          personal_account_id,
-         webhook_ingress_id,
-         public_id,
+          webhook_ingress_id,
+          display_name_fallback,
+          public_id,
          number_suffix,
          state,
          state_changed_at,
          created_at
        )
-       VALUES ($1, $2, $3, $4, '0033', 'connecting', $5, $5)`,
+        VALUES ($1, $2, $3, 'Bright Badger', $4, '0033', 'connecting', $5, $5)`,
       [
         connectionId,
         accountId,
@@ -632,9 +633,9 @@ describe("Webhook Event repository", () => {
       makeWhatsAppConnectionRepository(apiProvider).listForUser(
         "user_webhook_event",
       ),
-    ).resolves.toEqual([
+    ).resolves.toMatchObject([
       {
-        displayName: null,
+        displayName: { fallback: "Bright Badger" },
         numberSuffix: "0033",
         publicId,
         state: "connected",
