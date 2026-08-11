@@ -369,6 +369,7 @@ export const makePgAtomicSendRepository = (
                       input.recipientPublicId,
                     ),
                     eq(directoryContactsInApp.active, true),
+                    sql`NOT public.whatsapp_recipient_excluded(${accountId}, ${connectionId}, 'contact', ${directoryContactsInApp.providerIdentityIndex})`,
                   ),
                 )
             : await db.execute<Record<string, unknown>>(
@@ -385,7 +386,10 @@ export const makePgAtomicSendRepository = (
                     WHERE groups.personal_account_id = ${accountId}
                       AND groups.whatsapp_connection_id = ${connectionId}
                       AND groups.public_id = ${input.recipientPublicId}
-                      AND groups.joined = true`,
+                      AND groups.joined = true
+                      AND NOT public.whatsapp_recipient_excluded(
+                        ${accountId}, ${connectionId}, 'group', groups.provider_locator
+                      )`,
               );
         if (recipient[0] === undefined) {
           await finishAudit("execution_error", "recipient_not_found");

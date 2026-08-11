@@ -431,6 +431,7 @@ interface ProcessingCounts {
   readonly duplicateCount: number;
   readonly quarantinedCount: number;
   readonly supersededCount: number;
+  readonly suppressedCount: number;
 }
 
 const emptyCounts = (): ProcessingCounts => ({
@@ -438,12 +439,24 @@ const emptyCounts = (): ProcessingCounts => ({
   duplicateCount: 0,
   quarantinedCount: 0,
   supersededCount: 0,
+  suppressedCount: 0,
 });
 
 const increment = (
   counts: ProcessingCounts,
   field: keyof ProcessingCounts,
 ): ProcessingCounts => ({ ...counts, [field]: counts[field] + 1 });
+
+const outcomeField = (
+  outcome: WebhookItemProjectionOutcome,
+): keyof ProcessingCounts =>
+  outcome === "applied"
+    ? "appliedCount"
+    : outcome === "duplicate"
+      ? "duplicateCount"
+      : outcome === "suppressed"
+        ? "suppressedCount"
+        : "supersededCount";
 
 const processItems = (
   message: WebhookEventQueueMessage,
@@ -546,14 +559,7 @@ const processItems = (
               }),
             ),
         );
-        counts = increment(
-          counts,
-          outcome === "applied"
-            ? "appliedCount"
-            : outcome === "duplicate"
-              ? "duplicateCount"
-              : "supersededCount",
-        );
+        counts = increment(counts, outcomeField(outcome));
         continue;
       }
       if (item.kind === "directory_contact") {
@@ -588,14 +594,7 @@ const processItems = (
               }),
             ),
         );
-        counts = increment(
-          counts,
-          outcome === "applied"
-            ? "appliedCount"
-            : outcome === "duplicate"
-              ? "duplicateCount"
-              : "supersededCount",
-        );
+        counts = increment(counts, outcomeField(outcome));
         continue;
       }
       if (item.kind === "message_edit") {
@@ -652,14 +651,7 @@ const processItems = (
               }),
             ),
         );
-        counts = increment(
-          counts,
-          outcome === "applied"
-            ? "appliedCount"
-            : outcome === "duplicate"
-              ? "duplicateCount"
-              : "supersededCount",
-        );
+        counts = increment(counts, outcomeField(outcome));
         continue;
       }
       if (item.kind === "message_delete") {
@@ -709,14 +701,7 @@ const processItems = (
           sentAt: item.sentAt,
           whatsappConnectionId: message.whatsapp_connection_id,
         });
-        counts = increment(
-          counts,
-          outcome === "applied"
-            ? "appliedCount"
-            : outcome === "duplicate"
-              ? "duplicateCount"
-              : "supersededCount",
-        );
+        counts = increment(counts, outcomeField(outcome));
         continue;
       }
       if (item.kind === "message_upsert") {
@@ -880,14 +865,7 @@ const processItems = (
               ),
           );
         }
-        counts = increment(
-          counts,
-          outcome === "applied"
-            ? "appliedCount"
-            : outcome === "duplicate"
-              ? "duplicateCount"
-              : "supersededCount",
-        );
+        counts = increment(counts, outcomeField(outcome));
         continue;
       }
       if (item.kind === "send_evidence") {
@@ -967,14 +945,7 @@ const processItems = (
             }
           },
         );
-        counts = increment(
-          counts,
-          outcome === "applied"
-            ? "appliedCount"
-            : outcome === "duplicate"
-              ? "duplicateCount"
-              : "supersededCount",
-        );
+        counts = increment(counts, outcomeField(outcome));
         continue;
       }
       if (item.kind !== "connection_state") {
@@ -1004,14 +975,7 @@ const processItems = (
             }),
           ),
       );
-      counts = increment(
-        counts,
-        outcome === "applied"
-          ? "appliedCount"
-          : outcome === "duplicate"
-            ? "duplicateCount"
-            : "supersededCount",
-      );
+      counts = increment(counts, outcomeField(outcome));
     }
     return counts;
   });

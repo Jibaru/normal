@@ -113,6 +113,7 @@ export const safeTelemetryFieldsByEvent = {
     "outcome",
     "quarantinedCount",
     "supersededCount",
+    "suppressedCount",
   ],
   "webhook_event.replay.completed": [...common, "attemptReference", "outcome"],
   "webhook_event.source_retention.completed": [...common, "deletedCount"],
