@@ -30,6 +30,7 @@ Confirm the `alert-delivery-canary` arrives in the ticket destination with only 
 - Active dead letters page immediately. Follow the immutable replay process in the deployment runbook; never paste source payloads into an incident.
 - Deletion cleanup pages with six hours remaining before the 24-hour deadline, preserving time for recovery.
 - Restore-gate and key failures page immediately. Keep serving and verification access closed until the failing gate is healthy.
+- A rising WhatsApp Recipient Exclusion transition failure rate, or an exclusion cleanup panel that stops draining while Stored Media object deletions stay overdue, creates an incident. Investigate the R2 journal bucket, the recipient transition HMAC secret, and the scheduled drain; never inspect the recipient, its Directory record, or message content to triage. The dashboards carry only aggregate operation class, desired-state class, normalized outcome, counts, timing, and latency.
 - Quota utilization at or above 80% for 15 minutes creates a capacity ticket.
 - A five-minute Wasender or WhatsApp outage pages as a dependency incident and remains distinct from first-party SLO reporting.
 

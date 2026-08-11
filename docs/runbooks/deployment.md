@@ -657,6 +657,21 @@ authorization, Connection, search, or limit must return `invalid_cursor`.
 Confirm the response contains freshness fields and no roster, description,
 profile URL, provider identity, or routing value.
 
+Verify one WhatsApp Recipient Exclusion end to end for the same disposable
+Connection. In dashboard Settings, list contacts, exclude one recipient, and
+confirm the response reports the new state. Confirm the locked
+`whatsapp-mcp-recipient-transitions` bucket gained exactly one object under a
+64-character hexadecimal prefix, that its body contains only version,
+transition identity, desired state, effective time, and purge cutoff, and that
+retrying the same request adds no second object. Confirm the excluded recipient
+disappears from `list_contacts` or `list_groups`, that a previously observed
+WhatsApp Conversation handle and media URI now fail as not found, and that
+`send_text_message` returns `recipient_not_found`. Remove the exclusion and
+confirm only future activity is permitted: the recipient reappears in the
+Directory, and no previously purged message returns. Retain only normalized
+outcomes; never record the recipient handle, locator, journal prefix, or any
+message content as deployment evidence.
+
 Sign in through the deployed web application with a designated smoke-test Clerk
 User and bootstrap once. Confirm the browser sends `POST
 /v1/personal-account/bootstrap` directly to `API_ORIGIN`, the UI reports

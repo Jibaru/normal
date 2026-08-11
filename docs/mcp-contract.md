@@ -13,6 +13,7 @@ This document defines the public launch contract for the Normal MCP server. Prov
 - Timestamps are UTC RFC 3339 strings.
 - Unknown optional values are returned as `null`, not omitted.
 - No tool parameter is mirrored into an HTTP header with `x-mcp-header`.
+- A WhatsApp Recipient Exclusion is enforced beneath every grant and never changes the grant itself. While one applies, the recipient is absent from `list_contacts`, `list_groups`, and `list_chats`; `read_messages` and Stored Media resources reject a retained WhatsApp Conversation handle or media URI as not found; and `send_text_message` returns `recipient_not_found` before quota reservation or provider access. No tool discloses that an exclusion is the reason, and no MCP tool can read or change one.
 
 ## Scope Map
 

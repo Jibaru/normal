@@ -53,6 +53,7 @@ Secret examples never contain usable key material.
 | Break-glass role ARN | Non-secret | Incident credential broker only | The environment's `BreakGlassRoleArn` output. Sessions require MFA, last at most one hour, and must carry the approved `personalAccountId` and `breakGlassRequestId` tags. Never configure this role on an application Worker. |
 | `DELETION_COORDINATOR_DATABASE_URL` | Secret | Deletion coordinator | TLS Neon URL authenticated only as `whatsapp_deletion_runtime`. The role can list marker IDs and confirm provider absence, but cannot select tenant tables. |
 | `DELETION_MARKER_HMAC_SECRET` | Secret | API deletion-marker writer | Dedicated 32-byte hex HMAC key for restore-external marker object keys. Generate independently with `openssl rand -hex 32`, retain it in the recovery inventory, and never reuse a provider-reference, webhook, cursor, or content key. |
+| `RECIPIENT_TRANSITION_HMAC_SECRET` | Secret | API WhatsApp Recipient Exclusion writer and restore coordinator | Dedicated 32-byte hex HMAC key that derives the non-reversible recipient transition journal prefix from environment, WhatsApp Connection identity, recipient kind, and stable recipient locator. Generate independently with `openssl rand -hex 32`, retain it in the recovery inventory, and never reuse a deletion-marker, provider-reference, webhook, cursor, OAuth, WhatsApp Number, or content key. Losing it makes existing journal evidence unreadable and keeps a restored branch closed. |
 | `NEON_BRANCH_ID` | Internal | API and restore coordinator | The exact opaque Neon branch identity. Readiness is bound to it so a restored branch inherits a non-matching approval and remains closed. |
 | `RESTORE_DATABASE_URL` | Secret | Restore coordinator only | Direct TLS Neon URL for the `whatsapp_restore_runtime` role. It exposes only restore replay functions and must never be bound to the API or other Workers. |
 | `WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET` | Secret | API Connection Setup writer | Dedicated 32-byte hex HMAC key for platform-wide WhatsApp Number reservations. Generate independently with `openssl rand -hex 32`; never reuse Directory index, deletion-marker, provider-reference, webhook, cursor, OAuth, or content keys. Rotation requires rebuilding every retained reservation under a stopped-provisioning migration. |
@@ -71,6 +72,17 @@ authority values before network access. Its provider origin is fixed in the
 production adapter, so configuration cannot redirect credentials to another
 host or select a fake implementation.
 
+A WhatsApp Recipient Exclusion is a User-owned rule, so provider Directory
+reconciliation and webhook projection never write it. Its current state lives
+in a tenant-owned Neon relation under forced row level security, and every
+acknowledged transition is also appended to the locked, restore-external
+`RECIPIENT_TRANSITIONS` bucket before the API answers. The bucket keeps an
+indefinite object lock, has its public r2.dev domain disabled, and is bound to
+the API Worker and the restore coordinator only. Journal objects carry version,
+transition identity, desired state, effective time, and purge cutoff — no
+tenant identifier, connection identifier, public handle, provider identifier,
+name, phone data, content, or credential.
+
 Directory contact provider identities, display names, and phone numbers are
 stored only as connection-scoped envelope ciphertext. The approved derived
 normalized display-name sort value and HMAC blind indexes for provider
@@ -85,9 +97,9 @@ succeeded.
 
 The API Worker receives `PROVIDER_CONTROL`, `HYPERDRIVE`,
 `WEBHOOK_HYPERDRIVE`, `OAUTH_KV`, `WEBHOOK_INGRESS`, `STORED_MEDIA`,
-`DELETION_CAPSULES`, `DELETION_MARKERS`, the `INGESTION_QUEUE` producer
-binding, and the dedicated `CONNECTION_SETUP_PROVISIONING_QUEUE` producer and
-consumer binding. These are not string environment values and cannot be
+`DELETION_CAPSULES`, `DELETION_MARKERS`, `RECIPIENT_TRANSITIONS`, the
+`INGESTION_QUEUE` producer binding, and the dedicated
+`CONNECTION_SETUP_PROVISIONING_QUEUE` producer and consumer binding. These are not string environment values and cannot be
 supplied by a public request. The production composition root fails closed
 when any required binding is absent or has the wrong runtime capability.
 `/health` remains a non-sensitive liveness endpoint; every other API route
