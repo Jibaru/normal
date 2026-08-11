@@ -81,6 +81,7 @@ describe("restore replay", () => {
           calls.push("purge-excluded");
           return 0;
         },
+        recordUnresolvedRecipientPrefixes: async () => 0,
         replayRecipientTransition: async () => true,
         purgeExpired: async () => {
           calls.push("expire");
@@ -103,6 +104,7 @@ describe("restore replay", () => {
       expiredRecordCount: 2,
       markerCount: 1,
       recipientTransitionCount: 0,
+      unresolvedRecipientPrefixCount: 0,
     });
     expect(calls).toEqual([
       "replay-marker",
@@ -150,6 +152,7 @@ describe("restore replay", () => {
       whatsappConnectionId: connectionId,
     };
     const replayed: Array<string> = [];
+    const recordedPrefixes: Array<string> = [];
     const repository = {
       begin: async () => [],
       complete: async () => undefined,
@@ -159,6 +162,12 @@ describe("restore replay", () => {
         cursor === null ? [identity] : [],
       purgeExcludedRecipientHistory: async () => 0,
       purgeExpired: async () => 0,
+      recordUnresolvedRecipientPrefixes: async (
+        prefixes: ReadonlyArray<string>,
+      ) => {
+        recordedPrefixes.push(...prefixes);
+        return prefixes.length;
+      },
       replayDeletion: async () => false,
       replayRecipientTransition: async (input: { transitionId: string }) => {
         replayed.push(input.transitionId);
@@ -191,10 +200,73 @@ describe("restore replay", () => {
       repository,
     });
     expect(result.recipientTransitionCount).toBe(2);
+    // The matched prefix is resolved, so nothing needs later recovery.
+    expect(recordedPrefixes).toEqual([]);
     expect(replayed).toEqual([
       "30000000-0000-4000-8000-000000000001",
       "30000000-0000-4000-8000-000000000002",
     ]);
+  });
+
+  test("records journal evidence the restored snapshot has no identity for", async () => {
+    const recipientSecret = Redacted.make("cd".repeat(32));
+    const prefix = await deriveRecipientJournalPrefix(
+      "production",
+      recipientSecret,
+      connectionId,
+      "contact",
+      recipientLocator,
+    );
+    const key = `recipient-transitions/v1/${prefix}/30000000-0000-4000-8000-000000000001.json`;
+    const recordedPrefixes: Array<string> = [];
+    const repository = {
+      begin: async () => [],
+      complete: async () => undefined,
+      finishObjectDeletion: async () => undefined,
+      listObjectDeletions: async () => [],
+      // The snapshot predates this recipient, so the scan yields nothing.
+      listRecipientIdentities: async () => [],
+      purgeExcludedRecipientHistory: async () => 0,
+      purgeExpired: async () => 0,
+      recordUnresolvedRecipientPrefixes: async (
+        prefixes: ReadonlyArray<string>,
+      ) => {
+        recordedPrefixes.push(...prefixes);
+        return prefixes.length;
+      },
+      replayDeletion: async () => false,
+      replayRecipientTransition: async () => true,
+    } as unknown as RestoreRepository;
+
+    const result = await replayRestore({
+      branchId: "br-restored",
+      buckets: {
+        stored_media: { delete: async () => undefined },
+        webhook_ingress: { delete: async () => undefined },
+      },
+      environment: "production",
+      hmacSecret: Redacted.make("ab".repeat(32)),
+      markers: { create: vi.fn(), enumerate: () => Effect.succeed([]) },
+      observedAt: "2026-08-03T12:00:00.000Z",
+      recipientHmacSecret: recipientSecret,
+      recipientJournal: {
+        get: async () => ({
+          text: async () =>
+            JSON.stringify({
+              effectiveAt: "2026-08-01T00:00:00.000Z",
+              excluded: true,
+              purgeCutoffAt: "2026-08-01T00:00:00.000Z",
+              transitionId: "30000000-0000-4000-8000-000000000001",
+              version: 1,
+            }),
+        }),
+        list: async () => ({ objects: [{ key }], truncated: false }),
+        put: async () => null,
+      },
+      repository,
+    });
+    expect(recordedPrefixes).toEqual([prefix]);
+    expect(result.unresolvedRecipientPrefixCount).toBe(1);
   });
 
   test("keeps readiness closed when a journal object is malformed", async () => {
@@ -227,6 +299,7 @@ describe("restore replay", () => {
         cursor === null ? [identity] : [],
       purgeExcludedRecipientHistory: async () => 0,
       purgeExpired: async () => 0,
+      recordUnresolvedRecipientPrefixes: async () => 0,
       replayDeletion: async () => false,
       replayRecipientTransition: async () => true,
     } as unknown as RestoreRepository;

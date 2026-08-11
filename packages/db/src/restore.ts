@@ -58,6 +58,10 @@ export interface RestoreRepository {
     limit: number,
   ) => Promise<number>;
   readonly purgeExpired: (observedAt: string, limit: number) => Promise<number>;
+  readonly recordUnresolvedRecipientPrefixes: (
+    prefixes: ReadonlyArray<string>,
+    observedAt: string,
+  ) => Promise<number>;
   readonly replayDeletion: (
     input: RestoreCandidate & {
       readonly markerId: string;
@@ -139,6 +143,16 @@ export const makePgRestoreRepository = (
         ) AS replayed
       `);
       return result[0]?.replayed === true;
+    }),
+  recordUnresolvedRecipientPrefixes: (prefixes, observedAt) =>
+    withClient(connectionString, async (client) => {
+      const db = makeDatabase(client);
+      const result = await db.execute<{ recorded: number }>(sql`
+        SELECT public.record_unresolved_recipient_transition_prefixes(
+          ${[...prefixes]}::text[], ${observedAt}
+        ) AS recorded
+      `);
+      return Number(result[0]?.recorded ?? 0);
     }),
   purgeExcludedRecipientHistory: (observedAt, limit) =>
     withClient(connectionString, async (client) => {

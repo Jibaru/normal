@@ -1007,6 +1007,150 @@ END
 $function$;
 --> statement-breakpoint
 
+-- A recipient first projected and excluded after the restore point is absent
+-- from the restored snapshot, so its journal prefix cannot be derived during
+-- replay. The prefix itself is identity-free, so restore records the ones it
+-- could not resolve and the API reapplies them when the WhatsApp Directory
+-- projects that recipient again.
+CREATE TABLE public.whatsapp_recipient_transition_prefixes (
+  journal_prefix text PRIMARY KEY CHECK (journal_prefix ~ '^[a-f0-9]{64}$'),
+  recorded_at timestamptz NOT NULL
+);
+--> statement-breakpoint
+REVOKE ALL ON TABLE public.whatsapp_recipient_transition_prefixes FROM PUBLIC;
+--> statement-breakpoint
+
+CREATE FUNCTION public.record_unresolved_recipient_transition_prefixes(
+  requested_prefixes text[], observed_at timestamptz
+)
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public, public AS $function$
+DECLARE recorded integer;
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM unnest(coalesce(requested_prefixes, ARRAY[]::text[])) candidate
+    WHERE candidate !~ '^[a-f0-9]{64}$'
+  ) THEN
+    RAISE EXCEPTION 'invalid recipient transition prefix';
+  END IF;
+  DELETE FROM public.whatsapp_recipient_transition_prefixes
+  WHERE journal_prefix <> ALL (coalesce(requested_prefixes, ARRAY[]::text[]));
+  INSERT INTO public.whatsapp_recipient_transition_prefixes(journal_prefix, recorded_at)
+  SELECT candidate, observed_at
+  FROM unnest(coalesce(requested_prefixes, ARRAY[]::text[])) candidate
+  ON CONFLICT (journal_prefix) DO NOTHING;
+  SELECT count(*)::int INTO recorded
+  FROM public.whatsapp_recipient_transition_prefixes;
+  RETURN recorded;
+END
+$function$;
+--> statement-breakpoint
+
+CREATE FUNCTION public.list_unresolved_recipient_transition_prefixes(
+  requested_limit integer
+)
+RETURNS TABLE (journal_prefix text, recorded_at timestamptz)
+LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path = pg_catalog, public, public AS $function$
+#variable_conflict use_column
+BEGIN
+  IF requested_limit < 1 OR requested_limit > 1000 THEN
+    RAISE EXCEPTION 'invalid recipient transition prefix limit';
+  END IF;
+  RETURN QUERY
+    SELECT prefixes.journal_prefix, prefixes.recorded_at
+    FROM public.whatsapp_recipient_transition_prefixes prefixes
+    ORDER BY prefixes.journal_prefix
+    LIMIT requested_limit;
+END
+$function$;
+--> statement-breakpoint
+
+CREATE FUNCTION public.resolve_recipient_transition_prefix(requested_prefix text)
+RETURNS void LANGUAGE sql SECURITY DEFINER
+SET search_path = pg_catalog, public, public AS $function$
+  DELETE FROM public.whatsapp_recipient_transition_prefixes
+  WHERE journal_prefix = requested_prefix;
+$function$;
+--> statement-breakpoint
+
+-- Only recipients projected after the recorded prefixes could be the missing
+-- identities, so the recovery scan stays small and bounded.
+CREATE FUNCTION public.list_recipient_identities_without_exclusion(
+  observed_since timestamptz, requested_limit integer, cursor_key text
+)
+RETURNS TABLE (
+  personal_account_id uuid, whatsapp_connection_id uuid, recipient_kind text,
+  recipient_locator text, recipient_public_id text, scan_key text
+)
+LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path = pg_catalog, public, public AS $function$
+#variable_conflict use_column
+BEGIN
+  IF requested_limit < 1 OR requested_limit > 1000 THEN
+    RAISE EXCEPTION 'invalid recipient recovery scan limit';
+  END IF;
+  RETURN QUERY
+    WITH candidates AS (
+      SELECT contacts.personal_account_id AS account_id,
+        contacts.whatsapp_connection_id AS connection_id, 'contact'::text AS kind,
+        contacts.provider_identity_index::text AS locator,
+        contacts.public_id AS handle, contacts.created_at AS projected_at
+      FROM public.directory_contacts contacts
+      UNION ALL
+      SELECT groups.personal_account_id, groups.whatsapp_connection_id, 'group'::text,
+        groups.provider_locator, groups.public_id, groups.created_at
+      FROM public.whatsapp_groups groups
+    )
+    SELECT candidates.account_id, candidates.connection_id, candidates.kind,
+      candidates.locator, candidates.handle,
+      candidates.connection_id::text || '/' || candidates.kind || '/' || candidates.locator
+    FROM candidates
+    WHERE candidates.projected_at >= observed_since
+      AND NOT EXISTS (
+        SELECT 1 FROM public.whatsapp_recipient_exclusions rules
+        WHERE rules.personal_account_id = candidates.account_id
+          AND rules.whatsapp_connection_id = candidates.connection_id
+          AND rules.recipient_kind = candidates.kind
+          AND rules.recipient_locator = candidates.locator
+      )
+      AND (cursor_key IS NULL
+        OR candidates.connection_id::text || '/' || candidates.kind || '/'
+          || candidates.locator > cursor_key)
+    ORDER BY candidates.connection_id::text || '/' || candidates.kind || '/'
+      || candidates.locator
+    LIMIT requested_limit;
+END
+$function$;
+--> statement-breakpoint
+
+CREATE FUNCTION public.latest_restore_replay_completed_at()
+RETURNS timestamptz LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = pg_catalog, public, public AS $function$
+  SELECT max(audit.completed_at) FROM public.restore_replay_audit audit;
+$function$;
+--> statement-breakpoint
+
+REVOKE ALL ON FUNCTION
+  public.record_unresolved_recipient_transition_prefixes(text[],timestamptz),
+  public.list_unresolved_recipient_transition_prefixes(integer),
+  public.resolve_recipient_transition_prefix(text),
+  public.list_recipient_identities_without_exclusion(timestamptz,integer,text),
+  public.latest_restore_replay_completed_at() FROM PUBLIC;
+--> statement-breakpoint
+GRANT EXECUTE ON FUNCTION
+  public.list_unresolved_recipient_transition_prefixes(integer),
+  public.resolve_recipient_transition_prefix(text),
+  public.list_recipient_identities_without_exclusion(timestamptz,integer,text),
+  public.latest_restore_replay_completed_at(),
+  public.replay_whatsapp_recipient_exclusion(uuid,uuid,text,text,text,boolean,timestamptz,timestamptz,uuid,timestamptz)
+  TO whatsapp_api_runtime;
+--> statement-breakpoint
+GRANT EXECUTE ON FUNCTION
+  public.record_unresolved_recipient_transition_prefixes(text[],timestamptz)
+  TO whatsapp_restore_runtime;
+--> statement-breakpoint
+
 -- Restore readiness stays closed while a prepared transition has no
 -- acknowledged outcome, so recovery cannot serve uncertain privacy state.
 CREATE OR REPLACE FUNCTION public.complete_restore_replay(

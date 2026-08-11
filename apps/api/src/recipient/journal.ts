@@ -243,6 +243,38 @@ export const makeRecipientJournalStore = ({
     }),
 });
 
+// Every prefix the journal holds evidence for. Restore compares this against
+// the prefixes it could derive from the restored snapshot; the remainder
+// belongs to recipients the snapshot predates.
+export const listJournalPrefixes = async (
+  bucket: RecipientJournalBucket,
+): Promise<ReadonlyArray<string>> => {
+  const prefixes = new Set<string>();
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+  do {
+    const page = await bucket.list({ cursor, prefix: journalPrefix });
+    for (const object of page.objects) {
+      const named =
+        /^recipient-transitions\/v1\/([a-f0-9]{64})\/[0-9a-f-]{36}\.json$/u.exec(
+          object.key,
+        );
+      if (named?.[1] === undefined) {
+        throw operationError("enumerate-transitions");
+      }
+      prefixes.add(named[1]);
+    }
+    if (page.truncated) {
+      if (!page.cursor || seenCursors.has(page.cursor)) {
+        throw operationError("enumerate-transitions");
+      }
+      seenCursors.add(page.cursor);
+    }
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+  return [...prefixes];
+};
+
 // Ordered oldest first by effective time so a replay applies the latest
 // acknowledged state and the greatest purge cutoff.
 export const readTransitions = async (

@@ -38,6 +38,7 @@ describe("Personal Account purge schedule", () => {
             expiryPage++ === 0 ? 500 : 0,
         }),
         purgeExcludedRecipientHistory: async () => 0,
+        recoverRecipientExclusions: async () => undefined,
         purgeExpiredMessages: async () => 0,
         purgeExpiredToolCallLogs: async () => 0,
         retainWebhookSources: async () => undefined,

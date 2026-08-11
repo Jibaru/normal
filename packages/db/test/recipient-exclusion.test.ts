@@ -580,6 +580,73 @@ describe("WhatsApp Recipient Exclusion persistence", () => {
     expect(remaining.rows).toEqual([{ conversations: 0, messages: 0 }]);
   });
 
+  test("recovers journal evidence for a recipient the restored snapshot predates", async () => {
+    const laterLocator = `di1_${"E".repeat(43)}`;
+    const laterPublicId = "ctc_000000000000000000071";
+    const prefix = "a".repeat(64);
+    await database.query(
+      "SELECT public.record_unresolved_recipient_transition_prefixes($1::text[],$2)",
+      [[prefix], "2026-08-13T00:00:00Z"],
+    );
+    await database.query(
+      `INSERT INTO public.restore_replay_audit(branch_id,completed_at,marker_count,
+        deleted_entity_count,expired_record_count)
+       VALUES('br-exclusion-70','2026-08-13T00:00:00Z',0,0,0)`,
+    );
+    expect(await repository().latestRestoreCompletedAt()).toBe(
+      "2026-08-13T00:00:00.000Z",
+    );
+    expect(await repository().listUnresolvedJournalPrefixes(10)).toEqual([
+      prefix,
+    ]);
+
+    // The pre-restore contact is not a recovery candidate; only the one the
+    // WhatsApp Directory projected after the restore is.
+    await database.query(
+      `INSERT INTO public.directory_contacts(personal_account_id,whatsapp_connection_id,id,public_id,
+        provider_identity_index,provider_identity_ciphertext_version,provider_identity_key_version,
+        provider_identity_nonce,provider_identity_ciphertext,display_name_sort,active,received_at,created_at)
+       VALUES($1,$2,'50000000-0000-4000-8000-000000000072',$3,$4,1,1,
+        decode(repeat('01',12),'hex'),decode(repeat('02',17),'hex'),'zoe',true,
+        '2026-08-14T00:00:00Z','2026-08-14T00:00:00Z')`,
+      [accountId, connectionId, laterPublicId, laterLocator],
+    );
+    await database.query(
+      "UPDATE public.directory_contacts SET created_at='2026-06-02T00:00:00Z' WHERE public_id=$1",
+      [contactPublicId],
+    );
+    const candidates = await repository().listRecipientsWithoutExclusion({
+      cursorKey: null,
+      limit: 100,
+      since: "2026-08-13T00:00:00.000Z",
+    });
+    expect(candidates).toMatchObject([
+      { recipientLocator: laterLocator, recipientPublicId: laterPublicId },
+    ]);
+
+    expect(
+      await repository().replayTransition({
+        effectiveAt: "2026-08-12T00:00:00.000Z",
+        excluded: true,
+        observedAt: "2026-08-14T01:00:00.000Z",
+        personalAccountId: accountId,
+        purgeCutoffAt: "2026-08-12T00:00:00.000Z",
+        recipientKind: "contact",
+        recipientLocator: laterLocator,
+        recipientPublicId: laterPublicId,
+        transitionId: "80000000-0000-4000-8000-000000000071",
+        whatsappConnectionId: connectionId,
+      }),
+    ).toBe(true);
+    await repository().resolveJournalPrefix(prefix);
+    expect(await repository().listUnresolvedJournalPrefixes(10)).toEqual([]);
+    const recovered = await database.query<{ excluded: boolean }>(
+      "SELECT excluded FROM public.whatsapp_recipient_exclusions WHERE recipient_public_id=$1",
+      [laterPublicId],
+    );
+    expect(recovered.rows).toEqual([{ excluded: true }]);
+  });
+
   test("keeps restore replay closed until every prepared transition resolves", async () => {
     await repository().prepareTransition({
       clerkUserId,

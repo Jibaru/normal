@@ -187,8 +187,10 @@ import {
 } from "./personal-account-deletion";
 import { makeProviderControlLayers } from "./provider-control-production";
 import {
+  deriveRecipientJournalPrefix,
   makeRecipientJournalStore,
   type RecipientJournalBucket,
+  readTransitions,
 } from "./recipient/journal";
 import {
   openRecipientRecords,
@@ -1612,6 +1614,80 @@ const recoverPreparedRecipientTransitions = async (
   }
 };
 
+// A WhatsApp Recipient Exclusion whose recipient was absent from a restored
+// snapshot is reapplied as soon as the WhatsApp Directory projects that
+// recipient again. The scan runs only while restore recorded unresolved
+// journal evidence, and only over recipients projected since that restore.
+const recoverJournaledRecipientExclusions = async (
+  environment: ApiEnvironment,
+  connectionString: string,
+  observedAt: string,
+) => {
+  const repository = makePgRecipientExclusionRepository(connectionString);
+  const unresolved = new Set(
+    await repository.listUnresolvedJournalPrefixes(1000),
+  );
+  if (unresolved.size === 0) return;
+  const since = await repository.latestRestoreCompletedAt();
+  if (since === null) return;
+  const journal = await Effect.runPromise(
+    Config.all({
+      application: productionConfig,
+      hmacSecret: recipientTransitionHmacSecret,
+    }).pipe(
+      Effect.map(({ application, hmacSecret }) => ({
+        bucket: environment.RECIPIENT_TRANSITIONS as RecipientJournalBucket,
+        environment: application.environment,
+        hmacSecret,
+      })),
+      Effect.withConfigProvider(environmentConfigProvider(environment)),
+    ),
+  );
+  let cursorKey: string | null = null;
+  let recoveredCount = 0;
+  for (;;) {
+    const candidates = await repository.listRecipientsWithoutExclusion({
+      cursorKey,
+      limit: 500,
+      since,
+    });
+    for (const candidate of candidates) {
+      const prefix = await deriveRecipientJournalPrefix(
+        journal.environment,
+        journal.hmacSecret,
+        candidate.whatsappConnectionId,
+        candidate.recipientKind,
+        candidate.recipientLocator,
+      );
+      if (!unresolved.has(prefix)) continue;
+      for (const transition of await readTransitions(journal.bucket, prefix)) {
+        await repository.replayTransition({
+          ...candidate,
+          ...transition,
+          observedAt,
+        });
+      }
+      await repository.resolveJournalPrefix(prefix);
+      unresolved.delete(prefix);
+      recoveredCount += 1;
+    }
+    if (candidates.length < 500) break;
+    const last = candidates.at(-1);
+    if (last === undefined || last.scanKey === cursorKey) break;
+    cursorKey = last.scanKey;
+  }
+  if (recoveredCount > 0) {
+    Effect.runSync(
+      safeTelemetry.emit({
+        event: "recipient_exclusion.recovery.completed",
+        outcome: "success",
+        recoveredCount,
+        service: "api",
+      }),
+    );
+  }
+};
+
 const safeTelemetry = {
   emit: (event: SafeTelemetryEvent) =>
     Effect.sync(() => console.info(serializeSafeTelemetry(event))).pipe(
@@ -2351,6 +2427,9 @@ export const createProductionScheduledHandler =
         observedAt: string,
         limit: number,
       ) => Promise<number>;
+      readonly recoverRecipientExclusions?: (
+        observedAt: string,
+      ) => Promise<void>;
       readonly purgeExpiredMessages?: (
         observedAt: string,
         limit: number,
@@ -2432,6 +2511,15 @@ export const createProductionScheduledHandler =
           service: "api",
         }),
       );
+      await (
+        dependencies.recoverRecipientExclusions ??
+        ((value) =>
+          recoverJournaledRecipientExclusions(
+            environment,
+            connectionString,
+            value,
+          ))
+      )(observedAt);
       let removedCount = 0;
       while (true) {
         const count = await (

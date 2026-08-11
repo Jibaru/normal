@@ -72,6 +72,14 @@ authority values before network access. Its provider origin is fixed in the
 production adapter, so configuration cannot redirect credentials to another
 host or select a fake implementation.
 
+The WhatsApp Connection row lock serializes every projection that can create
+or restore readable content — message upsert, edit, deletion, send evidence,
+and Stored Media finalization — against an exclusion transition, so a purge
+cannot commit between a suppression check and its write. An acknowledged
+transition also keeps a 90-day replay binding for its idempotency key, so a
+retry after a lost response replays the recorded result instead of colliding
+with its own effect.
+
 The read and ingestion enforcement predicates run with invoker rights so row
 level security stays in force, and they raise rather than answer when the
 transaction is not already in the recipient's own Personal Account context.

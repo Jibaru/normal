@@ -387,6 +387,94 @@ export const makeRecipientExclusionRepository = (
         };
       });
     }),
+  listUnresolvedJournalPrefixes: (
+    limit: number,
+  ): Promise<ReadonlyArray<string>> =>
+    provider.withConnection(async (connection) => {
+      const result = await makeDatabase(connection).execute<{
+        journal_prefix: string;
+      }>(sql`
+        SELECT journal_prefix
+        FROM public.list_unresolved_recipient_transition_prefixes(${limit})
+      `);
+      return result.map((row) => row.journal_prefix);
+    }),
+  listRecipientsWithoutExclusion: (input: {
+    readonly cursorKey: string | null;
+    readonly limit: number;
+    readonly since: string;
+  }): Promise<
+    ReadonlyArray<{
+      readonly personalAccountId: string;
+      readonly recipientKind: RecipientKind;
+      readonly recipientLocator: string;
+      readonly recipientPublicId: string;
+      readonly scanKey: string;
+      readonly whatsappConnectionId: string;
+    }>
+  > =>
+    provider.withConnection(async (connection) => {
+      const result = await makeDatabase(connection).execute<{
+        personal_account_id: string;
+        recipient_kind: RecipientKind;
+        recipient_locator: string;
+        recipient_public_id: string;
+        scan_key: string;
+        whatsapp_connection_id: string;
+      }>(sql`
+        SELECT * FROM public.list_recipient_identities_without_exclusion(
+          ${input.since}, ${input.limit}, ${input.cursorKey}
+        )
+      `);
+      return result.map((row) => ({
+        personalAccountId: row.personal_account_id,
+        recipientKind: row.recipient_kind,
+        recipientLocator: row.recipient_locator,
+        recipientPublicId: row.recipient_public_id,
+        scanKey: row.scan_key,
+        whatsappConnectionId: row.whatsapp_connection_id,
+      }));
+    }),
+  latestRestoreCompletedAt: (): Promise<string | null> =>
+    provider.withConnection(async (connection) => {
+      const result = await makeDatabase(connection).execute<{
+        completed_at: unknown;
+      }>(
+        sql`SELECT public.latest_restore_replay_completed_at() AS completed_at`,
+      );
+      return timestamp(result[0]?.completed_at);
+    }),
+  replayTransition: (input: {
+    readonly effectiveAt: string;
+    readonly excluded: boolean;
+    readonly observedAt: string;
+    readonly personalAccountId: string;
+    readonly purgeCutoffAt: string | null;
+    readonly recipientKind: RecipientKind;
+    readonly recipientLocator: string;
+    readonly recipientPublicId: string;
+    readonly transitionId: string;
+    readonly whatsappConnectionId: string;
+  }): Promise<boolean> =>
+    provider.withConnection(async (connection) => {
+      const result = await makeDatabase(connection).execute<{
+        replayed: boolean;
+      }>(sql`
+        SELECT public.replay_whatsapp_recipient_exclusion(
+          ${input.personalAccountId}, ${input.whatsappConnectionId},
+          ${input.recipientKind}, ${input.recipientLocator},
+          ${input.recipientPublicId}, ${input.excluded}, ${input.effectiveAt},
+          ${input.purgeCutoffAt}, ${input.transitionId}, ${input.observedAt}
+        ) AS replayed
+      `);
+      return result[0]?.replayed === true;
+    }),
+  resolveJournalPrefix: (prefix: string): Promise<void> =>
+    provider.withConnection(async (connection) => {
+      await makeDatabase(connection).execute(
+        sql`SELECT public.resolve_recipient_transition_prefix(${prefix})`,
+      );
+    }),
   purgeExcludedHistory: (input: {
     readonly limit: number;
     readonly observedAt: string;

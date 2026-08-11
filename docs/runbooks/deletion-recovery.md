@@ -164,8 +164,14 @@ provider-control, OAuth, or public-route binding.
    reapply every greatest purge cutoff whether or not the recipient is
    currently excluded, and drain the resulting Stored Media object deletions.
    Reject an invalid object key, missing object, malformed body, extra body
-   field, unsupported version, non-canonical timestamp, or an exclusion
-   recorded without a purge cutoff.
+   field, unsupported version, non-canonical timestamp, an object stored under
+   a name other than its own transition identity, or an exclusion recorded
+   without a purge cutoff. A recipient first projected and excluded after the
+   restore point has no identity in the snapshot, so its prefix cannot be
+   derived here; record every journal prefix that stayed unmatched. The API
+   reapplies those transitions on its hourly sweep as soon as the WhatsApp
+   Directory projects the recipient again, and the recorded prefixes are
+   identity-free.
 5. Run the same `app_private.purge_expired_message_content` wall-clock expiry
    gate used by the hourly worker until it returns fewer than the batch limit,
    then drain `stored_media_object_deletions`, before verification access or
@@ -174,8 +180,11 @@ provider-control, OAuth, or public-route binding.
 6. Verify no marked identifier has an available key envelope or readable
    content, and that no excluded recipient has readable Stored Message content,
    readable Stored Media, or a remaining prepared transition. Record marker
-   count, replayed transition count, normalized outcomes, RPO, and elapsed RTO
-   without recording tenant, recipient, or provider identifiers.
+   count, replayed transition count, unresolved prefix count, normalized
+   outcomes, RPO, and elapsed RTO without recording tenant, recipient, or
+   provider identifiers. A non-zero unresolved prefix count is expected when
+   the restore point predates a recipient; track it until the API sweep
+   reports it resolved.
 7. Enable verification access, and later traffic, only after every marker,
    recipient transition, and expiry operation succeeds.
 

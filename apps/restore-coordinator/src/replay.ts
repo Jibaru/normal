@@ -4,6 +4,7 @@ import {
 } from "@whatsapp-mcp/api/deletion/marker";
 import {
   deriveRecipientJournalPrefix,
+  listJournalPrefixes,
   type RecipientJournalBucket,
   readTransitions,
 } from "@whatsapp-mcp/api/recipient/journal";
@@ -27,6 +28,7 @@ const replayRecipientTransitions = async (input: {
   readonly recipientHmacSecret: Redacted.Redacted<string>;
   readonly repository: RestoreRepository;
 }) => {
+  const unresolvedPrefixes = new Set(await listJournalPrefixes(input.journal));
   let cursorKey: string | null = null;
   let recipientTransitionCount = 0;
   for (;;) {
@@ -44,6 +46,7 @@ const replayRecipientTransitions = async (input: {
         identity.recipientKind,
         identity.recipientLocator,
       );
+      unresolvedPrefixes.delete(prefix);
       for (const transition of await readTransitions(input.journal, prefix)) {
         if (
           !(await input.repository.replayRecipientTransition({
@@ -69,7 +72,14 @@ const replayRecipientTransitions = async (input: {
     );
     if (removed < 1000) break;
   }
-  return recipientTransitionCount;
+  // Evidence the snapshot has no identity for stays recorded so the API can
+  // reapply it when the WhatsApp Directory projects that recipient again.
+  const unresolvedPrefixCount =
+    await input.repository.recordUnresolvedRecipientPrefixes(
+      [...unresolvedPrefixes],
+      input.observedAt,
+    );
+  return { recipientTransitionCount, unresolvedPrefixCount };
 };
 
 export const replayRestore = async (input: {
@@ -111,7 +121,7 @@ export const replayRestore = async (input: {
     }
   }
 
-  const recipientTransitionCount = await replayRecipientTransitions({
+  const recipients = await replayRecipientTransitions({
     environment: input.environment,
     journal: input.recipientJournal,
     observedAt: input.observedAt,
@@ -144,6 +154,7 @@ export const replayRestore = async (input: {
     deletedEntityCount,
     expiredRecordCount,
     markerCount: markerReferences.length,
-    recipientTransitionCount,
+    recipientTransitionCount: recipients.recipientTransitionCount,
+    unresolvedRecipientPrefixCount: recipients.unresolvedPrefixCount,
   };
 };
