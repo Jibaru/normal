@@ -342,6 +342,35 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(
     page.getByRole("region", { name: "Personal Account Deletion" }),
   ).toBeVisible();
+
+  const exclusions = page.getByRole("region", {
+    name: "WhatsApp Recipient Exclusions",
+  });
+  await expect(exclusions).toBeVisible();
+  const excludeAda = exclusions.getByRole("checkbox", {
+    name: "Do not track Ada Lovelace",
+  });
+  await expect(excludeAda).not.toBeChecked();
+  await excludeAda.click();
+  await expect(page.getByTestId("recipient-exclusion-status")).toContainText(
+    "Normal no longer tracks Ada Lovelace.",
+  );
+  await expect(excludeAda).toBeChecked();
+  await page.reload();
+  await expect(
+    page.getByRole("checkbox", { name: "Do not track Ada Lovelace" }),
+  ).toBeChecked();
+  await page.getByLabel("Search by name").fill("grace");
+  await expect(
+    page.getByRole("checkbox", { name: "Do not track Grace Hopper" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("checkbox", { name: "Do not track Ada Lovelace" }),
+  ).toHaveCount(0);
+  // A scoped recipient outage must not disable unrelated account controls.
+  await expect(
+    page.getByRole("button", { name: "Delete Personal Account" }),
+  ).toBeEnabled();
   const providerObservations = await request.get(
     `http://127.0.0.1:${apiPort}/test/provider-observations`,
   );
