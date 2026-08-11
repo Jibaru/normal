@@ -15,6 +15,22 @@ export interface RestoreObjectDeletion {
   readonly objectKey: string;
 }
 
+export interface RestoreRecipientIdentity {
+  readonly personalAccountId: string;
+  readonly recipientKind: "contact" | "group";
+  readonly recipientLocator: string;
+  readonly recipientPublicId: string;
+  readonly scanKey: string;
+  readonly whatsappConnectionId: string;
+}
+
+export interface RestoreRecipientTransition {
+  readonly effectiveAt: string;
+  readonly excluded: boolean;
+  readonly purgeCutoffAt: string | null;
+  readonly transitionId: string;
+}
+
 export interface RestoreRepository {
   readonly begin: (
     branchId: string,
@@ -33,12 +49,24 @@ export interface RestoreRepository {
   readonly listObjectDeletions: (
     limit: number,
   ) => Promise<ReadonlyArray<RestoreObjectDeletion>>;
+  readonly listRecipientIdentities: (
+    limit: number,
+    cursorKey: string | null,
+  ) => Promise<ReadonlyArray<RestoreRecipientIdentity>>;
+  readonly purgeExcludedRecipientHistory: (
+    observedAt: string,
+    limit: number,
+  ) => Promise<number>;
   readonly purgeExpired: (observedAt: string, limit: number) => Promise<number>;
   readonly replayDeletion: (
     input: RestoreCandidate & {
       readonly markerId: string;
       readonly observedAt: string;
     },
+  ) => Promise<boolean>;
+  readonly replayRecipientTransition: (
+    input: RestoreRecipientIdentity &
+      RestoreRecipientTransition & { readonly observedAt: string },
   ) => Promise<boolean>;
 }
 
@@ -74,6 +102,53 @@ export const makePgRestoreRepository = (
         ) AS replayed
       `);
       return result[0]?.replayed === true;
+    }),
+  listRecipientIdentities: (limit, cursorKey) =>
+    withClient(connectionString, async (client) => {
+      const db = makeDatabase(client);
+      const result = await db.execute<{
+        personal_account_id: string;
+        recipient_kind: RestoreRecipientIdentity["recipientKind"];
+        recipient_locator: string;
+        recipient_public_id: string;
+        scan_key: string;
+        whatsapp_connection_id: string;
+      }>(sql`
+        SELECT * FROM public.list_restore_recipient_identities(
+          ${limit}, ${cursorKey}
+        )
+      `);
+      return result.map((row) => ({
+        personalAccountId: row.personal_account_id,
+        recipientKind: row.recipient_kind,
+        recipientLocator: row.recipient_locator,
+        recipientPublicId: row.recipient_public_id,
+        scanKey: row.scan_key,
+        whatsappConnectionId: row.whatsapp_connection_id,
+      }));
+    }),
+  replayRecipientTransition: (input) =>
+    withClient(connectionString, async (client) => {
+      const db = makeDatabase(client);
+      const result = await db.execute<{ replayed: boolean }>(sql`
+        SELECT public.replay_whatsapp_recipient_exclusion(
+          ${input.personalAccountId}, ${input.whatsappConnectionId},
+          ${input.recipientKind}, ${input.recipientLocator},
+          ${input.recipientPublicId}, ${input.excluded}, ${input.effectiveAt},
+          ${input.purgeCutoffAt}, ${input.transitionId}, ${input.observedAt}
+        ) AS replayed
+      `);
+      return result[0]?.replayed === true;
+    }),
+  purgeExcludedRecipientHistory: (observedAt, limit) =>
+    withClient(connectionString, async (client) => {
+      const db = makeDatabase(client);
+      const result = await db.execute<{ removed: number }>(sql`
+        SELECT public.purge_excluded_recipient_history(
+          ${observedAt}, ${limit}
+        ) AS removed
+      `);
+      return Number(result[0]?.removed ?? 0);
     }),
   purgeExpired: (observedAt, limit) =>
     withClient(connectionString, async (client) => {
