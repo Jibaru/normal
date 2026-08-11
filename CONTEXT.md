@@ -88,6 +88,10 @@ _Avoid_: Thread
 A contact or joined group marked active in the latest WhatsApp Directory projection for one WhatsApp Connection and therefore eligible for an outbound attempt. A WhatsApp Recipient can exist before the platform observes a WhatsApp Conversation and is addressed by its Directory identity rather than a raw phone number or provider identifier; projection staleness means provider routability is not guaranteed.
 _Avoid_: Conversation, raw destination
 
+**WhatsApp Recipient Exclusion**:
+A User-owned rule, scoped to one WhatsApp Connection and one WhatsApp Recipient, that stops Normal from tracking that recipient. While it applies, the recipient is absent from every MCP Directory, chat, message, and Stored Media result, a new Send Operation to it is rejected as recipient not found, and no provider observation for it creates a WhatsApp Conversation, Stored Message, Stored Media, or readable Pending Send Content. Setting one purges the recipient's existing Message Store history and records a permanent purge cutoff that survives a database restore; removing one permits only future observations and future sends and never restores purged history. The WhatsApp Directory projection for the recipient is retained so the User can still recognize and manage it.
+_Avoid_: Block, mute, hidden contact, display filter
+
 **Conversation Activity**:
 The latest inbound or outbound Stored Message in a WhatsApp Conversation. Directory changes, receipts, reactions, and other provider events do not count as Conversation Activity.
 _Avoid_: Unread activity, provider chat update

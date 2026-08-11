@@ -153,7 +153,7 @@ export const webhookItemsInApp = publicSchema.table(
     ),
     check(
       "webhook_items_outcome_check",
-      sql`outcome = ANY (ARRAY['applied'::text, 'quarantined'::text, 'superseded'::text])`,
+      sql`outcome = ANY (ARRAY['applied'::text, 'quarantined'::text, 'superseded'::text, 'suppressed'::text])`,
     ),
     check(
       "webhook_items_provider_version_check",

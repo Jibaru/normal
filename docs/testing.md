@@ -29,6 +29,14 @@ same shape: drive the production-built web app, cross directly to the API
 Worker, and fake only external organizations through the test composition
 root.
 
+The WhatsApp Recipient Exclusion journey drives the same seam: it selects a
+WhatsApp Connection, filters by recipient kind, searches by a safe display-name
+prefix, changes an exclusion, observes the live status region, reloads to prove
+the state came from Normal rather than an optimistic local choice, and confirms
+Personal Account Deletion stays usable after a scoped recipient failure.
+Database coverage separately proves the transition, purge, suppression, and
+restore invariants against migrated Postgres under the production runtime role.
+
 The MCP Authorization management journey lists and revokes through that same
 browser-to-Worker seam. Database coverage separately applies the production
 migrations and switches to `whatsapp_api_runtime` to prove RLS isolation,
@@ -72,7 +80,11 @@ The Worker runtime suite proves:
   indexes, query-bound deterministic cursor pagination, suffix-only output,
   empty-result privacy for unavailable contacts, and audit-before-release
   behavior; and
-- an authenticated, non-cacheable protected-resource read.
+- an authenticated, non-cacheable protected-resource read; and
+- the signed-in WhatsApp Recipient Exclusion boundary: exact Origin and CORS
+  behavior, closed query and body parsing, opaque handle pagination, stale
+  expected state, constant-shape not found, journal-append failure leaving no
+  acknowledged transition, and byte-stable idempotent journal replay.
 
 Controlled values, credentials, and failure selection are reachable only from
 the test Worker composition root. The HTTP and event handlers live under

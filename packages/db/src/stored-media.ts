@@ -87,7 +87,8 @@ export interface FinalizeStoredMediaInput {
 export type FinalizeStoredMediaOutcome =
   | "already_terminal"
   | "quota_exceeded"
-  | "ready";
+  | "ready"
+  | "recipient_excluded";
 
 const decode = (value: string, name: string): Uint8Array => {
   const bytes = Uint8Array.from(Buffer.from(value, "base64"));
@@ -331,6 +332,48 @@ export const makeStoredMediaRepository = (
           )
           .for("update");
         if (media[0]?.state !== "pending") return "already_terminal";
+        // Exclusion is rechecked under the WhatsApp Connection lock so an
+        // upload that finished after the transition cannot become readable.
+        const excluded = await db.execute<{ excluded: unknown }>(sql`
+          WITH locked_connection AS MATERIALIZED (
+            SELECT connections.id
+            FROM public.whatsapp_connections connections
+            JOIN public.stored_media media
+              ON media.personal_account_id = connections.personal_account_id
+             AND media.whatsapp_connection_id = connections.id
+            WHERE media.personal_account_id = ${input.personalAccountId}
+              AND media.id = ${input.id}
+            FOR UPDATE OF connections
+          )
+          SELECT public.whatsapp_recipient_excluded(
+            conversations.personal_account_id, conversations.whatsapp_connection_id,
+            CASE WHEN conversations.kind = 'group' THEN 'group' ELSE 'contact' END,
+            conversations.recipient_locator
+          ) AS excluded
+          FROM locked_connection
+          JOIN public.stored_media media
+            ON media.personal_account_id = ${input.personalAccountId}
+           AND media.id = ${input.id}
+          JOIN public.stored_messages messages
+            ON messages.personal_account_id = media.personal_account_id
+           AND messages.whatsapp_connection_id = media.whatsapp_connection_id
+           AND messages.id = media.stored_message_id
+          JOIN public.whatsapp_conversations conversations
+            ON conversations.personal_account_id = messages.personal_account_id
+           AND conversations.whatsapp_connection_id = messages.whatsapp_connection_id
+           AND conversations.id = messages.conversation_id
+        `);
+        if (excluded[0]?.excluded === true) {
+          await db
+            .delete(storedMediaInApp)
+            .where(
+              and(
+                eq(storedMediaInApp.personalAccountId, input.personalAccountId),
+                eq(storedMediaInApp.id, input.id),
+              ),
+            );
+          return "recipient_excluded";
+        }
         const available = Number(account[0]?.available);
         if (!Number.isSafeInteger(available))
           throw new Error("invalid Stored Media quota");

@@ -26,6 +26,7 @@ flowchart LR
         webhook[(Private R2<br/>Encrypted Webhook Events)]
         media[(Private R2<br/>Encrypted Stored Media)]
         lifecycle[(Private R2<br/>Deletion Capsules and markers)]
+        transitions[(Private R2<br/>Recipient Exclusion transitions)]
         hyperdrive[Hyperdrive]
     end
 
@@ -58,6 +59,8 @@ flowchart LR
     deletion -->|read capsules and write markers| lifecycle
     deletion -->|capsule key operations| kms
     restore -->|verify deletion markers| lifecycle
+    api -->|append only transition journal| transitions
+    restore -->|replay recipient transitions| transitions
     restore -->|reapply terminal deletion state| neon
 ```
 
@@ -76,6 +79,10 @@ flowchart LR
 * Connection Deletion revokes access and key use immediately. The deletion and
   restore coordinators preserve that terminal state through provider cleanup
   and database restore.
+* A WhatsApp Recipient Exclusion is a User-owned rule enforced beneath every
+  MCP Authorization. Neon holds current state; a locked, restore-external R2
+  journal holds the append-only transitions and permanent purge cutoffs the
+  restore coordinator replays before traffic reopens.
 
 For exact behavior, read [`CONTEXT.md`](../CONTEXT.md), the
 [MCP contract](mcp-contract.md), the [configuration reference](configuration.md),

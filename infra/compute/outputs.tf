@@ -37,10 +37,11 @@ output "oauth_kv_namespace_id" {
 output "r2_bucket_names" {
   description = "Private R2 buckets bound only to the API Worker."
   value = {
-    deletion_capsules = cloudflare_r2_bucket.deletion_capsules.name
-    deletion_markers  = cloudflare_r2_bucket.deletion_markers.name
-    stored_media      = cloudflare_r2_bucket.stored_media.name
-    webhook_ingress   = cloudflare_r2_bucket.webhook_ingress.name
+    deletion_capsules     = cloudflare_r2_bucket.deletion_capsules.name
+    deletion_markers      = cloudflare_r2_bucket.deletion_markers.name
+    recipient_transitions = cloudflare_r2_bucket.recipient_transitions.name
+    stored_media          = cloudflare_r2_bucket.stored_media.name
+    webhook_ingress       = cloudflare_r2_bucket.webhook_ingress.name
   }
 }
 

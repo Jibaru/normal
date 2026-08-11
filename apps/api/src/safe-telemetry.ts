@@ -92,6 +92,26 @@ export const safeTelemetryFieldsByEvent = {
     "outcome",
     "responseBytes",
   ],
+  "recipient_exclusion.cleanup.completed": [
+    ...common,
+    "outcome",
+    "removedCount",
+  ],
+  "recipient_exclusion.list.completed": [
+    ...common,
+    "outcome",
+    "recipientCount",
+  ],
+  "recipient_exclusion.recovery.completed": [
+    ...common,
+    "outcome",
+    "recoveredCount",
+  ],
+  "recipient_exclusion.transition.completed": [
+    ...common,
+    "outcome",
+    "transitionKind",
+  ],
   "send.dispatch_lease.sweep_completed": [...common, "expiredCount"],
   "stored-media.container.completed": [
     ...common,
@@ -114,6 +134,7 @@ export const safeTelemetryFieldsByEvent = {
     "outcome",
     "quarantinedCount",
     "supersededCount",
+    "suppressedCount",
   ],
   "webhook_event.replay.completed": [...common, "attemptReference", "outcome"],
   "webhook_event.source_retention.completed": [...common, "deletedCount"],

@@ -74,6 +74,7 @@ run "development_topology" {
       cloudflare_r2_bucket.stored_media.name == "whatsapp-mcp-stored-media-development" &&
       cloudflare_r2_bucket.deletion_capsules.name == "whatsapp-mcp-deletion-capsules-development" &&
       cloudflare_r2_bucket.deletion_markers.name == "whatsapp-mcp-deletion-markers-development" &&
+      cloudflare_r2_bucket.recipient_transitions.name == "whatsapp-mcp-recipient-transitions-development" &&
       cloudflare_workers_kv_namespace.oauth.title == "whatsapp-mcp-oauth-development" &&
       cloudflare_queue.connection_setup_provisioning.queue_name == "whatsapp-mcp-connection-setup-provisioning-development" &&
       cloudflare_queue.ingestion.queue_name == "whatsapp-mcp-ingestion-development" &&
@@ -99,6 +100,7 @@ run "development_topology" {
       "inherit:KMS_DELETION_COORDINATOR_KEY_ARN",
       "inherit:MCP_CURSOR_HMAC_SECRET",
       "inherit:NEON_BRANCH_ID",
+      "inherit:RECIPIENT_TRANSITION_HMAC_SECRET",
       "inherit:SEND_FINGERPRINT_HMAC_SECRET",
       "inherit:SMOKE_CHECK_SECRET",
       "inherit:OAUTH_PROTOCOL_ENCRYPTION_KEY",
@@ -124,6 +126,7 @@ run "development_topology" {
       "queue:INGESTION_QUEUE",
       "r2_bucket:DELETION_CAPSULES",
       "r2_bucket:DELETION_MARKERS",
+      "r2_bucket:RECIPIENT_TRANSITIONS",
       "r2_bucket:STORED_MEDIA",
       "r2_bucket:WEBHOOK_INGRESS",
       "service:PROVIDER_CONTROL",
@@ -202,9 +205,11 @@ run "development_topology" {
         ]) == toset([
         "inherit:DELETION_MARKER_HMAC_SECRET",
         "inherit:NEON_BRANCH_ID",
+        "inherit:RECIPIENT_TRANSITION_HMAC_SECRET",
         "inherit:RESTORE_DATABASE_URL",
         "plain_text:DEPLOYMENT_ENVIRONMENT",
         "r2_bucket:DELETION_MARKERS",
+        "r2_bucket:RECIPIENT_TRANSITIONS",
         "r2_bucket:STORED_MEDIA",
         "r2_bucket:WEBHOOK_INGRESS",
       ])
@@ -301,7 +306,8 @@ run "production_topology" {
       cloudflare_r2_managed_domain.webhook_ingress.enabled == false &&
       cloudflare_r2_managed_domain.stored_media.enabled == false &&
       cloudflare_r2_managed_domain.deletion_capsules.enabled == false &&
-      cloudflare_r2_managed_domain.deletion_markers.enabled == false
+      cloudflare_r2_managed_domain.deletion_markers.enabled == false &&
+      cloudflare_r2_managed_domain.recipient_transitions.enabled == false
     )
     error_message = "Every R2 bucket must explicitly disable its public r2.dev domain."
   }
@@ -322,6 +328,15 @@ run "production_topology" {
       if rule.id == "retain-deletion-markers"
     ]) == "Indefinite"
     error_message = "Deletion markers must be protected by an indefinite bucket lock."
+  }
+
+  assert {
+    condition = one([
+      for rule in cloudflare_r2_bucket_lock.recipient_transitions.rules :
+      rule.condition.type
+      if rule.id == "retain-recipient-transitions"
+    ]) == "Indefinite"
+    error_message = "WhatsApp Recipient Exclusion transitions must be protected by an indefinite bucket lock."
   }
 
   assert {

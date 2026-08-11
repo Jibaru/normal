@@ -105,6 +105,7 @@ export type WebhookItemQuarantineClassification =
 export type WebhookItemProjectionOutcome =
   | "applied"
   | "duplicate"
+  | "suppressed"
   | "superseded";
 
 export type WebhookVersionComparison =
@@ -320,6 +321,60 @@ const enterPersonalAccountContext = async (
   await db.execute(
     sql`select set_config('public.personal_account_id', ${personalAccountId}, true)`,
   );
+};
+
+// The WhatsApp Connection row is the shared serialization point with a
+// WhatsApp Recipient Exclusion transition. Every projection that can create or
+// restore readable content takes it before checking suppression, so an
+// exclusion cannot commit its purge between the check and the write.
+const lockConnection = async (
+  db: Database,
+  input: WebhookItemBase,
+): Promise<void> => {
+  const locked = await db
+    .select({ id: whatsappConnectionsInApp.id })
+    .from(whatsappConnectionsInApp)
+    .where(
+      and(
+        eq(whatsappConnectionsInApp.personalAccountId, input.personalAccountId),
+        eq(whatsappConnectionsInApp.id, input.whatsappConnectionId),
+      ),
+    )
+    .for("update");
+  if (locked.length !== 1) {
+    throw new Error("Webhook Item projection target unavailable");
+  }
+};
+
+// A WhatsApp Recipient Exclusion is checked after the Webhook Item claims its
+// deduplication identity, so a suppressed item still cannot be reprocessed.
+const isObservationSuppressed = async (
+  db: Database,
+  input: WebhookItemBase & { readonly itemIdentity: string },
+  recipientKind: "contact" | "direct" | "group",
+  recipientLocator: string,
+): Promise<boolean> => {
+  const result = await db.execute<{ suppressed: unknown }>(sql`
+    SELECT public.whatsapp_recipient_observation_suppressed(
+      ${input.personalAccountId}, ${input.whatsappConnectionId},
+      ${recipientKind === "group" ? "group" : "contact"}, ${recipientLocator},
+      ${input.receivedAt}
+    ) AS suppressed
+  `);
+  if (result[0]?.suppressed !== true) return false;
+  // The claimed Webhook Item keeps durable evidence that this delivery was
+  // seen and deliberately not projected.
+  await db
+    .update(webhookItemsInApp)
+    .set({ outcome: "suppressed" })
+    .where(
+      and(
+        eq(webhookItemsInApp.personalAccountId, input.personalAccountId),
+        eq(webhookItemsInApp.whatsappConnectionId, input.whatsappConnectionId),
+        eq(webhookItemsInApp.deduplicationIdentity, input.itemIdentity),
+      ),
+    );
+  return true;
 };
 
 const positiveInteger = (value: unknown): number | null => {
@@ -954,6 +1009,7 @@ export const makeWebhookEventRepository = (
     provider.withConnection((connection) =>
       withTransaction(connection, async (db) => {
         await enterPersonalAccountContext(db, input.personalAccountId);
+        await lockConnection(db, input);
         const claimed = await db
           .insert(webhookItemsInApp)
           .values({
@@ -1018,6 +1074,22 @@ export const makeWebhookEventRepository = (
              ) returning id`,
         );
         const operation = correlated[0];
+        // Send Status converges from trusted evidence even while excluded, but
+        // the evidence must not materialize a Stored Message.
+        if (
+          operation !== undefined &&
+          typeof operation.recipient_locator === "string" &&
+          (await isObservationSuppressed(
+            db,
+            input,
+            scalar(operation, "recipient_type") === "group"
+              ? "group"
+              : "contact",
+            operation.recipient_locator,
+          ))
+        ) {
+          return "suppressed" as const;
+        }
         if (
           operation !== undefined &&
           materialize !== undefined &&
@@ -1780,6 +1852,16 @@ export const makeWebhookEventRepository = (
             : input.recipientPublicId;
         if (!(await claimWebhookItem(db, input, "message_upsert")))
           return "duplicate" as const;
+        if (
+          await isObservationSuppressed(
+            db,
+            input,
+            input.recipientKind,
+            input.recipientLocator,
+          )
+        ) {
+          return "suppressed" as const;
+        }
         const current = await db
           .select({
             deleted_at: storedMessagesInApp.deletedAt,
@@ -2046,8 +2128,32 @@ export const makeWebhookEventRepository = (
         const ciphertext = decodeCiphertext(input.content);
         const nonce = decodeNonce(input.content);
         await enterPersonalAccountContext(db, input.personalAccountId);
+        await lockConnection(db, input);
         if (!(await claimWebhookItem(db, input, "message_edit")))
           return "duplicate" as const;
+        const edited = await db.execute<{ recipient_locator: unknown }>(sql`
+          SELECT conversations.recipient_locator
+          FROM public.stored_messages messages
+          JOIN public.whatsapp_conversations conversations
+            ON conversations.personal_account_id = messages.personal_account_id
+           AND conversations.whatsapp_connection_id = messages.whatsapp_connection_id
+           AND conversations.id = messages.conversation_id
+          WHERE messages.personal_account_id = ${input.personalAccountId}
+            AND messages.whatsapp_connection_id = ${input.whatsappConnectionId}
+            AND messages.message_identity = ${input.messageIdentity}
+        `);
+        const editedLocator = edited[0]?.recipient_locator;
+        if (
+          typeof editedLocator === "string" &&
+          (await isObservationSuppressed(
+            db,
+            input,
+            editedLocator.startsWith("wi1_") ? "group" : "contact",
+            editedLocator,
+          ))
+        ) {
+          return "suppressed" as const;
+        }
         const current = await db
           .select({
             deleted_at: storedMessagesInApp.deletedAt,
@@ -2133,8 +2239,19 @@ export const makeWebhookEventRepository = (
     provider.withConnection((connection) =>
       withTransaction(connection, async (db) => {
         await enterPersonalAccountContext(db, input.personalAccountId);
+        await lockConnection(db, input);
         if (!(await claimWebhookItem(db, input, "message_delete")))
           return "duplicate" as const;
+        if (
+          await isObservationSuppressed(
+            db,
+            input,
+            input.recipientKind,
+            input.recipientLocator,
+          )
+        ) {
+          return "suppressed" as const;
+        }
         await db
           .insert(whatsappConversationsInApp)
           .values({

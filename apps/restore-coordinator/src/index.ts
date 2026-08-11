@@ -2,6 +2,7 @@ import {
   type DeletionMarkerBucket,
   makeDeletionMarkerStore,
 } from "@whatsapp-mcp/api/deletion/marker";
+import type { RecipientJournalBucket } from "@whatsapp-mcp/api/recipient/journal";
 import { restrictedRestoreRuntimeConnectionString } from "@whatsapp-mcp/db/config";
 import { makePgRestoreRepository } from "@whatsapp-mcp/db/restore";
 import { Redacted } from "effect";
@@ -13,6 +14,8 @@ interface Environment {
   readonly NEON_BRANCH_ID: string;
   readonly RESTORE_DATABASE_URL: string;
   readonly DELETION_MARKER_HMAC_SECRET: string;
+  readonly RECIPIENT_TRANSITION_HMAC_SECRET: string;
+  readonly RECIPIENT_TRANSITIONS: R2Bucket;
   readonly STORED_MEDIA: R2Bucket;
   readonly WEBHOOK_INGRESS: R2Bucket;
 }
@@ -46,6 +49,14 @@ const scheduled: ExportedHandlerScheduledHandler<Environment> = async (
       hmacSecret: Redacted.make(environment.DELETION_MARKER_HMAC_SECRET),
     }),
     observedAt: new Date(controller.scheduledTime).toISOString(),
+    recipientHmacSecret: Redacted.make(
+      required(
+        environment.RECIPIENT_TRANSITION_HMAC_SECRET,
+        "WhatsApp Recipient Exclusion transition HMAC secret",
+      ),
+    ),
+    recipientJournal:
+      environment.RECIPIENT_TRANSITIONS as unknown as RecipientJournalBucket,
     repository: makePgRestoreRepository(
       restrictedRestoreRuntimeConnectionString(
         required(environment.RESTORE_DATABASE_URL, "Restore database"),

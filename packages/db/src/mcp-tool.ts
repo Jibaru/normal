@@ -1561,7 +1561,13 @@ export const makeMcpToolRepository = (
              AND groups.whatsapp_connection_id =
                   conversations.whatsapp_connection_id
              AND groups.provider_locator = conversations.recipient_locator
-            WHERE EXISTS (
+            WHERE NOT public.whatsapp_recipient_excluded(
+                conversations.personal_account_id,
+                conversations.whatsapp_connection_id,
+                CASE WHEN conversations.kind = 'group' THEN 'group' ELSE 'contact' END,
+                conversations.recipient_locator
+              )
+              AND EXISTS (
               SELECT 1
               FROM public.stored_messages retained
               WHERE retained.personal_account_id =
@@ -2174,6 +2180,11 @@ export const makeMcpToolRepository = (
             AND conversations.whatsapp_connection_id=messages.whatsapp_connection_id
             AND conversations.id=messages.conversation_id
           WHERE messages.personal_account_id=${accountId} AND messages.whatsapp_connection_id=${connectionId}
+            AND NOT public.whatsapp_recipient_excluded(
+              conversations.personal_account_id, conversations.whatsapp_connection_id,
+              CASE WHEN conversations.kind = 'group' THEN 'group' ELSE 'contact' END,
+              conversations.recipient_locator
+            )
             AND messages.message_search_index_version=1
             AND messages.message_search_tokens @> ${searchTokenArray}
             AND messages.deleted_at IS NULL AND messages.content_expired_at IS NULL
@@ -2433,6 +2444,7 @@ export const makeMcpToolRepository = (
               eq(whatsappGroupsInApp.personalAccountId, personalAccountId),
               eq(whatsappGroupsInApp.whatsappConnectionId, connectionId),
               eq(whatsappGroupsInApp.joined, true),
+              sql`NOT public.whatsapp_recipient_excluded(${whatsappGroupsInApp.personalAccountId}, ${whatsappGroupsInApp.whatsappConnectionId}, 'group', ${whatsappGroupsInApp.providerLocator})`,
               input.searchIndex === null
                 ? undefined
                 : sql`${whatsappGroupsInApp.namePrefixIndexes} @> ARRAY[${input.searchIndex}::public.group_name_blind_index]`,
@@ -2640,6 +2652,10 @@ export const makeMcpToolRepository = (
              AND connections.public_id = ${input.connectionPublicId}
              AND connections.state <> 'deleting'
              AND contacts.active
+             AND NOT public.whatsapp_recipient_excluded(
+               connections.personal_account_id, connections.id, 'contact',
+               contacts.provider_identity_index
+             )
              AND (
                ${input.cursorDisplayNameSort}::text IS NULL
                OR (contacts.display_name_sort, contacts.public_id)

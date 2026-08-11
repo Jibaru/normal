@@ -44,6 +44,13 @@ import {
   InvalidBoundaryIdentity,
 } from "../../src/public-boundary";
 import { createPublicBoundaryWorker } from "../../src/public-boundary-worker";
+import {
+  createRecipientExclusionHandler,
+  isRecipientExclusionRequest,
+  RecipientExclusionClock,
+  RecipientExclusionPersistence,
+  RecipientTransitionJournal,
+} from "../../src/recipient-exclusion";
 import { RestoreSafeDeletion, SafeTelemetry } from "../../src/services";
 import {
   ToolCallLogClock,
@@ -124,6 +131,27 @@ let providerConnectionState:
   | "degraded" = "disconnected";
 let lifecycleClaimId: string | null = null;
 const retentionPolicies = new Map<string, number | null>();
+const recipientExclusions = new Map<string, boolean>();
+const testRecipients = [
+  {
+    displayName: "Ada Lovelace",
+    id: "ctc_000000000000000000001",
+    kind: "contact" as const,
+    phoneLastFour: "0123",
+  },
+  {
+    displayName: "Grace Hopper",
+    id: "ctc_000000000000000000002",
+    kind: "contact" as const,
+    phoneLastFour: "0456",
+  },
+  {
+    displayName: "Release crew",
+    id: "grp_000000000000000000001",
+    kind: "group" as const,
+    phoneLastFour: null,
+  },
+];
 const whatsAppConnections: Array<{
   displayName: string;
   numberSuffix: string;
@@ -495,6 +523,129 @@ const makeTestLayer = (
           }
           retentionPolicies.set(connectionPublicId, days);
           return { days, updatedAt };
+        }),
+    }),
+    Layer.succeed(RecipientExclusionClock, {
+      now: Effect.succeed("2026-08-03T12:00:00.000Z"),
+    }),
+    Layer.succeed(RecipientTransitionJournal, {
+      append: () => Effect.void,
+    }),
+    Layer.succeed(RecipientExclusionPersistence, {
+      finalize: ({ recipientPublicId }) =>
+        Effect.succeed({
+          effectiveAt: "2026-08-03T12:00:00.000Z",
+          excluded: recipientExclusions.get(recipientPublicId) === true,
+          purgeCutoffAt: "2026-08-03T12:00:00.000Z",
+        }),
+      list: ({ connectionPublicId, kind, search }) =>
+        Effect.succeed(
+          whatsAppConnections.some(
+            (connection) => connection.publicId === connectionPublicId,
+          )
+            ? {
+                material: {
+                  accountKey: {
+                    ciphertext: "AA==",
+                    keyVersion: 1,
+                    kmsKeyId: "test",
+                    personalAccountId: "10000000-0000-4000-8000-000000000001",
+                    version: 1,
+                  },
+                  connectionKey: {
+                    accountKeyVersion: 1,
+                    ciphertext: "AA==",
+                    connectionId: "20000000-0000-4000-8000-000000000001",
+                    keyVersion: 1,
+                    nonce: "AAAAAAAAAAAAAAAA",
+                    personalAccountId: "10000000-0000-4000-8000-000000000001",
+                    version: 1,
+                  },
+                  identityKey: {
+                    ciphertext: "AA==",
+                    keyVersion: 1,
+                    nonce: "AAAAAAAAAAAAAAAA",
+                    version: 1,
+                  },
+                  personalAccountId: "10000000-0000-4000-8000-000000000001",
+                  projection: {
+                    asOf: "2026-08-03T11:00:00.000Z",
+                    partial: false,
+                    stale: false,
+                  },
+                  whatsappConnectionId: "20000000-0000-4000-8000-000000000001",
+                },
+                recipients: testRecipients
+                  .filter(
+                    (recipient) =>
+                      recipient.kind === kind &&
+                      (search === null ||
+                        (recipient.displayName ?? "")
+                          .toLowerCase()
+                          .startsWith(search.toLowerCase())),
+                  )
+                  .map((recipient) => ({
+                    displayNameCiphertext: null,
+                    excluded: recipientExclusions.get(recipient.id) === true,
+                    phoneCiphertext: null,
+                    publicId: recipient.id,
+                    recordId: recipient.id,
+                  })),
+              }
+            : null,
+        ),
+      open: ({ recipients }) =>
+        Effect.succeed(
+          recipients.map((recipient) => {
+            const known = testRecipients.find(
+              (candidate) => candidate.id === recipient.publicId,
+            );
+            return {
+              displayName: known?.displayName ?? null,
+              excluded: recipient.excluded,
+              phoneLastFour: known?.phoneLastFour ?? null,
+              publicId: recipient.publicId,
+            };
+          }),
+        ),
+      prepare: ({ excluded, expectedExcluded, recipientPublicId }) =>
+        Effect.sync(() => {
+          const known = testRecipients.find(
+            (candidate) => candidate.id === recipientPublicId,
+          );
+          if (known === undefined) return null;
+          const current = recipientExclusions.get(recipientPublicId) === true;
+          if (current !== expectedExcluded) {
+            return {
+              effectiveAt: "2026-08-03T12:00:00.000Z",
+              excluded: current,
+              outcome: "conflict" as const,
+              personalAccountId: "10000000-0000-4000-8000-000000000001",
+              purgeCutoffAt: null,
+              recipientKind: known.kind,
+              recipientLocator:
+                known.kind === "contact"
+                  ? `di1_${"A".repeat(43)}`
+                  : `wi1_${"A".repeat(43)}`,
+              transitionId: null,
+              whatsappConnectionId: "20000000-0000-4000-8000-000000000001",
+            };
+          }
+          recipientExclusions.set(recipientPublicId, excluded);
+          return {
+            effectiveAt: "2026-08-03T12:00:00.000Z",
+            excluded,
+            outcome: "prepared" as const,
+            personalAccountId: "10000000-0000-4000-8000-000000000001",
+            purgeCutoffAt: "2026-08-03T12:00:00.000Z",
+            recipientKind: known.kind,
+            recipientLocator:
+              known.kind === "contact"
+                ? `di1_${"A".repeat(43)}`
+                : `wi1_${"A".repeat(43)}`,
+            transitionId: "30000000-0000-4000-8000-000000000001",
+            whatsappConnectionId: "20000000-0000-4000-8000-000000000001",
+          };
         }),
     }),
     Layer.succeed(McpAuthorizationPersistence, {
@@ -1309,65 +1460,70 @@ const selectedFailure = (request: Request): FailureTarget | undefined => {
 const worker = createPublicBoundaryWorker({
   browserOrigin,
   fallback: (request, environment) =>
-    isMessageRetentionRequest(request)
-      ? createMessageRetentionHandler(
+    isRecipientExclusionRequest(request)
+      ? createRecipientExclusionHandler(
           makeTestLayer(selectedFailure(request), environment),
           browserOrigin,
-          [7, 30, 90],
         )(request)
-      : new URL(request.url).pathname === "/test/webhook-queue"
-        ? Promise.resolve(
-            new Response(JSON.stringify(publishedWebhookMessages), {
-              headers: {
-                "cache-control": "no-store",
-                "content-type": "application/json; charset=utf-8",
-              },
-            }),
-          )
-        : new URL(request.url).pathname === "/test/webhook-dead-letters"
+      : isMessageRetentionRequest(request)
+        ? createMessageRetentionHandler(
+            makeTestLayer(selectedFailure(request), environment),
+            browserOrigin,
+            [7, 30, 90],
+          )(request)
+        : new URL(request.url).pathname === "/test/webhook-queue"
           ? Promise.resolve(
-              new Response(JSON.stringify([...deadLetteredWebhookEvents]), {
+              new Response(JSON.stringify(publishedWebhookMessages), {
                 headers: {
                   "cache-control": "no-store",
                   "content-type": "application/json; charset=utf-8",
                 },
               }),
             )
-          : new URL(request.url).pathname === "/test/webhook-replay-attempts"
+          : new URL(request.url).pathname === "/test/webhook-dead-letters"
             ? Promise.resolve(
-                new Response(
-                  JSON.stringify(
-                    [...webhookReplayAttempts.entries()].map(
-                      ([requestId, attempt]) => ({
-                        requestId,
-                        status: attempt.status,
-                      }),
-                    ),
-                  ),
-                  {
-                    headers: {
-                      "cache-control": "no-store",
-                      "content-type": "application/json; charset=utf-8",
-                    },
+                new Response(JSON.stringify([...deadLetteredWebhookEvents]), {
+                  headers: {
+                    "cache-control": "no-store",
+                    "content-type": "application/json; charset=utf-8",
                   },
-                ),
+                }),
               )
-            : new URL(request.url).pathname === "/test/provider-observations"
+            : new URL(request.url).pathname === "/test/webhook-replay-attempts"
               ? Promise.resolve(
-                  new Response(JSON.stringify(providerObservations), {
-                    headers: {
-                      "cache-control": "no-store",
-                      "content-type": "application/json; charset=utf-8",
+                  new Response(
+                    JSON.stringify(
+                      [...webhookReplayAttempts.entries()].map(
+                        ([requestId, attempt]) => ({
+                          requestId,
+                          status: attempt.status,
+                        }),
+                      ),
+                    ),
+                    {
+                      headers: {
+                        "cache-control": "no-store",
+                        "content-type": "application/json; charset=utf-8",
+                      },
                     },
-                  }),
+                  ),
                 )
-              : createProductionHandler({
-                  ...environment,
-                  WEBHOOK_HYPERDRIVE: {
-                    connectionString:
-                      "postgresql://webhook-runtime@hyperdrive.test/database",
-                  },
-                } as Env)(request),
+              : new URL(request.url).pathname === "/test/provider-observations"
+                ? Promise.resolve(
+                    new Response(JSON.stringify(providerObservations), {
+                      headers: {
+                        "cache-control": "no-store",
+                        "content-type": "application/json; charset=utf-8",
+                      },
+                    }),
+                  )
+                : createProductionHandler({
+                    ...environment,
+                    WEBHOOK_HYPERDRIVE: {
+                      connectionString:
+                        "postgresql://webhook-runtime@hyperdrive.test/database",
+                    },
+                  } as Env)(request),
   layerFor: (request, environment) =>
     makeTestLayer(selectedFailure(request), environment),
   provisioningLayer: makeTestLayer(undefined),

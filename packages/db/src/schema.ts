@@ -6,6 +6,7 @@ export * from "./schema/directory";
 export * from "./schema/mcp-authorizations";
 export * from "./schema/messages";
 export * from "./schema/operations";
+export * from "./schema/recipient-exclusions";
 export * from "./schema/sends";
 export * from "./schema/tool-calls";
 export * from "./schema/webhooks";

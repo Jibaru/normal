@@ -38,6 +38,8 @@
         "duplicateCount",
         "quarantinedCount",
         "supersededCount",
+        "suppressedCount",
+        "transitionKind",
         "deletedCount",
         "connectionCount",
         "plaintextBytes",
@@ -192,6 +194,20 @@
           "metric": "restoreGateFailures",
           "filter": {},
           "groupBy": ["service"]
+        },
+        {
+          "title": "Recipient exclusion transitions",
+          "source": "workerTelemetry",
+          "metric": "count",
+          "filter": { "event": "recipient_exclusion.transition.completed" },
+          "groupBy": ["outcome", "transitionKind"]
+        },
+        {
+          "title": "Recipient exclusion cleanup",
+          "source": "workerTelemetry",
+          "metric": "count",
+          "filter": { "event": "recipient_exclusion.cleanup.completed" },
+          "groupBy": ["outcome"]
         }
       ]
     },

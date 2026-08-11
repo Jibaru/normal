@@ -156,28 +156,52 @@ provider-control, OAuth, or public-route binding.
    match those IDs against the enumerated marker set. Marker bodies deliberately
    contain no reversible identifier. Make every match's key unavailable first,
    then re-purge its restored rows and active object references.
-4. Run the same `app_private.purge_expired_message_content` wall-clock expiry
+4. Enumerate every `recipient-transitions/v1/` object for each restored
+   recipient identity. Scan restored WhatsApp Directory contacts and groups,
+   WhatsApp Conversations, and existing exclusion rows, derive each journal
+   prefix with the dedicated `RECIPIENT_TRANSITION_HMAC_SECRET`, and replay the
+   ordered transitions oldest first. Restore the latest acknowledged state,
+   reapply every greatest purge cutoff whether or not the recipient is
+   currently excluded, and drain the resulting Stored Media object deletions.
+   Reject an invalid object key, missing object, malformed body, extra body
+   field, unsupported version, non-canonical timestamp, an object stored under
+   a name other than its own transition identity, or an exclusion recorded
+   without a purge cutoff. A recipient first projected and excluded after the
+   restore point has no identity in the snapshot, so its prefix cannot be
+   derived here; record every journal prefix that stayed unmatched. The API
+   reapplies those transitions on its hourly sweep as soon as the WhatsApp
+   Directory projects the recipient again, and the recorded prefixes are
+   identity-free.
+5. Run the same `app_private.purge_expired_message_content` wall-clock expiry
    gate used by the hourly worker until it returns fewer than the batch limit,
    then drain `stored_media_object_deletions`, before verification access or
    serving traffic. This applies current per-connection policy as required by
    ADR 0021 without reopening content from the restored snapshot.
-5. Verify no marked identifier has an available key envelope or readable
-   content. Record marker count, normalized outcomes, RPO, and elapsed RTO
-   without recording tenant or provider identifiers.
-6. Enable verification access, and later traffic, only after every marker and
-   expiry operation succeeds.
+6. Verify no marked identifier has an available key envelope or readable
+   content, and that no excluded recipient has readable Stored Message content,
+   readable Stored Media, or a remaining prepared transition. Record marker
+   count, replayed transition count, unresolved prefix count, normalized
+   outcomes, RPO, and elapsed RTO without recording tenant, recipient, or
+   provider identifiers. A non-zero unresolved prefix count is expected when
+   the restore point predates a recipient; track it until the API sweep
+   reports it resolved.
+7. Enable verification access, and later traffic, only after every marker,
+   recipient transition, and expiry operation succeeds.
 
-Do not sample marker replay, skip a malformed marker, substitute a database
-copy of marker state, or unlock/delete the marker bucket to recover from an
-error. Restore the marker/KMS authority or forward-fix the replay code while
-traffic remains closed.
+Do not sample marker or recipient transition replay, skip a malformed object,
+substitute a database copy of marker or journal state, or unlock/delete either
+locked bucket to recover from an error. Restore the marker, recipient
+transition, or KMS authority, or forward-fix the replay code, while traffic
+remains closed.
 
 ## Restore gate release criteria
 
 Release verification access only after all marker pages were enumerated, every
 restored opaque identifier was compared, marked keys are unavailable, marked
-rows and active objects were re-purged, wall-clock expiry batches and Stored
-Media deletion intents drained, and schema/RLS/quota/audit invariants pass.
+rows and active objects were re-purged, every recipient transition journal
+prefix was replayed with its purge cutoff reapplied and no prepared transition
+left unresolved, wall-clock expiry batches and Stored Media deletion intents
+drained, and schema/RLS/quota/audit invariants pass.
 Release application and Queue traffic only after verification records aggregate
 marker count, zero failures, branch identity, achieved RPO, and elapsed RTO.
 Any malformed marker, authority failure, branch mismatch, or incomplete batch
@@ -185,8 +209,9 @@ keeps the gate closed; there is no bypass or sampled success mode.
 
 ## Rollback and authority recovery
 
-Never delete, unlock, rename, or replace the marker bucket, its indefinite lock,
-the dedicated marker HMAC secret, or either KMS key during application rollback.
+Never delete, unlock, rename, or replace the marker bucket, the recipient
+transition bucket, either indefinite lock, the dedicated marker or recipient
+transition HMAC secret, or either KMS key during application rollback.
 Do not age-delete Deletion Capsules: unexplained capsule loss can strand a
 provider session after tenant keys are unavailable. Restore a failed
 coordinator from the last known-good production artifact with its separate
