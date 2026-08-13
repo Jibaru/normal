@@ -1,8 +1,12 @@
+import {
+  decodeOnboardingProfileWrite,
+  type OnboardingProfileWrite,
+} from "@whatsapp-mcp/contracts/onboarding-profile";
 import type {
   OnboardingProfile,
   OnboardingProfileLookup,
 } from "@whatsapp-mcp/db/onboarding-profile";
-import { Context, Data, Effect, type Layer, Schema } from "effect";
+import { Context, Data, Effect, type Layer } from "effect";
 import {
   HumanIdentity,
   type HumanIdentityService,
@@ -16,47 +20,6 @@ import {
 } from "./services";
 
 const ONBOARDING_PROFILE_ROUTE = "/v1/personal-account/onboarding-profile";
-
-const OnboardingPrimaryUseCase = Schema.Literal(
-  "conversation_search",
-  "summaries",
-  "draft_replies",
-  "outbound_sends",
-  "follow_ups",
-  "exploration",
-  "other",
-);
-const OnboardingWhatsAppUsageContext = Schema.Literal(
-  "personal",
-  "work",
-  "both",
-);
-const OnboardingRole = Schema.Literal(
-  "founder_or_owner",
-  "engineer",
-  "product_or_design",
-  "operations_or_support",
-  "marketing_or_sales",
-  "consultant_or_freelancer",
-  "student_or_researcher",
-  "other",
-  "not_sure",
-);
-const OnboardingIntendedMcpClient = Schema.Literal(
-  "claude",
-  "chatgpt",
-  "other",
-  "not_sure",
-);
-const OnboardingResearchCallInterest = Schema.Literal("yes", "no", "not_sure");
-
-const OnboardingProfileWriteBody = Schema.Struct({
-  intended_mcp_client: OnboardingIntendedMcpClient,
-  primary_use_case: OnboardingPrimaryUseCase,
-  research_call_interest: OnboardingResearchCallInterest,
-  role: OnboardingRole,
-  whatsapp_usage_context: OnboardingWhatsAppUsageContext,
-});
 
 export class OnboardingProfilePersistenceError extends Data.TaggedError(
   "OnboardingProfilePersistenceError",
@@ -130,7 +93,7 @@ const profileJson = (profile: OnboardingProfile) => ({
 
 const decodeWriteBody = async (
   request: Request,
-): Promise<typeof OnboardingProfileWriteBody.Type | null> => {
+): Promise<OnboardingProfileWrite | null> => {
   let body: unknown;
   try {
     body = await request.json();
@@ -152,9 +115,7 @@ const decodeWriteBody = async (
     return null;
   }
   try {
-    return Schema.decodeUnknownSync(OnboardingProfileWriteBody, {
-      onExcessProperty: "error",
-    })(body);
+    return decodeOnboardingProfileWrite(body);
   } catch {
     return null;
   }
@@ -180,7 +141,7 @@ export const createOnboardingProfileHandler =
       return json({ error: "not_found" }, 404, browserOrigin);
     }
 
-    let writeBody: typeof OnboardingProfileWriteBody.Type | null = null;
+    let writeBody: OnboardingProfileWrite | null = null;
     if (request.method === "PUT") {
       writeBody = await decodeWriteBody(request);
       if (writeBody === null) {

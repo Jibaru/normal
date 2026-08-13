@@ -1,3 +1,12 @@
+import {
+  ONBOARDING_INTENDED_MCP_CLIENTS,
+  ONBOARDING_PRIMARY_USE_CASES,
+  ONBOARDING_RESEARCH_CALL_INTERESTS,
+  ONBOARDING_ROLES,
+  ONBOARDING_WHATSAPP_USAGE_CONTEXTS,
+  type OnboardingProfileWrite,
+} from "@whatsapp-mcp/contracts/onboarding-profile";
+import type { OnboardingProfile } from "@whatsapp-mcp/db/onboarding-profile";
 import { Effect, Layer } from "effect";
 import { describe, expect, test } from "vitest";
 import {
@@ -18,13 +27,13 @@ const endpoint =
   "https://api.example.test/v1/personal-account/onboarding-profile";
 const clerkUserId = "user_2RfWKJREkjKbHZy0Wqa5qrHeAnb";
 
-const validBody = {
+const validBody: OnboardingProfileWrite = {
   intended_mcp_client: "claude",
   primary_use_case: "conversation_search",
   research_call_interest: "yes",
   role: "engineer",
   whatsapp_usage_context: "personal",
-} as const;
+};
 
 const makeHarness = (
   options: {
@@ -33,19 +42,7 @@ const makeHarness = (
     readonly persistenceFailure?: boolean;
   } = {},
 ) => {
-  const profiles = new Map<
-    string,
-    {
-      readonly completedAt: string;
-      readonly createdAt: string;
-      readonly intendedMcpClient: "claude";
-      readonly primaryUseCase: "conversation_search";
-      readonly researchCallInterest: "yes";
-      readonly role: "engineer";
-      readonly updatedAt: string;
-      readonly whatsappUsageContext: "personal";
-    }
-  >();
+  const profiles = new Map<string, OnboardingProfile>();
   const events: Array<SafeTelemetryEvent> = [];
 
   const persistence: OnboardingProfilePersistenceService = {
@@ -65,15 +62,15 @@ const makeHarness = (
         : Effect.sync(() => {
             if (options.deleted) return null;
             const existing = profiles.get(input.clerkUserId);
-            const profile = {
+            const profile: OnboardingProfile = {
               completedAt: existing?.completedAt ?? input.updatedAt,
               createdAt: existing?.createdAt ?? input.updatedAt,
-              intendedMcpClient: input.intendedMcpClient as "claude",
-              primaryUseCase: input.primaryUseCase as "conversation_search",
-              researchCallInterest: input.researchCallInterest as "yes",
-              role: input.role as "engineer",
+              intendedMcpClient: input.intendedMcpClient,
+              primaryUseCase: input.primaryUseCase,
+              researchCallInterest: input.researchCallInterest,
+              role: input.role,
               updatedAt: input.updatedAt,
-              whatsappUsageContext: input.whatsappUsageContext as "personal",
+              whatsappUsageContext: input.whatsappUsageContext,
             };
             profiles.set(input.clerkUserId, profile);
             return profile;
@@ -160,6 +157,49 @@ describe("Onboarding profile HTTP boundary", () => {
         service: "api",
       },
     ]);
+
+    const updated = await harness.handler(
+      request("PUT", {
+        body: { ...validBody, intended_mcp_client: "chatgpt" },
+      }),
+    );
+    expect(updated.status).toBe(200);
+    await expect(updated.json()).resolves.toMatchObject({
+      profile: {
+        completed_at: "2026-08-13T12:00:00.000Z",
+        intended_mcp_client: "chatgpt",
+      },
+    });
+  });
+
+  test("accepts every allowed enum value", async () => {
+    const bodies: Array<OnboardingProfileWrite> = [
+      ...ONBOARDING_PRIMARY_USE_CASES.map((primary_use_case) => ({
+        ...validBody,
+        primary_use_case,
+      })),
+      ...ONBOARDING_WHATSAPP_USAGE_CONTEXTS.map((whatsapp_usage_context) => ({
+        ...validBody,
+        whatsapp_usage_context,
+      })),
+      ...ONBOARDING_ROLES.map((role) => ({ ...validBody, role })),
+      ...ONBOARDING_INTENDED_MCP_CLIENTS.map((intended_mcp_client) => ({
+        ...validBody,
+        intended_mcp_client,
+      })),
+      ...ONBOARDING_RESEARCH_CALL_INTERESTS.map((research_call_interest) => ({
+        ...validBody,
+        research_call_interest,
+      })),
+    ];
+    for (const body of bodies) {
+      const harness = makeHarness();
+      const response = await harness.handler(request("PUT", { body }));
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        profile: body,
+      });
+    }
   });
 
   test("rejects malformed and extra fields with constant invalid_request", async () => {

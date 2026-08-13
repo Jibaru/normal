@@ -183,4 +183,62 @@ describe("Onboarding profile repository", () => {
     );
     expect(remaining.rows[0]).toEqual({ count: 0 });
   });
+
+  test("keeps a terminally deleted profile unreadable after restore replay", async () => {
+    const repository = makeOnboardingProfileRepository(provider);
+    await repository.upsertForUser({
+      clerkUserId,
+      intendedMcpClient: "claude",
+      primaryUseCase: "follow_ups",
+      researchCallInterest: "yes",
+      role: "operations_or_support",
+      updatedAt: "2026-08-13T12:00:00.000Z",
+      whatsappUsageContext: "work",
+    });
+    await repository.upsertForUser({
+      clerkUserId: otherClerkUserId,
+      intendedMcpClient: "chatgpt",
+      primaryUseCase: "draft_replies",
+      researchCallInterest: "no",
+      role: "product_or_design",
+      updatedAt: "2026-08-13T12:00:00.000Z",
+      whatsappUsageContext: "both",
+    });
+
+    await database.exec("SET ROLE whatsapp_restore_runtime");
+    try {
+      await database.query(
+        "SELECT * FROM public.begin_restore_replay('br-onboarding-70','2026-08-13T16:00:00Z')",
+      );
+      const replay = await database.query<{ replayed: boolean }>(
+        `SELECT public.replay_restore_deletion(
+          'personal_account', $1, $2, '2026-08-13T16:00:00Z'
+        ) AS replayed`,
+        [accountId, "b".repeat(64)],
+      );
+      expect(replay.rows).toEqual([{ replayed: true }]);
+    } finally {
+      await database.exec("RESET ROLE");
+    }
+
+    await expect(repository.getForUser(clerkUserId)).resolves.toEqual({
+      accessible: false,
+    });
+    const remaining = await database.query<{ count: number }>(
+      `SELECT COUNT(*)::int AS count
+       FROM public.personal_account_onboarding_profiles
+       WHERE personal_account_id = $1`,
+      [accountId],
+    );
+    expect(remaining.rows[0]).toEqual({ count: 0 });
+    await expect(
+      repository.getForUser(otherClerkUserId),
+    ).resolves.toMatchObject({
+      accessible: true,
+      profile: {
+        intendedMcpClient: "chatgpt",
+        primaryUseCase: "draft_replies",
+      },
+    });
+  });
 });

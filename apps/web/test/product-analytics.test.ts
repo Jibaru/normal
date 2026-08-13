@@ -65,6 +65,14 @@ describe("product analytics boundary", () => {
       event: "feature_used",
       feature: "mcp_guide_opened",
     });
+    captureProductAnalyticsEvent({
+      event: "feature_used",
+      feature: "additional_connection_setup",
+    });
+    captureProductAnalyticsEvent({
+      event: "feature_used",
+      feature: "tool_call_logs_viewed",
+    });
 
     expect(captured).toEqual([
       { event: "onboarding_stage_viewed", stage: "welcome" },
@@ -73,6 +81,8 @@ describe("product analytics boundary", () => {
         outcome: "capacity_unavailable",
       },
       { event: "feature_used", feature: "mcp_guide_opened" },
+      { event: "feature_used", feature: "additional_connection_setup" },
+      { event: "feature_used", feature: "tool_call_logs_viewed" },
     ]);
     expect(JSON.stringify(captured)).not.toMatch(
       /clerk|email|personal_account|whatsapp|profile|phone|message|qr|provider/iu,

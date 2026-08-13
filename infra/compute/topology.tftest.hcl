@@ -184,6 +184,14 @@ run "development_topology" {
   }
 
   assert {
+    condition = length([
+      for item in vercel_project.web.environment :
+      item.key if startswith(item.key, "NEXT_PUBLIC_POSTHOG_")
+    ]) == 0
+    error_message = "Browser PostHog analytics must stay disabled until both optional PostHog inputs are set."
+  }
+
+  assert {
     condition = toset([
       for binding in cloudflare_worker_version.provider_control.bindings :
       "${binding.type}:${binding.name}"
@@ -402,6 +410,80 @@ run "reject_same_web_and_api_origin" {
     decrypted_media_bytes_per_day = 268435456
     sends_per_minute              = 10
     sends_per_day                 = 200
+  }
+
+  expect_failures = [vercel_project.web]
+}
+
+run "development_topology_with_posthog" {
+  command = plan
+
+  plan_options {
+    refresh = false
+  }
+
+  variables {
+    deployment_environment        = "development"
+    cloudflare_account_id         = "11111111111111111111111111111111"
+    cloudflare_zone_id            = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    api_hyperdrive_id             = "11111111111111111111111111111111"
+    webhook_hyperdrive_id         = "22222222222222222222222222222222"
+    vercel_team_id                = "team_developmentvalidation"
+    api_hostname                  = "api.dev.example.com"
+    web_hostname                  = "app.dev.example.com"
+    clerk_issuer                  = "https://clerk.dev.example.com"
+    clerk_publishable_key         = "pk_test_Y2xlcmsuZGV2LmV4YW1wbGUuY29tJA"
+    mcp_requests_per_minute       = 60
+    mcp_requests_per_hour         = 600
+    read_message_records_per_day  = 10000
+    decrypted_media_bytes_per_day = 268435456
+    sends_per_minute              = 10
+    sends_per_day                 = 200
+    posthog_project_key           = "phc_developmentvalidationkey"
+    posthog_host                  = "https://us.i.posthog.com"
+  }
+
+  assert {
+    condition = (
+      one([
+        for item in vercel_project.web.environment :
+        item.value if item.key == "NEXT_PUBLIC_POSTHOG_KEY"
+      ]) == "phc_developmentvalidationkey" &&
+      one([
+        for item in vercel_project.web.environment :
+        item.value if item.key == "NEXT_PUBLIC_POSTHOG_HOST"
+      ]) == "https://us.i.posthog.com"
+    )
+    error_message = "When both PostHog inputs are set, the browser must receive the public project key and ingest origin."
+  }
+}
+
+run "reject_partial_posthog_configuration" {
+  command = plan
+
+  plan_options {
+    refresh = false
+  }
+
+  variables {
+    deployment_environment        = "development"
+    cloudflare_account_id         = "11111111111111111111111111111111"
+    cloudflare_zone_id            = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    api_hyperdrive_id             = "11111111111111111111111111111111"
+    webhook_hyperdrive_id         = "22222222222222222222222222222222"
+    vercel_team_id                = "team_developmentvalidation"
+    api_hostname                  = "api.dev.example.com"
+    web_hostname                  = "app.dev.example.com"
+    clerk_issuer                  = "https://clerk.dev.example.com"
+    clerk_publishable_key         = "pk_test_Y2xlcmsuZGV2LmV4YW1wbGUuY29tJA"
+    mcp_requests_per_minute       = 60
+    mcp_requests_per_hour         = 600
+    read_message_records_per_day  = 10000
+    decrypted_media_bytes_per_day = 268435456
+    sends_per_minute              = 10
+    sends_per_day                 = 200
+    posthog_project_key           = "phc_developmentvalidationkey"
+    posthog_host                  = ""
   }
 
   expect_failures = [vercel_project.web]

@@ -71,7 +71,7 @@ its locked marker is durable and every WhatsApp Connection row has completed
 Connection Deletion. The restricted purge function transforms each ordinary
 Tool Call Log into a Security Record containing only category, allowlisted
 client class, outcome, counts, timing, and latency, then deletes the Personal
-Account row so its Clerk identity mapping and all remaining tenant rows cascade
+Account row so its Clerk identity mapping, onboarding profile, and all remaining tenant rows cascade
 away. Security Records keep the source log's original 90-day expiry. The only
 cleanup audit retains the deletion marker digest and completion time and expires
 90 days after completion; the locked R2 marker remains indefinitely as the

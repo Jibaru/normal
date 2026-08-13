@@ -51,6 +51,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { captureProductAnalyticsEvent } from "../effect/product-analytics";
 import {
   type ConnectionSetupCleanupState,
   ConnectionSetupForm,
@@ -1272,6 +1273,14 @@ export function PublicBoundaryJourney({
     void checkBoundary();
   }, [autoInitialize, isLoaded, isSignedIn]);
 
+  useEffect(() => {
+    if (view !== "activity") return;
+    captureProductAnalyticsEvent({
+      event: "feature_used",
+      feature: "tool_call_logs_viewed",
+    });
+  }, [view]);
+
   const revokeAuthorization = async (authorization: McpAuthorization) => {
     setRevokingAuthorization(authorization.id);
     try {
@@ -2048,6 +2057,12 @@ export function PublicBoundaryJourney({
                   setupState !== "connected";
                 if (open || !durableActiveSetup) {
                   setSetupDialogOpen(open);
+                }
+                if (open) {
+                  captureProductAnalyticsEvent({
+                    event: "feature_used",
+                    feature: "additional_connection_setup",
+                  });
                 }
                 if (!open && !durableActiveSetup && setupId !== null) {
                   clearSetupDraft();

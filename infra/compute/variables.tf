@@ -159,3 +159,28 @@ variable "sends_per_day" {
     error_message = "sends_per_day must be a positive integer."
   }
 }
+
+variable "posthog_project_key" {
+  description = "Optional public PostHog project key for browser analytics. Empty disables collection. Must be set together with posthog_host."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.posthog_project_key == "" || can(regex("^phc_[A-Za-z0-9_-]+$", var.posthog_project_key))
+    error_message = "posthog_project_key must be empty or a public PostHog project key."
+  }
+}
+
+variable "posthog_host" {
+  description = "Optional bare HTTPS PostHog ingest origin. Empty disables collection. Must be set together with posthog_project_key."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      var.posthog_host == "" ||
+      can(regex("^https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$", var.posthog_host))
+    )
+    error_message = "posthog_host must be empty or an exact HTTPS origin."
+  }
+}

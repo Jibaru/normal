@@ -37,11 +37,13 @@ const contentSecurityPolicy = [
   "base-uri 'self'",
   "frame-ancestors 'none'",
   "object-src 'none'",
-  "img-src 'self' data: blob:",
+  "img-src 'self' data: blob: https://img.clerk.com",
   "font-src 'self' data:",
   "style-src 'self' 'unsafe-inline'",
   // Clerk supplies the signed-in browser identity UI; keep inline bootstrap scripts allowed.
   "script-src 'self' 'unsafe-inline' https://*.clerk.accounts.dev https://clerk.cueva.io https://*.clerk.com",
+  "frame-src 'self' https://*.clerk.accounts.dev https://clerk.cueva.io https://*.clerk.com",
+  "worker-src 'self' blob:",
   `connect-src ${connectSrc} https://*.clerk.accounts.dev https://api.clerk.com https://clerk.cueva.io https://*.clerk.com`,
 ].join("; ");
 
