@@ -30,12 +30,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -56,6 +51,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  type ConnectionSetupCleanupState,
+  ConnectionSetupForm,
+  type ConnectionSetupState,
+  decodeOnboardingProfileResponse,
+  FirstConnectionOnboarding,
+  type OnboardingProfile,
+} from "./first-connection-onboarding";
 import { McpConnectionGuides } from "./mcp-connection-guides";
 import { RecipientExclusions } from "./recipient-exclusions";
 
@@ -66,6 +69,7 @@ interface PublicBoundaryJourneyProps {
   readonly connectionSetupEndpoint: string;
   readonly mcpAuthorizationsEndpoint: string;
   readonly mcpServerUrl: string;
+  readonly onboardingProfileEndpoint: string;
   readonly personalAccountEndpoint: string;
   readonly personalAccountDeletionEndpoint: string;
   readonly toolCallLogsEndpoint: string;
@@ -81,25 +85,7 @@ export type PersonalAccountView =
 
 type JourneyState = "idle" | "loading" | "signed_out" | "unavailable" | "ok";
 
-type SetupState =
-  | "cancelled"
-  | "cancelling"
-  | "idle"
-  | "loading"
-  | "pending"
-  | "connecting"
-  | "qr_available"
-  | "connected"
-  | "provisioned"
-  | "provider_capacity_unavailable"
-  | "provisioning_failed"
-  | "provisioning_quarantined"
-  | "replayed"
-  | "invalid"
-  | "number_unavailable"
-  | "connection_limit_reached"
-  | "expired"
-  | "unavailable";
+type SetupState = ConnectionSetupState;
 
 interface McpAuthorization {
   readonly client: {
@@ -342,7 +328,7 @@ const displayTime = (value: string): string =>
     timeZone: "UTC",
   }).format(new Date(value));
 
-type SetupCleanupState = "complete" | "pending" | "retrying";
+type SetupCleanupState = ConnectionSetupCleanupState;
 
 interface SafeWhatsAppConnection {
   readonly displayName: string;
@@ -398,6 +384,7 @@ export function PublicBoundaryJourney({
   connectionSetupEndpoint,
   mcpAuthorizationsEndpoint,
   mcpServerUrl,
+  onboardingProfileEndpoint,
   personalAccountEndpoint,
   personalAccountDeletionEndpoint,
   toolCallLogsEndpoint,
@@ -482,6 +469,10 @@ export function PublicBoundaryJourney({
     new Set(),
   );
   const [setupDialogOpen, setSetupDialogOpen] = useState(false);
+  const [showFirstConnectionOnboarding, setShowFirstConnectionOnboarding] =
+    useState(false);
+  const [onboardingProfile, setOnboardingProfile] =
+    useState<OnboardingProfile | null>(null);
   const [reconnectQr, setReconnectQr] = useState<{
     readonly connectionId: string;
     readonly url: string;
@@ -699,11 +690,39 @@ export function PublicBoundaryJourney({
     replaceQrImage(null);
   };
 
+  const resetSetupForDraftChange = () => {
+    stopObserving();
+    setupIntent.current = null;
+    setSetupCleanupState(null);
+    setSetupId(null);
+    setSetupState("idle");
+  };
+
+  const updateConnectionName = (value: string) => {
+    resetSetupForDraftChange();
+    setConnectionName(value);
+  };
+
+  const updateWhatsappNumber = (value: string) => {
+    resetSetupForDraftChange();
+    setWhatsappNumber(value);
+  };
+
+  const clearSetupDraft = () => {
+    stopObserving();
+    setupIntent.current = null;
+    setConnectionName("");
+    setSetupCleanupState(null);
+    setSetupId(null);
+    setSetupState("idle");
+    setWhatsappNumber("");
+  };
+
   const loadConnections = async (token: string) => {
     const response = await fetch(connectionsEndpoint, {
       headers: { authorization: `Bearer ${token}` },
     });
-    if (!response.ok) return false;
+    if (!response.ok) return null;
     const body = (await response.json()) as {
       readonly whatsapp_connections?: ReadonlyArray<{
         readonly display_name?: unknown;
@@ -713,11 +732,11 @@ export function PublicBoundaryJourney({
         readonly state_changed_at?: unknown;
       }>;
     };
-    if (!Array.isArray(body.whatsapp_connections)) return false;
+    if (!Array.isArray(body.whatsapp_connections)) return null;
     const parsed: SafeWhatsAppConnection[] = [];
     for (const connection of body.whatsapp_connections) {
       const decoded = decodeSafeWhatsAppConnection(connection);
-      if (decoded === null) return false;
+      if (decoded === null) return null;
       parsed.push(decoded);
     }
     const withPolicies = await Promise.all(
@@ -765,6 +784,17 @@ export function PublicBoundaryJourney({
         ]),
       ),
     );
+    return withPolicies;
+  };
+
+  const loadOnboardingProfile = async (token: string) => {
+    const response = await fetch(onboardingProfileEndpoint, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) return false;
+    const profile = decodeOnboardingProfileResponse(await response.json());
+    if (profile === undefined) return false;
+    setOnboardingProfile(profile);
     return true;
   };
 
@@ -1100,7 +1130,7 @@ export function PublicBoundaryJourney({
       if (response.status === 204) {
         replaceQrImage(null);
         setSetupState("connected");
-        if (!(await loadConnections(token))) {
+        if ((await loadConnections(token)) === null) {
           if (isCurrent()) setSetupState("unavailable");
         }
         return;
@@ -1167,9 +1197,20 @@ export function PublicBoundaryJourney({
         setState("unavailable");
         return;
       }
-      if (!(await loadConnections(token))) {
+      const loadedConnections = await loadConnections(token);
+      if (loadedConnections === null) {
         setState("unavailable");
         return;
+      }
+      if (loadedConnections.length === 0) {
+        if (!(await loadOnboardingProfile(token))) {
+          setState("unavailable");
+          return;
+        }
+        setShowFirstConnectionOnboarding(true);
+      } else {
+        setOnboardingProfile(null);
+        setShowFirstConnectionOnboarding(false);
       }
       setState("ok");
       setAuthorizationState("loading");
@@ -1360,7 +1401,7 @@ export function PublicBoundaryJourney({
               startObserving(setup.id);
             } else if (
               setup.state === "activated" &&
-              !(await loadConnections(token)) &&
+              (await loadConnections(token)) === null &&
               observationGeneration.current === requestGeneration
             ) {
               setSetupState("unavailable");
@@ -1492,7 +1533,38 @@ export function PublicBoundaryJourney({
           Your Personal Account is temporarily unavailable. Please try again.
         </p>
       ) : null}
-      {state === "ok" ? (
+      {state === "ok" &&
+      showFirstConnectionOnboarding &&
+      (view === "overview" || view === "connections") ? (
+        <FirstConnectionOnboarding
+          connectedConnection={connections[0] ?? null}
+          getToken={getToken}
+          initialProfile={onboardingProfile}
+          mcpServerUrl={mcpServerUrl}
+          onboardingProfileEndpoint={onboardingProfileEndpoint}
+          onComplete={() => {
+            clearSetupDraft();
+            setShowFirstConnectionOnboarding(false);
+          }}
+          setupForm={{
+            connectionName,
+            onCancelSetup: cancelSetup,
+            onConnectionNameChange: updateConnectionName,
+            onStartSetup: startSetup,
+            onWhatsappNumberChange: updateWhatsappNumber,
+            qrImageUrl,
+            setupCleanupState,
+            setupId,
+            setupState,
+            whatsappNumber,
+          }}
+        />
+      ) : null}
+      {state === "ok" &&
+      !(
+        showFirstConnectionOnboarding &&
+        (view === "overview" || view === "connections")
+      ) ? (
         <>
           {view === "overview" ? (
             <McpConnectionGuides serverUrl={mcpServerUrl} />
@@ -1951,7 +2023,9 @@ export function PublicBoundaryJourney({
           ) : null}
         </>
       ) : null}
-      {state === "ok" && view === "connections" ? (
+      {state === "ok" &&
+      !showFirstConnectionOnboarding &&
+      view === "connections" ? (
         <section
           aria-label="WhatsApp Connections"
           className="flex flex-col gap-5"
@@ -1976,12 +2050,7 @@ export function PublicBoundaryJourney({
                   setSetupDialogOpen(open);
                 }
                 if (!open && !durableActiveSetup && setupId !== null) {
-                  setupIntent.current = null;
-                  setConnectionName("");
-                  setSetupCleanupState(null);
-                  setSetupId(null);
-                  setSetupState("idle");
-                  setWhatsappNumber("");
+                  clearSetupDraft();
                 }
               }}
               open={setupDialogOpen}
@@ -1997,160 +2066,20 @@ export function PublicBoundaryJourney({
                     code in WhatsApp next.
                   </DialogDescription>
                 </DialogHeader>
-                <form className="contents" onSubmit={startSetup}>
-                  <DialogBody className="flex flex-col gap-5">
-                    <FieldGroup>
-                      <Field>
-                        <FieldLabel htmlFor="connection-name">Name</FieldLabel>
-                        <Input
-                          autoComplete="off"
-                          disabled={
-                            setupState === "loading" || setupId !== null
-                          }
-                          id="connection-name"
-                          maxLength={64}
-                          onChange={(event) => {
-                            stopObserving();
-                            setConnectionName(event.target.value);
-                            setSetupCleanupState(null);
-                            setSetupId(null);
-                            setSetupState("idle");
-                          }}
-                          placeholder="Personal WhatsApp"
-                          required
-                          value={connectionName}
-                        />
-                        <FieldDescription>
-                          Use a name that helps you identify this WhatsApp
-                          Connection.
-                        </FieldDescription>
-                      </Field>
-                      <Field>
-                        <FieldLabel htmlFor="whatsapp-number">
-                          WhatsApp number
-                        </FieldLabel>
-                        <Input
-                          autoComplete="tel"
-                          disabled={
-                            setupState === "loading" || setupId !== null
-                          }
-                          id="whatsapp-number"
-                          inputMode="tel"
-                          onChange={(event) => {
-                            stopObserving();
-                            setWhatsappNumber(event.target.value);
-                            setSetupCleanupState(null);
-                            setSetupId(null);
-                            setSetupState("idle");
-                          }}
-                          placeholder="+1 555 012 3456"
-                          required
-                          type="tel"
-                          value={whatsappNumber}
-                        />
-                        <FieldDescription>
-                          Include the country code, for example +51. The QR code
-                          expires after 15 minutes.
-                        </FieldDescription>
-                      </Field>
-                    </FieldGroup>
-                    {setupState === "idle" ? null : (
-                      <p
-                        aria-live="polite"
-                        className="rounded-lg bg-muted px-3 py-2.5 text-sm text-muted-foreground"
-                        data-testid="connection-setup-status"
-                      >
-                        {setupState === "loading"
-                          ? "Starting Connection Setup."
-                          : setupState === "unavailable"
-                            ? "Connection Setup is temporarily unavailable."
-                            : setupState === "pending"
-                              ? "Connection Setup started. Preparing your QR code."
-                              : setupState === "replayed"
-                                ? "Connection Setup already started. Preparing your QR code."
-                                : setupState === "qr_available"
-                                  ? "Scan this QR code with WhatsApp."
-                                  : setupState === "connecting"
-                                    ? "Waiting for WhatsApp to finish connecting."
-                                    : setupState === "connected"
-                                      ? "WhatsApp Connection active."
-                                      : setupState === "provisioned"
-                                        ? "Connection Setup is ready."
-                                        : setupState ===
-                                            "provider_capacity_unavailable"
-                                          ? "WhatsApp Connection capacity is temporarily unavailable. Please try again later."
-                                          : setupState === "provisioning_failed"
-                                            ? "Connection Setup could not be prepared."
-                                            : setupState ===
-                                                "provisioning_quarantined"
-                                              ? "Connection Setup needs support review."
-                                              : setupState === "cancelling"
-                                                ? "Cancelling Connection Setup."
-                                                : setupState === "cancelled"
-                                                  ? setupCleanupState ===
-                                                    "complete"
-                                                    ? "Connection Setup cancelled. Provider cleanup is complete."
-                                                    : setupCleanupState ===
-                                                        "retrying"
-                                                      ? "Connection Setup cancelled. Provider cleanup is retrying."
-                                                      : "Connection Setup cancelled. Provider cleanup is in progress."
-                                                  : setupState === "expired"
-                                                    ? setupCleanupState ===
-                                                      "complete"
-                                                      ? "Connection Setup expired. Provider cleanup is complete."
-                                                      : setupCleanupState ===
-                                                          "retrying"
-                                                        ? "Connection Setup expired. Provider cleanup is retrying."
-                                                        : "Connection Setup expired. Provider cleanup is in progress."
-                                                    : setupState ===
-                                                        "number_unavailable"
-                                                      ? "That WhatsApp Number is already in use."
-                                                      : setupState ===
-                                                          "connection_limit_reached"
-                                                        ? "Your Personal Account already has three active setup or Connection slots."
-                                                        : setupState ===
-                                                            "invalid"
-                                                          ? "Enter a valid international WhatsApp Number."
-                                                          : ""}
-                      </p>
-                    )}
-                    {qrImageUrl === null ? null : (
-                      // The object URL is created from the authenticated, non-persisted
-                      // SVG response and is revoked as soon as setup completes.
-                      // biome-ignore lint/performance/noImgElement: QR bytes are already a complete generated SVG.
-                      <img
-                        alt="Scan this WhatsApp QR code"
-                        className="size-64 self-center rounded-lg bg-background p-3 ring-1 ring-border"
-                        src={qrImageUrl}
-                      />
-                    )}
-                  </DialogBody>
-                  <DialogFooter>
-                    {setupId !== null &&
-                    (setupState === "pending" ||
-                      setupState === "replayed" ||
-                      setupState === "qr_available" ||
-                      setupState === "connecting" ||
-                      setupState === "provisioned" ||
-                      setupState === "provider_capacity_unavailable" ||
-                      setupState === "provisioning_failed" ||
-                      setupState === "provisioning_quarantined") ? (
-                      <Button
-                        onClick={cancelSetup}
-                        type="button"
-                        variant="outline"
-                      >
-                        Cancel setup
-                      </Button>
-                    ) : null}
-                    <Button disabled={setupState === "loading"} type="submit">
-                      {setupState === "loading" ? (
-                        <Spinner data-icon="inline-start" />
-                      ) : null}
-                      Continue
-                    </Button>
-                  </DialogFooter>
-                </form>
+                <ConnectionSetupForm
+                  connectionName={connectionName}
+                  idPrefix="additional-connection"
+                  layout="dialog"
+                  onCancelSetup={cancelSetup}
+                  onConnectionNameChange={updateConnectionName}
+                  onStartSetup={startSetup}
+                  onWhatsappNumberChange={updateWhatsappNumber}
+                  qrImageUrl={qrImageUrl}
+                  setupCleanupState={setupCleanupState}
+                  setupId={setupId}
+                  setupState={setupState}
+                  whatsappNumber={whatsappNumber}
+                />
               </DialogContent>
             </Dialog>
           </div>
@@ -2519,7 +2448,9 @@ export function PublicBoundaryJourney({
           )}
         </section>
       ) : null}
-      {state === "ok" && view === "settings" ? (
+      {state === "ok" &&
+      !showFirstConnectionOnboarding &&
+      view === "settings" ? (
         <section
           aria-label="WhatsApp Recipient Exclusions"
           className="flex flex-col items-start gap-3"
@@ -2538,7 +2469,9 @@ export function PublicBoundaryJourney({
           />
         </section>
       ) : null}
-      {state === "ok" && view === "settings" ? (
+      {state === "ok" &&
+      !showFirstConnectionOnboarding &&
+      view === "settings" ? (
         <section
           aria-label="Personal Account Deletion"
           className="flex flex-col items-start gap-3"

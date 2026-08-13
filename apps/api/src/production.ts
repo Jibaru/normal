@@ -29,6 +29,7 @@ import { makePgMcpAuthorizationRepository } from "@whatsapp-mcp/db/mcp-authoriza
 import { makePgMcpToolRepository } from "@whatsapp-mcp/db/mcp-tool";
 import { makePgMessageRetentionRepository } from "@whatsapp-mcp/db/message-retention";
 import { makePgMessageSearchRepository } from "@whatsapp-mcp/db/message-search";
+import { makePgOnboardingProfileRepository } from "@whatsapp-mcp/db/onboarding-profile";
 import {
   makePgPersonalAccountRepository,
   type PersonalAccountRepository,
@@ -175,6 +176,13 @@ import {
   createOAuthHandler,
   loadOAuthConfiguration,
 } from "./oauth";
+import {
+  createOnboardingProfileHandler,
+  isOnboardingProfileRequest,
+  OnboardingProfileClock,
+  OnboardingProfilePersistence,
+  OnboardingProfilePersistenceError,
+} from "./onboarding-profile";
 import {
   createPersonalAccountHandler,
   isPersonalAccountRequest,
@@ -835,6 +843,39 @@ const messageRetentionLayer = (environment: ApiEnvironment) =>
             ).updateForUser(input);
           },
           catch: () => new MessageRetentionPersistenceError(),
+        }),
+    }),
+  );
+
+const onboardingProfileLayer = (environment: ApiEnvironment) =>
+  Layer.mergeAll(
+    Layer.succeed(OnboardingProfileClock, {
+      now: Effect.sync(() => new Date().toISOString()),
+    }),
+    Layer.succeed(OnboardingProfilePersistence, {
+      get: (input) =>
+        Effect.tryPromise({
+          try: () => {
+            const connectionString = environment.HYPERDRIVE?.connectionString;
+            if (typeof connectionString !== "string")
+              throw new Error("database unavailable");
+            return makePgOnboardingProfileRepository(
+              connectionString,
+            ).getForUser(input.clerkUserId);
+          },
+          catch: () => new OnboardingProfilePersistenceError(),
+        }),
+      upsert: (input) =>
+        Effect.tryPromise({
+          try: () => {
+            const connectionString = environment.HYPERDRIVE?.connectionString;
+            if (typeof connectionString !== "string")
+              throw new Error("database unavailable");
+            return makePgOnboardingProfileRepository(
+              connectionString,
+            ).upsertForUser(input);
+          },
+          catch: () => new OnboardingProfilePersistenceError(),
         }),
     }),
   );
@@ -1826,6 +1867,7 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     mcpAuthorizationPersistenceLayer(environment),
     mcpAuthorizationRuntimeLayer,
     messageRetentionLayer(environment),
+    onboardingProfileLayer(environment),
     recipientExclusionLayer(environment),
     makeWebhookIngressProductionLayer(environment),
     mcpToolPersistenceLayer(environment),
@@ -1872,6 +1914,10 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     layer,
     environment.CLERK_AUTHORIZED_PARTY ?? "",
     retentionDayOptions(environment.MESSAGE_RETENTION_DAY_OPTIONS),
+  );
+  const onboardingProfileHandler = createOnboardingProfileHandler(
+    layer,
+    environment.CLERK_AUTHORIZED_PARTY ?? "",
   );
   const recipientExclusionHandler = createRecipientExclusionHandler(
     layer,
@@ -1987,6 +2033,9 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
         }
         if (isMessageRetentionRequest(nextRequest)) {
           return messageRetentionHandler(nextRequest);
+        }
+        if (isOnboardingProfileRequest(nextRequest)) {
+          return onboardingProfileHandler(nextRequest);
         }
         if (isPersonalAccountRequest(nextRequest)) {
           return personalAccountHandler(nextRequest);

@@ -16,6 +16,10 @@ Review the MCP Client name, select only the connections it needs, and grant only
 
 Tool Call Logs show operational metadata and opaque references. They do not copy message content, media, credentials, full phone numbers, or provider payloads. The platform architecture also prohibits routine operator access to private conversation content.
 
+## Product analytics stay non-identifying
+
+When analytics is enabled, Normal sends only allowlisted aggregate product-behavior events to PostHog. Those events do not include Clerk IDs, email addresses, Personal Account identifiers, WhatsApp Numbers, connection names, profile answers, message content, or QR material. Session replay and automatic element capture stay disabled.
+
 ## You can revoke access
 
 Revoking an MCP Authorization ends the MCP Client’s access without deleting the WhatsApp Connection. Disconnecting is also distinct from Connection Deletion and can retain historical data under the Message Retention Policy.

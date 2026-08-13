@@ -1,0 +1,251 @@
+import type {
+  OnboardingProfile,
+  OnboardingProfileLookup,
+} from "@whatsapp-mcp/db/onboarding-profile";
+import { Context, Data, Effect, type Layer, Schema } from "effect";
+import {
+  HumanIdentity,
+  type HumanIdentityService,
+} from "./auth/human-identity";
+import { hasFailureTag } from "./failure-tag";
+import { noStoreJsonResponse } from "./http-response";
+import { hasExactKeys } from "./record";
+import {
+  SafeTelemetry,
+  type SafeTelemetry as SafeTelemetryService,
+} from "./services";
+
+const ONBOARDING_PROFILE_ROUTE = "/v1/personal-account/onboarding-profile";
+
+const OnboardingPrimaryUseCase = Schema.Literal(
+  "conversation_search",
+  "summaries",
+  "draft_replies",
+  "outbound_sends",
+  "follow_ups",
+  "exploration",
+  "other",
+);
+const OnboardingWhatsAppUsageContext = Schema.Literal(
+  "personal",
+  "work",
+  "both",
+);
+const OnboardingRole = Schema.Literal(
+  "founder_or_owner",
+  "engineer",
+  "product_or_design",
+  "operations_or_support",
+  "marketing_or_sales",
+  "consultant_or_freelancer",
+  "student_or_researcher",
+  "other",
+  "not_sure",
+);
+const OnboardingIntendedMcpClient = Schema.Literal(
+  "claude",
+  "chatgpt",
+  "other",
+  "not_sure",
+);
+const OnboardingResearchCallInterest = Schema.Literal("yes", "no", "not_sure");
+
+const OnboardingProfileWriteBody = Schema.Struct({
+  intended_mcp_client: OnboardingIntendedMcpClient,
+  primary_use_case: OnboardingPrimaryUseCase,
+  research_call_interest: OnboardingResearchCallInterest,
+  role: OnboardingRole,
+  whatsapp_usage_context: OnboardingWhatsAppUsageContext,
+});
+
+export class OnboardingProfilePersistenceError extends Data.TaggedError(
+  "OnboardingProfilePersistenceError",
+) {}
+
+export interface OnboardingProfilePersistenceService {
+  readonly get: (input: {
+    readonly clerkUserId: string;
+  }) => Effect.Effect<
+    OnboardingProfileLookup,
+    OnboardingProfilePersistenceError
+  >;
+  readonly upsert: (input: {
+    readonly clerkUserId: string;
+    readonly intendedMcpClient: OnboardingProfile["intendedMcpClient"];
+    readonly primaryUseCase: OnboardingProfile["primaryUseCase"];
+    readonly researchCallInterest: OnboardingProfile["researchCallInterest"];
+    readonly role: OnboardingProfile["role"];
+    readonly updatedAt: string;
+    readonly whatsappUsageContext: OnboardingProfile["whatsappUsageContext"];
+  }) => Effect.Effect<
+    OnboardingProfile | null,
+    OnboardingProfilePersistenceError
+  >;
+}
+
+export const OnboardingProfilePersistence =
+  Context.GenericTag<OnboardingProfilePersistenceService>(
+    "@whatsapp-mcp/api/OnboardingProfilePersistence",
+  );
+
+export interface OnboardingProfileClockService {
+  readonly now: Effect.Effect<string>;
+}
+
+export const OnboardingProfileClock =
+  Context.GenericTag<OnboardingProfileClockService>(
+    "@whatsapp-mcp/api/OnboardingProfileClock",
+  );
+
+type Requirements =
+  | HumanIdentityService
+  | OnboardingProfileClockService
+  | OnboardingProfilePersistenceService
+  | SafeTelemetryService;
+
+const headers = (origin: string) => ({
+  "access-control-allow-headers": "authorization,content-type",
+  "access-control-allow-methods": "GET,OPTIONS,PUT",
+  "access-control-allow-origin": origin,
+  vary: "Origin",
+});
+
+const json = (body: unknown, status: number, origin?: string) =>
+  noStoreJsonResponse(
+    body,
+    status,
+    origin === undefined ? {} : headers(origin),
+  );
+
+const profileJson = (profile: OnboardingProfile) => ({
+  completed_at: profile.completedAt,
+  created_at: profile.createdAt,
+  intended_mcp_client: profile.intendedMcpClient,
+  primary_use_case: profile.primaryUseCase,
+  research_call_interest: profile.researchCallInterest,
+  role: profile.role,
+  updated_at: profile.updatedAt,
+  whatsapp_usage_context: profile.whatsappUsageContext,
+});
+
+const decodeWriteBody = async (
+  request: Request,
+): Promise<typeof OnboardingProfileWriteBody.Type | null> => {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return null;
+  }
+  if (
+    typeof body !== "object" ||
+    body === null ||
+    Array.isArray(body) ||
+    !hasExactKeys(body, [
+      "intended_mcp_client",
+      "primary_use_case",
+      "research_call_interest",
+      "role",
+      "whatsapp_usage_context",
+    ])
+  ) {
+    return null;
+  }
+  try {
+    return Schema.decodeUnknownSync(OnboardingProfileWriteBody, {
+      onExcessProperty: "error",
+    })(body);
+  } catch {
+    return null;
+  }
+};
+
+export const createOnboardingProfileHandler =
+  (layer: Layer.Layer<Requirements, unknown>, browserOrigin: string) =>
+  async (request: Request): Promise<Response> => {
+    const url = new URL(request.url);
+    if (
+      url.pathname !== ONBOARDING_PROFILE_ROUTE ||
+      request.headers.get("origin") !== browserOrigin
+    ) {
+      return json({ error: "not_found" }, 404);
+    }
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        headers: headers(browserOrigin),
+        status: 204,
+      });
+    }
+    if (request.method !== "GET" && request.method !== "PUT") {
+      return json({ error: "not_found" }, 404, browserOrigin);
+    }
+
+    let writeBody: typeof OnboardingProfileWriteBody.Type | null = null;
+    if (request.method === "PUT") {
+      writeBody = await decodeWriteBody(request);
+      if (writeBody === null) {
+        return json({ error: "invalid_request" }, 400, browserOrigin);
+      }
+    }
+
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const identity = yield* HumanIdentity;
+        const clerkUserId = yield* identity.verify(request);
+        const persistence = yield* OnboardingProfilePersistence;
+        if (writeBody === null) {
+          const lookup = yield* persistence.get({ clerkUserId });
+          return { operation: "get" as const, lookup };
+        }
+        const clock = yield* OnboardingProfileClock;
+        const profile = yield* persistence.upsert({
+          clerkUserId,
+          intendedMcpClient: writeBody.intended_mcp_client,
+          primaryUseCase: writeBody.primary_use_case,
+          researchCallInterest: writeBody.research_call_interest,
+          role: writeBody.role,
+          updatedAt: yield* clock.now,
+          whatsappUsageContext: writeBody.whatsapp_usage_context,
+        });
+        const telemetry = yield* SafeTelemetry;
+        yield* telemetry.emit({
+          event: "onboarding_profile.upsert.completed",
+          outcome: profile === null ? "not_found" : "success",
+          service: "api",
+        });
+        return {
+          operation: "upsert" as const,
+          lookup:
+            profile === null
+              ? ({ accessible: false } as const)
+              : ({ accessible: true, profile } as const),
+        };
+      }).pipe(
+        Effect.provide(layer),
+        Effect.match({
+          onFailure: (failure: unknown) =>
+            hasFailureTag(failure, "InvalidHumanIdentity")
+              ? json({ error: "not_found" }, 404, browserOrigin)
+              : json({ error: "unavailable" }, 503, browserOrigin),
+          onSuccess: (result) => {
+            if (!result.lookup.accessible) {
+              return json({ error: "not_found" }, 404, browserOrigin);
+            }
+            return json(
+              {
+                profile:
+                  result.lookup.profile === null
+                    ? null
+                    : profileJson(result.lookup.profile),
+              },
+              200,
+              browserOrigin,
+            );
+          },
+        }),
+      ),
+    );
+  };
+
+export const isOnboardingProfileRequest = (request: Request): boolean =>
+  new URL(request.url).pathname === ONBOARDING_PROFILE_ROUTE;

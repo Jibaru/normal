@@ -20,6 +20,8 @@ Secret examples never contain usable key material.
 | `NEXT_PUBLIC_API_ORIGIN` | Non-secret | Web browser bundle and web startup validation | OpenTofu sets the same-environment API Worker's bare HTTPS origin. It is frozen into the browser bundle at build time. |
 | `NEXT_PUBLIC_WEB_ORIGIN` | Non-secret | Web metadata, robots, XML sitemap, and web startup validation | OpenTofu sets the same-environment Vercel custom origin. It is frozen into the web build and must be a bare HTTPS origin. |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Public identifier | Web browser bundle and web startup validation | Copy the publishable key from the same-environment Clerk instance. OpenTofu freezes it into that environment's browser bundle. |
+| `NEXT_PUBLIC_POSTHOG_KEY` | Public project key | Web browser product analytics | Optional same-environment PostHog project key. Public browser configuration, not a secret. Leave unset to disable analytics collection. |
+| `NEXT_PUBLIC_POSTHOG_HOST` | Non-secret | Web browser product analytics | Optional bare HTTPS PostHog ingest origin for the same project. Browser analytics go directly to this origin; do not add a Vercel rewrite or first-party proxy. |
 | `CLERK_API_AUDIENCE` | Non-secret | API | Exact bare HTTPS API origin. OpenTofu derives it from `api_hostname`; the custom JWT template's `aud` claim must match it exactly. |
 | `CLERK_AUTHORIZED_PARTY` | Non-secret | API | Exact bare HTTPS web origin allowed by both the token `azp` claim and request `Origin`. OpenTofu derives it from `web_hostname`. |
 | `CLERK_ISSUER` | Non-secret | API | Exact HTTPS issuer for the same-environment Clerk instance. |
@@ -413,7 +415,64 @@ allowlisted `created` or `recovered` outcome. Never add
 Clerk User IDs, Personal Account IDs, token claims, Origin values, network
 addresses, key identifiers, ciphertext, or profile data to this event.
 
+## First-connection onboarding profile
+
+A signed-in User with no WhatsApp Connection completes a short first-connection
+onboarding journey before Connection Setup. The journey collects one structured
+research profile owned by the Personal Account:
+
+- primary use case
+- WhatsApp usage context (`personal`, `work`, or `both`)
+- role
+- intended MCP Client
+- research-call interest
+
+Choices are constrained enums only. Free text is rejected. The authenticated
+browser reads and upserts the profile at
+`/v1/personal-account/onboarding-profile` with no-store responses and the same
+Origin/CORS rules as other Personal Account browser routes. Neon remains
+authoritative. The profile has one row per Personal Account, tenant RLS, and
+cascades on Personal Account purge. Personal Account Deletion removes it with
+other User-addressable tenant data; a terminally deleted profile must not become
+readable after restore.
+
+The first Connection Setup is rejected at the API boundary until a completed
+profile exists, except when the Personal Account already retains a WhatsApp
+Connection (grandfathered). Profile values never enter Tool Call Logs, Security
+Records, or worker telemetry beyond the allowlisted outcome event
+`onboarding_profile.upsert.completed`.
+
+## Browser product analytics
+
+PostHog is an aggregate behavioral analytics destination only. Neon remains
+authoritative for identity and profile state. Browser product code emits typed
+events through a small analytics boundary that:
+
+- accepts only explicitly allowlisted event names and bounded properties
+- disables automatic capture and session replay
+- uses an ephemeral random browser-session identifier that is not persisted
+  beyond the browser session and cannot be joined to Neon or Clerk
+- never blocks profile persistence, Connection Setup, navigation, or rendering
+
+Allowed funnel events cover onboarding stage viewed/completed, profile
+completed, security education reached, Connection Setup started/completed by
+normalized outcome, onboarding completed, and selected aggregate feature-use
+events. Events must not contain or derive from Clerk IDs, email, Personal
+Account IDs, public handles, WhatsApp Connection IDs, WhatsApp Numbers,
+connection names, profile answers tied to a persistent User identity, message,
+contact, media, provider, request-body, or QR material.
+
+`NEXT_PUBLIC_POSTHOG_KEY` and `NEXT_PUBLIC_POSTHOG_HOST` are public browser
+configuration validated per environment. When either is absent, analytics is
+disabled. Update CSP, privacy disclosures, retention configuration, and the
+subprocessor inventory before enabling collection in production.
+
 ## Connection Setup creation
+
+The first Connection Setup for a Personal Account also requires a completed
+onboarding profile unless the account already retains a WhatsApp Connection.
+Additional WhatsApp Connections keep the existing compact Connection Setup
+dialog and do not repeat profile collection.
 
 The signed-in browser creates a fresh 21-character NanoID idempotency key for
 each named WhatsApp Number intent and retains it for exact transport retries. It
