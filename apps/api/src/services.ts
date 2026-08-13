@@ -54,6 +54,12 @@ export interface PersonalAccountDeletionCompletedEvent {
   readonly source: "clerk_webhook" | "product";
 }
 
+export interface OnboardingProfileUpsertCompletedEvent {
+  readonly event: "onboarding_profile.upsert.completed";
+  readonly outcome: "not_found" | "success";
+  readonly service: "api";
+}
+
 export interface ConnectionSetupStartCompletedEvent {
   readonly event: "connection_setup.start.completed";
   readonly outcome:
@@ -61,6 +67,7 @@ export interface ConnectionSetupStartCompletedEvent {
     | "created"
     | "idempotency_conflict"
     | "number_unavailable"
+    | "onboarding_profile_required"
     | "replay";
   readonly service: "api";
 }
@@ -440,6 +447,7 @@ export type SafeTelemetryEvent =
   | OAuthAuthorizationRequestCompletedEvent
   | OAuthProtocolRequestFailedEvent
   | OAuthRefreshCompletedEvent
+  | OnboardingProfileUpsertCompletedEvent
   | PersonalAccountBootstrapCompletedEvent
   | PersonalAccountDeletionCompletedEvent
   | PersonalAccountDeletionDeadlineRiskEvent

@@ -1,0 +1,134 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import {
+  captureProductAnalyticsEvent,
+  configureProductAnalytics,
+  isAllowlistedProductAnalyticsEvent,
+  type ProductAnalyticsEvent,
+  parseProductAnalyticsConfiguration,
+} from "../src/effect/product-analytics";
+
+const originalFetch = globalThis.fetch;
+
+afterEach(() => {
+  configureProductAnalytics(null);
+  globalThis.fetch = originalFetch;
+});
+
+describe("product analytics boundary", () => {
+  test("parses only bare HTTPS PostHog origins with a project key", () => {
+    expect(
+      parseProductAnalyticsConfiguration({
+        host: "https://us.i.posthog.com",
+        projectKey: "phc_example",
+      }),
+    ).toEqual({
+      host: "https://us.i.posthog.com",
+      projectKey: "phc_example",
+    });
+    expect(
+      parseProductAnalyticsConfiguration({
+        host: "http://us.i.posthog.com",
+        projectKey: "phc_example",
+      }),
+    ).toBeNull();
+    expect(
+      parseProductAnalyticsConfiguration({
+        host: "https://us.i.posthog.com/path",
+        projectKey: "phc_example",
+      }),
+    ).toBeNull();
+    expect(
+      parseProductAnalyticsConfiguration({
+        host: "https://us.i.posthog.com",
+        projectKey: "",
+      }),
+    ).toBeNull();
+    expect(parseProductAnalyticsConfiguration({})).toBeNull();
+  });
+
+  test("serializes only allowlisted events and bounded properties", async () => {
+    const requests: Array<{ body: unknown; url: string }> = [];
+    globalThis.fetch = ((input, init) => {
+      requests.push({
+        body: JSON.parse(String(init?.body)) as unknown,
+        url: String(input),
+      });
+      return Promise.resolve(new Response(null, { status: 204 }));
+    }) as typeof fetch;
+    configureProductAnalytics({
+      host: "https://us.i.posthog.com",
+      projectKey: "phc_example",
+    });
+
+    const allowed: ProductAnalyticsEvent = {
+      event: "onboarding_stage_viewed",
+      stage: "welcome",
+    };
+    expect(isAllowlistedProductAnalyticsEvent(allowed)).toBe(true);
+    expect(
+      isAllowlistedProductAnalyticsEvent({
+        ...allowed,
+        personal_account_id: "account-secret",
+      }),
+    ).toBe(false);
+    expect(
+      isAllowlistedProductAnalyticsEvent({
+        event: "connection_setup_completed",
+        outcome: "provider_error",
+      }),
+    ).toBe(false);
+
+    captureProductAnalyticsEvent(allowed);
+    captureProductAnalyticsEvent({
+      event: "onboarding_completed",
+      email: "user@example.test",
+    } as ProductAnalyticsEvent);
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toBe("https://us.i.posthog.com/capture/");
+    expect(requests[0]?.body).toMatchObject({
+      api_key: "phc_example",
+      event: "onboarding_stage_viewed",
+      properties: {
+        $process_person_profile: false,
+        stage: "welcome",
+      },
+    });
+    const body = requests[0]?.body as {
+      readonly distinct_id?: unknown;
+      readonly properties?: {
+        readonly $session_id?: unknown;
+        readonly distinct_id?: unknown;
+      };
+    };
+    expect(body.distinct_id).toBeUndefined();
+    expect(body.properties?.distinct_id).toBeString();
+    expect(body.properties?.distinct_id).toBe(body.properties?.$session_id);
+    expect(JSON.stringify(requests)).not.toMatch(
+      /clerk|email|personal_account|whatsapp|phone|message|qr|provider/iu,
+    );
+  });
+
+  test("swallows capture failures so onboarding can continue", () => {
+    globalThis.fetch = (() => {
+      throw new Error("analytics unavailable");
+    }) as unknown as typeof fetch;
+    configureProductAnalytics({
+      host: "https://us.i.posthog.com",
+      projectKey: "phc_example",
+    });
+    expect(() =>
+      captureProductAnalyticsEvent({ event: "onboarding_completed" }),
+    ).not.toThrow();
+  });
+
+  test("does not capture when analytics is unconfigured", () => {
+    let requests = 0;
+    globalThis.fetch = (() => {
+      requests += 1;
+      return Promise.resolve(new Response(null, { status: 204 }));
+    }) as unknown as typeof fetch;
+    captureProductAnalyticsEvent({ event: "onboarding_security_reached" });
+    expect(requests).toBe(0);
+  });
+});

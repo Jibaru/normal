@@ -265,7 +265,10 @@ protocol-encryption key, and receive exact Clerk audience, authorized-party,
 OAuth issuer/resource, reviewed client-registry, and
 `MCP_REQUESTS_PER_MINUTE` and `MCP_REQUESTS_PER_HOUR` text bindings;
 provider-control must receive none of them. The Vercel project must
-receive only the public Clerk key and JWT template name. It must also contain
+receive the public Clerk key, API and web origins, and deployment
+environment. Optional `NEXT_PUBLIC_POSTHOG_KEY` and
+`NEXT_PUBLIC_POSTHOG_HOST` are added only when both OpenTofu PostHog
+inputs are set. It must also contain
 four private R2 buckets with disabled
 managed domains, the seven-day Webhook Event lifecycle, the isolated Deletion
 Capsule bucket with destroy protection, the indefinite deletion-marker lock,
@@ -1232,6 +1235,26 @@ processing and subprocessors, deletion and backup erasure, security controls,
 webhook authentication, and retry behavior. The real adapter remains in the
 production bundle while that business gate is closed; do not route production
 traffic to a test Layer or alternate origin.
+
+## Subprocessor inventory
+
+Production subprocessors that may process User or product data are:
+
+| Subprocessor | Purpose | Data in scope |
+| --- | --- | --- |
+| Clerk | Sign-in identity | User identity and session claims. Not WhatsApp content. |
+| Neon | Authoritative tenant data | Personal Account state, onboarding profiles, encrypted WhatsApp data, authorization, and lifecycle records. |
+| Cloudflare | API, Workers, R2, Queues | Request handling, encrypted objects, and operational queues. |
+| Vercel | Web application hosting | Public browser configuration and the signed-in UI. Not the data plane. |
+| AWS KMS | Envelope encryption | Key use for Personal Account and WhatsApp Connection content keys. |
+| Wasender | WhatsApp provider seam | Provider session lifecycle behind provider-control. |
+| PostHog | Optional aggregate product analytics | Allowlisted non-identifying browser events only. No Clerk IDs, emails, Personal Account IDs, public handles, WhatsApp Numbers, profile answers, message content, or QR material. No person profiles or session replay. |
+
+Do not enable production PostHog collection until this inventory, CSP, privacy
+copy, retention configuration, and browser-IP handling are reviewed for that
+environment. Disable IP capture or configure immediate IP discard in PostHog,
+then set `posthog_privacy_controls_approved = true` in the reviewed environment
+inputs. Never use that input to bypass an incomplete review.
 
 Roll application code back without rolling back, replacing, disabling, or
 deleting either KMS key.

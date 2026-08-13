@@ -770,37 +770,61 @@ resource "vercel_project" "web" {
   git_fork_protection                               = true
   protected_sourcemaps                              = true
 
-  environment = [
-    {
-      key       = "DEPLOYMENT_ENVIRONMENT"
-      value     = var.deployment_environment
-      target    = ["production"]
-      sensitive = false
-    },
-    {
-      key       = "NEXT_PUBLIC_API_ORIGIN"
-      value     = "https://${var.api_hostname}"
-      target    = ["production"]
-      sensitive = false
-    },
-    {
-      key       = "NEXT_PUBLIC_WEB_ORIGIN"
-      value     = "https://${var.web_hostname}"
-      target    = ["production"]
-      sensitive = false
-    },
-    {
-      key       = "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"
-      value     = var.clerk_publishable_key
-      target    = ["production"]
-      sensitive = false
-    }
-  ]
+  environment = concat(
+    [
+      {
+        key       = "DEPLOYMENT_ENVIRONMENT"
+        value     = var.deployment_environment
+        target    = ["production"]
+        sensitive = false
+      },
+      {
+        key       = "NEXT_PUBLIC_API_ORIGIN"
+        value     = "https://${var.api_hostname}"
+        target    = ["production"]
+        sensitive = false
+      },
+      {
+        key       = "NEXT_PUBLIC_WEB_ORIGIN"
+        value     = "https://${var.web_hostname}"
+        target    = ["production"]
+        sensitive = false
+      },
+      {
+        key       = "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"
+        value     = var.clerk_publishable_key
+        target    = ["production"]
+        sensitive = false
+      }
+    ],
+    var.posthog_project_key != "" && var.posthog_host != "" ? [
+      {
+        key       = "NEXT_PUBLIC_POSTHOG_KEY"
+        value     = var.posthog_project_key
+        target    = ["production"]
+        sensitive = false
+      },
+      {
+        key       = "NEXT_PUBLIC_POSTHOG_HOST"
+        value     = var.posthog_host
+        target    = ["production"]
+        sensitive = false
+      }
+    ] : []
+  )
 
   lifecycle {
     precondition {
       condition     = var.api_hostname != var.web_hostname
       error_message = "The web and API origins must be distinct so Vercel cannot become a data-plane proxy."
+    }
+    precondition {
+      condition     = (var.posthog_project_key == "") == (var.posthog_host == "")
+      error_message = "PostHog key and host must both be set or both empty so analytics cannot be partially enabled."
+    }
+    precondition {
+      condition     = var.posthog_project_key == "" || var.posthog_privacy_controls_approved
+      error_message = "PostHog cannot be enabled until retention, IP handling, privacy disclosure, CSP, and subprocessor controls are approved for this environment."
     }
   }
 }

@@ -171,7 +171,8 @@ type ConnectionSetupOutcome =
       readonly outcome:
         | "connection_limit_reached"
         | "idempotency_conflict"
-        | "number_unavailable";
+        | "number_unavailable"
+        | "onboarding_profile_required";
     };
 
 export const startConnectionSetup = (
@@ -204,6 +205,9 @@ export const startConnectionSetup = (
     });
     if (prepared === null) {
       return yield* Effect.fail(new ConnectionSetupNotAccessible());
+    }
+    if (prepared.outcome === "onboarding_profile_required") {
+      return prepared;
     }
     const matchesStoredName = (
       material: ConnectionSetupNameMaterial,
@@ -571,7 +575,11 @@ export const createConnectionSetupHandler =
               result.outcome === "number_unavailable"
                 ? "whatsapp_number_unavailable"
                 : result.outcome;
-            return jsonResponse({ error }, 409, browserOrigin);
+            return jsonResponse(
+              { error },
+              result.outcome === "onboarding_profile_required" ? 403 : 409,
+              browserOrigin,
+            );
           },
         }),
       ),

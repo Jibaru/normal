@@ -2,6 +2,8 @@ import { ClerkProvider } from "@clerk/nextjs";
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { isClerkPublishableKey } from "../effect/clerk-config";
+import { parseProductAnalyticsConfiguration } from "../effect/product-analytics";
+import { ProductAnalyticsBootstrap } from "./product-analytics-bootstrap";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -29,12 +31,19 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  const productAnalytics = parseProductAnalyticsConfiguration({
+    host: process.env.NEXT_PUBLIC_POSTHOG_HOST,
+    projectKey: process.env.NEXT_PUBLIC_POSTHOG_KEY,
+  });
   const content = (
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <ProductAnalyticsBootstrap configuration={productAnalytics} />
+        {children}
+      </body>
     </html>
   );
 

@@ -7,6 +7,8 @@ import { OpenAILogo } from "@/components/logos/openai";
 import { Button, buttonVariants } from "@/components/ui/button";
 
 interface McpConnectionGuidesProps {
+  readonly client?: "all" | "claude" | "chatgpt";
+  readonly onGuideOpened?: (() => void) | undefined;
   readonly serverUrl: string;
 }
 
@@ -106,12 +108,14 @@ function GuideCard({
   accent,
   connectUrl,
   name,
+  onGuideOpened,
   serverUrl,
   steps,
 }: {
   readonly accent: "claude" | "chatgpt";
   readonly connectUrl: string;
   readonly name: string;
+  readonly onGuideOpened?: (() => void) | undefined;
   readonly serverUrl: string;
   readonly steps: ReadonlyArray<GuideStep>;
 }) {
@@ -138,6 +142,7 @@ function GuideCard({
         <a
           className={buttonVariants({ variant: "outline" })}
           href={connectUrl}
+          onClick={onGuideOpened}
           rel="noreferrer"
           target="_blank"
         >
@@ -184,7 +189,14 @@ const prompts = [
   "Draft a WhatsApp reply to Ada. Do not send it yet.",
 ] as const;
 
-export function McpConnectionGuides({ serverUrl }: McpConnectionGuidesProps) {
+export function McpConnectionGuides({
+  client = "all",
+  onGuideOpened,
+  serverUrl,
+}: McpConnectionGuidesProps) {
+  const showClaude = client === "all" || client === "claude";
+  const showChatGpt = client === "all" || client === "chatgpt";
+
   return (
     <section
       aria-labelledby="connect-mcp-clients"
@@ -196,7 +208,11 @@ export function McpConnectionGuides({ serverUrl }: McpConnectionGuidesProps) {
           id="connect-mcp-clients"
           className="mt-1 text-2xl font-semibold tracking-tight"
         >
-          Connect Normal to Claude or ChatGPT
+          {client === "claude"
+            ? "Connect Normal to Claude"
+            : client === "chatgpt"
+              ? "Connect Normal to ChatGPT"
+              : "Connect Normal to Claude or ChatGPT"}
         </h2>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
           Add the server once, then choose the exact WhatsApp Connections and
@@ -204,20 +220,26 @@ export function McpConnectionGuides({ serverUrl }: McpConnectionGuidesProps) {
         </p>
       </div>
       <div className="grid items-start gap-4 lg:grid-cols-2">
-        <GuideCard
-          accent="claude"
-          connectUrl="https://claude.ai/settings/connectors"
-          name="Claude"
-          serverUrl={serverUrl}
-          steps={claudeSteps}
-        />
-        <GuideCard
-          accent="chatgpt"
-          connectUrl="https://chatgpt.com/plugins"
-          name="ChatGPT"
-          serverUrl={serverUrl}
-          steps={chatGptSteps}
-        />
+        {showClaude ? (
+          <GuideCard
+            accent="claude"
+            connectUrl="https://claude.ai/settings/connectors"
+            name="Claude"
+            onGuideOpened={onGuideOpened}
+            serverUrl={serverUrl}
+            steps={claudeSteps}
+          />
+        ) : null}
+        {showChatGpt ? (
+          <GuideCard
+            accent="chatgpt"
+            connectUrl="https://chatgpt.com/plugins"
+            name="ChatGPT"
+            onGuideOpened={onGuideOpened}
+            serverUrl={serverUrl}
+            steps={chatGptSteps}
+          />
+        ) : null}
       </div>
       <div className="mt-3">
         <h3 className="text-lg font-semibold tracking-tight">Try asking</h3>

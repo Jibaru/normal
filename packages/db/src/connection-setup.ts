@@ -80,7 +80,8 @@ export type PreparedConnectionSetup =
       readonly nameMaterial: ConnectionSetupNameMaterial;
       readonly setup: ConnectionSetupRecord;
     }
-  | { readonly outcome: "idempotency_conflict" };
+  | { readonly outcome: "idempotency_conflict" }
+  | { readonly outcome: "onboarding_profile_required" };
 
 export interface PrepareConnectionSetupInput {
   readonly clerkUserId: string;
@@ -807,6 +808,13 @@ export const makeConnectionSetupRepository = (
           !(await enterPersonalAccountContext(db, row.personal_account_id))
         ) {
           return null;
+        }
+
+        const eligibility = await db.execute<{ eligible: unknown }>(
+          sql`SELECT public.first_connection_setup_eligible(${input.clerkUserId}) AS eligible`,
+        );
+        if (eligibility[0]?.eligible !== true) {
+          return { outcome: "onboarding_profile_required" as const };
         }
 
         const binding = await db
