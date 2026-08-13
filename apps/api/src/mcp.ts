@@ -992,7 +992,9 @@ const listConnections = (
               connection,
               displayName: connection.displayNameFallback,
             })
-          : connection.displayName === null
+          : connection.accountKey === null ||
+              connection.connectionKey === null ||
+              connection.displayName === null
             ? Effect.fail(
                 new EncryptionError({
                   operation: "decrypt",

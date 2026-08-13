@@ -240,6 +240,30 @@ describe("MCP tool repository", () => {
     ]);
   });
 
+  test("lists a selected fallback-named Connection without encryption envelopes", async () => {
+    await database.query(
+      `DELETE FROM public.whatsapp_connection_key_envelopes
+       WHERE personal_account_id = $1
+         AND whatsapp_connection_id = '20000000-0000-4000-8000-000000000033'`,
+      [accountId],
+    );
+
+    const listed = await repository.listConnections({
+      ...authorization,
+      observedAt,
+    });
+
+    expect(listed).toContainEqual(
+      expect.objectContaining({
+        accountKey: null,
+        connectionKey: null,
+        displayName: null,
+        displayNameFallback: "Kind Otter",
+        publicId: connectionWithoutSuffix,
+      }),
+    );
+  });
+
   test("atomically binds, leases, quotas, audits, and encrypts one send before replay", async () => {
     await database.query(
       `INSERT INTO public.directory_contact_projections (
