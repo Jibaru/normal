@@ -53,6 +53,77 @@ const allowedEventNames = new Set<ProductAnalyticsEvent["event"]>([
   "feature_used",
 ]);
 
+const onboardingStages = new Set([
+  "welcome",
+  "profile",
+  "security",
+  "connection_setup",
+  "success",
+]);
+const connectionSetupOutcomes = new Set([
+  "success",
+  "failed",
+  "cancelled",
+  "capacity_unavailable",
+]);
+const features = new Set([
+  "additional_connection_setup",
+  "mcp_guide_opened",
+  "tool_call_logs_viewed",
+]);
+
+const hasExactKeys = (
+  value: object,
+  expected: ReadonlyArray<string>,
+): boolean => {
+  const actual = Object.keys(value).sort();
+  const expectedSorted = [...expected].sort();
+  return (
+    actual.length === expectedSorted.length &&
+    actual.every((key, index) => key === expectedSorted[index])
+  );
+};
+
+const decodeEvent = (value: unknown): ProductAnalyticsEvent | null => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const event = value as Record<string, unknown>;
+  if (
+    typeof event.event !== "string" ||
+    !allowedEventNames.has(event.event as ProductAnalyticsEvent["event"])
+  ) {
+    return null;
+  }
+  if (
+    event.event === "onboarding_stage_viewed" ||
+    event.event === "onboarding_stage_completed"
+  ) {
+    return hasExactKeys(event, ["event", "stage"]) &&
+      typeof event.stage === "string" &&
+      onboardingStages.has(event.stage)
+      ? (event as unknown as ProductAnalyticsEvent)
+      : null;
+  }
+  if (event.event === "connection_setup_completed") {
+    return hasExactKeys(event, ["event", "outcome"]) &&
+      typeof event.outcome === "string" &&
+      connectionSetupOutcomes.has(event.outcome)
+      ? (event as unknown as ProductAnalyticsEvent)
+      : null;
+  }
+  if (event.event === "feature_used") {
+    return hasExactKeys(event, ["event", "feature"]) &&
+      typeof event.feature === "string" &&
+      features.has(event.feature)
+      ? (event as unknown as ProductAnalyticsEvent)
+      : null;
+  }
+  return hasExactKeys(event, ["event"])
+    ? (event as unknown as ProductAnalyticsEvent)
+    : null;
+};
+
 let configuredAnalytics: ProductAnalyticsConfiguration | null = null;
 let ephemeralSessionId: string | null = null;
 let captureImpl: ProductAnalytics["capture"] | null = null;
@@ -70,8 +141,8 @@ const sessionId = (): string => {
 };
 
 export const isAllowlistedProductAnalyticsEvent = (
-  event: ProductAnalyticsEvent,
-): boolean => allowedEventNames.has(event.event);
+  event: unknown,
+): event is ProductAnalyticsEvent => decodeEvent(event) !== null;
 
 const posthogCapture =
   (configuration: ProductAnalyticsConfiguration): ProductAnalytics["capture"] =>
@@ -149,8 +220,9 @@ export function captureProductAnalyticsEvent(
 ): void {
   try {
     if (captureImpl === null) return;
-    if (!isAllowlistedProductAnalyticsEvent(event)) return;
-    captureImpl(event);
+    const decoded = decodeEvent(event);
+    if (decoded === null) return;
+    captureImpl(decoded);
   } catch {
     // Analytics must never affect the product journey.
   }

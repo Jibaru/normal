@@ -423,24 +423,25 @@ run "development_topology_with_posthog" {
   }
 
   variables {
-    deployment_environment        = "development"
-    cloudflare_account_id         = "11111111111111111111111111111111"
-    cloudflare_zone_id            = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    api_hyperdrive_id             = "11111111111111111111111111111111"
-    webhook_hyperdrive_id         = "22222222222222222222222222222222"
-    vercel_team_id                = "team_developmentvalidation"
-    api_hostname                  = "api.dev.example.com"
-    web_hostname                  = "app.dev.example.com"
-    clerk_issuer                  = "https://clerk.dev.example.com"
-    clerk_publishable_key         = "pk_test_Y2xlcmsuZGV2LmV4YW1wbGUuY29tJA"
-    mcp_requests_per_minute       = 60
-    mcp_requests_per_hour         = 600
-    read_message_records_per_day  = 10000
-    decrypted_media_bytes_per_day = 268435456
-    sends_per_minute              = 10
-    sends_per_day                 = 200
-    posthog_project_key           = "phc_developmentvalidationkey"
-    posthog_host                  = "https://us.i.posthog.com"
+    deployment_environment            = "development"
+    cloudflare_account_id             = "11111111111111111111111111111111"
+    cloudflare_zone_id                = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    api_hyperdrive_id                 = "11111111111111111111111111111111"
+    webhook_hyperdrive_id             = "22222222222222222222222222222222"
+    vercel_team_id                    = "team_developmentvalidation"
+    api_hostname                      = "api.dev.example.com"
+    web_hostname                      = "app.dev.example.com"
+    clerk_issuer                      = "https://clerk.dev.example.com"
+    clerk_publishable_key             = "pk_test_Y2xlcmsuZGV2LmV4YW1wbGUuY29tJA"
+    mcp_requests_per_minute           = 60
+    mcp_requests_per_hour             = 600
+    read_message_records_per_day      = 10000
+    decrypted_media_bytes_per_day     = 268435456
+    sends_per_minute                  = 10
+    sends_per_day                     = 200
+    posthog_project_key               = "phc_developmentvalidationkey"
+    posthog_host                      = "https://us.i.posthog.com"
+    posthog_privacy_controls_approved = true
   }
 
   assert {

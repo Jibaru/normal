@@ -810,6 +810,13 @@ export const makeConnectionSetupRepository = (
           return null;
         }
 
+        const eligibility = await db.execute<{ eligible: unknown }>(
+          sql`SELECT public.first_connection_setup_eligible(${input.clerkUserId}) AS eligible`,
+        );
+        if (eligibility[0]?.eligible !== true) {
+          return { outcome: "onboarding_profile_required" as const };
+        }
+
         const binding = await db
           .select({
             created_at: connectionSetupsInApp.createdAt,
@@ -863,13 +870,6 @@ export const makeConnectionSetupRepository = (
             outcome: "replay" as const,
             setup,
           };
-        }
-
-        const eligibility = await db.execute<{ eligible: unknown }>(
-          sql`SELECT public.first_connection_setup_eligible(${input.clerkUserId}) AS eligible`,
-        );
-        if (eligibility[0]?.eligible !== true) {
-          return { outcome: "onboarding_profile_required" as const };
         }
 
         return {

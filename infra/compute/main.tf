@@ -822,6 +822,10 @@ resource "vercel_project" "web" {
       condition     = (var.posthog_project_key == "") == (var.posthog_host == "")
       error_message = "PostHog key and host must both be set or both empty so analytics cannot be partially enabled."
     }
+    precondition {
+      condition     = var.posthog_project_key == "" || var.posthog_privacy_controls_approved
+      error_message = "PostHog cannot be enabled until retention, IP handling, privacy disclosure, CSP, and subprocessor controls are approved for this environment."
+    }
   }
 }
 

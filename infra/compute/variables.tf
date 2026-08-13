@@ -184,3 +184,9 @@ variable "posthog_host" {
     error_message = "posthog_host must be empty or an exact HTTPS origin."
   }
 }
+
+variable "posthog_privacy_controls_approved" {
+  description = "Confirms that the environment's PostHog retention, IP handling, privacy disclosure, CSP, and subprocessor review are complete."
+  type        = bool
+  default     = false
+}

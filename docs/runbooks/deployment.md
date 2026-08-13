@@ -1251,7 +1251,10 @@ Production subprocessors that may process User or product data are:
 | PostHog | Optional aggregate product analytics | Allowlisted non-identifying browser events only. No Clerk IDs, emails, Personal Account IDs, public handles, WhatsApp Numbers, profile answers, message content, or QR material. No person profiles or session replay. |
 
 Do not enable production PostHog collection until this inventory, CSP, privacy
-copy, and retention configuration are reviewed for that environment.
+copy, retention configuration, and browser-IP handling are reviewed for that
+environment. Disable IP capture or configure immediate IP discard in PostHog,
+then set `posthog_privacy_controls_approved = true` in the reviewed environment
+inputs. Never use that input to bypass an incomplete review.
 
 Roll application code back without rolling back, replacing, disabling, or
 deleting either KMS key.

@@ -536,14 +536,24 @@ export function ConnectionSetupForm({
         </p>
       )}
       {qrImageUrl === null ? null : (
-        // The object URL is created from the authenticated, non-persisted
-        // SVG response and is revoked as soon as setup completes.
-        // biome-ignore lint/performance/noImgElement: QR bytes are already a complete generated SVG.
-        <img
-          alt="Scan this WhatsApp QR code"
-          className="size-64 self-center rounded-lg bg-background p-3 ring-1 ring-border"
-          src={qrImageUrl}
-        />
+        <div className="grid gap-5 sm:grid-cols-[auto_1fr] sm:items-center">
+          {/* The object URL is created from the authenticated, non-persisted
+          SVG response and is revoked as soon as setup completes. */}
+          {/* biome-ignore lint/performance/noImgElement: QR bytes are already a complete generated SVG. */}
+          <img
+            alt="Scan this WhatsApp QR code"
+            className="size-64 self-center rounded-lg bg-background p-3 ring-1 ring-border"
+            src={qrImageUrl}
+          />
+          <div>
+            <p className="font-medium">Scan with WhatsApp</p>
+            <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm leading-6 text-muted-foreground">
+              <li>Open WhatsApp on your phone.</li>
+              <li>Open Settings, then Linked Devices.</li>
+              <li>Choose Link a Device and scan this QR code.</li>
+            </ol>
+          </div>
+        </div>
       )}
     </>
   );

@@ -56,6 +56,18 @@ describe("product analytics boundary", () => {
       stage: "welcome",
     };
     expect(isAllowlistedProductAnalyticsEvent(allowed)).toBe(true);
+    expect(
+      isAllowlistedProductAnalyticsEvent({
+        ...allowed,
+        personal_account_id: "account-secret",
+      }),
+    ).toBe(false);
+    expect(
+      isAllowlistedProductAnalyticsEvent({
+        event: "connection_setup_completed",
+        outcome: "provider_error",
+      }),
+    ).toBe(false);
     captureProductAnalyticsEvent(allowed);
     captureProductAnalyticsEvent({
       event: "connection_setup_completed",
@@ -73,6 +85,10 @@ describe("product analytics boundary", () => {
       event: "feature_used",
       feature: "tool_call_logs_viewed",
     });
+    captureProductAnalyticsEvent({
+      event: "onboarding_completed",
+      email: "user@example.test",
+    } as ProductAnalyticsEvent);
 
     expect(captured).toEqual([
       { event: "onboarding_stage_viewed", stage: "welcome" },

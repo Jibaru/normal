@@ -516,6 +516,12 @@ subprocessor inventory before enabling collection in production. PostHog must
 not receive a person profile, session replay, or a durable identifier that can
 be joined to Neon or Clerk.
 
+OpenTofu requires `posthog_privacy_controls_approved = true` before it can
+publish PostHog browser configuration. Set it only after reviewing the exact
+environment's retention period, disabling IP capture or configuring immediate
+IP discard, and confirming the privacy disclosure, CSP, and subprocessor
+inventory. The approval is an explicit deployment gate, not a runtime flag.
+
 ## Connection Setup creation
 
 The first Connection Setup for a Personal Account also requires a completed
@@ -809,6 +815,7 @@ repository:
 | `clerk_publishable_key` | Public browser key for the same-environment Clerk instance. |
 | `posthog_project_key` | Optional public PostHog project key. Empty disables browser analytics. Must be set together with `posthog_host`. |
 | `posthog_host` | Optional exact HTTPS PostHog ingest origin. Empty disables browser analytics. Must be set together with `posthog_project_key`. |
+| `posthog_privacy_controls_approved` | Explicit environment approval for PostHog retention, IP handling, privacy disclosure, CSP, and subprocessor controls. Must be true before non-empty PostHog configuration can be deployed. |
 | `mcp_requests_per_minute` | Required approved positive integer for authoritative per-Personal-Account requests in an exact rolling minute. |
 | `mcp_requests_per_hour` | Required approved integer for authoritative per-Personal-Account requests in an exact rolling hour; at least the minute value. |
 | `read_message_records_per_day` | Required approved positive integer for UTC-day Stored Message record reservations. |
