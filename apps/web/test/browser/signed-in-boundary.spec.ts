@@ -28,6 +28,8 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     releaseFirstQr = resolve;
   });
   let reconnectRequests = 0;
+  let renameRequests = 0;
+  let retentionUpdateRequests = 0;
   let resumeReconnectPolling = false;
   let releaseReconnectPoll: (() => void) | undefined;
   const reconnectPollCanContinue = new Promise<void>((resolve) => {
@@ -56,6 +58,22 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
       original.method() === "GET"
     ) {
       await firstQrCanContinue;
+    }
+    if (
+      /\/v1\/whatsapp-connections\/con_[A-Za-z0-9_-]{21}\/name$/u.test(
+        requestPath,
+      ) &&
+      original.method() === "PUT"
+    ) {
+      renameRequests += 1;
+    }
+    if (
+      /\/v1\/whatsapp-connections\/con_[A-Za-z0-9_-]{21}\/retention-policy$/u.test(
+        requestPath,
+      ) &&
+      original.method() === "PUT"
+    ) {
+      retentionUpdateRequests += 1;
     }
     if (
       /^\/v1\/whatsapp-connections\/con_[A-Za-z0-9_-]{21}\/reconnect$/u.test(
@@ -266,28 +284,35 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   const retentionPolicy = configuration.getByRole("combobox", {
     name: "Keep message history for",
   });
+  const saveConfiguration = configuration.getByRole("button", {
+    name: "Save changes",
+  });
+  await expect(saveConfiguration).toBeDisabled();
   await configuration.getByLabel("Name", { exact: true }).fill("Work WhatsApp");
-  await configuration.getByRole("button", { name: "Save name" }).click();
+  await expect(saveConfiguration).toBeEnabled();
+  await saveConfiguration.click();
   await expect(configuration).toContainText("Name saved.");
+  expect(renameRequests).toBe(1);
+  expect(retentionUpdateRequests).toBe(0);
   await expect(connection).toContainText("Work WhatsApp");
   await expect(retentionPolicy).toContainText("30 days");
   await retentionPolicy.click();
   await page.getByRole("option", { name: "7 days" }).click();
-  await configuration.getByRole("button", { name: "Save changes" }).click();
+  await saveConfiguration.click();
   await expect(configuration).toContainText("Current policy: 7 days");
+  expect(renameRequests).toBe(1);
+  expect(retentionUpdateRequests).toBe(1);
   await retentionPolicy.click();
   await page
     .getByRole("option", { name: "Retain until Connection Deletion" })
     .click();
-  await expect(
-    configuration.getByRole("button", { name: "Save changes" }),
-  ).toBeDisabled();
+  await expect(saveConfiguration).toBeDisabled();
   await configuration
     .getByRole("checkbox", {
       name: "I explicitly choose to retain message content for longer.",
     })
     .check();
-  await configuration.getByRole("button", { name: "Save changes" }).click();
+  await saveConfiguration.click();
   await expect(configuration).toContainText("retain until Connection Deletion");
   await expect(page.getByTestId("whatsapp-connection")).not.toContainText(
     "session-authority",

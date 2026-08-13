@@ -769,9 +769,7 @@ export function PublicBoundaryJourney({
   };
 
   const renameConnection = async (connection: SafeWhatsAppConnection) => {
-    if (savingNames.has(connection.id)) return;
     const name = nameDrafts[connection.id] ?? connection.displayName;
-    setSavingNames((current) => new Set(current).add(connection.id));
     setNameStatus((current) => ({
       ...current,
       [connection.id]: "Saving name…",
@@ -818,12 +816,6 @@ export function PublicBoundaryJourney({
         ...current,
         [connection.id]: "Name could not be saved.",
       }));
-    } finally {
-      setSavingNames((current) => {
-        const next = new Set(current);
-        next.delete(connection.id);
-        return next;
-      });
     }
   };
 
@@ -883,6 +875,45 @@ export function PublicBoundaryJourney({
         ...current,
         [connection.id]: "Message Retention Policy could not be saved.",
       }));
+    }
+  };
+
+  const saveConnectionConfiguration = async (
+    connection: SafeWhatsAppConnection,
+  ) => {
+    if (savingNames.has(connection.id)) return;
+    const name = nameDrafts[connection.id] ?? connection.displayName;
+    const retention =
+      retentionDrafts[connection.id] ??
+      (connection.retentionDays === null
+        ? "until-deletion"
+        : String(connection.retentionDays));
+    const nameChanged = name !== connection.displayName;
+    const retentionChanged =
+      retention !==
+      (connection.retentionDays === null
+        ? "until-deletion"
+        : String(connection.retentionDays));
+
+    if (!nameChanged && !retentionChanged) return;
+    setSavingNames((current) => new Set(current).add(connection.id));
+    if (!nameChanged) {
+      setNameStatus((current) => ({ ...current, [connection.id]: "" }));
+    }
+    if (!retentionChanged) {
+      setRetentionStatus((current) => ({ ...current, [connection.id]: "" }));
+    }
+    try {
+      await Promise.all([
+        nameChanged ? renameConnection(connection) : Promise.resolve(),
+        retentionChanged ? updateRetention(connection) : Promise.resolve(),
+      ]);
+    } finally {
+      setSavingNames((current) => {
+        const next = new Set(current);
+        next.delete(connection.id);
+        return next;
+      });
     }
   };
 
@@ -2260,21 +2291,6 @@ export function PublicBoundaryJourney({
                               connection.displayName
                             }
                           />
-                          <Button
-                            className="self-end"
-                            disabled={
-                              savingNames.has(connection.id) ||
-                              (nameDrafts[connection.id] ??
-                                connection.displayName) ===
-                                connection.displayName ||
-                              (nameDrafts[connection.id] ?? "").trim()
-                                .length === 0
-                            }
-                            onClick={() => void renameConnection(connection)}
-                            type="button"
-                          >
-                            Save name
-                          </Button>
                           {nameStatus[connection.id] ? (
                             <p
                               aria-live="polite"
@@ -2291,6 +2307,7 @@ export function PublicBoundaryJourney({
                               Keep message history for
                             </FieldLabel>
                             <Select
+                              disabled={savingNames.has(connection.id)}
                               items={[
                                 ...connection.retentionOptions.map((days) => ({
                                   label: `${days} days`,
@@ -2346,9 +2363,14 @@ export function PublicBoundaryJourney({
                                 ? null
                                 : Number(draft ?? connection.retentionDays);
                             const broadens =
-                              next === null ||
-                              (connection.retentionDays !== null &&
-                                next > connection.retentionDays);
+                              draft !== undefined &&
+                              draft !==
+                                (connection.retentionDays === null
+                                  ? "until-deletion"
+                                  : String(connection.retentionDays)) &&
+                              (next === null ||
+                                (connection.retentionDays !== null &&
+                                  next > connection.retentionDays));
                             return broadens ? (
                               <Field orientation="horizontal">
                                 <Checkbox
@@ -2373,27 +2395,6 @@ export function PublicBoundaryJourney({
                               </Field>
                             ) : null;
                           })()}
-                          <Button
-                            className="self-end"
-                            disabled={(() => {
-                              const draft = retentionDrafts[connection.id];
-                              const next =
-                                draft === "until-deletion"
-                                  ? null
-                                  : Number(draft ?? connection.retentionDays);
-                              return (
-                                (next === null ||
-                                  (connection.retentionDays !== null &&
-                                    next > connection.retentionDays)) &&
-                                retentionAcknowledgements[connection.id] !==
-                                  true
-                              );
-                            })()}
-                            onClick={() => void updateRetention(connection)}
-                            type="button"
-                          >
-                            Save changes
-                          </Button>
                           <p
                             aria-live="polite"
                             className="text-sm text-muted-foreground"
@@ -2403,6 +2404,52 @@ export function PublicBoundaryJourney({
                           </p>
                         </FieldGroup>
                       </DialogBody>
+                      <DialogFooter>
+                        <Button
+                          disabled={(() => {
+                            const name =
+                              nameDrafts[connection.id] ??
+                              connection.displayName;
+                            const retention =
+                              retentionDrafts[connection.id] ??
+                              (connection.retentionDays === null
+                                ? "until-deletion"
+                                : String(connection.retentionDays));
+                            const retentionChanged =
+                              retention !==
+                              (connection.retentionDays === null
+                                ? "until-deletion"
+                                : String(connection.retentionDays));
+                            const nextRetention =
+                              retention === "until-deletion"
+                                ? null
+                                : Number(retention);
+                            const broadensRetention =
+                              retentionChanged &&
+                              (nextRetention === null ||
+                                (connection.retentionDays !== null &&
+                                  nextRetention > connection.retentionDays));
+                            return (
+                              savingNames.has(connection.id) ||
+                              name.trim().length === 0 ||
+                              (name === connection.displayName &&
+                                !retentionChanged) ||
+                              (broadensRetention &&
+                                retentionAcknowledgements[connection.id] !==
+                                  true)
+                            );
+                          })()}
+                          onClick={() =>
+                            void saveConnectionConfiguration(connection)
+                          }
+                          type="button"
+                        >
+                          {savingNames.has(connection.id) ? (
+                            <Spinner data-icon="inline-start" />
+                          ) : null}
+                          Save changes
+                        </Button>
+                      </DialogFooter>
                     </DialogContent>
                   </Dialog>
                   <Dialog
