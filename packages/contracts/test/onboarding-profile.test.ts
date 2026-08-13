@@ -72,7 +72,7 @@ describe("onboarding profile contract", () => {
       role: "founder_or_owner",
       updated_at: "2026-08-13T13:00:00.000Z",
       whatsapp_usage_context: "work",
-    };
+    } as const;
     expect(decodeOnboardingProfile(profile)).toEqual(profile);
     expect(() =>
       decodeOnboardingProfile({

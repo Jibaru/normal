@@ -114,8 +114,7 @@ const request = (
   } = {},
 ) =>
   new Request(endpoint, {
-    body:
-      overrides.body === undefined ? undefined : JSON.stringify(overrides.body),
+    body: overrides.body === undefined ? null : JSON.stringify(overrides.body),
     headers: {
       authorization: overrides.authorization ?? "Bearer signed-clerk-token",
       "content-type": "application/json",
