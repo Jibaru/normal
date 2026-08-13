@@ -1,0 +1,36 @@
+name: Bootstrap production MCP smoke credential
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - name: Assume the production MCP smoke credential role
+        uses: aws-actions/configure-aws-credentials@v6.1.0
+        with:
+          aws-region: us-east-1
+          role-session-name: production-mcp-smoke-bootstrap
+          role-to-assume: ${{ vars.AWS_MCP_SMOKE_CREDENTIAL_ROLE_ARN }}
+      - name: Bootstrap the current refresh credential
+        env:
+          MCP_SMOKE_REFRESH_TOKEN: ${{ secrets.MCP_SMOKE_REFRESH_TOKEN }}
+          MCP_SMOKE_REFRESH_SECRET_ID: ${{ vars.MCP_SMOKE_REFRESH_SECRET_ID }}
+        run: |
+          test -n "$MCP_SMOKE_REFRESH_TOKEN"
+          test -n "$MCP_SMOKE_REFRESH_SECRET_ID"
+          aws secretsmanager put-secret-value \
+            --secret-id "$MCP_SMOKE_REFRESH_SECRET_ID" \
+            --secret-string file:///dev/stdin \
+            >/dev/null <<<"$MCP_SMOKE_REFRESH_TOKEN"
