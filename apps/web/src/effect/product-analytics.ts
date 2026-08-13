@@ -126,7 +126,6 @@ const decodeEvent = (value: unknown): ProductAnalyticsEvent | null => {
 
 let configuredAnalytics: ProductAnalyticsConfiguration | null = null;
 let ephemeralSessionId: string | null = null;
-let captureImpl: ProductAnalytics["capture"] | null = null;
 
 const randomSessionId = (): string => {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -149,14 +148,15 @@ const posthogCapture =
   (event) => {
     if (!isAllowlistedProductAnalyticsEvent(event)) return;
     const { event: eventName, ...properties } = event;
+    const distinctId = sessionId();
     const body = {
       api_key: configuration.projectKey,
-      distinct_id: sessionId(),
       event: eventName,
       properties: {
         ...properties,
         $process_person_profile: false,
-        $session_id: sessionId(),
+        $session_id: distinctId,
+        distinct_id: distinctId,
       },
     };
     void fetch(new URL("/capture/", configuration.host), {
@@ -172,11 +172,7 @@ export const configureProductAnalytics = (
   configuration: ProductAnalyticsConfiguration | null,
 ): void => {
   configuredAnalytics = configuration;
-  captureImpl = configuration === null ? null : posthogCapture(configuration);
 };
-
-export const getProductAnalyticsConfiguration =
-  (): ProductAnalyticsConfiguration | null => configuredAnalytics;
 
 export const parseProductAnalyticsConfiguration = (input: {
   readonly host?: string | undefined;
@@ -208,21 +204,14 @@ export const parseProductAnalyticsConfiguration = (input: {
   };
 };
 
-/** Replaces the capture implementation for controlled tests. */
-export const installProductAnalyticsCapture = (
-  capture: ProductAnalytics["capture"] | null,
-): void => {
-  captureImpl = capture;
-};
-
 export function captureProductAnalyticsEvent(
   event: ProductAnalyticsEvent,
 ): void {
   try {
-    if (captureImpl === null) return;
+    if (configuredAnalytics === null) return;
     const decoded = decodeEvent(event);
     if (decoded === null) return;
-    captureImpl(decoded);
+    posthogCapture(configuredAnalytics)(decoded);
   } catch {
     // Analytics must never affect the product journey.
   }

@@ -122,6 +122,7 @@ export interface ConnectionSetupFormProps {
   readonly idPrefix: string;
   readonly layout: "dialog" | "inline";
   readonly onCancelSetup: () => void;
+  readonly onResetSetup: () => void;
   readonly onConnectionNameChange: (value: string) => void;
   readonly onStartSetup: FormEventHandler<HTMLFormElement>;
   readonly onWhatsappNumberChange: (value: string) => void;
@@ -476,6 +477,7 @@ export function ConnectionSetupForm({
   idPrefix,
   layout,
   onCancelSetup,
+  onResetSetup,
   onConnectionNameChange,
   onStartSetup,
   onWhatsappNumberChange,
@@ -564,6 +566,12 @@ export function ConnectionSetupForm({
           Cancel setup
         </Button>
       ) : null}
+      {setupId !== null &&
+      (setupState === "expired" || setupState === "unavailable") ? (
+        <Button onClick={onResetSetup} type="button" variant="outline">
+          Start again
+        </Button>
+      ) : null}
       <Button disabled={setupState === "loading"} type="submit">
         {setupState === "loading" ? <Spinner data-icon="inline-start" /> : null}
         Continue
@@ -607,9 +615,13 @@ export function FirstConnectionOnboarding({
     "idle" | "saving" | "unavailable"
   >("idle");
   const [stage, setStage] = useState<OnboardingStage>(
-    initialProfile?.completedAt === null || initialProfile === null
-      ? "welcome"
-      : "security",
+    setupForm.setupState === "connected" && connectedConnection !== null
+      ? "success"
+      : setupForm.setupId !== null
+        ? "connection_setup"
+        : initialProfile?.completedAt === null || initialProfile === null
+          ? "welcome"
+          : "security",
   );
   const viewedStages = useRef<Set<OnboardingStage>>(new Set());
   const reportedSetupOutcome = useRef(false);

@@ -2,15 +2,16 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
   captureProductAnalyticsEvent,
   configureProductAnalytics,
-  installProductAnalyticsCapture,
   isAllowlistedProductAnalyticsEvent,
   type ProductAnalyticsEvent,
   parseProductAnalyticsConfiguration,
 } from "../src/effect/product-analytics";
 
+const originalFetch = globalThis.fetch;
+
 afterEach(() => {
-  installProductAnalyticsCapture(null);
   configureProductAnalytics(null);
+  globalThis.fetch = originalFetch;
 });
 
 describe("product analytics boundary", () => {
@@ -45,10 +46,18 @@ describe("product analytics boundary", () => {
     expect(parseProductAnalyticsConfiguration({})).toBeNull();
   });
 
-  test("captures only allowlisted events and bounded properties", () => {
-    const captured: Array<ProductAnalyticsEvent> = [];
-    installProductAnalyticsCapture((event) => {
-      captured.push(event);
+  test("serializes only allowlisted events and bounded properties", async () => {
+    const requests: Array<{ body: unknown; url: string }> = [];
+    globalThis.fetch = ((input, init) => {
+      requests.push({
+        body: JSON.parse(String(init?.body)) as unknown,
+        url: String(input),
+      });
+      return Promise.resolve(new Response(null, { status: 204 }));
+    }) as typeof fetch;
+    configureProductAnalytics({
+      host: "https://us.i.posthog.com",
+      projectKey: "phc_example",
     });
 
     const allowed: ProductAnalyticsEvent = {
@@ -68,46 +77,45 @@ describe("product analytics boundary", () => {
         outcome: "provider_error",
       }),
     ).toBe(false);
+
     captureProductAnalyticsEvent(allowed);
-    captureProductAnalyticsEvent({
-      event: "connection_setup_completed",
-      outcome: "capacity_unavailable",
-    });
-    captureProductAnalyticsEvent({
-      event: "feature_used",
-      feature: "mcp_guide_opened",
-    });
-    captureProductAnalyticsEvent({
-      event: "feature_used",
-      feature: "additional_connection_setup",
-    });
-    captureProductAnalyticsEvent({
-      event: "feature_used",
-      feature: "tool_call_logs_viewed",
-    });
     captureProductAnalyticsEvent({
       event: "onboarding_completed",
       email: "user@example.test",
     } as ProductAnalyticsEvent);
 
-    expect(captured).toEqual([
-      { event: "onboarding_stage_viewed", stage: "welcome" },
-      {
-        event: "connection_setup_completed",
-        outcome: "capacity_unavailable",
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toBe("https://us.i.posthog.com/capture/");
+    expect(requests[0]?.body).toMatchObject({
+      api_key: "phc_example",
+      event: "onboarding_stage_viewed",
+      properties: {
+        $process_person_profile: false,
+        stage: "welcome",
       },
-      { event: "feature_used", feature: "mcp_guide_opened" },
-      { event: "feature_used", feature: "additional_connection_setup" },
-      { event: "feature_used", feature: "tool_call_logs_viewed" },
-    ]);
-    expect(JSON.stringify(captured)).not.toMatch(
-      /clerk|email|personal_account|whatsapp|profile|phone|message|qr|provider/iu,
+    });
+    const body = requests[0]?.body as {
+      readonly distinct_id?: unknown;
+      readonly properties?: {
+        readonly $session_id?: unknown;
+        readonly distinct_id?: unknown;
+      };
+    };
+    expect(body.distinct_id).toBeUndefined();
+    expect(body.properties?.distinct_id).toBeString();
+    expect(body.properties?.distinct_id).toBe(body.properties?.$session_id);
+    expect(JSON.stringify(requests)).not.toMatch(
+      /clerk|email|personal_account|whatsapp|phone|message|qr|provider/iu,
     );
   });
 
   test("swallows capture failures so onboarding can continue", () => {
-    installProductAnalyticsCapture(() => {
+    globalThis.fetch = (() => {
       throw new Error("analytics unavailable");
+    }) as unknown as typeof fetch;
+    configureProductAnalytics({
+      host: "https://us.i.posthog.com",
+      projectKey: "phc_example",
     });
     expect(() =>
       captureProductAnalyticsEvent({ event: "onboarding_completed" }),
@@ -115,14 +123,12 @@ describe("product analytics boundary", () => {
   });
 
   test("does not capture when analytics is unconfigured", () => {
-    const captured: Array<ProductAnalyticsEvent> = [];
-    configureProductAnalytics(null);
-    installProductAnalyticsCapture((event) => {
-      captured.push(event);
-    });
-    // installProductAnalyticsCapture overrides; clear again to mimic boot.
-    installProductAnalyticsCapture(null);
+    let requests = 0;
+    globalThis.fetch = (() => {
+      requests += 1;
+      return Promise.resolve(new Response(null, { status: 204 }));
+    }) as unknown as typeof fetch;
     captureProductAnalyticsEvent({ event: "onboarding_security_reached" });
-    expect(captured).toEqual([]);
+    expect(requests).toBe(0);
   });
 });

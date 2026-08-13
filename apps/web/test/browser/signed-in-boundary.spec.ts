@@ -270,6 +270,11 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(
     page.getByRole("button", { name: "Register WhatsApp Number" }),
   ).toHaveCount(0);
+  await page.getByRole("link", { name: "Settings" }).click();
+  await expect(
+    page.getByRole("region", { name: "Personal Account Deletion" }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "WhatsApp Connections" }).click();
   await completeFirstConnectionProfile(page);
   const onboarding = page.getByTestId("first-connection-onboarding");
   await onboarding
@@ -288,6 +293,14 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(page.getByTestId("connection-setup-status")).toHaveText(
     "Connection Setup started. Preparing your QR code.",
   );
+  await page.getByRole("link", { name: "Tool Call Logs" }).click();
+  await page.getByRole("link", { name: "WhatsApp Connections" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Start Connection Setup" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Security and control" }),
+  ).toHaveCount(0);
   releaseFirstQr?.();
   await expect(
     page.getByRole("img", { name: "Scan this WhatsApp QR code" }),

@@ -1559,6 +1559,7 @@ export function PublicBoundaryJourney({
             connectionName,
             onCancelSetup: cancelSetup,
             onConnectionNameChange: updateConnectionName,
+            onResetSetup: clearSetupDraft,
             onStartSetup: startSetup,
             onWhatsappNumberChange: updateWhatsappNumber,
             qrImageUrl,
@@ -2087,6 +2088,7 @@ export function PublicBoundaryJourney({
                   layout="dialog"
                   onCancelSetup={cancelSetup}
                   onConnectionNameChange={updateConnectionName}
+                  onResetSetup={clearSetupDraft}
                   onStartSetup={startSetup}
                   onWhatsappNumberChange={updateWhatsappNumber}
                   qrImageUrl={qrImageUrl}
@@ -2484,9 +2486,7 @@ export function PublicBoundaryJourney({
           />
         </section>
       ) : null}
-      {state === "ok" &&
-      !showFirstConnectionOnboarding &&
-      view === "settings" ? (
+      {state === "ok" && view === "settings" ? (
         <section
           aria-label="Personal Account Deletion"
           className="flex flex-col items-start gap-3"

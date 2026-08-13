@@ -28,6 +28,25 @@ const bareHttpsOrigin = (value: string | undefined): string | null => {
 const apiOrigin = bareHttpsOrigin(process.env.NEXT_PUBLIC_API_ORIGIN);
 const posthogOrigin = bareHttpsOrigin(process.env.NEXT_PUBLIC_POSTHOG_HOST);
 
+const clerkOriginFromPublishableKey = (
+  value: string | undefined,
+): string | null => {
+  if (value === undefined || !/^pk_(?:test|live)_/u.test(value)) return null;
+  try {
+    const encoded = value.replace(/^pk_(?:test|live)_/u, "");
+    const frontendHost = Buffer.from(encoded, "base64url")
+      .toString("utf8")
+      .replace(/\$$/u, "");
+    return bareHttpsOrigin(`https://${frontendHost}`);
+  } catch {
+    return null;
+  }
+};
+
+const clerkOrigin = clerkOriginFromPublishableKey(
+  process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
+);
+
 const connectSrc = ["'self'", apiOrigin, posthogOrigin]
   .filter((value): value is string => typeof value === "string")
   .join(" ");
@@ -41,10 +60,10 @@ const contentSecurityPolicy = [
   "font-src 'self' data:",
   "style-src 'self' 'unsafe-inline'",
   // Clerk supplies the signed-in browser identity UI; keep inline bootstrap scripts allowed.
-  "script-src 'self' 'unsafe-inline' https://*.clerk.accounts.dev https://clerk.cueva.io https://*.clerk.com",
-  "frame-src 'self' https://*.clerk.accounts.dev https://clerk.cueva.io https://*.clerk.com",
+  `script-src 'self' 'unsafe-inline' https://*.clerk.accounts.dev https://*.clerk.com${clerkOrigin === null ? "" : ` ${clerkOrigin}`}`,
+  `frame-src 'self' https://*.clerk.accounts.dev https://*.clerk.com${clerkOrigin === null ? "" : ` ${clerkOrigin}`}`,
   "worker-src 'self' blob:",
-  `connect-src ${connectSrc} https://*.clerk.accounts.dev https://api.clerk.com https://clerk.cueva.io https://*.clerk.com`,
+  `connect-src ${connectSrc} https://*.clerk.accounts.dev https://api.clerk.com https://*.clerk.com${clerkOrigin === null ? "" : ` ${clerkOrigin}`}`,
 ].join("; ");
 
 const nextConfig: NextConfig = {
