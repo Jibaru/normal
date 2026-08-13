@@ -295,15 +295,13 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(page.getByTestId("connection-setup-status")).toHaveText(
     "Scan this QR code with WhatsApp.",
   );
-  await expect(page.getByTestId("connection-setup-status")).toHaveText(
-    "WhatsApp Connection active.",
-  );
+  await expect(
+    page.getByRole("heading", { name: "WhatsApp Connection active" }),
+  ).toBeVisible({ timeout: 15_000 });
   await expect(
     page.getByRole("img", { name: "Scan this WhatsApp QR code" }),
   ).toHaveCount(0);
-  await expect(
-    page.getByRole("heading", { name: "WhatsApp Connection active" }),
-  ).toBeVisible();
+  await expect(page.getByTestId("connection-setup-status")).toHaveCount(0);
   await expect(onboarding).toContainText("ending 3456");
   await expect(onboarding).toContainText(
     "observes supported WhatsApp Conversations from activation",
