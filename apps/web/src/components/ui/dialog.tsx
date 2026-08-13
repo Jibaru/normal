@@ -30,14 +30,13 @@ function DialogOverlay({
   return (
     <DialogPrimitive.Backdrop
       className={cn(
-        "fixed inset-0 isolate z-50 bg-black/10 backdrop-blur-xs",
+        "fixed inset-0 isolate z-50 bg-black/20 backdrop-blur-[2px] transition-opacity duration-150 ease-[var(--ease-out)] data-ending-style:opacity-0 data-starting-style:opacity-0",
         className,
       )}
       data-slot="dialog-overlay"
       style={{
-        WebkitBackdropFilter: "blur(4px)",
-        backdropFilter: "blur(4px)",
-        backgroundColor: "rgb(0 0 0 / 0.1)",
+        WebkitBackdropFilter: "blur(2px)",
+        backdropFilter: "blur(2px)",
         ...style,
       }}
       {...props}
@@ -55,10 +54,10 @@ function DialogContent({
   return (
     <DialogPortal>
       <DialogOverlay />
-      <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6">
         <DialogPrimitive.Popup
           className={cn(
-            "pointer-events-auto relative grid max-h-[calc(100dvh-2rem)] w-full max-w-lg gap-4 overflow-y-auto rounded-xl bg-popover p-4 text-sm text-popover-foreground shadow-xl ring-1 ring-foreground/10 outline-none",
+            "pointer-events-auto relative flex max-h-[calc(100dvh-1.5rem)] w-full max-w-lg origin-center flex-col overflow-hidden rounded-xl bg-popover text-sm text-popover-foreground shadow-[0_24px_80px_-24px_rgb(0_0_0/0.35),0_8px_24px_-12px_rgb(0_0_0/0.18)] ring-1 ring-foreground/10 outline-none transition-[opacity,transform] duration-200 ease-[var(--ease-out)] data-ending-style:scale-[0.98] data-ending-style:opacity-0 data-starting-style:translate-y-1 data-starting-style:scale-[0.97] data-starting-style:opacity-0",
             className,
           )}
           data-slot="dialog-content"
@@ -75,7 +74,7 @@ function DialogContent({
               data-slot="dialog-close"
               render={
                 <Button
-                  className="absolute top-2 right-2"
+                  className="absolute top-4 right-4 text-muted-foreground hover:text-foreground"
                   size="icon-sm"
                   variant="ghost"
                 />
@@ -94,8 +93,37 @@ function DialogContent({
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
-      className={cn("flex flex-col gap-2", className)}
+      className={cn(
+        "flex shrink-0 flex-col gap-1.5 border-b border-border/70 px-5 py-4 pr-14 sm:px-6 sm:py-5 sm:pr-16",
+        className,
+      )}
       data-slot="dialog-header"
+      {...props}
+    />
+  );
+}
+
+function DialogBody({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      className={cn(
+        "min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6",
+        className,
+      )}
+      data-slot="dialog-body"
+      {...props}
+    />
+  );
+}
+
+function DialogFooter({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      className={cn(
+        "flex shrink-0 flex-col-reverse gap-2 border-t border-border/70 bg-muted/30 px-5 py-3.5 sm:flex-row sm:justify-end sm:px-6",
+        className,
+      )}
+      data-slot="dialog-footer"
       {...props}
     />
   );
@@ -105,7 +133,7 @@ function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
   return (
     <DialogPrimitive.Title
       className={cn(
-        "font-heading text-base leading-none font-medium",
+        "font-heading text-lg leading-6 font-semibold tracking-tight",
         className,
       )}
       data-slot="dialog-title"
@@ -120,7 +148,10 @@ function DialogDescription({
 }: DialogPrimitive.Description.Props) {
   return (
     <DialogPrimitive.Description
-      className={cn("text-sm text-muted-foreground", className)}
+      className={cn(
+        "max-w-md text-sm leading-5 text-muted-foreground",
+        className,
+      )}
       data-slot="dialog-description"
       {...props}
     />
@@ -130,8 +161,10 @@ function DialogDescription({
 export {
   Dialog,
   DialogClose,
+  DialogBody,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogOverlay,
   DialogPortal,
