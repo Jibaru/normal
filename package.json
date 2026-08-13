@@ -15,7 +15,7 @@
     "db:record-gap": "bun run --cwd packages/db db:record-gap",
     "dev": "turbo run dev --filter=@whatsapp-mcp/api --filter=@whatsapp-mcp/web --cache-dir=.turbo/cache",
     "dev:tunnel": "cloudflared tunnel run dev",
-    "deploy:smoke": "bun scripts/deployment-smoke.ts",
+    "deploy:smoke": "bun scripts/mcp-smoke-credentials.ts",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "infra:validate": "bun scripts/validate-infrastructure.ts",
@@ -36,6 +36,7 @@
   },
   "devDependencies": {
     "@ai-hero/sandcastle": "^0.12.0",
+    "@aws-sdk/client-secrets-manager": "3.1099.0",
     "@biomejs/biome": "2.2.0",
     "@types/bun": "^1.3.14",
     "@types/node": "^20",

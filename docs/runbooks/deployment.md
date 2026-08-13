@@ -449,6 +449,15 @@ verify the three secret names before relying on its schedule. The broker retains
 the reviewed emergency assumer in its trust policy for incident recovery, but
 neither authority receives content permissions directly.
 
+Production MCP smoke uses the separate
+`infra/aws/mcp-smoke-credential.template.json` stack. Deploy it with the
+existing GitHub OIDC provider ARN and a distinct emergency recovery assumer,
+then store its outputs as protected environment variables
+`AWS_MCP_SMOKE_CREDENTIAL_ROLE_ARN` and `MCP_SMOKE_REFRESH_SECRET_ID` in both
+`production` and `production-launch-gate`. Store the reviewed public client ID
+as `MCP_SMOKE_CLIENT_ID`. The role trusts only those two exact environment
+subjects and can only describe, read, and create a version of that one secret.
+
 Do not give Cloudflare the administrator, deletion coordinator,
 provider-control, or ordinary operator credentials. Never print the assumed
 credentials or store them in GitHub secrets, repository files, workflow
@@ -617,27 +626,52 @@ private service-binding health before deploying the API. Never rotate
 ## Smoke check
 
 Create a dedicated approved MCP Authorization for deployment automation with
-the minimum discovery scope needed by the release policy. Store its access
-token, the independently generated `SMOKE_CHECK_SECRET`, and the two origins in
-the deployment runner's secret store. Run the single non-interactive check
-after every deployment:
+the minimum discovery scope needed by the release policy. During bootstrap,
+complete consent once, capture the returned refresh credential without printing
+it, and put it into the exact `MCP_SMOKE_REFRESH_SECRET_ID` through a reviewed
+stdin or console operation. Never place it in a command argument, shell history,
+OpenTofu input/state, GitHub secret, workflow output, log, or artifact. Store the
+independently generated `SMOKE_CHECK_SECRET` in GitHub and the API Worker as
+before. The deployment and launch-gate workflows assume the narrow smoke role
+through GitHub OIDC and run the same command:
 
 ```sh
 SMOKE_API_ORIGIN="$(tofu -chdir=infra/compute output -raw api_origin)" \
 SMOKE_WEB_ORIGIN="$(tofu -chdir=infra/compute output -raw web_origin)" \
-SMOKE_MCP_ACCESS_TOKEN="$DEPLOYMENT_MCP_ACCESS_TOKEN" \
+SMOKE_MCP_CLIENT_ID="$MCP_SMOKE_CLIENT_ID" \
+SMOKE_MCP_REFRESH_SECRET_ID="$MCP_SMOKE_REFRESH_SECRET_ID" \
 SMOKE_CHECK_SECRET="$DEPLOYMENT_SMOKE_CHECK_SECRET" \
 bun run deploy:smoke
 ```
+
+The command first reads the current refresh credential and proves durable write
+authority by creating an equivalent secret version before contacting OAuth. It
+then exchanges the one-time credential, persists the descendant, and only then
+uses the ephemeral ten-minute access token for MCP smoke. Both workflows use
+the `production` concurrency group, so only one production deployment, launch
+gate, or credential rotation can operate at a time.
 
 The command validates web and API health, branch-bound schema and restore
 readiness, OAuth metadata, authenticated MCP initialization and discovery, the
 restricted Hyperdrive role, private provider-control safe-read reachability,
 Queue publication and consumption, and an encrypted disposable R2/KMS round
 trip. The Queue consumer removes its object before reporting success; KV status
-expires automatically. Output contains only safe subsystem names. Re-run with
-`bun run deploy:smoke` after remediating the named subsystem; never print or
-pass the access token or smoke secret on a command line.
+expires automatically. Output contains only safe subsystem or credential
+outcomes. Re-run after an ordinary pre-exchange store or network failure. If
+descendant persistence fails after exchange, do not retry the predecessor: it
+may already be consumed. Revoke the affected MCP Authorization, complete fresh
+consent, replace the secret through the bootstrap procedure, and rerun. An
+`invalid or reused` outcome requires the same reauthorization and review of
+CloudTrail plus `oauth.refresh.completed` outcome counts. Never inspect a secret
+version or raw OAuth response as diagnostic evidence, and never print or pass
+the access token, refresh credential, or smoke secret on a command line.
+
+For planned rotation, create and bootstrap a new dedicated MCP Authorization,
+replace the current secret once, verify one workflow run, then revoke the old
+authorization. If the secret is deleted or its current version is unavailable,
+recover it only from a descendant known not to have been presented; otherwise
+reauthorize. The retained emergency assumer exists for this recovery procedure,
+not for routine workflow execution.
 
 Using the designated non-production approved MCP Client, complete consent for
 one smoke-test WhatsApp Connection and `connections:read`, then initialize a

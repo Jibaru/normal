@@ -21,7 +21,7 @@ export const OAUTH_SCOPES = [
 ] as const;
 
 const AUTHORIZATION_REQUEST_TTL_SECONDS = 10 * 60;
-const ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
+const ACCESS_TOKEN_TTL_SECONDS = 10 * 60;
 
 export interface AllowlistedOAuthClient {
   readonly clientClass: string;

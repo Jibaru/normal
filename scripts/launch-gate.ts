@@ -1,4 +1,4 @@
-import { runDeploymentSmoke } from "./deployment-smoke";
+import { runRotatingDeploymentSmoke } from "./mcp-smoke-credentials";
 import { type DrillEvidence, evaluateLaunchGate } from "./recovery-drills";
 
 const required = (name: string) => {
@@ -13,7 +13,7 @@ const approved = (name: string) => required(name) === "approved";
 export const runLaunchGate = async (
   options: {
     readonly readEvidence?: (path: string) => Promise<DrillEvidence>;
-    readonly smoke?: typeof runDeploymentSmoke;
+    readonly smoke?: typeof runRotatingDeploymentSmoke;
     readonly now?: Date;
   } = {},
 ) => {
@@ -26,9 +26,10 @@ export const runLaunchGate = async (
   ]);
   let smokePassed = false;
   try {
-    await (options.smoke ?? runDeploymentSmoke)({
+    await (options.smoke ?? runRotatingDeploymentSmoke)({
       apiOrigin: required("API_ORIGIN"),
-      mcpAccessToken: required("MCP_SMOKE_ACCESS_TOKEN"),
+      clientId: required("MCP_SMOKE_CLIENT_ID"),
+      refreshSecretId: required("MCP_SMOKE_REFRESH_SECRET_ID"),
       smokeSecret: required("SMOKE_CHECK_SECRET"),
       webOrigin: required("WEB_ORIGIN"),
     });

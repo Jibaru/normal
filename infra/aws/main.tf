@@ -58,6 +58,20 @@ variable "break_glass_assumer_arn" {
   type        = string
 }
 
+variable "mcp_smoke_emergency_assumer_arn" {
+  description = "Human recovery authority for the deployment-smoke refresh credential."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "github_oidc_provider_arn" {
+  description = "Existing token.actions.githubusercontent.com OIDC provider ARN."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
 locals {
   bootstrap_principals = [
     var.kms_administrator_assumer_arn,
@@ -93,6 +107,27 @@ resource "aws_cloudformation_stack" "kms" {
   }
 }
 
+resource "aws_cloudformation_stack" "mcp_smoke_credential" {
+  count         = var.deployment_environment == "production" ? 1 : 0
+  name          = "whatsapp-mcp-production-mcp-smoke-credential"
+  capabilities  = ["CAPABILITY_NAMED_IAM"]
+  on_failure    = "ROLLBACK"
+  template_body = file("${path.module}/mcp-smoke-credential.template.json")
+
+  parameters = {
+    EmergencyAssumerArn      = var.mcp_smoke_emergency_assumer_arn
+    GitHubOidcProviderArn    = var.github_oidc_provider_arn
+    GitHubRepositoryIdentity = "cuevaio@83598208/normal@1317490924"
+  }
+
+  lifecycle {
+    precondition {
+      condition     = var.mcp_smoke_emergency_assumer_arn != null && var.github_oidc_provider_arn != null
+      error_message = "Production requires distinct MCP smoke recovery authority and the existing GitHub OIDC provider ARN."
+    }
+  }
+}
+
 output "content_root_key_arn" {
   description = "Configure the API as KMS_CONTENT_ROOT_KEY_ARN."
   value       = aws_cloudformation_stack.kms.outputs["ContentRootKeyArn"]
@@ -114,4 +149,12 @@ output "deletion_coordinator_role_arn" {
 output "break_glass_role_arn" {
   description = "Short-lived, Personal-Account-tag-bound incident decryption role."
   value       = aws_cloudformation_stack.kms.outputs["BreakGlassRoleArn"]
+}
+
+output "mcp_smoke_credential_role_arn" {
+  value = try(aws_cloudformation_stack.mcp_smoke_credential[0].outputs["McpSmokeCredentialRoleArn"], null)
+}
+
+output "mcp_smoke_refresh_secret_id" {
+  value = try(aws_cloudformation_stack.mcp_smoke_credential[0].outputs["McpSmokeRefreshSecretId"], null)
 }

@@ -3,9 +3,14 @@ name: External onboarding launch gate
 on:
   workflow_dispatch:
 
+concurrency:
+  group: production
+  cancel-in-progress: false
+
 permissions:
   actions: read
   contents: read
+  id-token: write
 
 jobs:
   gate:
@@ -31,11 +36,18 @@ jobs:
           path: evidence/quarterly
           workflow_conclusion: success
       - run: bun run inspect:bundles
+      - name: Assume the production MCP smoke credential role
+        uses: aws-actions/configure-aws-credentials@v6.1.0
+        with:
+          aws-region: us-east-1
+          role-session-name: production-launch-gate-mcp-smoke
+          role-to-assume: ${{ vars.AWS_MCP_SMOKE_CREDENTIAL_ROLE_ARN }}
       - run: bun scripts/launch-gate.ts
         env:
           API_ORIGIN: ${{ vars.API_ORIGIN }}
           WEB_ORIGIN: ${{ vars.WEB_ORIGIN }}
-          MCP_SMOKE_ACCESS_TOKEN: ${{ secrets.MCP_SMOKE_ACCESS_TOKEN }}
+          MCP_SMOKE_CLIENT_ID: ${{ vars.MCP_SMOKE_CLIENT_ID }}
+          MCP_SMOKE_REFRESH_SECRET_ID: ${{ vars.MCP_SMOKE_REFRESH_SECRET_ID }}
           SMOKE_CHECK_SECRET: ${{ secrets.SMOKE_CHECK_SECRET }}
           MONTHLY_RECOVERY_EVIDENCE: evidence/monthly/monthly_restore.json
           QUARTERLY_GAME_DAY_EVIDENCE: evidence/quarterly/quarterly_game_day.json

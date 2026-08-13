@@ -32,6 +32,9 @@ Secret examples never contain usable key material.
 | `OAUTH_RESOURCE` | Non-secret | API OAuth provider | Exact protected MCP resource, formed as `OAUTH_ISSUER` plus `/mcp`. |
 | `OAUTH_PROTOCOL_ENCRYPTION_KEY` | Secret | API OAuth provider | Dedicated 32-byte hex AES key for short-lived consent handoff records. Generate with `openssl rand -hex 32`; never reuse another platform key. |
 | `SMOKE_CHECK_SECRET` | Secret | API deployed-smoke boundary and deployment runner | Dedicated 32-byte hex bearer secret. Generate independently with `openssl rand -hex 32`, store it in the Worker and deployment secret stores, and rotate both together. It authorizes only disposable smoke canaries and must never be reused as an OAuth, encryption, or HMAC key. |
+| `MCP_SMOKE_CLIENT_ID` | Public authorization-policy identifier | Deployment and launch-gate workflows | The reviewed public OAuth client ID used by the dedicated deployment-smoke MCP Authorization. Change only with the corresponding client-policy review and reauthorization. |
+| `MCP_SMOKE_REFRESH_SECRET_ID` | Sensitive identifier | Deployment and launch-gate workflows | The exact AWS Secrets Manager secret created by `mcp-smoke-credential.template.json`. Its plaintext is the current one-time refresh credential and is read and replaced only by the environment-bound smoke role. |
+| `AWS_MCP_SMOKE_CREDENTIAL_ROLE_ARN` | Non-secret authority identifier | GitHub Actions OIDC | Exact role allowed to read and rotate only the production smoke refresh secret. Trust is limited to this repository's `production` and `production-launch-gate` protected environments. |
 | `MCP_REQUESTS_PER_MINUTE` | Non-secret approved quota | API MCP resource server | Authoritative per-Personal-Account request reservations allowed in an exact rolling minute. Set the reviewed positive integer through `mcp_requests_per_minute`; there is no production default. |
 | `MCP_REQUESTS_PER_HOUR` | Non-secret approved quota | API MCP resource server | Authoritative per-Personal-Account request reservations allowed in an exact rolling hour. Set the reviewed integer through `mcp_requests_per_hour`; it must be at least the minute value and has no production default. |
 | `READ_MESSAGE_RECORDS_PER_DAY` | Non-secret approved quota | API MCP resource server | Authoritative per-Personal-Account Stored Message records returned per UTC day. Tombstones count and there is no production default. |
@@ -249,10 +252,19 @@ Every refresh rechecks the current Clerk identity mapping, active Personal
 Account, active MCP Authorization, non-revoked family, absolute expiry, and at
 least one still-selected existing WhatsApp Connection through the restricted
 API role. Access tokens remain bound to the exact `/mcp` resource and expire
-after ten minutes. No additional Cloudflare binding or OpenTofu authority is
+after ten minutes. No additional Cloudflare binding or API runtime authority is
 required beyond the existing OAuth KV and API Hyperdrive; migration 0007 grants
 only `SELECT`, `INSERT`, and `UPDATE` on the ledger plus execute access to its
 narrow fixed-search-path bootstrap functions to `whatsapp_api_runtime`.
+
+Deployment automation keeps its current plaintext refresh credential only in
+the purpose-specific AWS Secrets Manager secret. Before refresh, the workflow
+proves that it can durably write that secret; after exchange it persists the
+descendant before invoking MCP and keeps the ten-minute access token in process
+memory only. Deployment and launch gate share the `production` concurrency group
+with production credential rotation, preserving one serialized credential lineage.
+Neither token may enter GitHub secrets, command arguments, outputs, artifacts,
+telemetry, repository state, or OpenTofu state.
 
 Migration 0009 adds an ADR 0023 `mca_` management handle and the consent-time
 MCP Client display name. Historical rows without a stored display name safely

@@ -221,28 +221,3 @@ export const runDeploymentSmoke = async (
   }
   return fail("queue");
 };
-
-const required = (name: string): string => {
-  const value = process.env[name];
-  if (!value)
-    throw new Error(`${name} is required; remediate with: ${remediation}`);
-  return value;
-};
-
-if (import.meta.main) {
-  runDeploymentSmoke({
-    apiOrigin: required("SMOKE_API_ORIGIN"),
-    mcpAccessToken: required("SMOKE_MCP_ACCESS_TOKEN"),
-    smokeSecret: required("SMOKE_CHECK_SECRET"),
-    webOrigin: required("SMOKE_WEB_ORIGIN"),
-  })
-    .then((result) => console.info(JSON.stringify(result)))
-    .catch((error: unknown) => {
-      console.error(
-        error instanceof Error
-          ? error.message
-          : `smoke failed; remediate with: ${remediation}`,
-      );
-      process.exitCode = 1;
-    });
-}

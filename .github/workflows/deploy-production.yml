@@ -118,9 +118,16 @@ jobs:
           VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
 
       - name: Smoke production
+        uses: aws-actions/configure-aws-credentials@v6.1.0
+        with:
+          aws-region: us-east-1
+          role-session-name: production-mcp-smoke
+          role-to-assume: ${{ vars.AWS_MCP_SMOKE_CREDENTIAL_ROLE_ARN }}
+      - name: Rotate credential and smoke production
         run: bun run deploy:smoke
         env:
           SMOKE_API_ORIGIN: ${{ vars.API_ORIGIN }}
           SMOKE_CHECK_SECRET: ${{ secrets.SMOKE_CHECK_SECRET }}
-          SMOKE_MCP_ACCESS_TOKEN: ${{ secrets.MCP_SMOKE_ACCESS_TOKEN }}
+          SMOKE_MCP_CLIENT_ID: ${{ vars.MCP_SMOKE_CLIENT_ID }}
+          SMOKE_MCP_REFRESH_SECRET_ID: ${{ vars.MCP_SMOKE_REFRESH_SECRET_ID }}
           SMOKE_WEB_ORIGIN: ${{ vars.WEB_ORIGIN }}

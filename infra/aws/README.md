@@ -1,7 +1,9 @@
 # AWS encryption infrastructure
 
 `main.tf` is the OpenTofu entry point and manages `kms.template.json` as one
-CloudFormation stack per environment. The template declares two non-exportable,
+CloudFormation stack per environment. In production it also manages the
+purpose-specific `mcp-smoke-credential.template.json` stack. The KMS template
+declares two non-exportable,
 single-Region symmetric KMS keys and six separated IAM authorities. Deploy it
 only in `us-east-1`; both OpenTofu and the template enforce that region.
 
@@ -35,3 +37,8 @@ Both keys enable automatic rotation, use a 30-day pending-deletion window, and
 are retained when the stack is deleted or replaced. See the deployment runbook
 for remote-state requirements, validation, deployment, credential delivery,
 monitoring, and rollback.
+
+The MCP smoke stack creates one retained Secrets Manager secret and one GitHub
+OIDC role restricted to that secret. The secret has no generated value: an
+operator bootstraps the current refresh credential out of band so plaintext
+never enters source, OpenTofu input, plans, or state.

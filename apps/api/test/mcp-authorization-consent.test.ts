@@ -696,7 +696,7 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
     const token = (await tokenResponse.json()) as Record<string, unknown>;
     expect(tokenResponse.status, JSON.stringify(token)).toBe(200);
     expect(token).toMatchObject({
-      expires_in: 3_600,
+      expires_in: 600,
       resource: "https://api.example.test/mcp",
       scope: "connections:read",
       token_type: "bearer",
@@ -770,7 +770,7 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
     const rotated = (await rotatedResponse?.json()) as Record<string, unknown>;
     expect(rotated).toMatchObject({
       access_token: expect.any(String),
-      expires_in: 3_600,
+      expires_in: 600,
       resource: "https://api.example.test/mcp",
       scope: "connections:read",
     });

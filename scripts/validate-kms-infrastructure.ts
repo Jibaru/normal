@@ -171,3 +171,44 @@ assert.deepEqual(broker.Properties?.Policies?.[0]?.PolicyDocument?.Statement, [
 console.info(
   "Content credential broker restricts GitHub OIDC and runtime role authority.",
 );
+
+const smokeTemplate = (await Bun.file(
+  "infra/aws/mcp-smoke-credential.template.json",
+).json()) as {
+  readonly Resources?: Readonly<Record<string, Resource>>;
+};
+const smokeResources = smokeTemplate.Resources;
+assert(smokeResources, "MCP smoke credential template must declare resources");
+assert.equal(
+  smokeResources.McpSmokeRefreshCredential?.Type,
+  "AWS::SecretsManager::Secret",
+);
+assert.equal(smokeResources.McpSmokeCredentialRole?.Type, "AWS::IAM::Role");
+const smokeRole = smokeResources.McpSmokeCredentialRole as Resource & {
+  readonly Properties?: {
+    readonly Policies?: ReadonlyArray<{
+      readonly PolicyDocument?: {
+        readonly Statement?: ReadonlyArray<{
+          readonly Action?: ReadonlyArray<string>;
+          readonly Resource?: unknown;
+        }>;
+      };
+    }>;
+  };
+};
+assert.deepEqual(
+  smokeRole.Properties?.Policies?.[0]?.PolicyDocument?.Statement?.[0],
+  {
+    Action: [
+      "secretsmanager:DescribeSecret",
+      "secretsmanager:GetSecretValue",
+      "secretsmanager:PutSecretValue",
+    ],
+    Effect: "Allow",
+    Resource: { Ref: "McpSmokeRefreshCredential" },
+  },
+);
+
+console.info(
+  "MCP smoke credential infrastructure restricts workflow secret authority.",
+);
