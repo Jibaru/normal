@@ -262,8 +262,22 @@ describe("MCP Authorization repository", () => {
 
   test("uses the restricted role and fails closed for cross-account selections or expiry", async () => {
     expect(await repository.listConnections("user_authorization27")).toEqual([
-      { connectionId: connectionA, numberSuffix: "3456" },
-      { connectionId: connectionB, numberSuffix: "7890" },
+      {
+        accountKey: null,
+        connectionId: connectionA,
+        connectionKey: null,
+        displayName: null,
+        displayNameFallback: "Bright Badger",
+        numberSuffix: "3456",
+      },
+      {
+        accountKey: null,
+        connectionId: connectionB,
+        connectionKey: null,
+        displayName: null,
+        displayNameFallback: "Calm Falcon",
+        numberSuffix: "7890",
+      },
     ]);
     expect(
       await repository.create({

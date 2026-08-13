@@ -2,13 +2,19 @@ import type { OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import type {
   McpAuthorizationScope,
   McpAuthorizationSummary,
+  SelectableWhatsAppConnection,
 } from "@whatsapp-mcp/db/mcp-authorization";
+import { normalizeWhatsAppConnectionName } from "@whatsapp-mcp/domain/whatsapp-connection";
 import { Context, Data, Effect, type Layer } from "effect";
 import {
   HumanIdentity,
   type HumanIdentityService,
 } from "./auth/human-identity";
 import { encodeBase64Url } from "./base64-url";
+import {
+  type EnvelopeEncryption,
+  EnvelopeEncryptionService,
+} from "./encryption/envelope";
 import { hasFailureTag } from "./failure-tag";
 import { noStoreJsonResponse } from "./http-response";
 import {
@@ -57,11 +63,10 @@ export interface McpAuthorizationPersistenceService {
     readonly observedAt: Date;
     readonly oauthSubject: string;
   }) => Effect.Effect<boolean, McpAuthorizationPersistenceError>;
-  readonly listConnections: (clerkUserId: string) => Effect.Effect<
-    ReadonlyArray<{
-      readonly connectionId: string;
-      readonly numberSuffix: string | null;
-    }> | null,
+  readonly listConnections: (
+    clerkUserId: string,
+  ) => Effect.Effect<
+    ReadonlyArray<SelectableWhatsAppConnection> | null,
     McpAuthorizationPersistenceError
   >;
   readonly list: (
@@ -128,6 +133,7 @@ export const McpAuthorizationIdentifiers =
   );
 
 type McpAuthorizationRequirements =
+  | EnvelopeEncryption
   | HumanIdentityService
   | McpAuthorizationClockService
   | McpAuthorizationIdentifiersService
@@ -269,16 +275,66 @@ const inspect = async (
   if (connections.right === null) {
     return jsonResponse({ error: "not_found" }, 404, options.browserOrigin);
   }
+  const selectableConnections = connections.right;
+  const revealed = await runEither(
+    Effect.gen(function* () {
+      const encryption = yield* EnvelopeEncryptionService;
+      return yield* Effect.forEach(
+        selectableConnections,
+        (connection) =>
+          connection.displayNameFallback !== null
+            ? Effect.succeed({
+                connection,
+                label: connection.displayNameFallback,
+              })
+            : connection.accountKey === null ||
+                connection.connectionKey === null ||
+                connection.displayName === null
+              ? Effect.fail(
+                  new Error("invalid WhatsApp Connection name material"),
+                )
+              : encryption
+                  .decrypt({
+                    accountKey: connection.accountKey,
+                    ciphertext: connection.displayName,
+                    connectionKey: connection.connectionKey,
+                    context: {
+                      accountId: connection.accountKey.personalAccountId,
+                      connectionId: connection.connectionKey.connectionId,
+                      entity: "whatsapp-connection",
+                      fieldOrObjectPurpose: "display-name",
+                      recordId: connection.connectionKey.connectionId,
+                    },
+                  })
+                  .pipe(
+                    Effect.map((value) => ({
+                      connection,
+                      label: new TextDecoder("utf-8", {
+                        fatal: true,
+                        ignoreBOM: false,
+                      }).decode(value),
+                    })),
+                  ),
+        { concurrency: 3 },
+      );
+    }),
+    options.layer,
+  );
+  if (
+    revealed._tag === "Left" ||
+    revealed.right.some(
+      ({ label }) => normalizeWhatsAppConnectionName(label) !== label,
+    )
+  ) {
+    return jsonResponse({ error: "unavailable" }, 503, options.browserOrigin);
+  }
   return jsonResponse(
     {
       client: { name: opened.client.clientName },
-      connections: connections.right.map(({ connectionId, numberSuffix }) => ({
-        connection_id: connectionId,
-        label:
-          numberSuffix === null
-            ? `WhatsApp Connection …${connectionId.slice(-6)}`
-            : "WhatsApp",
-        number_suffix: numberSuffix,
+      connections: revealed.right.map(({ connection, label }) => ({
+        connection_id: connection.connectionId,
+        label,
+        number_suffix: connection.numberSuffix,
       })),
       presentation: await presentationFor(body.request, identity.right, opened),
       requested_scopes: opened.request.scope,

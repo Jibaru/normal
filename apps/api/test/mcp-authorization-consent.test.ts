@@ -9,6 +9,7 @@ import {
   InvalidHumanIdentity,
   RecentHumanVerificationRequired,
 } from "../src/auth/human-identity";
+import { EnvelopeEncryptionService } from "../src/encryption/envelope";
 import {
   createMcpAuthorizationConsentHandler,
   McpAuthorizationClock,
@@ -98,7 +99,36 @@ const makeHarness = async (
     isActive: () => Effect.succeed(true),
     list: () => Effect.succeed([]),
     listConnections: () =>
-      Effect.succeed([{ connectionId, numberSuffix: "3456" }] as const),
+      Effect.succeed([
+        {
+          accountKey: {
+            ciphertext: "AQID",
+            keyVersion: 1,
+            kmsKeyId:
+              "arn:aws:kms:us-east-1:111122223333:key/test-content-root",
+            personalAccountId: "10000000-0000-4000-8000-000000000027",
+            version: 1,
+          },
+          connectionId,
+          connectionKey: {
+            accountKeyVersion: 1,
+            ciphertext: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcY",
+            connectionId: "20000000-0000-4000-8000-000000000027",
+            keyVersion: 1,
+            nonce: "AQIDBAUGBwgJCgsM",
+            personalAccountId: "10000000-0000-4000-8000-000000000027",
+            version: 1,
+          },
+          displayName: {
+            ciphertext: "AQID",
+            keyVersion: 1,
+            nonce: "AQIDBAUGBwgJCgsM",
+            version: 1,
+          },
+          displayNameFallback: null,
+          numberSuffix: "3456",
+        },
+      ] as const),
     registerRefreshCredential: () => Effect.succeed(true),
     rotateRefreshCredential: (_input, issue) =>
       Effect.promise(issue).pipe(
@@ -131,6 +161,16 @@ const makeHarness = async (
             }),
     }),
     Layer.succeed(McpAuthorizationPersistence, persistence),
+    Layer.succeed(EnvelopeEncryptionService, {
+      createConnectionKey: () => Effect.die("not used"),
+      createPersonalAccountKey: () => Effect.die("not used"),
+      decrypt: ({ context }) =>
+        context.fieldOrObjectPurpose === "display-name"
+          ? Effect.succeed(new TextEncoder().encode("Personal WhatsApp"))
+          : Effect.die("not used"),
+      decryptMany: () => Effect.die("not used"),
+      encrypt: () => Effect.die("not used"),
+    }),
     Layer.succeed(McpAuthorizationClock, {
       now: Effect.succeed(new Date("2026-07-31T12:00:00.000Z")),
     }),
@@ -262,7 +302,13 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
       client: { name: "Approved MCP Client" },
-      connections: [{ connection_id: connectionId, number_suffix: "3456" }],
+      connections: [
+        {
+          connection_id: connectionId,
+          label: "Personal WhatsApp",
+          number_suffix: "3456",
+        },
+      ],
       requested_scopes: ["connections:read", "messages:send"],
     });
   });
@@ -433,6 +479,13 @@ describe("explicit MCP Authorization consent HTTP boundary", () => {
         Layer.succeed(HumanIdentity, {
           verify: () => Effect.fail(new InvalidHumanIdentity()),
           verifyRecently: () => Effect.fail(new InvalidHumanIdentity()),
+        }),
+        Layer.succeed(EnvelopeEncryptionService, {
+          createConnectionKey: () => Effect.die("not used"),
+          createPersonalAccountKey: () => Effect.die("not used"),
+          decrypt: () => Effect.die("not used"),
+          decryptMany: () => Effect.die("not used"),
+          encrypt: () => Effect.die("not used"),
         }),
         Layer.succeed(McpAuthorizationPersistence, {
           create: () => Effect.succeed(false),

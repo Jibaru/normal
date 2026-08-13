@@ -24,9 +24,43 @@ export const MCP_AUTHORIZATION_SCOPES = [
 export type McpAuthorizationScope = (typeof MCP_AUTHORIZATION_SCOPES)[number];
 
 export interface SelectableWhatsAppConnection {
+  readonly accountKey: {
+    readonly ciphertext: string;
+    readonly keyVersion: number;
+    readonly kmsKeyId: string;
+    readonly personalAccountId: string;
+    readonly version: 1;
+  } | null;
+  readonly connectionKey: {
+    readonly accountKeyVersion: number;
+    readonly ciphertext: string;
+    readonly connectionId: string;
+    readonly keyVersion: number;
+    readonly nonce: string;
+    readonly personalAccountId: string;
+    readonly version: 1;
+  } | null;
   readonly connectionId: string;
+  readonly displayName: {
+    readonly ciphertext: string;
+    readonly keyVersion: number;
+    readonly nonce: string;
+    readonly version: 1;
+  } | null;
+  readonly displayNameFallback: string | null;
   readonly numberSuffix: string | null;
 }
+
+const base64 = (value: Uint8Array): string =>
+  Buffer.from(value).toString("base64");
+
+const bytes = (value: unknown): Uint8Array | null => {
+  if (value instanceof Uint8Array) return value;
+  if (typeof Buffer !== "undefined" && Buffer.isBuffer(value)) {
+    return new Uint8Array(value);
+  }
+  return null;
+};
 
 export interface CreateMcpAuthorizationInput {
   readonly authorizationId: string;
@@ -203,20 +237,102 @@ export const makeMcpAuthorizationRepository = (
         if ((await enterClerkContext(connection, clerkUserId)) === null) {
           return null;
         }
-        const result = await db
-          .select({
-            numberSuffix: whatsappConnectionsInApp.numberSuffix,
-            publicId: whatsappConnectionsInApp.publicId,
-          })
-          .from(whatsappConnectionsInApp)
-          .orderBy(
-            asc(whatsappConnectionsInApp.createdAt),
-            asc(whatsappConnectionsInApp.publicId),
-          );
-        return result.map((row) => ({
-          connectionId: row.publicId,
-          numberSuffix: row.numberSuffix,
-        }));
+        const result = await db.execute<Record<string, unknown>>(sql`
+          SELECT
+            account_keys.ciphertext AS account_key_ciphertext,
+            account_keys.key_version AS account_key_version,
+            account_keys.kms_key_id AS account_kms_key_id,
+            connections.id AS connection_id,
+            connection_keys.account_key_version AS connection_key_account_version,
+            connection_keys.ciphertext AS connection_key_ciphertext,
+            connection_keys.nonce AS connection_key_nonce,
+            connection_keys.key_version AS connection_key_version,
+            connections.display_name_ciphertext AS display_name_ciphertext,
+            connections.display_name_ciphertext_version AS display_name_ciphertext_version,
+            connections.display_name_fallback AS display_name_fallback,
+            connections.display_name_key_version AS display_name_key_version,
+            connections.display_name_nonce AS display_name_nonce,
+            connections.number_suffix AS number_suffix,
+            connections.personal_account_id AS personal_account_id,
+            connections.public_id AS public_id
+          FROM public.whatsapp_connections AS connections
+          LEFT JOIN public.personal_account_key_envelopes AS account_keys
+            ON account_keys.personal_account_id = connections.personal_account_id
+           AND account_keys.unavailable_at IS NULL
+          LEFT JOIN public.whatsapp_connection_key_envelopes AS connection_keys
+            ON connection_keys.personal_account_id = connections.personal_account_id
+           AND connection_keys.whatsapp_connection_id = connections.id
+           AND connection_keys.unavailable_at IS NULL
+          ORDER BY connections.created_at, connections.public_id
+        `);
+        return result.map((row) => {
+          const accountKeyCiphertext = bytes(row.account_key_ciphertext);
+          const connectionKeyCiphertext = bytes(row.connection_key_ciphertext);
+          const connectionKeyNonce = bytes(row.connection_key_nonce);
+          const displayNameCiphertext = bytes(row.display_name_ciphertext);
+          const displayNameNonce = bytes(row.display_name_nonce);
+          const displayNameFallback =
+            typeof row.display_name_fallback === "string"
+              ? row.display_name_fallback
+              : null;
+          const hasEncryptedName = displayNameCiphertext !== null;
+          const hasEncryptionMaterial =
+            accountKeyCiphertext !== null &&
+            typeof row.account_key_version === "number" &&
+            typeof row.account_kms_key_id === "string" &&
+            typeof row.connection_key_account_version === "number" &&
+            connectionKeyCiphertext !== null &&
+            connectionKeyNonce !== null &&
+            typeof row.connection_key_version === "number" &&
+            row.display_name_ciphertext_version === 1 &&
+            typeof row.display_name_key_version === "number" &&
+            displayNameNonce !== null;
+          if (
+            hasEncryptedName === (displayNameFallback !== null) ||
+            (hasEncryptedName && !hasEncryptionMaterial) ||
+            typeof row.connection_id !== "string" ||
+            typeof row.personal_account_id !== "string" ||
+            typeof row.public_id !== "string" ||
+            (row.number_suffix !== null &&
+              typeof row.number_suffix !== "string")
+          ) {
+            throw new Error("invalid persisted WhatsApp Connection name");
+          }
+          return {
+            accountKey: hasEncryptedName
+              ? {
+                  ciphertext: base64(accountKeyCiphertext as Uint8Array),
+                  keyVersion: row.account_key_version as number,
+                  kmsKeyId: row.account_kms_key_id as string,
+                  personalAccountId: row.personal_account_id,
+                  version: 1 as const,
+                }
+              : null,
+            connectionId: row.public_id,
+            connectionKey: hasEncryptedName
+              ? {
+                  accountKeyVersion:
+                    row.connection_key_account_version as number,
+                  ciphertext: base64(connectionKeyCiphertext as Uint8Array),
+                  connectionId: row.connection_id,
+                  keyVersion: row.connection_key_version as number,
+                  nonce: base64(connectionKeyNonce as Uint8Array),
+                  personalAccountId: row.personal_account_id,
+                  version: 1 as const,
+                }
+              : null,
+            displayName: hasEncryptedName
+              ? {
+                  ciphertext: base64(displayNameCiphertext),
+                  keyVersion: row.display_name_key_version as number,
+                  nonce: base64(displayNameNonce as Uint8Array),
+                  version: 1 as const,
+                }
+              : null,
+            displayNameFallback,
+            numberSuffix: row.number_suffix as string | null,
+          };
+        });
       }),
     ),
   list: (clerkUserId, observedAt) =>
