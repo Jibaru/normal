@@ -242,9 +242,10 @@ describe("WhatsApp Recipient Exclusion persistence", () => {
     await database.query(
       `INSERT INTO public.stored_messages(id,personal_account_id,whatsapp_connection_id,conversation_id,
         public_id,message_identity,direction,sent_at,content_type,content_ciphertext_version,
-        content_key_version,content_nonce,content_ciphertext,received_at,webhook_item_identity)
+        content_key_version,content_nonce,content_ciphertext,received_at,created_at,webhook_item_identity)
        VALUES($1,$2,$3,$4,'msg_000000000000000000070',$5,'inbound','2026-07-01T00:00:00Z','image',1,1,
-        decode(repeat('01',12),'hex'),decode(repeat('02',17),'hex'),'2026-07-01T00:00:00Z',$6)`,
+        decode(repeat('01',12),'hex'),decode(repeat('02',17),'hex'),'2026-07-01T00:00:00Z',
+        '2026-07-01T00:00:00Z',$6)`,
       [
         messageId,
         accountId,
@@ -415,9 +416,10 @@ describe("WhatsApp Recipient Exclusion persistence", () => {
     await database.query(
       `INSERT INTO public.stored_messages(id,personal_account_id,whatsapp_connection_id,conversation_id,
         public_id,message_identity,direction,sent_at,content_type,content_ciphertext_version,
-        content_key_version,content_nonce,content_ciphertext,received_at,webhook_item_identity)
+        content_key_version,content_nonce,content_ciphertext,received_at,created_at,webhook_item_identity)
        VALUES($1,$2,$3,$4,'msg_000000000000000000070',$5,'inbound','2026-07-01T00:00:00Z','image',1,1,
-        decode(repeat('01',12),'hex'),decode(repeat('02',17),'hex'),'2026-07-01T00:00:00Z',$6)`,
+        decode(repeat('01',12),'hex'),decode(repeat('02',17),'hex'),'2026-07-01T00:00:00Z',
+        '2026-07-01T00:00:00Z',$6)`,
       [
         messageId,
         accountId,

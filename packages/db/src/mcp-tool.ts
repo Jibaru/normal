@@ -47,9 +47,9 @@ export interface McpAccessAuthorization {
 }
 
 export interface McpToolConnectionRecord {
-  readonly accountKey: AccountKeyEnvelope;
+  readonly accountKey: AccountKeyEnvelope | null;
   readonly connectionId: string;
-  readonly connectionKey: ConnectionKeyEnvelope;
+  readonly connectionKey: ConnectionKeyEnvelope | null;
   readonly displayName: McpToolDirectoryCiphertext | null;
   readonly displayNameFallback: string | null;
   readonly numberLastFour: string | null;
@@ -1257,10 +1257,10 @@ export const makeMcpToolRepository = (
           JOIN public.whatsapp_connections AS connections
             ON connections.personal_account_id = selected.personal_account_id
            AND connections.id = selected.whatsapp_connection_id
-          JOIN public.personal_account_key_envelopes AS account_keys
+          LEFT JOIN public.personal_account_key_envelopes AS account_keys
             ON account_keys.personal_account_id = connections.personal_account_id
            AND account_keys.unavailable_at IS NULL
-          JOIN public.whatsapp_connection_key_envelopes AS connection_keys
+          LEFT JOIN public.whatsapp_connection_key_envelopes AS connection_keys
             ON connection_keys.personal_account_id = connections.personal_account_id
            AND connection_keys.whatsapp_connection_id = connections.id
            AND connection_keys.unavailable_at IS NULL
@@ -1286,17 +1286,20 @@ export const makeMcpToolRepository = (
             typeof row.display_name_fallback === "string"
               ? row.display_name_fallback
               : null;
+          const hasEncryptedName = displayName !== null;
+          const hasEncryptionMaterial =
+            accountCiphertext !== null &&
+            accountVersion !== null &&
+            typeof row.account_kms_key_id === "string" &&
+            connectionKeyCiphertext !== null &&
+            connectionKeyNonce !== null &&
+            connectionKeyVersion !== null &&
+            connectionKeyAccountVersion !== null;
           if (
-            accountCiphertext === null ||
-            accountVersion === null ||
-            typeof row.account_kms_key_id !== "string" ||
             typeof row.personal_account_id !== "string" ||
             typeof row.connection_id !== "string" ||
-            connectionKeyCiphertext === null ||
-            connectionKeyNonce === null ||
-            connectionKeyVersion === null ||
-            connectionKeyAccountVersion === null ||
-            (displayName === null) === (displayNameFallback === null) ||
+            hasEncryptedName === (displayNameFallback !== null) ||
+            (hasEncryptedName && !hasEncryptionMaterial) ||
             (row.number_last_four !== null &&
               (typeof row.number_last_four !== "string" ||
                 !/^[0-9]{4}$/u.test(row.number_last_four))) ||
@@ -1312,23 +1315,27 @@ export const makeMcpToolRepository = (
             throw new Error("invalid persisted MCP WhatsApp Connection");
           }
           return {
-            accountKey: {
-              ciphertext: base64(accountCiphertext),
-              keyVersion: accountVersion,
-              kmsKeyId: row.account_kms_key_id,
-              personalAccountId: row.personal_account_id,
-              version: 1 as const,
-            },
+            accountKey: hasEncryptedName
+              ? {
+                  ciphertext: base64(accountCiphertext as Uint8Array),
+                  keyVersion: accountVersion as number,
+                  kmsKeyId: row.account_kms_key_id as string,
+                  personalAccountId: row.personal_account_id,
+                  version: 1 as const,
+                }
+              : null,
             connectionId: row.connection_id,
-            connectionKey: {
-              accountKeyVersion: connectionKeyAccountVersion,
-              ciphertext: base64(connectionKeyCiphertext),
-              connectionId: row.connection_id,
-              keyVersion: connectionKeyVersion,
-              nonce: base64(connectionKeyNonce),
-              personalAccountId: row.personal_account_id,
-              version: 1 as const,
-            },
+            connectionKey: hasEncryptedName
+              ? {
+                  accountKeyVersion: connectionKeyAccountVersion as number,
+                  ciphertext: base64(connectionKeyCiphertext as Uint8Array),
+                  connectionId: row.connection_id,
+                  keyVersion: connectionKeyVersion as number,
+                  nonce: base64(connectionKeyNonce as Uint8Array),
+                  personalAccountId: row.personal_account_id,
+                  version: 1 as const,
+                }
+              : null,
             displayName,
             displayNameFallback,
             numberLastFour: row.number_last_four,

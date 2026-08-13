@@ -14,8 +14,11 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
+  DialogBody,
+  DialogClose,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -42,6 +45,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -1962,65 +1966,135 @@ export function PublicBoundaryJourney({
                     code in WhatsApp next.
                   </DialogDescription>
                 </DialogHeader>
-                <form className="flex flex-col gap-4" onSubmit={startSetup}>
-                  <FieldGroup>
-                    <Field>
-                      <FieldLabel htmlFor="connection-name">Name</FieldLabel>
-                      <Input
-                        autoComplete="off"
-                        disabled={setupState === "loading" || setupId !== null}
-                        id="connection-name"
-                        maxLength={64}
-                        onChange={(event) => {
-                          stopObserving();
-                          setConnectionName(event.target.value);
-                          setSetupCleanupState(null);
-                          setSetupId(null);
-                          setSetupState("idle");
-                        }}
-                        placeholder="Personal WhatsApp"
-                        required
-                        value={connectionName}
+                <form className="contents" onSubmit={startSetup}>
+                  <DialogBody className="flex flex-col gap-5">
+                    <FieldGroup>
+                      <Field>
+                        <FieldLabel htmlFor="connection-name">Name</FieldLabel>
+                        <Input
+                          autoComplete="off"
+                          disabled={
+                            setupState === "loading" || setupId !== null
+                          }
+                          id="connection-name"
+                          maxLength={64}
+                          onChange={(event) => {
+                            stopObserving();
+                            setConnectionName(event.target.value);
+                            setSetupCleanupState(null);
+                            setSetupId(null);
+                            setSetupState("idle");
+                          }}
+                          placeholder="Personal WhatsApp"
+                          required
+                          value={connectionName}
+                        />
+                        <FieldDescription>
+                          Use a name that helps you identify this WhatsApp
+                          Connection.
+                        </FieldDescription>
+                      </Field>
+                      <Field>
+                        <FieldLabel htmlFor="whatsapp-number">
+                          WhatsApp number
+                        </FieldLabel>
+                        <Input
+                          autoComplete="tel"
+                          disabled={
+                            setupState === "loading" || setupId !== null
+                          }
+                          id="whatsapp-number"
+                          inputMode="tel"
+                          onChange={(event) => {
+                            stopObserving();
+                            setWhatsappNumber(event.target.value);
+                            setSetupCleanupState(null);
+                            setSetupId(null);
+                            setSetupState("idle");
+                          }}
+                          placeholder="+1 555 012 3456"
+                          required
+                          type="tel"
+                          value={whatsappNumber}
+                        />
+                        <FieldDescription>
+                          Include the country code, for example +51. The QR code
+                          expires after 15 minutes.
+                        </FieldDescription>
+                      </Field>
+                    </FieldGroup>
+                    {setupState === "idle" ? null : (
+                      <p
+                        aria-live="polite"
+                        className="rounded-lg bg-muted px-3 py-2.5 text-sm text-muted-foreground"
+                        data-testid="connection-setup-status"
+                      >
+                        {setupState === "loading"
+                          ? "Starting Connection Setup."
+                          : setupState === "unavailable"
+                            ? "Connection Setup is temporarily unavailable."
+                            : setupState === "pending"
+                              ? "Connection Setup started. Preparing your QR code."
+                              : setupState === "replayed"
+                                ? "Connection Setup already started. Preparing your QR code."
+                                : setupState === "qr_available"
+                                  ? "Scan this QR code with WhatsApp."
+                                  : setupState === "connecting"
+                                    ? "Waiting for WhatsApp to finish connecting."
+                                    : setupState === "connected"
+                                      ? "WhatsApp Connection active."
+                                      : setupState === "provisioned"
+                                        ? "Connection Setup is ready."
+                                        : setupState ===
+                                            "provider_capacity_unavailable"
+                                          ? "WhatsApp Connection capacity is temporarily unavailable. Please try again later."
+                                          : setupState === "provisioning_failed"
+                                            ? "Connection Setup could not be prepared."
+                                            : setupState ===
+                                                "provisioning_quarantined"
+                                              ? "Connection Setup needs support review."
+                                              : setupState === "cancelling"
+                                                ? "Cancelling Connection Setup."
+                                                : setupState === "cancelled"
+                                                  ? setupCleanupState ===
+                                                    "complete"
+                                                    ? "Connection Setup cancelled. Provider cleanup is complete."
+                                                    : setupCleanupState ===
+                                                        "retrying"
+                                                      ? "Connection Setup cancelled. Provider cleanup is retrying."
+                                                      : "Connection Setup cancelled. Provider cleanup is in progress."
+                                                  : setupState === "expired"
+                                                    ? setupCleanupState ===
+                                                      "complete"
+                                                      ? "Connection Setup expired. Provider cleanup is complete."
+                                                      : setupCleanupState ===
+                                                          "retrying"
+                                                        ? "Connection Setup expired. Provider cleanup is retrying."
+                                                        : "Connection Setup expired. Provider cleanup is in progress."
+                                                    : setupState ===
+                                                        "number_unavailable"
+                                                      ? "That WhatsApp Number is already in use."
+                                                      : setupState ===
+                                                          "connection_limit_reached"
+                                                        ? "Your Personal Account already has three active setup or Connection slots."
+                                                        : setupState ===
+                                                            "invalid"
+                                                          ? "Enter a valid international WhatsApp Number."
+                                                          : ""}
+                      </p>
+                    )}
+                    {qrImageUrl === null ? null : (
+                      // The object URL is created from the authenticated, non-persisted
+                      // SVG response and is revoked as soon as setup completes.
+                      // biome-ignore lint/performance/noImgElement: QR bytes are already a complete generated SVG.
+                      <img
+                        alt="Scan this WhatsApp QR code"
+                        className="size-64 self-center rounded-lg bg-background p-3 ring-1 ring-border"
+                        src={qrImageUrl}
                       />
-                      <FieldDescription>
-                        Use a name that helps you identify this WhatsApp
-                        Connection.
-                      </FieldDescription>
-                    </Field>
-                    <Field>
-                      <FieldLabel htmlFor="whatsapp-number">
-                        WhatsApp number
-                      </FieldLabel>
-                      <Input
-                        autoComplete="tel"
-                        disabled={setupState === "loading" || setupId !== null}
-                        id="whatsapp-number"
-                        inputMode="tel"
-                        onChange={(event) => {
-                          stopObserving();
-                          setWhatsappNumber(event.target.value);
-                          setSetupCleanupState(null);
-                          setSetupId(null);
-                          setSetupState("idle");
-                        }}
-                        placeholder="+1 555 012 3456"
-                        required
-                        type="tel"
-                        value={whatsappNumber}
-                      />
-                      <FieldDescription>
-                        Include the country code, for example +51. The QR code
-                        expires after 15 minutes.
-                      </FieldDescription>
-                    </Field>
-                  </FieldGroup>
-                  <div className="flex flex-wrap gap-2">
-                    <Button disabled={setupState === "loading"} type="submit">
-                      {setupState === "loading" ? (
-                        <Spinner data-icon="inline-start" />
-                      ) : null}
-                      Continue
-                    </Button>
+                    )}
+                  </DialogBody>
+                  <DialogFooter>
                     {setupId !== null &&
                     (setupState === "pending" ||
                       setupState === "replayed" ||
@@ -2038,72 +2112,13 @@ export function PublicBoundaryJourney({
                         Cancel setup
                       </Button>
                     ) : null}
-                  </div>
-                  {setupState === "idle" ? null : (
-                    <p aria-live="polite" data-testid="connection-setup-status">
-                      {setupState === "loading"
-                        ? "Starting Connection Setup."
-                        : setupState === "unavailable"
-                          ? "Connection Setup is temporarily unavailable."
-                          : setupState === "pending"
-                            ? "Connection Setup started. Preparing your QR code."
-                            : setupState === "replayed"
-                              ? "Connection Setup already started. Preparing your QR code."
-                              : setupState === "qr_available"
-                                ? "Scan this QR code with WhatsApp."
-                                : setupState === "connecting"
-                                  ? "Waiting for WhatsApp to finish connecting."
-                                  : setupState === "connected"
-                                    ? "WhatsApp Connection active."
-                                    : setupState === "provisioned"
-                                      ? "Connection Setup is ready."
-                                      : setupState ===
-                                          "provider_capacity_unavailable"
-                                        ? "WhatsApp Connection capacity is temporarily unavailable. Please try again later."
-                                        : setupState === "provisioning_failed"
-                                          ? "Connection Setup could not be prepared."
-                                          : setupState ===
-                                              "provisioning_quarantined"
-                                            ? "Connection Setup needs support review."
-                                            : setupState === "cancelling"
-                                              ? "Cancelling Connection Setup."
-                                              : setupState === "cancelled"
-                                                ? setupCleanupState ===
-                                                  "complete"
-                                                  ? "Connection Setup cancelled. Provider cleanup is complete."
-                                                  : setupCleanupState ===
-                                                      "retrying"
-                                                    ? "Connection Setup cancelled. Provider cleanup is retrying."
-                                                    : "Connection Setup cancelled. Provider cleanup is in progress."
-                                                : setupState === "expired"
-                                                  ? setupCleanupState ===
-                                                    "complete"
-                                                    ? "Connection Setup expired. Provider cleanup is complete."
-                                                    : setupCleanupState ===
-                                                        "retrying"
-                                                      ? "Connection Setup expired. Provider cleanup is retrying."
-                                                      : "Connection Setup expired. Provider cleanup is in progress."
-                                                  : setupState ===
-                                                      "number_unavailable"
-                                                    ? "That WhatsApp Number is already in use."
-                                                    : setupState ===
-                                                        "connection_limit_reached"
-                                                      ? "Your Personal Account already has three active setup or Connection slots."
-                                                      : setupState === "invalid"
-                                                        ? "Enter a valid international WhatsApp Number."
-                                                        : ""}
-                    </p>
-                  )}
-                  {qrImageUrl === null ? null : (
-                    // The object URL is created from the authenticated, non-persisted
-                    // SVG response and is revoked as soon as setup completes.
-                    // biome-ignore lint/performance/noImgElement: QR bytes are already a complete generated SVG.
-                    <img
-                      alt="Scan this WhatsApp QR code"
-                      className="size-64 self-center rounded-lg bg-background p-3"
-                      src={qrImageUrl}
-                    />
-                  )}
+                    <Button disabled={setupState === "loading"} type="submit">
+                      {setupState === "loading" ? (
+                        <Spinner data-icon="inline-start" />
+                      ) : null}
+                      Continue
+                    </Button>
+                  </DialogFooter>
                 </form>
               </DialogContent>
             </Dialog>
@@ -2224,7 +2239,7 @@ export function PublicBoundaryJourney({
                           keep its message history.
                         </DialogDescription>
                       </DialogHeader>
-                      <div className="flex flex-col gap-4">
+                      <DialogBody className="flex flex-col gap-6">
                         <Field>
                           <FieldLabel htmlFor={`name-${connection.id}`}>
                             Name
@@ -2246,6 +2261,7 @@ export function PublicBoundaryJourney({
                             }
                           />
                           <Button
+                            className="self-end"
                             disabled={
                               savingNames.has(connection.id) ||
                               (nameDrafts[connection.id] ??
@@ -2256,129 +2272,137 @@ export function PublicBoundaryJourney({
                             }
                             onClick={() => void renameConnection(connection)}
                             type="button"
-                            variant="outline"
                           >
                             Save name
                           </Button>
-                          <p
-                            aria-live="polite"
-                            className="text-sm text-muted-foreground"
-                          >
-                            {nameStatus[connection.id] ?? ""}
-                          </p>
+                          {nameStatus[connection.id] ? (
+                            <p
+                              aria-live="polite"
+                              className="text-sm text-muted-foreground"
+                            >
+                              {nameStatus[connection.id]}
+                            </p>
+                          ) : null}
                         </Field>
-                        <Field>
-                          <FieldLabel htmlFor={`retention-${connection.id}`}>
-                            Keep message history for
-                          </FieldLabel>
-                          <Select
-                            items={[
-                              ...connection.retentionOptions.map((days) => ({
-                                label: `${days} days`,
-                                value: String(days),
-                              })),
-                              {
-                                label: "Retain until Connection Deletion",
-                                value: "until-deletion",
-                              },
-                            ]}
-                            onValueChange={(value) => {
-                              if (value === null) return;
-                              setRetentionDrafts((current) => ({
-                                ...current,
-                                [connection.id]: value,
-                              }));
-                              setRetentionAcknowledgements((current) => ({
-                                ...current,
-                                [connection.id]: false,
-                              }));
-                            }}
-                            value={
-                              retentionDrafts[connection.id] ??
-                              (connection.retentionDays === null
-                                ? "until-deletion"
-                                : String(connection.retentionDays))
-                            }
-                          >
-                            <SelectTrigger id={`retention-${connection.id}`}>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectGroup>
-                                {connection.retentionOptions.map((days) => (
-                                  <SelectItem key={days} value={String(days)}>
-                                    {days} days
-                                  </SelectItem>
-                                ))}
-                                <SelectItem value="until-deletion">
-                                  Retain until Connection Deletion
-                                </SelectItem>
-                              </SelectGroup>
-                            </SelectContent>
-                          </Select>
-                        </Field>
-                        {(() => {
-                          const draft = retentionDrafts[connection.id];
-                          const next =
-                            draft === "until-deletion"
-                              ? null
-                              : Number(draft ?? connection.retentionDays);
-                          const broadens =
-                            next === null ||
-                            (connection.retentionDays !== null &&
-                              next > connection.retentionDays);
-                          return broadens ? (
-                            <Field orientation="horizontal">
-                              <Checkbox
-                                checked={
-                                  retentionAcknowledgements[connection.id] ===
-                                  true
-                                }
-                                id={`retention-acknowledgement-${connection.id}`}
-                                onCheckedChange={(checked) =>
-                                  setRetentionAcknowledgements((current) => ({
-                                    ...current,
-                                    [connection.id]: checked,
-                                  }))
-                                }
-                              />
-                              <FieldLabel
-                                htmlFor={`retention-acknowledgement-${connection.id}`}
+                        <Separator />
+                        <FieldGroup>
+                          <Field>
+                            <FieldLabel htmlFor={`retention-${connection.id}`}>
+                              Keep message history for
+                            </FieldLabel>
+                            <Select
+                              items={[
+                                ...connection.retentionOptions.map((days) => ({
+                                  label: `${days} days`,
+                                  value: String(days),
+                                })),
+                                {
+                                  label: "Retain until Connection Deletion",
+                                  value: "until-deletion",
+                                },
+                              ]}
+                              onValueChange={(value) => {
+                                if (value === null) return;
+                                setRetentionDrafts((current) => ({
+                                  ...current,
+                                  [connection.id]: value,
+                                }));
+                                setRetentionAcknowledgements((current) => ({
+                                  ...current,
+                                  [connection.id]: false,
+                                }));
+                              }}
+                              value={
+                                retentionDrafts[connection.id] ??
+                                (connection.retentionDays === null
+                                  ? "until-deletion"
+                                  : String(connection.retentionDays))
+                              }
+                            >
+                              <SelectTrigger
+                                className="w-full"
+                                id={`retention-${connection.id}`}
                               >
-                                I explicitly choose to retain message content
-                                for longer.
-                              </FieldLabel>
-                            </Field>
-                          ) : null;
-                        })()}
-                        <Button
-                          disabled={(() => {
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectGroup>
+                                  {connection.retentionOptions.map((days) => (
+                                    <SelectItem key={days} value={String(days)}>
+                                      {days} days
+                                    </SelectItem>
+                                  ))}
+                                  <SelectItem value="until-deletion">
+                                    Retain until Connection Deletion
+                                  </SelectItem>
+                                </SelectGroup>
+                              </SelectContent>
+                            </Select>
+                          </Field>
+                          {(() => {
                             const draft = retentionDrafts[connection.id];
                             const next =
                               draft === "until-deletion"
                                 ? null
                                 : Number(draft ?? connection.retentionDays);
-                            return (
-                              (next === null ||
-                                (connection.retentionDays !== null &&
-                                  next > connection.retentionDays)) &&
-                              retentionAcknowledgements[connection.id] !== true
-                            );
+                            const broadens =
+                              next === null ||
+                              (connection.retentionDays !== null &&
+                                next > connection.retentionDays);
+                            return broadens ? (
+                              <Field orientation="horizontal">
+                                <Checkbox
+                                  checked={
+                                    retentionAcknowledgements[connection.id] ===
+                                    true
+                                  }
+                                  id={`retention-acknowledgement-${connection.id}`}
+                                  onCheckedChange={(checked) =>
+                                    setRetentionAcknowledgements((current) => ({
+                                      ...current,
+                                      [connection.id]: checked,
+                                    }))
+                                  }
+                                />
+                                <FieldLabel
+                                  htmlFor={`retention-acknowledgement-${connection.id}`}
+                                >
+                                  I explicitly choose to retain message content
+                                  for longer.
+                                </FieldLabel>
+                              </Field>
+                            ) : null;
                           })()}
-                          onClick={() => void updateRetention(connection)}
-                          type="button"
-                          variant="outline"
-                        >
-                          Save changes
-                        </Button>
-                        <p
-                          aria-live="polite"
-                          className="text-sm text-muted-foreground"
-                        >
-                          {retentionStatus[connection.id] ??
-                            `Current policy: ${connection.retentionDays === null ? "retain until Connection Deletion" : `${connection.retentionDays} days`}.`}
-                        </p>
-                      </div>
+                          <Button
+                            className="self-end"
+                            disabled={(() => {
+                              const draft = retentionDrafts[connection.id];
+                              const next =
+                                draft === "until-deletion"
+                                  ? null
+                                  : Number(draft ?? connection.retentionDays);
+                              return (
+                                (next === null ||
+                                  (connection.retentionDays !== null &&
+                                    next > connection.retentionDays)) &&
+                                retentionAcknowledgements[connection.id] !==
+                                  true
+                              );
+                            })()}
+                            onClick={() => void updateRetention(connection)}
+                            type="button"
+                          >
+                            Save changes
+                          </Button>
+                          <p
+                            aria-live="polite"
+                            className="text-sm text-muted-foreground"
+                          >
+                            {retentionStatus[connection.id] ??
+                              `Current policy: ${connection.retentionDays === null ? "retain until Connection Deletion" : `${connection.retentionDays} days`}.`}
+                          </p>
+                        </FieldGroup>
+                      </DialogBody>
                     </DialogContent>
                   </Dialog>
                   <Dialog
@@ -2396,12 +2420,36 @@ export function PublicBoundaryJourney({
                           QR code in WhatsApp.
                         </DialogDescription>
                       </DialogHeader>
-                      <div className="flex flex-col gap-4">
-                        <p className="text-sm text-muted-foreground">
+                      <DialogBody className="flex flex-col gap-5">
+                        <p className="rounded-lg bg-muted px-3 py-2.5 text-sm leading-5 text-muted-foreground">
                           New side effects remain blocked until this WhatsApp
                           Connection recovers. Retained history remains
                           available under its Message Retention Policy.
                         </p>
+                        {connectionLifecycleStatus[connection.id] ? (
+                          <p
+                            aria-live="polite"
+                            className="text-sm text-muted-foreground"
+                            data-testid="connection-lifecycle-status"
+                          >
+                            {connectionLifecycleStatus[connection.id]}
+                          </p>
+                        ) : null}
+                        {reconnectQr?.connectionId === connection.id ? (
+                          // The object URL contains only the authenticated ephemeral
+                          // provider QR response and is revoked after reconciliation.
+                          // biome-ignore lint/performance/noImgElement: QR bytes are already a complete generated SVG.
+                          <img
+                            alt="Reconnect this WhatsApp Connection QR code"
+                            className="size-64 self-center rounded-lg bg-background p-3 ring-1 ring-border"
+                            src={reconnectQr.url}
+                          />
+                        ) : null}
+                      </DialogBody>
+                      <DialogFooter>
+                        <DialogClose render={<Button variant="outline" />}>
+                          Cancel
+                        </DialogClose>
                         <Button
                           aria-label={`Reconnect WhatsApp Connection ending ${connection.numberSuffix}`}
                           disabled={connectionLifecycleAction !== null}
@@ -2415,24 +2463,7 @@ export function PublicBoundaryJourney({
                           ) : null}
                           Reconnect
                         </Button>
-                        <p
-                          aria-live="polite"
-                          className="text-sm text-muted-foreground"
-                          data-testid="connection-lifecycle-status"
-                        >
-                          {connectionLifecycleStatus[connection.id] ?? ""}
-                        </p>
-                        {reconnectQr?.connectionId === connection.id ? (
-                          // The object URL contains only the authenticated ephemeral
-                          // provider QR response and is revoked after reconciliation.
-                          // biome-ignore lint/performance/noImgElement: QR bytes are already a complete generated SVG.
-                          <img
-                            alt="Reconnect this WhatsApp Connection QR code"
-                            className="size-64 self-center rounded-lg bg-background p-3"
-                            src={reconnectQr.url}
-                          />
-                        ) : null}
-                      </div>
+                      </DialogFooter>
                     </DialogContent>
                   </Dialog>
                 </li>

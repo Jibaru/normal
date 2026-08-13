@@ -6,7 +6,6 @@ import type {
 import { Effect } from "effect";
 import {
   contactSearchIndex,
-  decryptDirectoryString,
   importDirectoryIndexKey,
 } from "./directory-privacy";
 import type { EnvelopeEncryption } from "./encryption/envelope";
@@ -123,46 +122,99 @@ const openGroupName = (input: {
           Effect.mapError(persistenceError),
         );
 
-const openContact = (input: {
+const openContacts = (input: {
   readonly encryption: EnvelopeEncryption;
   readonly material: RecipientDirectoryMaterial;
-  readonly recipient: EncryptedRecipientRecord;
-}) =>
-  Effect.all(
-    [
-      decryptDirectoryString({
-        accountKey: input.material.accountKey,
-        ciphertext: input.recipient.displayNameCiphertext,
-        connectionKey: input.material.connectionKey,
-        encryption: input.encryption,
-        field: "display-name",
-        providerIdentityIndex: input.recipient.recordId,
-      }),
-      decryptDirectoryString({
-        accountKey: input.material.accountKey,
-        ciphertext: input.recipient.phoneCiphertext,
-        connectionKey: input.material.connectionKey,
-        encryption: input.encryption,
-        field: "phone-number",
-        providerIdentityIndex: input.recipient.recordId,
-      }),
-    ],
-    { concurrency: "unbounded" },
-  ).pipe(
-    Effect.mapError(persistenceError),
-    Effect.flatMap(([displayName, phoneNumber]) =>
-      phoneNumber !== null && !/^\+[1-9]\d{6,14}$/u.test(phoneNumber)
-        ? Effect.fail(persistenceError())
-        : Effect.succeed({
-            displayName,
-            excluded: input.recipient.excluded,
-            // Only the final four digits ever leave the API for a direct
-            // recipient.
-            phoneLastFour: phoneNumber === null ? null : phoneNumber.slice(-4),
-            publicId: input.recipient.publicId,
-          } satisfies OpenRecipientRecord),
-    ),
-  );
+  readonly recipients: ReadonlyArray<EncryptedRecipientRecord>;
+}) => {
+  const encrypted: Array<{
+    readonly ciphertext: NonNullable<
+      EncryptedRecipientRecord["displayNameCiphertext"]
+    >;
+    readonly context: {
+      readonly accountId: string;
+      readonly connectionId: string;
+      readonly entity: string;
+      readonly fieldOrObjectPurpose: string;
+      readonly recordId: string;
+    };
+  }> = [];
+  const indexes = input.recipients.map((recipient) => {
+    const add = (
+      ciphertext: EncryptedRecipientRecord["displayNameCiphertext"],
+      fieldOrObjectPurpose: "display-name" | "phone-number",
+    ) => {
+      if (ciphertext === null) return null;
+      encrypted.push({
+        ciphertext,
+        context: {
+          accountId: input.material.personalAccountId,
+          connectionId: input.material.whatsappConnectionId,
+          entity: "directory-contact",
+          fieldOrObjectPurpose,
+          recordId: recipient.recordId,
+        },
+      });
+      return encrypted.length - 1;
+    };
+    return {
+      displayName: add(recipient.displayNameCiphertext, "display-name"),
+      phoneNumber: add(recipient.phoneCiphertext, "phone-number"),
+    };
+  });
+
+  return input.encryption
+    .decryptMany({
+      accountKey: input.material.accountKey,
+      connectionKey: input.material.connectionKey,
+      items: encrypted,
+    })
+    .pipe(
+      Effect.mapError(persistenceError),
+      Effect.flatMap((plaintexts) =>
+        Effect.acquireUseRelease(
+          Effect.succeed(plaintexts),
+          (values) =>
+            Effect.try({
+              catch: persistenceError,
+              try: () =>
+                input.recipients.map((recipient, index) => {
+                  const selected = indexes[index];
+                  if (selected === undefined)
+                    throw new Error("missing recipient");
+                  const displayName =
+                    selected.displayName === null
+                      ? null
+                      : decoder.decode(values[selected.displayName]);
+                  const phoneNumber =
+                    selected.phoneNumber === null
+                      ? null
+                      : decoder.decode(values[selected.phoneNumber]);
+                  if (
+                    phoneNumber !== null &&
+                    !/^\+[1-9]\d{6,14}$/u.test(phoneNumber)
+                  ) {
+                    throw new Error("invalid recipient phone number");
+                  }
+                  return {
+                    displayName,
+                    excluded: recipient.excluded,
+                    // Only the final four digits ever leave the API for a
+                    // direct recipient.
+                    phoneLastFour:
+                      phoneNumber === null ? null : phoneNumber.slice(-4),
+                    publicId: recipient.publicId,
+                  } satisfies OpenRecipientRecord;
+                }),
+            }),
+          (values) =>
+            Effect.sync(() => {
+              for (const value of values) value.fill(0);
+            }),
+        ),
+      ),
+    );
+};
 
 export const openRecipientRecords = (input: {
   readonly encryption: EnvelopeEncryption;
@@ -173,16 +225,12 @@ export const openRecipientRecords = (input: {
   ReadonlyArray<OpenRecipientRecord>,
   RecipientExclusionPersistenceError
 > =>
-  Effect.forEach(
-    input.recipients,
-    (recipient) =>
-      input.kind === "contact"
-        ? openContact({
-            encryption: input.encryption,
-            material: input.material,
-            recipient,
-          })
-        : openGroupName({
+  input.kind === "contact"
+    ? openContacts(input)
+    : Effect.forEach(
+        input.recipients,
+        (recipient) =>
+          openGroupName({
             encryption: input.encryption,
             material: input.material,
             recipient,
@@ -195,5 +243,5 @@ export const openRecipientRecords = (input: {
               publicId: recipient.publicId,
             })),
           ),
-    { concurrency: 16 },
-  );
+        { concurrency: 16 },
+      );
