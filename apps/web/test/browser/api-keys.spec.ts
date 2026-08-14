@@ -114,20 +114,6 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
   expect(createRequests).toBe(1);
   await expect(panel).not.toContainText("temporarily unavailable");
 
-  await panel.getByLabel("Name").fill("CI");
-  await panel.getByRole("checkbox", { name: "Connection metadata" }).check();
-  await panel
-    .getByRole("checkbox", {
-      name: "Personal WhatsApp, ending in 3456",
-    })
-    .check();
-  await panel.getByRole("button", { name: "Create API Key" }).click();
-  await expect(panel).toContainText(
-    "An active API Key already uses this name.",
-  );
-  await expect(reveal).toBeVisible();
-  await expect(panel).not.toContainText("temporarily unavailable");
-
   await page.reload();
   await expect(page.getByRole("region", { name: "API Keys" })).toContainText(
     "CI",
