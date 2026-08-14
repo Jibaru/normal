@@ -152,12 +152,19 @@ export function ApiKeysPanel({
   const [creating, setCreating] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (options?: {
+    readonly preserveReveal?: boolean;
+  }) => {
+    const failClosed = () => {
+      if (options?.preserveReveal !== true) {
+        setState("unavailable");
+      }
+    };
     try {
       if (!isLoaded) return;
       const token = await getToken({ template: clerkJwtTemplate });
       if (!token) {
-        setState("unavailable");
+        failClosed();
         return;
       }
       const [keysResponse, connectionsResponse] = await Promise.all([
@@ -180,14 +187,14 @@ export function ApiKeysPanel({
         !connectionsResponse.ok ||
         decodedConnections === null
       ) {
-        setState("unavailable");
+        failClosed();
         return;
       }
       setKeys(decodedKeys);
       setConnections(decodedConnections);
       setState("ready");
     } catch {
-      setState("unavailable");
+      failClosed();
     }
   }, [
     apiKeysEndpoint,
@@ -242,7 +249,8 @@ export function ApiKeysPanel({
       setPermissions([]);
       setSelectedConnections([]);
       setExpiresAt("");
-      await load();
+      setState("ready");
+      await load({ preserveReveal: true });
     } catch {
       setState("unavailable");
     } finally {

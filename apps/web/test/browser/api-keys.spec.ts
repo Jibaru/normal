@@ -11,6 +11,7 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
   request,
 }) => {
   let createRequests = 0;
+  let failKeysListAfterCreate = true;
   await page.route("https://api.example.test/**", async (route) => {
     const original = route.request();
     const requestPath = new URL(original.url()).pathname;
@@ -43,6 +44,20 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
     }
     if (requestPath === "/v1/api-keys" && original.method() === "POST") {
       createRequests += 1;
+    }
+    if (
+      requestPath === "/v1/api-keys" &&
+      original.method() === "GET" &&
+      createRequests > 0 &&
+      failKeysListAfterCreate
+    ) {
+      failKeysListAfterCreate = false;
+      await route.fulfill({
+        body: JSON.stringify({ error: "unavailable" }),
+        contentType: "application/json",
+        status: 503,
+      });
+      return;
     }
     const localUrl = new URL(original.url());
     localUrl.protocol = "http:";
@@ -97,6 +112,7 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
     /^normal_apk_[A-Za-z0-9_-]{21}\.[A-Za-z0-9_-]{43}$/u,
   );
   expect(createRequests).toBe(1);
+  await expect(panel).not.toContainText("temporarily unavailable");
 
   await page.reload();
   await expect(page.getByRole("region", { name: "API Keys" })).toContainText(
