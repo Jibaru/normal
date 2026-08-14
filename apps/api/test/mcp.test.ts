@@ -1568,7 +1568,7 @@ describe("stateless MCP list_groups boundary", () => {
 
   test("distinguishes group recipient handles from conversation handles in discovery", async () => {
     const harness = makeHarness({
-      scopes: ["directory:read", "messages:read"],
+      scopes: ["directory:read", "messages:read", "messages:send"],
     });
     const response = await harness.handler(
       jsonRpcRequest("tools/list"),
@@ -1596,6 +1596,9 @@ describe("stateless MCP list_groups boundary", () => {
     );
     expect(descriptions.list_contacts).toContain(
       "do not use search_messages to locate a person",
+    );
+    expect(descriptions.send_text_message).toContain(
+      "idempotency_key of exactly 21 characters",
     );
   });
 

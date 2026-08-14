@@ -552,6 +552,8 @@ const readMessagesDescription =
   "Read a chronological page of one observed WhatsApp Conversation. Get conversation_id from list_contacts when the User names a person, or from list_chats when browsing recent conversations. The returned recipient_id can be passed directly to send_text_message without another contact lookup.";
 const listContactsDescription =
   "Find active contacts in one selected WhatsApp Connection. When the User names a person, call this tool with its search input; do not use search_messages to locate a person. contact_id can be passed to send_text_message. conversation_id can be passed to read_messages when messages:read is granted and retained activity exists; otherwise it is null.";
+const sendTextMessageDescription =
+  "Send exact text once to a current WhatsApp Recipient after Client Confirmation. Use recipient_id already returned by list_contacts, list_groups, list_chats, or read_messages; do not look up the same recipient again. Generate a fresh idempotency_key of exactly 21 characters matching [A-Za-z0-9_-]{21}; reuse that exact key only to retry the same connection, recipient, and text.";
 const searchMessagesDescription =
   "Search exact normalized words in retained Stored Message text and captions within one selected WhatsApp Connection. Results are newest first, not relevance ranked.";
 const ListGroupsInput = z
@@ -3408,8 +3410,7 @@ export const createMcpRequestHandler =
             idempotentHint: true,
             openWorldHint: true,
           },
-          description:
-            "Send exact text once to a current WhatsApp Recipient after Client Confirmation. Use recipient_id already returned by list_contacts, list_groups, list_chats, or read_messages; do not look up the same recipient again.",
+          description: sendTextMessageDescription,
           inputSchema: SendTextMessageInput,
           outputSchema: SendTextMessageOutputSchema,
           title: "Send WhatsApp Text Message",
@@ -3648,8 +3649,7 @@ export const createMcpRequestHandler =
               idempotentHint: true,
               openWorldHint: true,
             },
-            description:
-              "Send exact text once to a current WhatsApp Recipient after Client Confirmation.",
+            description: sendTextMessageDescription,
             inputSchema: z.toJSONSchema(SendTextMessageInput, {
               target: "draft-2020-12",
             }),
