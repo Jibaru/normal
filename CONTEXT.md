@@ -48,6 +48,10 @@ _Avoid_: User provider account, tenant
 An internal secret used to provision or operate a WhatsApp Connection. Provider API Credentials are never exposed to Users or MCP Clients.
 _Avoid_: User API key
 
+**API Key**:
+A User-created, revocable credential for a server-side automation to call Normal's public API on behalf of one Personal Account. Each API Key grants an explicitly selected set of WhatsApp Connections and independently selected permissions for connection metadata, the WhatsApp Directory, Stored Messages, and outbound sends; Connections added later are not included automatically.
+_Avoid_: Provider API Credential, MCP Authorization, browser token
+
 **MCP Client**:
 An external AI application that invokes the platform's WhatsApp tools on a User's behalf.
 _Avoid_: Agent, integration
@@ -72,13 +76,13 @@ _Avoid_: Stored Message, 90-day send history
 The platform's best known state of a Send Operation: processing locally, accepted by the provider, sent onward but not known delivered, delivered, read, failed according to current evidence, or unknown because provider acceptance is ambiguous. Send Status converges by evidence strength rather than event arrival order; accepted and sent do not mean delivered, and provider-specific status names are not Send Statuses.
 _Avoid_: Provider status, guaranteed delivery
 
-**Tool Call Log**:
-The User-visible audit history of tool invocations and protected resource reads made through MCP Authorizations and their outcomes. It contains operational metadata and opaque references, not copied message content, media, credentials, full phone numbers, or provider payloads, and is retained for 90 days.
-_Avoid_: Approval queue
+**Activity Log**:
+The User-visible audit history of protected operations made through MCP Authorizations and API Keys and their outcomes. It identifies the access channel and responsible MCP Client or API Key, contains operational metadata and opaque references rather than copied message content, media, credentials, full phone numbers, or provider payloads, and is retained for 90 days.
+_Avoid_: Tool Call Log, approval queue
 
 **Security Record**:
-An unlinkable record derived from a security-relevant authorization, tool, or protected-resource event during Personal Account Deletion. It retains only event category, allowlisted client class, outcome, counts, timing, and latency until the source event's original 90-day expiry, with no User, account, connection, authorization, network, message, contact, or provider reference.
-_Avoid_: Tool Call Log, account history
+An unlinkable record derived from a security-relevant authorization or protected-operation event during Personal Account Deletion. It retains only event category, allowlisted client class, outcome, counts, timing, and latency until the source event's original 90-day expiry, with no User, account, connection, authorization, network, message, contact, or provider reference.
+_Avoid_: Activity Log, account history
 
 **WhatsApp Conversation**:
 A direct chat or group chat within one WhatsApp Connection.
