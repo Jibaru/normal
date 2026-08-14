@@ -1013,6 +1013,31 @@ const parseReservedStarts = (
   return starts as Array<Date>;
 };
 
+const lockAccountAndListReservedStarts = async (
+  connection: McpToolConnection,
+  personalAccountId: string,
+  observedAt: Date,
+) => {
+  const db = makeDatabase(connection);
+  await db
+    .select({ id: personalAccountsInApp.id })
+    .from(personalAccountsInApp)
+    .where(eq(personalAccountsInApp.id, personalAccountId))
+    .for("update");
+  return db.execute<{
+    api_key_id: unknown;
+    started_at: unknown;
+  }>(sql`
+    SELECT logs.started_at, logs.api_key_id
+    FROM public.tool_call_logs logs
+    WHERE logs.personal_account_id = ${personalAccountId}
+      AND logs.quota_reserved = true
+      AND logs.started_at > ${observedAt}::timestamptz - interval '1 hour'
+      AND logs.started_at <= ${observedAt}
+    ORDER BY logs.started_at, logs.id
+  `);
+};
+
 const requiredScope = (toolName: McpToolName): McpAuthorizationScope =>
   toolName === "list_connections"
     ? "connections:read"
@@ -1189,7 +1214,6 @@ export const makeMcpToolRepository = (
   beginToolCall: (input) =>
     provider.withConnection((connection) =>
       withTransaction(connection, async () => {
-        const db = makeDatabase(connection);
         if (
           !Number.isSafeInteger(input.minuteLimit) ||
           input.minuteLimit < 1 ||
@@ -1232,21 +1256,11 @@ export const makeMcpToolRepository = (
           };
         }
 
-        const recent = await db.execute<{ started_at: unknown }>(sql`
-          WITH locked_account AS MATERIALIZED (
-            SELECT accounts.id
-            FROM public.personal_accounts accounts
-            WHERE accounts.id = ${personalAccountId}
-            FOR UPDATE
-          )
-          SELECT logs.started_at
-          FROM public.tool_call_logs logs
-          JOIN locked_account ON locked_account.id = logs.personal_account_id
-          WHERE logs.quota_reserved = true
-            AND logs.started_at > ${input.observedAt}::timestamptz - interval '1 hour'
-            AND logs.started_at <= ${input.observedAt}
-          ORDER BY logs.started_at, logs.id
-        `);
+        const recent = await lockAccountAndListReservedStarts(
+          connection,
+          personalAccountId,
+          input.observedAt,
+        );
         const starts = parseReservedStarts(recent);
         const resetsAt = requestQuotaExhausted(
           starts,
@@ -1318,7 +1332,6 @@ export const makeMcpToolRepository = (
         })
       : provider.withConnection((connection) =>
           withTransaction(connection, async () => {
-            const db = makeDatabase(connection);
             if (
               !Number.isSafeInteger(input.minuteLimit) ||
               input.minuteLimit < 1 ||
@@ -1351,24 +1364,11 @@ export const makeMcpToolRepository = (
               };
             }
 
-            const recent = await db.execute<{
-              api_key_id: unknown;
-              started_at: unknown;
-            }>(sql`
-              WITH locked_account AS MATERIALIZED (
-                SELECT accounts.id
-                FROM public.personal_accounts accounts
-                WHERE accounts.id = ${personalAccountId}
-                FOR UPDATE
-              )
-              SELECT logs.started_at, logs.api_key_id
-              FROM public.tool_call_logs logs
-              JOIN locked_account ON locked_account.id = logs.personal_account_id
-              WHERE logs.quota_reserved = true
-                AND logs.started_at > ${input.observedAt}::timestamptz - interval '1 hour'
-                AND logs.started_at <= ${input.observedAt}
-              ORDER BY logs.started_at, logs.id
-            `);
+            const recent = await lockAccountAndListReservedStarts(
+              connection,
+              personalAccountId,
+              input.observedAt,
+            );
             const accountStarts = parseReservedStarts(recent);
             const keyStarts = parseReservedStarts(
               recent.filter((row) => row.api_key_id === input.apiKey.grantId),
