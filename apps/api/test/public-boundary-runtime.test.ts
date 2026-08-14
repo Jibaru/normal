@@ -413,6 +413,7 @@ describe("public-boundary Worker harness", () => {
       tool_call_logs: [
         {
           capability: "list_connections",
+          channel: "mcp",
           client: { id: "approved-client", name: "Approved MCP Client" },
           completed_at: "2026-01-02T03:04:05.120Z",
           counts: { media_bytes: 0, results: 1 },
@@ -420,6 +421,7 @@ describe("public-boundary Worker harness", () => {
           latency_ms: 120,
           outcome: "success",
           references: {
+            api_key_id: null,
             mcp_authorization_id: "mca_123456789012345678901",
             send_id: null,
             whatsapp_connection_id: "con_123456789012345678901",

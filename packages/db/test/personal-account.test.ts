@@ -250,6 +250,21 @@ describe("Personal Account repository", () => {
        )`,
       [accountId],
     );
+    await database.query(
+      `INSERT INTO public.tool_call_logs (
+         id, personal_account_id, mcp_authorization_id, channel, api_key_id,
+         api_key_public_id, api_key_name, tool_name, started_at, completed_at,
+         outcome, result_count, latency_ms, quota_reserved, expires_at,
+         public_id
+       ) VALUES (
+         '30000000-0000-4000-8000-000000000002', $1, NULL, 'api',
+         '60000000-0000-4000-8000-000000000002', 'apk_bbbbbbbbbbbbbbbbbbbbb',
+         'Billing automation', 'list_connections', '2026-08-03T00:11:00Z',
+         '2026-08-03T00:11:00.040Z', 'success', 1, 40, true,
+         '2026-11-01T00:11:00Z', 'tcl_bbbbbbbbbbbbbbbbbbbbb'
+       )`,
+      [accountId],
+    );
     await database.exec("SET ROLE whatsapp_api_runtime");
 
     await expect(
@@ -281,7 +296,11 @@ describe("Personal Account repository", () => {
       ).rows,
     ).toEqual([{ count: 0 }]);
     expect(
-      (await database.query("SELECT * FROM public.security_records")).rows,
+      (
+        await database.query(
+          "SELECT * FROM public.security_records ORDER BY started_at",
+        )
+      ).rows,
     ).toEqual([
       {
         category: "tool_call",
@@ -293,7 +312,22 @@ describe("Personal Account repository", () => {
         result_count: 2,
         started_at: new Date("2026-08-03T00:10:00.000Z"),
       },
+      {
+        category: "tool_call",
+        client_class: "api_key",
+        completed_at: new Date("2026-08-03T00:11:00.040Z"),
+        expires_at: new Date("2026-11-01T00:11:00.000Z"),
+        latency_ms: 40,
+        outcome: "success",
+        result_count: 1,
+        started_at: new Date("2026-08-03T00:11:00.000Z"),
+      },
     ]);
+    expect(
+      JSON.stringify(
+        (await database.query("SELECT * FROM public.security_records")).rows,
+      ),
+    ).not.toMatch(/apk_|Billing|personal_account|60000000/iu);
     expect(
       (
         await database.query(

@@ -50,7 +50,7 @@ describe("production migrations", () => {
         (SELECT count(*)::int FROM public.schema_migrations) AS legacy,
         (SELECT count(*)::int FROM public.drizzle_migrations) AS standard
     `);
-    expect(ledgers.rows).toEqual([{ legacy: 40, standard: 8 }]);
+    expect(ledgers.rows).toEqual([{ legacy: 40, standard: 9 }]);
   });
 
   test("clears only retention limitations superseded by a complete Directory snapshot", async () => {

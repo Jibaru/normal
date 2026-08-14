@@ -170,7 +170,9 @@ describe("Tool Call Log repository", () => {
     expect(page).toEqual({
       logs: [
         {
+          apiKeyId: null,
           authorizationId: expect.stringMatching(/^mca_[A-Za-z0-9_-]{21}$/u),
+          channel: "mcp",
           clientId: "approved-client",
           clientName: "Approved MCP Client",
           completedAt: new Date("2026-07-31T12:00:00.120Z"),
@@ -264,5 +266,61 @@ describe("Tool Call Log repository", () => {
     expect(
       (await database.query("SELECT id FROM public.tool_call_logs")).rows,
     ).toEqual([]);
+  });
+
+  test("lists API-channel Activity Logs with allowlisted key presentation", async () => {
+    await database.query(
+      `INSERT INTO public.tool_call_logs (
+         id, personal_account_id, mcp_authorization_id, channel, api_key_id,
+         api_key_public_id, api_key_name, tool_name, started_at, completed_at,
+         outcome, result_count, latency_ms, quota_reserved, expires_at,
+         connection_public_id
+       ) VALUES (
+         $1, $2, NULL, 'api', $3, $4, 'Billing automation', 'list_connections',
+         $5, $6, 'success', 1, 40, true, $5::timestamptz + interval '90 days',
+         $7
+       )`,
+      [
+        "50000000-0000-4000-8000-000000000038",
+        accountId,
+        "60000000-0000-4000-8000-000000000038",
+        "apk_123456789012345678901",
+        new Date("2026-07-31T13:00:00.000Z"),
+        new Date("2026-07-31T13:00:00.040Z"),
+        connectionPublicId,
+      ],
+    );
+
+    const page = await repository.listForUser(
+      clerkUserId,
+      new Date("2026-08-01T12:00:00.000Z"),
+      null,
+      100,
+    );
+    expect(page).toEqual({
+      logs: [
+        {
+          apiKeyId: "apk_123456789012345678901",
+          authorizationId: null,
+          channel: "api",
+          clientId: "apk_123456789012345678901",
+          clientName: "Billing automation",
+          completedAt: new Date("2026-07-31T13:00:00.040Z"),
+          connectionId: connectionPublicId,
+          errorCode: null,
+          latencyMs: 40,
+          mediaBytes: 0,
+          outcome: "success",
+          resultCount: 1,
+          sendId: null,
+          startedAt: new Date("2026-07-31T13:00:00.000Z"),
+          toolName: "list_connections",
+        },
+      ],
+      nextCursor: null,
+    });
+    expect(JSON.stringify(page)).not.toMatch(
+      /normal_|digest|credential|phone|payload/iu,
+    );
   });
 });

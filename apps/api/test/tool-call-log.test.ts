@@ -15,7 +15,9 @@ import {
 
 const browserOrigin = "https://app.example.test";
 const safeLog: ToolCallLogSummary = {
+  apiKeyId: null,
   authorizationId: "mca_123456789012345678901",
+  channel: "mcp",
   clientId: "approved-client",
   clientName: "Approved MCP Client",
   completedAt: new Date("2026-08-01T12:00:00.120Z"),
@@ -93,6 +95,7 @@ describe("Tool Call Log product boundary", () => {
       tool_call_logs: [
         {
           capability: "list_connections",
+          channel: "mcp",
           client: { id: "approved-client", name: "Approved MCP Client" },
           completed_at: "2026-08-01T12:00:00.120Z",
           counts: { media_bytes: 0, results: 2 },
@@ -100,6 +103,7 @@ describe("Tool Call Log product boundary", () => {
           latency_ms: 120,
           outcome: "success",
           references: {
+            api_key_id: null,
             mcp_authorization_id: "mca_123456789012345678901",
             send_id: null,
             whatsapp_connection_id: "con_123456789012345678901",
@@ -118,6 +122,69 @@ describe("Tool Call Log product boundary", () => {
         service: "api",
       },
     ]);
+  });
+
+  test("presents API-channel Activity Logs with allowlisted key identity", async () => {
+    const apiLog: ToolCallLogSummary = {
+      ...safeLog,
+      apiKeyId: "apk_123456789012345678901",
+      authorizationId: null,
+      channel: "api",
+      clientId: "apk_123456789012345678901",
+      clientName: "Billing automation",
+    };
+    const layer = Layer.mergeAll(
+      Layer.succeed(HumanIdentity, {
+        verify: () => Effect.succeed("user_owner"),
+        verifyRecently: () => Effect.die("not used"),
+      }),
+      Layer.succeed(ToolCallLogClock, {
+        now: Effect.succeed(new Date("2026-08-01T12:01:00.000Z")),
+      }),
+      Layer.succeed(ToolCallLogPersistence, {
+        list: () =>
+          Effect.succeed({
+            logs: [apiLog],
+            nextCursor: null,
+          }),
+      }),
+      Layer.succeed(SafeTelemetry, {
+        emit: () => Effect.void,
+      }),
+    );
+    const response = await createToolCallLogHandler(
+      layer,
+      browserOrigin,
+    )(request());
+    const body = await response.json();
+    expect(body).toEqual({
+      next_cursor: null,
+      tool_call_logs: [
+        {
+          capability: "list_connections",
+          channel: "api",
+          client: {
+            id: "apk_123456789012345678901",
+            name: "Billing automation",
+          },
+          completed_at: "2026-08-01T12:00:00.120Z",
+          counts: { media_bytes: 0, results: 2 },
+          error_code: null,
+          latency_ms: 120,
+          outcome: "success",
+          references: {
+            api_key_id: "apk_123456789012345678901",
+            mcp_authorization_id: null,
+            send_id: null,
+            whatsapp_connection_id: "con_123456789012345678901",
+          },
+          started_at: "2026-08-01T12:00:00.000Z",
+        },
+      ],
+    });
+    expect(JSON.stringify(body)).not.toMatch(
+      /normal_|digest|credential|phone|payload|tenant/iu,
+    );
   });
 
   test("does not disclose invalid identities, origins, or persistence failures", async () => {

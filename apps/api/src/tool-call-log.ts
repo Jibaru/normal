@@ -138,6 +138,7 @@ export const createToolCallLogHandler =
                 next_cursor: page.nextCursor,
                 tool_call_logs: page.logs.map((log) => ({
                   capability: log.toolName,
+                  channel: log.channel,
                   client: { id: log.clientId, name: log.clientName },
                   completed_at: log.completedAt?.toISOString() ?? null,
                   counts: {
@@ -148,6 +149,7 @@ export const createToolCallLogHandler =
                   latency_ms: log.latencyMs,
                   outcome: log.outcome,
                   references: {
+                    api_key_id: log.apiKeyId,
                     mcp_authorization_id: log.authorizationId,
                     whatsapp_connection_id: log.connectionId,
                     send_id: log.sendId,

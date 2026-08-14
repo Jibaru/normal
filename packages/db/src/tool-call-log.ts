@@ -11,7 +11,9 @@ import {
 import { withTransaction } from "./transaction";
 
 export interface ToolCallLogSummary {
-  readonly authorizationId: string;
+  readonly apiKeyId: string | null;
+  readonly authorizationId: string | null;
+  readonly channel: "api" | "mcp";
   readonly clientId: string;
   readonly clientName: string;
   readonly completedAt: Date | null;
@@ -103,10 +105,14 @@ export const makeToolCallLogRepository = (
             ? []
             : await db
                 .select({
-                  authorizationPublicId:
-                    sql<string>`${mcpAuthorizationsInApp.publicId}`.as(
-                      "authorization_public_id",
-                    ),
+                  apiKeyName: toolCallLogsInApp.apiKeyName,
+                  apiKeyPublicId: toolCallLogsInApp.apiKeyPublicId,
+                  authorizationPublicId: sql<
+                    string | null
+                  >`${mcpAuthorizationsInApp.publicId}`.as(
+                    "authorization_public_id",
+                  ),
+                  channel: toolCallLogsInApp.channel,
                   clientId: mcpAuthorizationsInApp.clientId,
                   clientName: mcpAuthorizationsInApp.clientName,
                   completedAt: toolCallLogsInApp.completedAt,
@@ -129,7 +135,7 @@ export const makeToolCallLogRepository = (
                   toolName: toolCallLogsInApp.toolName,
                 })
                 .from(toolCallLogsInApp)
-                .innerJoin(
+                .leftJoin(
                   mcpAuthorizationsInApp,
                   and(
                     eq(
@@ -186,22 +192,33 @@ export const makeToolCallLogRepository = (
                 )
                 .limit(limit + 1);
         const pageRows = result.slice(0, limit);
-        const logs = pageRows.map((row) => ({
-          authorizationId: row.authorizationPublicId,
-          clientId: row.clientId,
-          clientName: row.clientName ?? row.clientId,
-          completedAt:
-            row.completedAt === null ? null : new Date(row.completedAt),
-          connectionId: row.connectionPublicId,
-          errorCode: row.errorCode,
-          latencyMs: row.latencyMs,
-          mediaBytes: Number(row.mediaBytesReserved),
-          outcome: row.outcome as ToolCallLogSummary["outcome"],
-          resultCount: row.resultCount,
-          sendId: row.sendPublicId,
-          startedAt: new Date(row.startedAt),
-          toolName: row.toolName,
-        }));
+        const logs: ToolCallLogSummary[] = pageRows.map((row) => {
+          const channel = row.channel === "api" ? "api" : "mcp";
+          const apiKeyId = row.apiKeyPublicId;
+          const clientId =
+            channel === "api" ? (apiKeyId ?? "") : (row.clientId ?? "");
+          return {
+            apiKeyId,
+            authorizationId: row.authorizationPublicId,
+            channel,
+            clientId,
+            clientName:
+              channel === "api"
+                ? (row.apiKeyName ?? clientId)
+                : (row.clientName ?? row.clientId ?? ""),
+            completedAt:
+              row.completedAt === null ? null : new Date(row.completedAt),
+            connectionId: row.connectionPublicId,
+            errorCode: row.errorCode,
+            latencyMs: row.latencyMs,
+            mediaBytes: Number(row.mediaBytesReserved),
+            outcome: row.outcome as ToolCallLogSummary["outcome"],
+            resultCount: row.resultCount,
+            sendId: row.sendPublicId,
+            startedAt: new Date(row.startedAt),
+            toolName: row.toolName,
+          };
+        });
         return {
           logs,
           nextCursor:

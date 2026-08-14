@@ -1,7 +1,12 @@
 "use client";
 
 import { useAuth, useClerk } from "@clerk/nextjs";
-import { makeIdempotencyKey } from "@whatsapp-mcp/contracts/handles";
+import {
+  ApiKeyId,
+  McpAuthorizationId,
+  makeIdempotencyKey,
+} from "@whatsapp-mcp/contracts/handles";
+import { Schema } from "effect";
 import {
   ArrowUpDownIcon,
   ChevronLeftIcon,
@@ -109,6 +114,7 @@ type AuthorizationState = "idle" | "loading" | "ok" | "unavailable";
 
 interface ToolCallLog {
   readonly capability: string;
+  readonly channel: "api" | "mcp";
   readonly client: { readonly id: string; readonly name: string };
   readonly completedAt: string | null;
   readonly counts: {
@@ -199,8 +205,18 @@ const decodeToolCallLogs = (value: unknown): ToolCallLogPage | null => {
         log.outcome !== "authorization_denied") ||
       typeof references !== "object" ||
       references === null ||
-      typeof references.mcp_authorization_id !== "string" ||
-      !/^mca_[A-Za-z0-9_-]{21}$/u.test(references.mcp_authorization_id) ||
+      (log.channel !== undefined &&
+        log.channel !== "mcp" &&
+        log.channel !== "api") ||
+      (references.mcp_authorization_id !== null &&
+        references.mcp_authorization_id !== undefined &&
+        !Schema.is(McpAuthorizationId)(references.mcp_authorization_id)) ||
+      (references.api_key_id !== null &&
+        references.api_key_id !== undefined &&
+        !Schema.is(ApiKeyId)(references.api_key_id)) ||
+      (log.channel === "api"
+        ? typeof references.api_key_id !== "string"
+        : typeof references.mcp_authorization_id !== "string") ||
       (references.whatsapp_connection_id !== null &&
         (typeof references.whatsapp_connection_id !== "string" ||
           !/^con_[A-Za-z0-9_-]{21}$/u.test(
@@ -215,6 +231,7 @@ const decodeToolCallLogs = (value: unknown): ToolCallLogPage | null => {
     }
     decoded.push({
       capability: log.capability,
+      channel: log.channel === "api" ? "api" : "mcp",
       client: { id: client.id, name: client.name },
       completedAt: log.completed_at,
       counts: { mediaBytes: counts.media_bytes, results: counts.results },
@@ -222,7 +239,12 @@ const decodeToolCallLogs = (value: unknown): ToolCallLogPage | null => {
       latencyMs: log.latency_ms,
       outcome: log.outcome,
       references: [
-        references.mcp_authorization_id,
+        ...(typeof references.mcp_authorization_id === "string"
+          ? [references.mcp_authorization_id]
+          : []),
+        ...(typeof references.api_key_id === "string"
+          ? [references.api_key_id]
+          : []),
         ...(typeof references.whatsapp_connection_id === "string"
           ? [references.whatsapp_connection_id]
           : []),
@@ -1907,7 +1929,9 @@ export function PublicBoundaryJourney({
                                 {log.capability.replaceAll("_", " ")}
                               </p>
                               <p className="whitespace-nowrap text-xs text-muted-foreground">
-                                {log.client.name}
+                                {log.channel === "api"
+                                  ? `API Key · ${log.client.name}`
+                                  : log.client.name}
                               </p>
                             </TableCell>
                             <TableCell className="px-4 py-3 align-top">
