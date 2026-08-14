@@ -152,57 +152,58 @@ export function ApiKeysPanel({
   const [creating, setCreating] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  const load = useCallback(async (options?: {
-    readonly preserveReveal?: boolean;
-  }) => {
-    const failClosed = () => {
-      if (options?.preserveReveal !== true) {
-        setState("unavailable");
-      }
-    };
-    try {
-      if (!isLoaded) return;
-      const token = await getToken({ template: clerkJwtTemplate });
-      if (!token) {
+  const load = useCallback(
+    async (options?: { readonly preserveReveal?: boolean }) => {
+      const failClosed = () => {
+        if (options?.preserveReveal !== true) {
+          setState("unavailable");
+        }
+      };
+      try {
+        if (!isLoaded) return;
+        const token = await getToken({ template: clerkJwtTemplate });
+        if (!token) {
+          failClosed();
+          return;
+        }
+        const [keysResponse, connectionsResponse] = await Promise.all([
+          fetch(apiKeysEndpoint, {
+            headers: { authorization: `Bearer ${token}` },
+          }),
+          fetch(connectionsEndpoint, {
+            headers: { authorization: `Bearer ${token}` },
+          }),
+        ]);
+        const [keysBody, connectionsBody] = await Promise.all([
+          keysResponse.json(),
+          connectionsResponse.json(),
+        ]);
+        const decodedKeys = decodeKeys(keysBody);
+        const decodedConnections = decodeConnections(connectionsBody);
+        if (
+          !keysResponse.ok ||
+          decodedKeys === null ||
+          !connectionsResponse.ok ||
+          decodedConnections === null
+        ) {
+          failClosed();
+          return;
+        }
+        setKeys(decodedKeys);
+        setConnections(decodedConnections);
+        setState("ready");
+      } catch {
         failClosed();
-        return;
       }
-      const [keysResponse, connectionsResponse] = await Promise.all([
-        fetch(apiKeysEndpoint, {
-          headers: { authorization: `Bearer ${token}` },
-        }),
-        fetch(connectionsEndpoint, {
-          headers: { authorization: `Bearer ${token}` },
-        }),
-      ]);
-      const [keysBody, connectionsBody] = await Promise.all([
-        keysResponse.json(),
-        connectionsResponse.json(),
-      ]);
-      const decodedKeys = decodeKeys(keysBody);
-      const decodedConnections = decodeConnections(connectionsBody);
-      if (
-        !keysResponse.ok ||
-        decodedKeys === null ||
-        !connectionsResponse.ok ||
-        decodedConnections === null
-      ) {
-        failClosed();
-        return;
-      }
-      setKeys(decodedKeys);
-      setConnections(decodedConnections);
-      setState("ready");
-    } catch {
-      failClosed();
-    }
-  }, [
-    apiKeysEndpoint,
-    clerkJwtTemplate,
-    connectionsEndpoint,
-    getToken,
-    isLoaded,
-  ]);
+    },
+    [
+      apiKeysEndpoint,
+      clerkJwtTemplate,
+      connectionsEndpoint,
+      getToken,
+      isLoaded,
+    ],
+  );
 
   useEffect(() => {
     void load();
