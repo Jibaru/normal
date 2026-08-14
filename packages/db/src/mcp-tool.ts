@@ -1019,11 +1019,19 @@ const lockAccountAndListReservedStarts = async (
   observedAt: Date,
 ) => {
   const db = makeDatabase(connection);
-  await db
+  const locked = await db
     .select({ id: personalAccountsInApp.id })
     .from(personalAccountsInApp)
-    .where(eq(personalAccountsInApp.id, personalAccountId))
+    .where(
+      and(
+        eq(personalAccountsInApp.id, personalAccountId),
+        eq(personalAccountsInApp.state, "active"),
+      ),
+    )
     .for("update");
+  if (locked.length !== 1) {
+    return null;
+  }
   return db.execute<{
     api_key_id: unknown;
     started_at: unknown;
@@ -1261,6 +1269,12 @@ export const makeMcpToolRepository = (
           personalAccountId,
           input.observedAt,
         );
+        if (recent === null) {
+          return {
+            auditLogId: input.auditLogId,
+            outcome: "authorization_denied" as const,
+          };
+        }
         const starts = parseReservedStarts(recent);
         const resetsAt = requestQuotaExhausted(
           starts,
@@ -1369,6 +1383,12 @@ export const makeMcpToolRepository = (
               personalAccountId,
               input.observedAt,
             );
+            if (recent === null) {
+              return {
+                auditLogId: input.auditLogId,
+                outcome: "authorization_denied" as const,
+              };
+            }
             const accountStarts = parseReservedStarts(recent);
             const keyStarts = parseReservedStarts(
               recent.filter((row) => row.api_key_id === input.apiKey.grantId),
