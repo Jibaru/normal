@@ -397,7 +397,7 @@ const ListChatsOutputSchema = z
             conversation_id: z.string().regex(/^cvs_[A-Za-z0-9_-]{21}$/u),
             kind: z.enum(["direct", "group"]),
             recipient_id: z.string().regex(/^(ctc|grp)_[A-Za-z0-9_-]{21}$/u),
-            display_name: z.string().min(1).max(64),
+            display_name: z.string().min(1).max(64).nullable(),
             phone: z
               .string()
               .regex(/^\+[1-9][0-9]{6,14}$/u)

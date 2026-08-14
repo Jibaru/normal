@@ -1755,7 +1755,7 @@ describe("list_chats MCP boundary", () => {
           },
           {
             conversationId: "cvs_222222222222222222222",
-            displayName: encrypted("Family"),
+            displayName: null,
             displayNameEntity: "whatsapp-group",
             displayNameRecordId: "group-two",
             kind: "group",
@@ -1799,7 +1799,7 @@ describe("list_chats MCP boundary", () => {
         phone: "+15550123456",
         phone_last_four: "3456",
       },
-      { display_name: "Family", phone: null, phone_last_four: null },
+      { display_name: null, phone: null, phone_last_four: null },
     ]);
     expect(
       harness.observations.filter((value) => value === "decrypt-many"),
