@@ -1041,7 +1041,6 @@ const lockAccountAndListReservedStarts = async (
     WHERE logs.personal_account_id = ${personalAccountId}
       AND logs.quota_reserved = true
       AND logs.started_at > ${observedAt}::timestamptz - interval '1 hour'
-      AND logs.started_at <= ${observedAt}
     ORDER BY logs.started_at, logs.id
   `);
 };

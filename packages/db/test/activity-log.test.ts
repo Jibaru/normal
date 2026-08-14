@@ -199,6 +199,31 @@ describe("Activity Log protected-operation admission", () => {
     });
   });
 
+  test("counts a later-stamped reservation against an earlier admission", async () => {
+    await expect(
+      repository.beginProtectedOperation({
+        ...apiPrincipal,
+        auditLogId: "50000000-0000-4000-8000-000000000047",
+        observedAt: new Date("2026-07-31T12:00:30.000Z"),
+        operationName: "list_connections",
+      }),
+    ).resolves.toEqual({
+      auditLogId: "50000000-0000-4000-8000-000000000047",
+      outcome: "started",
+    });
+    await expect(
+      repository.beginProtectedOperation({
+        ...apiPrincipal,
+        auditLogId: "50000000-0000-4000-8000-000000000048",
+        observedAt,
+        operationName: "list_connections",
+      }),
+    ).resolves.toMatchObject({
+      auditLogId: "50000000-0000-4000-8000-000000000048",
+      outcome: "rate_limited",
+    });
+  });
+
   test("denies an inactive Personal Account without writing an Activity Log", async () => {
     await database.query(
       `UPDATE public.personal_accounts SET state = 'deleting' WHERE id = $1`,
