@@ -80,6 +80,7 @@ An exact phone search never causes the full number to be returned or logged.
   "contacts": [
     {
       "contact_id": "ctc_k2M...21-characters",
+      "conversation_id": "cvs_f9A...21-characters",
       "display_name": "Ada",
       "phone_last_four": "0199"
     }
@@ -92,7 +93,7 @@ An exact phone search never causes the full number to be returned or logged.
 }
 ```
 
-`display_name` and `phone_last_four` are nullable. Results include only contacts marked active and non-deleted in the latest Directory projection, sort by normalized display name and then `contact_id`, and remain qualified by the page's `stale` and `partial` fields because the provider is authoritative.
+`display_name`, `phone_last_four`, and `conversation_id` are nullable. `conversation_id` is present only when the MCP Authorization also has `messages:read` and the platform has retained Stored Message activity for that direct WhatsApp Conversation. A caller can pass it directly to `read_messages`; absence does not mean the contact is inactive. Results include only contacts marked active and non-deleted in the latest Directory projection, sort by normalized display name and then `contact_id`, and remain qualified by the page's `stale` and `partial` fields because the provider is authoritative.
 
 ## `list_groups`
 
@@ -183,6 +184,9 @@ Without `older_cursor`, the tool selects the newest page. Records inside every p
 
 ```json
 {
+  "conversation_id": "cvs_f9A...21-characters",
+  "kind": "direct",
+  "recipient_id": "ctc_k2M...21-characters",
   "messages": [
     {
       "message_id": "msg_b7Q...21-characters",
@@ -229,6 +233,7 @@ Without `older_cursor`, the tool selects the newest page. Records inside every p
 
 Field rules:
 
+- `conversation_id` echoes the authorized WhatsApp Conversation read by this result. `recipient_id` is its current `ctc_` or `grp_` WhatsApp Recipient handle and can be passed directly to `send_text_message`; `kind` is `direct` or `group`.
 - `direction` is `inbound` or `outbound`.
 - `sender.kind` is `self`, `contact`, or `group_participant`; its display name and phone suffix are nullable.
 - `content_type` is `text`, `image`, `audio`, `video`, `document`, `sticker`, or `unknown`.

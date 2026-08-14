@@ -449,6 +449,11 @@ const makeHarness = (
               personalAccountId: "10000000-0000-4000-8000-000000000030",
               version: 1 as const,
             },
+            conversation: {
+              kind: "direct" as const,
+              publicId: "cvs_123456789012345678901",
+              recipientId: "ctc_123456789012345678901",
+            },
             messages: overrides.tombstone
               ? [
                   {
@@ -699,6 +704,7 @@ const makeHarness = (
         });
         const contacts = [
           {
+            conversationPublicId: null,
             displayNameCiphertext: encrypted("Grace"),
             displayNameSort: "grace",
             phoneCiphertext: null,
@@ -706,6 +712,11 @@ const makeHarness = (
             publicId: "ctc_123456789012345678902",
           },
           {
+            conversationPublicId: (overrides.scopes ?? []).includes(
+              "messages:read",
+            )
+              ? "cvs_123456789012345678901"
+              : null,
             displayNameCiphertext: encrypted("Ada"),
             displayNameSort: "ada",
             phoneCiphertext: encrypted("+15550199"),
@@ -1295,6 +1306,7 @@ describe("stateless MCP list_connections boundary", () => {
       contacts: [
         {
           contact_id: "ctc_123456789012345678901",
+          conversation_id: null,
           display_name: "Ada",
           phone_last_four: "0199",
         },
@@ -1577,10 +1589,13 @@ describe("stateless MCP list_groups boundary", () => {
       "group_id cannot be used as read_messages.conversation_id",
     );
     expect(descriptions.list_chats).toContain(
-      "Use its conversation_id with read_messages",
+      "Do not page through this tool when the User names a contact",
     );
     expect(descriptions.read_messages).toContain(
-      "Get conversation_id from list_chats, not list_groups",
+      "recipient_id can be passed directly to send_text_message",
+    );
+    expect(descriptions.list_contacts).toContain(
+      "do not use search_messages to locate a person",
     );
   });
 
@@ -1929,6 +1944,9 @@ describe("read_messages MCP boundary", () => {
       result: { structuredContent: Record<string, unknown> };
     };
     expect(body.result.structuredContent).toMatchObject({
+      conversation_id: "cvs_123456789012345678901",
+      kind: "direct",
+      recipient_id: "ctc_123456789012345678901",
       messages: [
         {
           message_id: "msg_111111111111111111111",
@@ -1987,6 +2005,11 @@ describe("read_messages MCP boundary", () => {
           nonce: "AQIDBAUGBwgJCgsM",
           personalAccountId: "10000000-0000-4000-8000-000000000030",
           version: 1,
+        },
+        conversation: {
+          kind: "direct",
+          publicId: "cvs_123456789012345678901",
+          recipientId: "ctc_123456789012345678901",
         },
         messages: [
           {
@@ -2106,6 +2129,11 @@ describe("read_messages MCP boundary", () => {
           personalAccountId: "10000000-0000-4000-8000-000000000030",
           version: 1,
         },
+        conversation: {
+          kind: "direct",
+          publicId: "cvs_123456789012345678901",
+          recipientId: "ctc_123456789012345678901",
+        },
         messages: [
           message("3", "a".repeat(16_000), "2026-07-31T11:59:00.000Z"),
           message("2", "b".repeat(16_000), "2026-07-31T11:58:00.000Z"),
@@ -2180,6 +2208,11 @@ describe("read_messages MCP boundary", () => {
           nonce: "AQIDBAUGBwgJCgsM",
           personalAccountId: "10000000-0000-4000-8000-000000000030",
           version: 1,
+        },
+        conversation: {
+          kind: "direct",
+          publicId: "cvs_123456789012345678901",
+          recipientId: "ctc_123456789012345678901",
         },
         messages: [
           {

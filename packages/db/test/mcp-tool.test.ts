@@ -1447,7 +1447,7 @@ describe("MCP tool repository", () => {
     const readAt = new Date("2026-08-01T12:00:00Z");
     const auditLogId = "50000000-0000-4000-8000-000000000042";
     await database.query(
-      "UPDATE public.mcp_authorizations SET scopes=ARRAY['messages:read']::text[] WHERE id=$1",
+      "UPDATE public.mcp_authorizations SET scopes=ARRAY['directory:read','messages:read']::text[] WHERE id=$1",
       [authorizationId],
     );
     await expect(
@@ -1475,6 +1475,11 @@ describe("MCP tool repository", () => {
     expect(result).toMatchObject({
       outcome: "success",
       page: {
+        conversation: {
+          kind: "direct",
+          publicId: conversationPublicId,
+          recipientId: "ctc_123456789012345678942",
+        },
         hasOlder: true,
         messages: [
           {
@@ -1495,6 +1500,25 @@ describe("MCP tool repository", () => {
           },
         ],
       },
+    });
+    await expect(
+      repository.listEncryptedContacts({
+        ...authorization,
+        connectionPublicId: connectionA,
+        cursorDisplayNameSort: null,
+        cursorPublicId: null,
+        limit: 20,
+        observedAt: readAt,
+        searchIndex: null,
+        searchKind: null,
+      }),
+    ).resolves.toMatchObject({
+      contacts: [
+        {
+          conversationPublicId,
+          publicId: "ctc_123456789012345678942",
+        },
+      ],
     });
     await expect(
       repository.completeMessageRecordRead({

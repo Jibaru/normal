@@ -104,6 +104,7 @@ export const ListContactsOutputContract = makePublicObjectContract({
   contacts: Schema.Array(
     Schema.Struct({
       contact_id: ContactId,
+      conversation_id: Schema.NullOr(ConversationId),
       display_name: Schema.NullOr(Schema.String),
       phone_last_four: Schema.NullOr(
         Schema.String.pipe(Schema.pattern(/^[0-9]{4}$/)),
@@ -174,6 +175,9 @@ export const ListChatsOutputContract = makePublicObjectContract({
 export type ListChatsOutput = typeof ListChatsOutputContract.schema.Type;
 
 export const ReadMessagesOutputContract = makePublicObjectContract({
+  conversation_id: ConversationId,
+  kind: Schema.Literal("direct", "group"),
+  recipient_id: Schema.Union(ContactId, GroupId),
   messages: Schema.Array(
     Schema.Struct({
       message_id: MessageId,

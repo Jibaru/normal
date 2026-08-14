@@ -6,6 +6,7 @@ import {
   ListContactsOutputContract,
   ListGroupsOutputContract,
   makePublicObjectContract,
+  ReadMessagesOutputContract,
   SearchMessagesOutputContract,
   SendTextMessageOutputContract,
 } from "../src/mcp-schema";
@@ -125,6 +126,7 @@ describe("makePublicObjectContract", () => {
       contacts: [
         {
           contact_id: "ctc_123456789012345678901",
+          conversation_id: "cvs_123456789012345678901",
           display_name: "Ada",
           phone_last_four: "0199",
         },
@@ -159,6 +161,25 @@ describe("makePublicObjectContract", () => {
         ],
       }),
     ).toThrow();
+  });
+
+  test("returns the conversation recipient needed for a follow-up send", () => {
+    const output = {
+      conversation_id: "cvs_123456789012345678901",
+      kind: "direct",
+      recipient_id: "ctc_123456789012345678901",
+      messages: [],
+      size_limited: false,
+      has_older: false,
+      older_cursor: null,
+      history_starts_at: "2026-07-01T00:00:00.000Z",
+      history_start_reason: "retention_policy",
+      gaps: [],
+    } as const;
+
+    expect(ReadMessagesOutputContract.decodeUnknown(output) as unknown).toEqual(
+      output,
+    );
   });
 
   test("validates the compact send receipt without sensitive inputs", () => {

@@ -128,6 +128,11 @@ export interface McpToolSendStatusRecord {
 export interface McpToolMessagePage {
   readonly accountKey: AccountKeyEnvelope;
   readonly connectionKey: ConnectionKeyEnvelope;
+  readonly conversation: {
+    readonly kind: "direct" | "group";
+    readonly publicId: string;
+    readonly recipientId: string;
+  };
   readonly messages: ReadonlyArray<McpToolMessageRecord>;
   readonly hasOlder: boolean;
   readonly sizeLimited: boolean;
@@ -280,6 +285,7 @@ export interface McpToolContactReadMaterial {
 }
 
 export interface McpToolEncryptedContactRecord {
+  readonly conversationPublicId: string | null;
   readonly displayNameCiphertext: McpToolDirectoryCiphertext | null;
   readonly displayNameSort: string;
   readonly phoneCiphertext: McpToolDirectoryCiphertext | null;
@@ -1715,11 +1721,36 @@ export const makeMcpToolRepository = (
         if ((await enterAuthorizationContext(connection, input, true)) === null)
           return null;
         const materialResult = await db.execute<Record<string, unknown>>(sql`
-          SELECT * FROM public.load_mcp_message_read_material(
-            ${input.authorizationId}, ${input.oauthSubject}, ${input.clientId ?? null},
-            ${input.observedAt}, ${input.connectionPublicId},
-            ${input.conversationPublicId}
+          WITH read_material AS MATERIALIZED (
+            SELECT * FROM public.load_mcp_message_read_material(
+              ${input.authorizationId}, ${input.oauthSubject}, ${input.clientId ?? null},
+              ${input.observedAt}, ${input.connectionPublicId},
+              ${input.conversationPublicId}
+            )
           )
+          SELECT read_material.*,
+            conversations.public_id AS conversation_public_id,
+            conversations.kind AS conversation_kind,
+            coalesce(
+              contacts.public_id,
+              groups.public_id,
+              conversations.recipient_public_id
+            ) AS recipient_public_id
+          FROM read_material
+          JOIN public.whatsapp_conversations AS conversations
+            ON conversations.personal_account_id = read_material.personal_account_id
+           AND conversations.whatsapp_connection_id = read_material.connection_id
+           AND conversations.public_id = ${input.conversationPublicId}
+          LEFT JOIN public.directory_contacts AS contacts
+            ON conversations.kind = 'direct'
+           AND contacts.personal_account_id = conversations.personal_account_id
+           AND contacts.whatsapp_connection_id = conversations.whatsapp_connection_id
+           AND contacts.provider_identity_index = conversations.recipient_locator
+          LEFT JOIN public.whatsapp_groups AS groups
+            ON conversations.kind = 'group'
+           AND groups.personal_account_id = conversations.personal_account_id
+           AND groups.whatsapp_connection_id = conversations.whatsapp_connection_id
+           AND groups.provider_locator = conversations.recipient_locator
         `);
         const row = materialResult[0];
         const accountId =
@@ -1777,7 +1808,19 @@ export const makeMcpToolRepository = (
           row?.message_retention_days === null
             ? null
             : positiveInteger(row?.message_retention_days);
-        if (material === null || connectionStarted === null) return null;
+        const conversationPublicId = row?.conversation_public_id;
+        const conversationKind = row?.conversation_kind;
+        const recipientPublicId = row?.recipient_public_id;
+        if (
+          material === null ||
+          connectionStarted === null ||
+          typeof conversationPublicId !== "string" ||
+          !/^cvs_[A-Za-z0-9_-]{21}$/u.test(conversationPublicId) ||
+          (conversationKind !== "direct" && conversationKind !== "group") ||
+          typeof recipientPublicId !== "string" ||
+          !/^(ctc|grp)_[A-Za-z0-9_-]{21}$/u.test(recipientPublicId)
+        )
+          return null;
         const retentionStart =
           retentionDays === null
             ? connectionStarted
@@ -2027,6 +2070,11 @@ export const makeMcpToolRepository = (
           outcome: "success" as const,
           page: {
             ...material,
+            conversation: {
+              kind: conversationKind,
+              publicId: conversationPublicId,
+              recipientId: recipientPublicId,
+            },
             messages,
             hasOlder:
               rows.length > candidateRows.length ||
@@ -2625,6 +2673,7 @@ export const makeMcpToolRepository = (
           throw new Error("invalid MCP Directory projection metadata");
         }
         const result = await db.execute<{
+          conversation_public_id: unknown;
           display_name_ciphertext: unknown;
           display_name_ciphertext_version: unknown;
           display_name_key_version: unknown;
@@ -2638,6 +2687,23 @@ export const makeMcpToolRepository = (
           public_id: unknown;
         }>(sql`SELECT
              contacts.public_id,
+             CASE WHEN 'messages:read' = ANY(authorizations.scopes) THEN (
+               SELECT conversations.public_id
+               FROM public.whatsapp_conversations AS conversations
+               WHERE conversations.personal_account_id = contacts.personal_account_id
+                 AND conversations.whatsapp_connection_id = contacts.whatsapp_connection_id
+                 AND conversations.kind = 'direct'
+                 AND conversations.recipient_locator = contacts.provider_identity_index
+                 AND EXISTS (
+                   SELECT 1 FROM public.stored_messages AS retained
+                   WHERE retained.personal_account_id = conversations.personal_account_id
+                     AND retained.whatsapp_connection_id = conversations.whatsapp_connection_id
+                     AND retained.conversation_id = conversations.id
+                     AND retained.content_expired_at IS NULL
+                 )
+               ORDER BY conversations.created_at
+               LIMIT 1
+             ) ELSE NULL END AS conversation_public_id,
              contacts.provider_identity_index,
              contacts.display_name_ciphertext_version,
              contacts.display_name_key_version,
@@ -2649,6 +2715,9 @@ export const makeMcpToolRepository = (
              contacts.phone_nonce,
              contacts.phone_ciphertext
            FROM public.mcp_authorization_connections AS selected
+           JOIN public.mcp_authorizations AS authorizations
+             ON authorizations.personal_account_id = selected.personal_account_id
+            AND authorizations.id = selected.mcp_authorization_id
            JOIN public.whatsapp_connections AS connections
              ON connections.personal_account_id = selected.personal_account_id
             AND connections.id = selected.whatsapp_connection_id
@@ -2721,6 +2790,15 @@ export const makeMcpToolRepository = (
             throw new Error("invalid persisted MCP Directory contact");
           }
           return {
+            conversationPublicId:
+              row.conversation_public_id === null
+                ? null
+                : typeof row.conversation_public_id === "string" &&
+                    /^cvs_[A-Za-z0-9_-]{21}$/u.test(row.conversation_public_id)
+                  ? row.conversation_public_id
+                  : (() => {
+                      throw new Error("invalid contact conversation handle");
+                    })(),
             displayNameCiphertext: parseField(row, "display_name"),
             displayNameSort: row.display_name_sort,
             phoneCiphertext: parseField(row, "phone"),

@@ -429,6 +429,9 @@ const ReadMessagesInput = z
   .strict();
 const ReadMessagesOutputSchema = z
   .object({
+    conversation_id: z.string().regex(/^cvs_[A-Za-z0-9_-]{21}$/u),
+    kind: z.enum(["direct", "group"]),
+    recipient_id: z.string().regex(/^(ctc|grp)_[A-Za-z0-9_-]{21}$/u),
     messages: z
       .array(
         z
@@ -544,9 +547,11 @@ const codePointLength = (value: string): number => Array.from(value).length;
 const listGroupsDescription =
   "List currently joined WhatsApp Recipients in one selected WhatsApp Connection without roster or provider metadata. Returns group_id handles for directory lookup and sending; group_id cannot be used as read_messages.conversation_id. Use list_chats to find observed group conversations.";
 const listChatsDescription =
-  "List WhatsApp Conversations with observed Stored Message activity, including the current contact or group name and direct-chat phone number when available, without message snippets or unread state. Use its conversation_id with read_messages.";
+  "List recent WhatsApp Conversations with observed Stored Message activity. Use this to browse recent or unnamed conversations. Do not page through this tool when the User names a contact; call list_contacts with its search input instead. Pass a returned conversation_id to read_messages or recipient_id to send_text_message.";
 const readMessagesDescription =
-  "Read a chronological page of observed Stored Messages and traverse toward older retained history with honest history-window and Ingestion Gap metadata. Get conversation_id from list_chats, not list_groups.";
+  "Read a chronological page of one observed WhatsApp Conversation. Get conversation_id from list_contacts when the User names a person, or from list_chats when browsing recent conversations. The returned recipient_id can be passed directly to send_text_message without another contact lookup.";
+const listContactsDescription =
+  "Find active contacts in one selected WhatsApp Connection. When the User names a person, call this tool with its search input; do not use search_messages to locate a person. contact_id can be passed to send_text_message. conversation_id can be passed to read_messages when messages:read is granted and retained activity exists; otherwise it is null.";
 const searchMessagesDescription =
   "Search exact normalized words in retained Stored Message text and captions within one selected WhatsApp Connection. Results are newest first, not relevance ranked.";
 const ListGroupsInput = z
@@ -607,6 +612,10 @@ const ListContactsOutputSchema = z
         z
           .object({
             contact_id: z.string().regex(/^ctc_[A-Za-z0-9_-]{21}$/u),
+            conversation_id: z
+              .string()
+              .regex(/^cvs_[A-Za-z0-9_-]{21}$/u)
+              .nullable(),
             display_name: z.string().nullable(),
             phone_last_four: z
               .string()
@@ -1515,6 +1524,7 @@ const listGroups = (
   }).pipe(Effect.catchAll(() => Effect.succeed(auditUnavailable())));
 
 interface OpenContact {
+  readonly conversationPublicId: string | null;
   readonly displayName: string | null;
   readonly normalizedDisplayName: string;
   readonly phoneLastFour: string | null;
@@ -1746,6 +1756,7 @@ const listContacts = (
                   return yield* Effect.fail(new McpToolPersistenceError());
                 }
                 return {
+                  conversationPublicId: contact.conversationPublicId,
                   displayName,
                   normalizedDisplayName: contact.displayNameSort,
                   phoneLastFour:
@@ -1806,6 +1817,7 @@ const listContacts = (
           as_of: openedPage.asOf,
           contacts: page.map((contact) => ({
             contact_id: contact.publicId,
+            conversation_id: contact.conversationPublicId,
             display_name: contact.displayName,
             phone_last_four: contact.phoneLastFour,
           })),
@@ -2617,6 +2629,9 @@ const readMessages = (
       sizeLimited: boolean,
     ): ReadMessagesOutput =>
       ReadMessagesOutputContract.decodeUnknown({
+        conversation_id: page.conversation.publicId,
+        kind: page.conversation.kind,
+        recipient_id: page.conversation.recipientId,
         messages: [...selectedNewestFirst].reverse(),
         size_limited: sizeLimited,
         has_older:
@@ -3394,7 +3409,7 @@ export const createMcpRequestHandler =
             openWorldHint: true,
           },
           description:
-            "Send exact text once to a current WhatsApp Recipient after Client Confirmation.",
+            "Send exact text once to a current WhatsApp Recipient after Client Confirmation. Use recipient_id already returned by list_contacts, list_groups, list_chats, or read_messages; do not look up the same recipient again.",
           inputSchema: SendTextMessageInput,
           outputSchema: SendTextMessageOutputSchema,
           title: "Send WhatsApp Text Message",
@@ -3560,8 +3575,7 @@ export const createMcpRequestHandler =
       server.registerTool(
         "list_contacts",
         {
-          description:
-            "List active contacts in one selected WhatsApp Connection with suffix-only phone metadata.",
+          description: listContactsDescription,
           inputSchema: ListContactsInput,
           outputSchema: ListContactsOutputSchema,
           title: "List WhatsApp Contacts",
@@ -3615,8 +3629,7 @@ export const createMcpRequestHandler =
             title: "List WhatsApp Groups",
           });
           tools.push({
-            description:
-              "List active contacts in one selected WhatsApp Connection with suffix-only phone metadata.",
+            description: listContactsDescription,
             inputSchema: z.toJSONSchema(ListContactsInput, {
               target: "draft-2020-12",
             }),
