@@ -317,14 +317,17 @@ binding window's safe retry and reset values without reading Connection state.
 Missing or invalid quota configuration prevents the production root from
 serving.
 
-Tool Call Logs expire after 90 days and contain only the tenant, authorization,
-tool name, timestamps, normalized outcome and error code, bounded result count,
-latency, and whether request quota was reserved. The signed-in
-`GET /v1/tool-call-logs` view resolves the owning MCP Client and records
-applicable public `mca_`, `con_`, and `snd_` handles. Its response is an
-explicit allowlist and never exposes internal IDs, message or media content,
-full phone numbers, credentials, OAuth tokens, provider identifiers, scope
-sets, request or response content, or raw payloads. MCP tool
+Activity Logs expire after 90 days and contain only the tenant, channel,
+allowlisted MCP Client or API Key presentation, operation name, timestamps,
+normalized outcome and error code, bounded result count, latency, and whether
+request quota was reserved. The signed-in `GET /v1/tool-call-logs` view
+resolves the owning MCP Client or API Key and records applicable public
+`mca_`, `apk_`, `con_`, and `snd_` handles plus an additive `channel` field.
+Its response is an explicit allowlist and never exposes internal IDs, message
+or media content, full phone numbers, credentials, OAuth tokens, API Key
+secrets, provider identifiers, scope sets, request or response content, or raw
+payloads. MCP-channel rows remain compatible; API-channel rows omit
+`mcp_authorization_id` and present the `apk_` handle instead. MCP tool
 telemetry is limited to `mcp.tool_call.completed`, the fixed
 `list_connections` or `list_groups` tool name, an allowlisted outcome, the API service name, and
 the bounded result count on success. Do not enrich it with tenant,

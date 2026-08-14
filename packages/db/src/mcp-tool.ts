@@ -333,12 +333,14 @@ export type BeginProtectedOperationInput = {
   | {
       readonly channel: "mcp";
       readonly authorization: McpAccessAuthorization;
+      readonly operationName: McpToolName;
     }
   | {
       readonly channel: "api";
       readonly apiKey: ApiKeyActivityPrincipal;
       readonly keyHourLimit: number;
       readonly keyMinuteLimit: number;
+      readonly operationName: string;
       readonly personalAccountId: string;
     }
 );
@@ -1306,7 +1308,7 @@ export const makeMcpToolRepository = (
           hourLimit: input.hourLimit,
           minuteLimit: input.minuteLimit,
           observedAt: input.observedAt,
-          toolName: input.operationName as McpToolName,
+          toolName: input.operationName,
           ...(input.connectionPublicId === undefined
             ? {}
             : { connectionPublicId: input.connectionPublicId }),

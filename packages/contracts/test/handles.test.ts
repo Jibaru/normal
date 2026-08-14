@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Schema } from "effect";
 import {
+  ApiKeyId,
   ConnectionId,
   ConnectionSetupId,
   ContactId,
@@ -10,6 +11,7 @@ import {
   McpAuthorizationId,
   MediaId,
   MessageId,
+  makeApiKeyId,
   makeConnectionId,
   makeConnectionSetupId,
   makeContactId,
@@ -37,6 +39,7 @@ describe("public handles", () => {
         Schema.decodeUnknownSync(MessageId)(`msg_${suffix}`),
         Schema.decodeUnknownSync(MediaId)(`med_${suffix}`),
         Schema.decodeUnknownSync(McpAuthorizationId)(`mca_${suffix}`),
+        Schema.decodeUnknownSync(ApiKeyId)(`apk_${suffix}`),
         Schema.decodeUnknownSync(SendId)(`snd_${suffix}`),
       ].map(String),
     ).toEqual([
@@ -48,6 +51,7 @@ describe("public handles", () => {
       `msg_${suffix}`,
       `med_${suffix}`,
       `mca_${suffix}`,
+      `apk_${suffix}`,
       `snd_${suffix}`,
     ]);
   });
@@ -57,6 +61,7 @@ describe("public handles", () => {
 
     for (const invalid of [
       `ctc_${suffix}`,
+      `apk_${suffix}`,
       `con_${suffix.slice(1)}`,
       `con_${suffix}a`,
       `con_${suffix.slice(0, -1)}.`,
@@ -77,13 +82,14 @@ describe("public handles", () => {
       makeMessageId(),
       makeMediaId(),
       makeMcpAuthorizationId(),
+      makeApiKeyId(),
       makeSendId(),
     ];
 
     expect(generated).toHaveLength(new Set(generated).size);
     for (const handle of generated) {
       expect(handle).toMatch(
-        /^(con|cst|ctc|grp|cvs|msg|med|mca|snd)_[A-Za-z0-9_-]{21}$/,
+        /^(con|cst|ctc|grp|cvs|msg|med|mca|apk|snd)_[A-Za-z0-9_-]{21}$/,
       );
     }
   });

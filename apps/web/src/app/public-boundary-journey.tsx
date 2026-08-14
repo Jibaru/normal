@@ -1,7 +1,12 @@
 "use client";
 
 import { useAuth, useClerk } from "@clerk/nextjs";
-import { makeIdempotencyKey } from "@whatsapp-mcp/contracts/handles";
+import {
+  ApiKeyId,
+  McpAuthorizationId,
+  makeIdempotencyKey,
+} from "@whatsapp-mcp/contracts/handles";
+import { Schema } from "effect";
 import {
   ArrowUpDownIcon,
   ChevronLeftIcon,
@@ -205,12 +210,10 @@ const decodeToolCallLogs = (value: unknown): ToolCallLogPage | null => {
         log.channel !== "api") ||
       (references.mcp_authorization_id !== null &&
         references.mcp_authorization_id !== undefined &&
-        (typeof references.mcp_authorization_id !== "string" ||
-          !/^mca_[A-Za-z0-9_-]{21}$/u.test(references.mcp_authorization_id))) ||
+        !Schema.is(McpAuthorizationId)(references.mcp_authorization_id)) ||
       (references.api_key_id !== null &&
         references.api_key_id !== undefined &&
-        (typeof references.api_key_id !== "string" ||
-          !/^apk_[A-Za-z0-9_-]{21}$/u.test(references.api_key_id))) ||
+        !Schema.is(ApiKeyId)(references.api_key_id)) ||
       (log.channel === "api"
         ? typeof references.api_key_id !== "string"
         : typeof references.mcp_authorization_id !== "string") ||
