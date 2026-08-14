@@ -150,13 +150,14 @@ for (const deployable of deployables) {
       "DELETION_MARKER_HMAC_SECRET",
       "KMS_CONTENT_ROOT_KEY_ARN",
       "KMS_DELETION_COORDINATOR_KEY_ARN",
+      "API_KEY_HMAC_SECRET",
       "MCP_CURSOR_HMAC_SECRET",
       "OAUTH_PROTOCOL_ENCRYPTION_KEY",
       "RECIPIENT_TRANSITION_HMAC_SECRET",
       "SEND_FINGERPRINT_HMAC_SECRET",
       "SMOKE_CHECK_SECRET",
       "WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET",
-    ];
+    ].sort();
     const configurations = manifestConfigurations(manifest);
     for (const [configurationName, configuration] of configurations) {
       const placement = configuration.placement as
