@@ -288,10 +288,12 @@ export function ApiKeysPanel({
       },
     );
     if (!response.ok) {
-      setState("unavailable");
+      if (revealed === null) {
+        setState("unavailable");
+      }
       return;
     }
-    await load();
+    await load({ preserveReveal: true });
   };
 
   const copyCredential = async () => {
