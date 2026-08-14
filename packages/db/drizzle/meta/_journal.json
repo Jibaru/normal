@@ -57,6 +57,13 @@
       "when": 1786474800000,
       "tag": "0007_add_personal_account_onboarding_profiles",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786478400000,
+      "tag": "0008_expand_activity_log_channels",
+      "breakpoints": true
     }
   ]
 }

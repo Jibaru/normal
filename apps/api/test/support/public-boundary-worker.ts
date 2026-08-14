@@ -493,7 +493,9 @@ const makeTestLayer = (
                 logs: [
                   cursor === null
                     ? {
+                        apiKeyId: null,
                         authorizationId: testAuthorizationId,
+                        channel: "mcp" as const,
                         clientId: "approved-client",
                         clientName: "Approved MCP Client",
                         completedAt: new Date("2026-01-02T03:04:05.120Z"),
@@ -508,7 +510,9 @@ const makeTestLayer = (
                         toolName: "list_connections",
                       }
                     : {
+                        apiKeyId: null,
                         authorizationId: testAuthorizationId,
+                        channel: "mcp" as const,
                         clientId: "approved-client",
                         clientName: "Approved MCP Client",
                         completedAt: new Date("2026-01-02T03:03:05.045Z"),

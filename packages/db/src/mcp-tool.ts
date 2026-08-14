@@ -315,6 +315,34 @@ export type BeginToolCallResult =
       readonly retryAfterSeconds: number;
     };
 
+export interface ApiKeyActivityPrincipal {
+  readonly grantId: string;
+  readonly name: string;
+  readonly publicId: string;
+}
+
+export type BeginProtectedOperationInput = {
+  readonly auditLogId: string;
+  readonly connectionPublicId?: string;
+  readonly hourLimit: number;
+  readonly minuteLimit: number;
+  readonly observedAt: Date;
+  readonly operationName: string;
+  readonly sendPublicId?: string;
+} & (
+  | {
+      readonly channel: "mcp";
+      readonly authorization: McpAccessAuthorization;
+    }
+  | {
+      readonly channel: "api";
+      readonly apiKey: ApiKeyActivityPrincipal;
+      readonly keyHourLimit: number;
+      readonly keyMinuteLimit: number;
+      readonly personalAccountId: string;
+    }
+);
+
 export interface McpToolRepository {
   readonly failStoredMediaRead: (input: {
     readonly auditLogId: string;
@@ -341,6 +369,9 @@ export interface McpToolRepository {
       readonly sendPublicId?: string;
       readonly toolName: McpToolName;
     },
+  ) => Promise<BeginToolCallResult>;
+  readonly beginProtectedOperation: (
+    input: BeginProtectedOperationInput,
   ) => Promise<BeginToolCallResult>;
   readonly completeToolCall: (input: {
     readonly auditLogId: string;
@@ -877,8 +908,10 @@ const loadAuthorizationScopes = async (
 const insertToolCallLog = (
   connection: McpToolConnection,
   input: {
+    readonly apiKey?: ApiKeyActivityPrincipal | undefined;
     readonly auditLogId: string;
-    readonly authorizationId: string;
+    readonly authorizationId: string | null;
+    readonly channel?: "api" | "mcp";
     readonly completed: boolean;
     readonly connectionPublicId?: string | undefined;
     readonly errorCode: string | null;
@@ -900,6 +933,10 @@ const insertToolCallLog = (
       id: input.auditLogId,
       personalAccountId: input.personalAccountId,
       mcpAuthorizationId: input.authorizationId,
+      channel: input.channel ?? "mcp",
+      apiKeyId: input.apiKey?.grantId ?? null,
+      apiKeyPublicId: input.apiKey?.publicId ?? null,
+      apiKeyName: input.apiKey?.name ?? null,
       toolName: input.toolName,
       startedAt: input.observedAt.toISOString(),
       completedAt: input.completed ? input.observedAt.toISOString() : null,
@@ -914,6 +951,65 @@ const insertToolCallLog = (
       connectionPublicId: input.connectionPublicId ?? null,
       sendPublicId: input.sendPublicId ?? null,
     });
+
+const enterAccountContext = async (
+  connection: McpToolConnection,
+  personalAccountId: string,
+): Promise<string | null> => {
+  const db = makeDatabase(connection);
+  await db.execute(
+    sql`SELECT set_config('public.personal_account_id', ${personalAccountId}, true)`,
+  );
+  const account = await db
+    .select({ id: personalAccountsInApp.id })
+    .from(personalAccountsInApp)
+    .where(
+      and(
+        eq(personalAccountsInApp.id, personalAccountId),
+        eq(personalAccountsInApp.state, "active"),
+      ),
+    );
+  return account[0]?.id ?? null;
+};
+
+const requestQuotaExhausted = (
+  starts: ReadonlyArray<Date>,
+  observedAt: Date,
+  minuteLimit: number,
+  hourLimit: number,
+): Date | null => {
+  const minuteFloor = new Date(observedAt.valueOf() - 60_000);
+  const minuteStarts = starts.filter((value) => value > minuteFloor);
+  const exhaustedResets: Array<Date> = [];
+  if (minuteStarts.length >= minuteLimit) {
+    exhaustedResets.push(
+      new Date(
+        (minuteStarts[minuteStarts.length - minuteLimit] as Date).valueOf() +
+          60_000,
+      ),
+    );
+  }
+  if (starts.length >= hourLimit) {
+    exhaustedResets.push(
+      new Date(
+        (starts[starts.length - hourLimit] as Date).valueOf() + 3_600_000,
+      ),
+    );
+  }
+  return exhaustedResets.length === 0
+    ? null
+    : new Date(Math.max(...exhaustedResets.map((value) => value.valueOf())));
+};
+
+const parseReservedStarts = (
+  rows: ReadonlyArray<{ readonly started_at: unknown }>,
+): Array<Date> => {
+  const starts = rows.map(({ started_at }) => timestamp(started_at));
+  if (starts.includes(null)) {
+    throw new Error("invalid Tool Call Log timestamp");
+  }
+  return starts as Array<Date>;
+};
 
 const requiredScope = (toolName: McpToolName): McpAuthorizationScope =>
   toolName === "list_connections"
@@ -1149,37 +1245,14 @@ export const makeMcpToolRepository = (
             AND logs.started_at <= ${input.observedAt}
           ORDER BY logs.started_at, logs.id
         `);
-        const hourStarts = recent.map(({ started_at }) =>
-          timestamp(started_at),
+        const starts = parseReservedStarts(recent);
+        const resetsAt = requestQuotaExhausted(
+          starts,
+          input.observedAt,
+          input.minuteLimit,
+          input.hourLimit,
         );
-        if (hourStarts.includes(null)) {
-          throw new Error("invalid Tool Call Log timestamp");
-        }
-        const starts = hourStarts as Array<Date>;
-        const minuteFloor = new Date(input.observedAt.valueOf() - 60_000);
-        const minuteStarts = starts.filter((value) => value > minuteFloor);
-        const exhaustedResets: Array<Date> = [];
-        if (minuteStarts.length >= input.minuteLimit) {
-          exhaustedResets.push(
-            new Date(
-              (
-                minuteStarts[minuteStarts.length - input.minuteLimit] as Date
-              ).valueOf() + 60_000,
-            ),
-          );
-        }
-        if (starts.length >= input.hourLimit) {
-          exhaustedResets.push(
-            new Date(
-              (starts[starts.length - input.hourLimit] as Date).valueOf() +
-                3_600_000,
-            ),
-          );
-        }
-        if (exhaustedResets.length > 0) {
-          const resetsAt = new Date(
-            Math.max(...exhaustedResets.map((value) => value.valueOf())),
-          );
+        if (resetsAt !== null) {
           await insertToolCallLog(connection, {
             auditLogId: input.auditLogId,
             authorizationId: input.authorizationId,
@@ -1225,6 +1298,150 @@ export const makeMcpToolRepository = (
         };
       }),
     ),
+  beginProtectedOperation: (input) =>
+    input.channel === "mcp"
+      ? makeMcpToolRepository(provider).beginToolCall({
+          ...input.authorization,
+          auditLogId: input.auditLogId,
+          hourLimit: input.hourLimit,
+          minuteLimit: input.minuteLimit,
+          observedAt: input.observedAt,
+          toolName: input.operationName as McpToolName,
+          ...(input.connectionPublicId === undefined
+            ? {}
+            : { connectionPublicId: input.connectionPublicId }),
+          ...(input.sendPublicId === undefined
+            ? {}
+            : { sendPublicId: input.sendPublicId }),
+        })
+      : provider.withConnection((connection) =>
+          withTransaction(connection, async () => {
+            const db = makeDatabase(connection);
+            if (
+              !Number.isSafeInteger(input.minuteLimit) ||
+              input.minuteLimit < 1 ||
+              !Number.isSafeInteger(input.hourLimit) ||
+              input.hourLimit < input.minuteLimit ||
+              !Number.isSafeInteger(input.keyMinuteLimit) ||
+              input.keyMinuteLimit < 1 ||
+              !Number.isSafeInteger(input.keyHourLimit) ||
+              input.keyHourLimit < input.keyMinuteLimit
+            ) {
+              throw new Error("invalid API request quota");
+            }
+            const apiKeyName = input.apiKey.name.trim();
+            if (
+              apiKeyName.length < 1 ||
+              apiKeyName.length > 64 ||
+              !/^apk_[A-Za-z0-9_-]{21}$/u.test(input.apiKey.publicId) ||
+              !/^[a-z][a-z0-9_]{0,63}$/u.test(input.operationName)
+            ) {
+              throw new Error("invalid API Activity Log principal");
+            }
+            const personalAccountId = await enterAccountContext(
+              connection,
+              input.personalAccountId,
+            );
+            if (personalAccountId === null) {
+              return {
+                auditLogId: input.auditLogId,
+                outcome: "authorization_denied" as const,
+              };
+            }
+
+            const recent = await db.execute<{
+              api_key_id: unknown;
+              started_at: unknown;
+            }>(sql`
+              WITH locked_account AS MATERIALIZED (
+                SELECT accounts.id
+                FROM public.personal_accounts accounts
+                WHERE accounts.id = ${personalAccountId}
+                FOR UPDATE
+              )
+              SELECT logs.started_at, logs.api_key_id
+              FROM public.tool_call_logs logs
+              JOIN locked_account ON locked_account.id = logs.personal_account_id
+              WHERE logs.quota_reserved = true
+                AND logs.started_at > ${input.observedAt}::timestamptz - interval '1 hour'
+                AND logs.started_at <= ${input.observedAt}
+              ORDER BY logs.started_at, logs.id
+            `);
+            const accountStarts = parseReservedStarts(recent);
+            const keyStarts = parseReservedStarts(
+              recent.filter((row) => row.api_key_id === input.apiKey.grantId),
+            );
+            const resetsAt = [
+              requestQuotaExhausted(
+                accountStarts,
+                input.observedAt,
+                input.minuteLimit,
+                input.hourLimit,
+              ),
+              requestQuotaExhausted(
+                keyStarts,
+                input.observedAt,
+                input.keyMinuteLimit,
+                input.keyHourLimit,
+              ),
+            ].reduce<Date | null>((latest, candidate) => {
+              if (candidate === null) return latest;
+              if (latest === null) return candidate;
+              return candidate.valueOf() > latest.valueOf()
+                ? candidate
+                : latest;
+            }, null);
+            const apiKey = { ...input.apiKey, name: apiKeyName };
+            if (resetsAt !== null) {
+              await insertToolCallLog(connection, {
+                apiKey,
+                auditLogId: input.auditLogId,
+                authorizationId: null,
+                channel: "api",
+                completed: true,
+                connectionPublicId: input.connectionPublicId,
+                errorCode: "rate_limited",
+                observedAt: input.observedAt,
+                outcome: "rate_limited",
+                personalAccountId,
+                quotaReserved: false,
+                sendPublicId: input.sendPublicId,
+                toolName: input.operationName,
+              });
+              return {
+                auditLogId: input.auditLogId,
+                outcome: "rate_limited" as const,
+                resetsAt,
+                retryAfterSeconds: Math.max(
+                  0,
+                  Math.ceil(
+                    (resetsAt.valueOf() - input.observedAt.valueOf()) / 1_000,
+                  ),
+                ),
+              };
+            }
+
+            await insertToolCallLog(connection, {
+              apiKey,
+              auditLogId: input.auditLogId,
+              authorizationId: null,
+              channel: "api",
+              completed: false,
+              connectionPublicId: input.connectionPublicId,
+              errorCode: null,
+              observedAt: input.observedAt,
+              outcome: "started",
+              personalAccountId,
+              quotaReserved: true,
+              sendPublicId: input.sendPublicId,
+              toolName: input.operationName,
+            });
+            return {
+              auditLogId: input.auditLogId,
+              outcome: "started" as const,
+            };
+          }),
+        ),
   listConnections: (input) =>
     provider.withConnection((connection) =>
       (async () => {
