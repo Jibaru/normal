@@ -252,7 +252,7 @@ export const makeApiKeyRepository = (
           .where(
             and(
               eq(apiKeysInApp.state, "active"),
-              sql`lower(${apiKeysInApp.name}) = ${name.toLowerCase()}`,
+              sql`lower(${apiKeysInApp.name}) = lower(${name})`,
             ),
           );
         if (duplicate.length > 0) {
@@ -409,18 +409,6 @@ export const makeApiKeyRepository = (
         if ((await enterClerkContext(connection, input.clerkUserId)) === null) {
           return null;
         }
-        const existing = await db
-          .select({
-            revokedAt: apiKeysInApp.revokedAt,
-            state: apiKeysInApp.state,
-          })
-          .from(apiKeysInApp)
-          .where(eq(apiKeysInApp.publicId, input.publicId));
-        const current = existing[0];
-        if (current === undefined) return null;
-        if (current.state === "revoked" && current.revokedAt !== null) {
-          return { revokedAt: new Date(current.revokedAt) };
-        }
         const revoked = await db
           .update(apiKeysInApp)
           .set({
@@ -432,10 +420,29 @@ export const makeApiKeyRepository = (
             revokedAt: input.revokedAt.toISOString(),
             state: "revoked",
           })
-          .where(eq(apiKeysInApp.publicId, input.publicId))
+          .where(
+            and(
+              eq(apiKeysInApp.publicId, input.publicId),
+              eq(apiKeysInApp.state, "active"),
+            ),
+          )
           .returning({ revokedAt: apiKeysInApp.revokedAt });
         const revokedAt = revoked[0]?.revokedAt;
-        return revokedAt == null ? null : { revokedAt: new Date(revokedAt) };
+        if (revokedAt != null) {
+          return { revokedAt: new Date(revokedAt) };
+        }
+        const existing = await db
+          .select({
+            revokedAt: apiKeysInApp.revokedAt,
+            state: apiKeysInApp.state,
+          })
+          .from(apiKeysInApp)
+          .where(eq(apiKeysInApp.publicId, input.publicId));
+        const current = existing[0];
+        if (current?.state === "revoked" && current.revokedAt !== null) {
+          return { revokedAt: new Date(current.revokedAt) };
+        }
+        return null;
       }),
     ),
 });

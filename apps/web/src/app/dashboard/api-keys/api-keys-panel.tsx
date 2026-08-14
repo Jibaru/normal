@@ -151,6 +151,7 @@ export function ApiKeysPanel({
   const [revealed, setRevealed] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const load = useCallback(
     async (options?: { readonly preserveReveal?: boolean }) => {
@@ -236,12 +237,29 @@ export function ApiKeysPanel({
   const create = async () => {
     setCreating(true);
     setCopied(false);
+    setCreateError(null);
     try {
       const body = (await submitCreate()) as {
         readonly credential?: unknown;
         readonly error?: unknown;
       };
       if (typeof body.credential !== "string") {
+        if (body.error === "duplicate_name") {
+          setCreateError("An active API Key already uses this name.");
+          return;
+        }
+        if (body.error === "limit_reached") {
+          setCreateError(
+            "This Personal Account already has ten active API Keys.",
+          );
+          return;
+        }
+        if (body.error === "invalid") {
+          setCreateError(
+            "Check the name, permissions, Connections, and expiry.",
+          );
+          return;
+        }
         setState("unavailable");
         return;
       }
@@ -253,7 +271,7 @@ export function ApiKeysPanel({
       setState("ready");
       await load({ preserveReveal: true });
     } catch {
-      setState("unavailable");
+      setCreateError("API Key creation was cancelled or failed. Try again.");
     } finally {
       setCreating(false);
     }
@@ -425,6 +443,11 @@ export function ApiKeysPanel({
             <Button disabled={!canCreate} type="submit">
               Create API Key
             </Button>
+            {createError === null ? null : (
+              <p aria-live="polite" className="text-sm text-muted-foreground">
+                {createError}
+              </p>
+            )}
           </form>
 
           {keys.length === 0 ? (
