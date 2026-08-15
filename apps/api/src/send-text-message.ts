@@ -4,8 +4,8 @@ import {
 } from "@whatsapp-mcp/contracts/handles";
 import type { SendTextMessageOutput } from "@whatsapp-mcp/contracts/mcp-schema";
 import {
-  mcpSendGrant,
   type AtomicSendRepository,
+  mcpSendGrant,
   type SendEncryptionMaterial,
   type SendGrantIdentity,
 } from "@whatsapp-mcp/db/send";

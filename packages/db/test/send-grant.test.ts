@@ -4,10 +4,10 @@ import { makeApiKeyRepository } from "../src/api-key";
 import { makeMcpAuthorizationRepository } from "../src/mcp-authorization";
 import {
   apiSendGrant,
-  makeMcpToolRepository,
-  mcpSendGrant,
   type McpToolConnectionProvider,
   type McpToolRepository,
+  makeMcpToolRepository,
+  mcpSendGrant,
 } from "../src/mcp-tool";
 import { runMigrations } from "../src/migrations";
 import type { PersonalAccountConnectionProvider } from "../src/personal-account";

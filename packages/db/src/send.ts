@@ -212,22 +212,29 @@ export const makePgAtomicSendRepository = (
                     FROM authorized
                     WHERE authorized.personal_account_id IS NOT NULL`,
               )
-            : await db.execute<{ personal_account_id: unknown }>(
-                sql`WITH authorized AS MATERIALIZED (
-                      SELECT account.id AS personal_account_id
+            : await (async () => {
+                const apiKey =
+                  input.grant.kind === "api" ? input.grant.apiKey : null;
+                if (apiKey === null) {
+                  return [] as Array<{ personal_account_id: unknown }>;
+                }
+                await db.execute(
+                  sql`SELECT set_config(
+                        'public.personal_account_id',
+                        ${apiKey.personalAccountId},
+                        true
+                      )`,
+                );
+                return db.execute<{ personal_account_id: unknown }>(
+                  sql`SELECT account.id AS personal_account_id
                       FROM public.personal_accounts AS account
-                      WHERE account.id = ${input.grant.apiKey.personalAccountId}
-                        AND account.state = 'active'
-                    )
-                    SELECT authorized.personal_account_id,
-                           set_config(
-                             'public.personal_account_id',
-                             authorized.personal_account_id::text,
-                             false
-                           ) AS configured_account_id
-                    FROM authorized
-                    WHERE authorized.personal_account_id IS NOT NULL`,
-              );
+                      INNER JOIN public.api_keys AS keys
+                        ON keys.personal_account_id = account.id
+                       AND keys.id = ${principal.grantId}
+                      WHERE account.id = ${apiKey.personalAccountId}
+                        AND account.state = 'active'`,
+                );
+              })();
         const accountId = boot[0]?.personal_account_id;
         if (typeof accountId !== "string") {
           await db.execute(sql`ROLLBACK`);
