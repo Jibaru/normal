@@ -42,6 +42,21 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
       });
       return;
     }
+    if (
+      /^\/v1\/whatsapp-connections\/con_[A-Za-z0-9_-]{21}\/retention-policy$/u.test(
+        requestPath,
+      ) &&
+      original.method() === "GET"
+    ) {
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          allowed_days: [7, 30, 90],
+          policy: { days: 30 },
+        }),
+      });
+      return;
+    }
     if (requestPath === "/v1/api-keys" && original.method() === "POST") {
       createRequests += 1;
     }
@@ -114,6 +129,39 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
   expect(createRequests).toBe(1);
   await expect(panel).not.toContainText("temporarily unavailable");
 
+  const listed = await request.get(
+    `http://127.0.0.1:${apiPort}/v1/connections`,
+    {
+      headers: {
+        authorization: `Bearer ${plaintext}`,
+      },
+    },
+  );
+  expect(listed.status()).toBe(200);
+  expect(listed.headers()["access-control-allow-origin"]).toBeUndefined();
+  expect(await listed.json()).toEqual({
+    data: [
+      {
+        connection_id: connectionId,
+        display_name: "Personal WhatsApp",
+        number_last_four: "3456",
+        state: "connected",
+        state_changed_at: "2026-08-14T12:00:00.000Z",
+      },
+    ],
+    pagination: { has_more: false, next_cursor: null },
+  });
+
+  await page.getByRole("link", { name: "Activity Log" }).click();
+  await expect(page).toHaveURL(/\/dashboard\/activity$/u);
+  await expect(
+    page.getByRole("region", { name: "Activity Log" }),
+  ).toContainText("API Key · CI");
+  await expect(page.getByTestId("tool-call-log").first()).toContainText(
+    "list connections",
+  );
+
+  await page.goto("/dashboard/api-keys");
   await page.reload();
   await expect(page.getByRole("region", { name: "API Keys" })).toContainText(
     "CI",
