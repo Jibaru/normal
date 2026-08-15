@@ -9,6 +9,7 @@ import {
 } from "../src/mcp-tool";
 import { runMigrations } from "../src/migrations";
 import type { PersonalAccountConnectionProvider } from "../src/personal-account";
+import { makeRecipientExclusionRepository } from "../src/recipient-exclusion";
 
 const accountId = "10000000-0000-4000-8000-000000000081";
 const authorizationId = "40000000-0000-4000-8000-000000000081";
@@ -301,5 +302,73 @@ describe("API Key Directory contacts", () => {
         searchKind: null,
       }),
     ).resolves.toMatchObject({ contacts: [] });
+  });
+
+  test("omits excluded contacts with the same empty-page shape as a miss", async () => {
+    const provider: McpToolConnectionProvider &
+      PersonalAccountConnectionProvider = {
+      withConnection: async (use) => {
+        await database.exec("SET ROLE whatsapp_api_runtime");
+        try {
+          return await use(database);
+        } finally {
+          await database.exec("RESET ROLE");
+        }
+      },
+    };
+    const exclusions = makeRecipientExclusionRepository(provider);
+    const prepared = await exclusions.prepareTransition({
+      clerkUserId,
+      connectionPublicId,
+      excluded: true,
+      expectedExcluded: false,
+      idempotencyKey: "idem-contacts-81-exclude",
+      recipientPublicId: contactPublicId,
+    });
+    expect(prepared).toMatchObject({ outcome: "prepared" });
+    await expect(
+      exclusions.finalizeTransition({
+        clerkUserId,
+        connectionPublicId,
+        observedAt: observedAt.toISOString(),
+        recipientPublicId: contactPublicId,
+        transitionId: prepared?.transitionId ?? "",
+      }),
+    ).resolves.toMatchObject({ excluded: true });
+
+    const excludedPage = await repository.listApiKeyEncryptedContacts({
+      apiKeyGrantId: apiKeyId,
+      connectionPublicId,
+      cursorDisplayNameSort: null,
+      cursorPublicId: null,
+      limit: 21,
+      observedAt,
+      permissions: ["connections:read", "directory:read"],
+      personalAccountId: accountId,
+      searchIndex: null,
+      searchKind: null,
+    });
+    const unknownSearch = await repository.listApiKeyEncryptedContacts({
+      apiKeyGrantId: apiKeyId,
+      connectionPublicId,
+      cursorDisplayNameSort: null,
+      cursorPublicId: null,
+      limit: 21,
+      observedAt,
+      permissions: ["connections:read", "directory:read"],
+      personalAccountId: accountId,
+      searchIndex: `di1_${"x".repeat(43)}`,
+      searchKind: "phone",
+    });
+
+    expect(excludedPage).toEqual(unknownSearch);
+    expect(excludedPage).toMatchObject({
+      asOf: observedAt.toISOString(),
+      contacts: [],
+      partial: false,
+      stale: false,
+    });
+    expect(JSON.stringify(excludedPage)).not.toContain(contactPublicId);
+    expect(JSON.stringify(excludedPage)).not.toContain("excluded");
   });
 });

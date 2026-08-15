@@ -306,5 +306,43 @@ describe("REST authorization-bound cursors", () => {
         verifyRestCursor(key, restCursor, restContext, expiresAtEpochSeconds),
       ),
     ).toBeInstanceOf(InvalidCursorError);
+    expect(
+      await runError(
+        verifyRestCursor(
+          key,
+          restCursor,
+          { ...restContext, pageSize: 50 },
+          nowEpochSeconds,
+        ),
+      ),
+    ).toBeInstanceOf(InvalidCursorError);
+    expect(
+      await runError(
+        verifyRestCursor(
+          key,
+          restCursor,
+          { ...restContext, sortVersion: "contacts-v2" },
+          nowEpochSeconds,
+        ),
+      ),
+    ).toBeInstanceOf(InvalidCursorError);
+    expect(
+      await runError(
+        verifyRestCursor(
+          key,
+          restCursor,
+          { ...restContext, operationId: "listGroups" },
+          nowEpochSeconds,
+        ),
+      ),
+    ).toBeInstanceOf(InvalidCursorError);
+    const tampered = `${restCursor.slice(0, -1)}${
+      restCursor.endsWith("a") ? "b" : "a"
+    }`;
+    expect(
+      await runError(
+        verifyRestCursor(key, tampered, restContext, nowEpochSeconds),
+      ),
+    ).toBeInstanceOf(InvalidCursorError);
   });
 });

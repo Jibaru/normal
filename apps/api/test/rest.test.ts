@@ -496,6 +496,24 @@ describe("REST Directory contacts", () => {
     });
   });
 
+  test("rejects extra query parameters and invalid search or limit before auth", async () => {
+    const harness = makeContactHarness();
+    for (const path of [
+      `/v1/connections/${connectionId}/contacts?include_removed=true`,
+      `/v1/connections/${connectionId}/contacts?search=Ad`,
+      `/v1/connections/${connectionId}/contacts?limit=0`,
+      `/v1/connections/${connectionId}/contacts?limit=51`,
+    ]) {
+      const response = await harness.handler(request(path));
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        code: "invalid_request",
+        status: 400,
+      });
+    }
+    expect(harness.telemetry).toEqual([]);
+  });
+
   test("rejects MCP cursors and other invalid cursors before quota reservation", async () => {
     const harness = makeContactHarness();
     const response = await harness.handler(
