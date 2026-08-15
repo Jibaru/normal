@@ -54,6 +54,7 @@ import {
   createRestHandler,
   isRestRequest,
   type RestClockService,
+  type RestCursorCodecService,
   type RestIdentifiersService,
   type RestPersistenceService,
 } from "./rest";
@@ -105,6 +106,7 @@ type PublicBoundaryRequirements =
   | OnboardingProfilePersistenceService
   | PersonalAccountRequirements
   | RestClockService
+  | RestCursorCodecService
   | RestIdentifiersService
   | RestPersistenceService
   | SafeTelemetryService

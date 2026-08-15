@@ -67,7 +67,13 @@ import {
   RecipientExclusionPersistence,
   RecipientTransitionJournal,
 } from "../../src/recipient-exclusion";
-import { RestClock, RestIdentifiers, RestPersistence } from "../../src/rest";
+import {
+  RestClock,
+  RestCursorCodec,
+  RestCursorError,
+  RestIdentifiers,
+  RestPersistence,
+} from "../../src/rest";
 import { RestoreSafeDeletion, SafeTelemetry } from "../../src/services";
 import {
   WebhookEventClock,
@@ -977,6 +983,10 @@ const makeTestLayer = (
     Layer.succeed(RestIdentifiers, {
       nextAuditLogId: Effect.succeed("50000000-0000-4000-8000-000000000079"),
     }),
+    Layer.succeed(RestCursorCodec, {
+      decode: () => Effect.fail(new RestCursorError()),
+      encode: () => Effect.succeed("rest-cursor"),
+    }),
     Layer.succeed(RestPersistence, {
       beginProtectedOperation: (input) =>
         Effect.sync(() => {
@@ -1032,6 +1042,40 @@ const makeTestLayer = (
           existing.errorCode = input.errorCode;
           existing.outcome = input.outcome;
           existing.resultCount = input.resultCount;
+        }),
+      loadContactReadMaterial: () => Effect.succeed(null),
+      listEncryptedContacts: () => Effect.succeed(null),
+      rejectProtectedOperation: (input) =>
+        Effect.sync(() => {
+          if (
+            input.requiredPermission !== undefined &&
+            !input.permissions.includes(input.requiredPermission)
+          ) {
+            apiActivityLogs.unshift({
+              apiKeyId: input.apiKey.publicId,
+              clientName: input.apiKey.name,
+              completedAt: input.observedAt,
+              errorCode: "authorization_denied",
+              id: input.auditLogId,
+              outcome: "authorization_denied",
+              resultCount: null,
+              startedAt: input.observedAt,
+              toolName: input.operationName,
+            });
+            return "authorization_denied" as const;
+          }
+          apiActivityLogs.unshift({
+            apiKeyId: input.apiKey.publicId,
+            clientName: input.apiKey.name,
+            completedAt: input.observedAt,
+            errorCode: input.errorCode,
+            id: input.auditLogId,
+            outcome: "execution_error",
+            resultCount: null,
+            startedAt: input.observedAt,
+            toolName: input.operationName,
+          });
+          return "rejected" as const;
         }),
       listConnections: (input) =>
         Effect.sync(() => {
