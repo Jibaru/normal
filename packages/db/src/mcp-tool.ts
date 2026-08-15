@@ -15,6 +15,7 @@ import { makeDatabase, makeQueryConnection } from "./database";
 import type { McpAuthorizationScope } from "./mcp-authorization";
 import { withPgRequestConnection } from "./request-connection";
 import {
+  activityLogsInApp,
   apiKeyConnectionsInApp,
   apiKeysInApp,
   ingestionGapsInApp,
@@ -22,7 +23,6 @@ import {
   mcpAuthorizationsInApp,
   personalAccountsInApp,
   sendOperationsInApp,
-  toolCallLogsInApp,
   whatsappConnectionsInApp,
   whatsappGroupsInApp,
 } from "./schema";
@@ -942,7 +942,7 @@ const loadAuthorizationScopes = async (
   return authorizationScopes(result[0]?.scopes);
 };
 
-const insertToolCallLog = (
+const insertActivityLog = (
   connection: McpToolConnection,
   input: {
     readonly apiKey?: ApiKeyActivityPrincipal | undefined;
@@ -965,7 +965,7 @@ const insertToolCallLog = (
   },
 ) =>
   makeDatabase(connection)
-    .insert(toolCallLogsInApp)
+    .insert(activityLogsInApp)
     .values({
       id: input.auditLogId,
       personalAccountId: input.personalAccountId,
@@ -1169,7 +1169,7 @@ const parseReservedStarts = (
 ): Array<Date> => {
   const starts = rows.map(({ started_at }) => timestamp(started_at));
   if (starts.includes(null)) {
-    throw new Error("invalid Tool Call Log timestamp");
+    throw new Error("invalid Activity Log timestamp");
   }
   return starts as Array<Date>;
 };
@@ -1230,30 +1230,30 @@ export const makeMcpToolRepository = (
              AS personal_account_id`);
         const personalAccountId = loaded[0]?.personal_account_id;
         if (typeof personalAccountId !== "string")
-          throw new Error("Tool Call Log unavailable");
+          throw new Error("Activity Log unavailable");
         await db.execute(
           sql`SELECT set_config('public.personal_account_id', ${personalAccountId}, true)`,
         );
         const updated = await db
-          .update(toolCallLogsInApp)
+          .update(activityLogsInApp)
           .set({
             completedAt: input.completedAt.toISOString(),
             outcome: "execution_error",
             errorCode: input.errorCode,
             resultCount: 0,
             mediaBytesReserved: 0,
-            latencyMs: sql`GREATEST(0, floor(extract(epoch FROM (${input.completedAt}::timestamptz - ${toolCallLogsInApp.startedAt})) * 1000)::integer)`,
+            latencyMs: sql`GREATEST(0, floor(extract(epoch FROM (${input.completedAt}::timestamptz - ${activityLogsInApp.startedAt})) * 1000)::integer)`,
           })
           .where(
             and(
-              eq(toolCallLogsInApp.id, input.auditLogId),
-              eq(toolCallLogsInApp.toolName, "read_stored_media"),
-              eq(toolCallLogsInApp.outcome, "started"),
+              eq(activityLogsInApp.id, input.auditLogId),
+              eq(activityLogsInApp.toolName, "read_stored_media"),
+              eq(activityLogsInApp.outcome, "started"),
             ),
           )
-          .returning({ id: toolCallLogsInApp.id });
+          .returning({ id: activityLogsInApp.id });
         if (updated.length !== 1)
-          throw new Error("Stored Media Tool Call Log unavailable");
+          throw new Error("Stored Media Activity Log unavailable");
       }),
     ),
   reserveStoredMediaRead: (input) =>
@@ -1284,18 +1284,18 @@ export const makeMcpToolRepository = (
         const size = Number(row?.plaintext_size_bytes);
         const used = await db
           .select({
-            used: sql<unknown>`COALESCE(sum(${toolCallLogsInApp.mediaBytesReserved}), 0)`,
+            used: sql<unknown>`COALESCE(sum(${activityLogsInApp.mediaBytesReserved}), 0)`,
           })
-          .from(toolCallLogsInApp)
+          .from(activityLogsInApp)
           .where(
             and(
-              eq(toolCallLogsInApp.personalAccountId, accountId),
+              eq(activityLogsInApp.personalAccountId, accountId),
               gte(
-                toolCallLogsInApp.startedAt,
+                activityLogsInApp.startedAt,
                 sql`date_trunc('day', ${input.observedAt}::timestamptz)`,
               ),
               lt(
-                toolCallLogsInApp.startedAt,
+                activityLogsInApp.startedAt,
                 sql`date_trunc('day', ${input.observedAt}::timestamptz) + interval '1 day'`,
               ),
             ),
@@ -1307,7 +1307,7 @@ export const makeMcpToolRepository = (
           Number(used[0]?.used ?? 0) + size > input.dailyByteLimit
         )
           return null;
-        await insertToolCallLog(connection, {
+        await insertActivityLog(connection, {
           auditLogId: input.auditLogId,
           authorizationId: input.authorizationId,
           completed: false,
@@ -1320,9 +1320,9 @@ export const makeMcpToolRepository = (
           toolName: "read_stored_media",
         });
         await db
-          .update(toolCallLogsInApp)
+          .update(activityLogsInApp)
           .set({ mediaBytesReserved: size })
-          .where(eq(toolCallLogsInApp.id, input.auditLogId));
+          .where(eq(activityLogsInApp.id, input.auditLogId));
         const accountCiphertext = bytes(row.account_key_ciphertext);
         const connectionCiphertext = bytes(row.connection_key_ciphertext);
         const connectionNonce = bytes(row.connection_key_nonce);
@@ -1405,7 +1405,7 @@ export const makeMcpToolRepository = (
           scopes === null ||
           !scopes.includes(requiredScope(input.toolName))
         ) {
-          await insertToolCallLog(connection, {
+          await insertActivityLog(connection, {
             auditLogId: input.auditLogId,
             authorizationId: input.authorizationId,
             completed: true,
@@ -1443,7 +1443,7 @@ export const makeMcpToolRepository = (
           input.hourLimit,
         );
         if (resetsAt !== null) {
-          await insertToolCallLog(connection, {
+          await insertActivityLog(connection, {
             auditLogId: input.auditLogId,
             authorizationId: input.authorizationId,
             completed: true,
@@ -1469,7 +1469,7 @@ export const makeMcpToolRepository = (
           };
         }
 
-        await insertToolCallLog(connection, {
+        await insertActivityLog(connection, {
           auditLogId: input.auditLogId,
           authorizationId: input.authorizationId,
           completed: false,
@@ -1542,7 +1542,7 @@ export const makeMcpToolRepository = (
               !(input.permissions ?? []).includes(input.requiredPermission)
             ) {
               const apiKey = { ...input.apiKey, name: apiKeyName };
-              await insertToolCallLog(connection, {
+              await insertActivityLog(connection, {
                 apiKey,
                 auditLogId: input.auditLogId,
                 authorizationId: null,
@@ -1600,7 +1600,7 @@ export const makeMcpToolRepository = (
             }, null);
             const apiKey = { ...input.apiKey, name: apiKeyName };
             if (resetsAt !== null) {
-              await insertToolCallLog(connection, {
+              await insertActivityLog(connection, {
                 apiKey,
                 auditLogId: input.auditLogId,
                 authorizationId: null,
@@ -1628,7 +1628,7 @@ export const makeMcpToolRepository = (
               };
             }
 
-            await insertToolCallLog(connection, {
+            await insertActivityLog(connection, {
               apiKey,
               auditLogId: input.auditLogId,
               authorizationId: null,
@@ -2907,7 +2907,7 @@ export const makeMcpToolRepository = (
           };
         }
         if (completion[0]?.completed !== true)
-          throw new Error("Tool Call Log completion unavailable");
+          throw new Error("Activity Log completion unavailable");
         return { outcome: "success" as const };
       }),
     ),
@@ -3277,7 +3277,7 @@ export const makeMcpToolRepository = (
           scopes === null ||
           !scopes.includes(requiredScope(input.toolName))
         ) {
-          await insertToolCallLog(connection, {
+          await insertActivityLog(connection, {
             auditLogId: input.auditLogId,
             authorizationId: input.authorizationId,
             completed: true,
@@ -3292,7 +3292,7 @@ export const makeMcpToolRepository = (
           });
           return "authorization_denied" as const;
         }
-        await insertToolCallLog(connection, {
+        await insertActivityLog(connection, {
           auditLogId: input.auditLogId,
           authorizationId: input.authorizationId,
           completed: true,
@@ -3359,10 +3359,10 @@ export const makeMcpToolRepository = (
             CROSS JOIN updated`);
         const personalAccountId = completed[0]?.personal_account_id;
         if (typeof personalAccountId !== "string") {
-          throw new Error("Tool Call Log unavailable");
+          throw new Error("Activity Log unavailable");
         }
         if (typeof completed[0]?.updated_id !== "string") {
-          throw new Error("Tool Call Log completion unavailable");
+          throw new Error("Activity Log completion unavailable");
         }
       })(),
     ),

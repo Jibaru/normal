@@ -1,4 +1,4 @@
-import type { ToolCallLogPage } from "@whatsapp-mcp/db/tool-call-log";
+import type { ActivityLogPage } from "@whatsapp-mcp/db/activity-log";
 import { Context, Data, Effect, type Layer } from "effect";
 import {
   HumanIdentity,
@@ -11,38 +11,38 @@ import {
   type SafeTelemetry as SafeTelemetryService,
 } from "./services";
 
-const TOOL_CALL_LOGS_PATH = "/v1/tool-call-logs";
+const ACTIVITY_LOGS_PATH = "/v1/activity-logs";
 
-export class ToolCallLogPersistenceError extends Data.TaggedError(
-  "ToolCallLogPersistenceError",
+export class ActivityLogPersistenceError extends Data.TaggedError(
+  "ActivityLogPersistenceError",
 ) {}
 
-export interface ToolCallLogPersistenceService {
+export interface ActivityLogPersistenceService {
   readonly list: (
     clerkUserId: string,
     observedAt: Date,
     cursor: string | null,
-  ) => Effect.Effect<ToolCallLogPage | null, ToolCallLogPersistenceError>;
+  ) => Effect.Effect<ActivityLogPage | null, ActivityLogPersistenceError>;
 }
 
-export const ToolCallLogPersistence =
-  Context.GenericTag<ToolCallLogPersistenceService>(
-    "@whatsapp-mcp/api/ToolCallLogPersistence",
+export const ActivityLogPersistence =
+  Context.GenericTag<ActivityLogPersistenceService>(
+    "@whatsapp-mcp/api/ActivityLogPersistence",
   );
 
-export interface ToolCallLogClockService {
+export interface ActivityLogClockService {
   readonly now: Effect.Effect<Date>;
 }
 
-export const ToolCallLogClock = Context.GenericTag<ToolCallLogClockService>(
-  "@whatsapp-mcp/api/ToolCallLogClock",
+export const ActivityLogClock = Context.GenericTag<ActivityLogClockService>(
+  "@whatsapp-mcp/api/ActivityLogClock",
 );
 
-type ToolCallLogRequirements =
+type ActivityLogRequirements =
   | HumanIdentityService
   | SafeTelemetryService
-  | ToolCallLogClockService
-  | ToolCallLogPersistenceService;
+  | ActivityLogClockService
+  | ActivityLogPersistenceService;
 
 const corsHeaders = (browserOrigin: string) => ({
   "access-control-allow-headers": "authorization,content-type",
@@ -65,16 +65,16 @@ const jsonResponse = (
 const notFound = (browserOrigin?: string): Response =>
   jsonResponse({ error: "not_found" }, 404, browserOrigin);
 
-export const createToolCallLogHandler =
+export const createActivityLogHandler =
   (
-    layer: Layer.Layer<ToolCallLogRequirements, unknown>,
+    layer: Layer.Layer<ActivityLogRequirements, unknown>,
     browserOrigin: string,
   ) =>
   (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     const path = url.pathname;
     if (
-      path !== TOOL_CALL_LOGS_PATH ||
+      path !== ACTIVITY_LOGS_PATH ||
       request.headers.get("origin") !== browserOrigin
     ) {
       return Promise.resolve(notFound());
@@ -105,18 +105,18 @@ export const createToolCallLogHandler =
       Effect.gen(function* () {
         const identity = yield* HumanIdentity;
         const clerkUserId = yield* identity.verify(request);
-        const clock = yield* ToolCallLogClock;
-        const persistence = yield* ToolCallLogPersistence;
+        const clock = yield* ActivityLogClock;
+        const persistence = yield* ActivityLogPersistence;
         const page = yield* persistence.list(
           clerkUserId,
           yield* clock.now,
           cursor,
         );
         if (page === null)
-          return yield* Effect.fail(new InvalidToolCallLogOwner());
+          return yield* Effect.fail(new InvalidActivityLogOwner());
         const telemetry = yield* SafeTelemetry;
         yield* telemetry.emit({
-          event: "tool_call_log.review.completed",
+          event: "activity_log.review.completed",
           logCount: page.logs.length,
           service: "api",
         });
@@ -128,7 +128,7 @@ export const createToolCallLogHandler =
             hasFailureTag(
               failure,
               "InvalidHumanIdentity",
-              "InvalidToolCallLogOwner",
+              "InvalidActivityLogOwner",
             )
               ? notFound(browserOrigin)
               : jsonResponse({ error: "unavailable" }, 503, browserOrigin),
@@ -136,7 +136,7 @@ export const createToolCallLogHandler =
             jsonResponse(
               {
                 next_cursor: page.nextCursor,
-                tool_call_logs: page.logs.map((log) => ({
+                activity_logs: page.logs.map((log) => ({
                   capability: log.toolName,
                   channel: log.channel,
                   client: { id: log.clientId, name: log.clientName },
@@ -165,9 +165,9 @@ export const createToolCallLogHandler =
     );
   };
 
-class InvalidToolCallLogOwner extends Data.TaggedError(
-  "InvalidToolCallLogOwner",
+class InvalidActivityLogOwner extends Data.TaggedError(
+  "InvalidActivityLogOwner",
 ) {}
 
-export const isToolCallLogRequest = (request: Request): boolean =>
-  new URL(request.url).pathname === TOOL_CALL_LOGS_PATH;
+export const isActivityLogRequest = (request: Request): boolean =>
+  new URL(request.url).pathname === ACTIVITY_LOGS_PATH;

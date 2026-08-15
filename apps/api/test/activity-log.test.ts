@@ -1,20 +1,20 @@
-import type { ToolCallLogSummary } from "@whatsapp-mcp/db/tool-call-log";
+import type { ActivityLogSummary } from "@whatsapp-mcp/db/activity-log";
 import { Effect, Layer } from "effect";
 import { describe, expect, test } from "vitest";
+import {
+  ActivityLogClock,
+  ActivityLogPersistence,
+  ActivityLogPersistenceError,
+  createActivityLogHandler,
+} from "../src/activity-log";
 import {
   HumanIdentity,
   InvalidHumanIdentity,
 } from "../src/auth/human-identity";
 import { SafeTelemetry, type SafeTelemetryEvent } from "../src/services";
-import {
-  createToolCallLogHandler,
-  ToolCallLogClock,
-  ToolCallLogPersistence,
-  ToolCallLogPersistenceError,
-} from "../src/tool-call-log";
 
 const browserOrigin = "https://app.example.test";
-const safeLog: ToolCallLogSummary = {
+const safeLog: ActivityLogSummary = {
   apiKeyId: null,
   authorizationId: "mca_123456789012345678901",
   channel: "mcp",
@@ -48,14 +48,14 @@ const makeHandler = (
           : Effect.fail(new InvalidHumanIdentity()),
       verifyRecently: () => Effect.die("not used"),
     }),
-    Layer.succeed(ToolCallLogClock, {
+    Layer.succeed(ActivityLogClock, {
       now: Effect.succeed(new Date("2026-08-01T12:01:00.000Z")),
     }),
-    Layer.succeed(ToolCallLogPersistence, {
+    Layer.succeed(ActivityLogPersistence, {
       list: (clerkUserId, _observedAt, cursor) => {
         cursors.push(cursor);
         return options.unavailable
-          ? Effect.fail(new ToolCallLogPersistenceError())
+          ? Effect.fail(new ActivityLogPersistenceError())
           : Effect.succeed(
               clerkUserId === "user_owner"
                 ? {
@@ -72,17 +72,17 @@ const makeHandler = (
   );
   return {
     cursors,
-    handler: createToolCallLogHandler(layer, browserOrigin),
+    handler: createActivityLogHandler(layer, browserOrigin),
     telemetry,
   };
 };
 
 const request = (authorization = "Bearer owner", origin = browserOrigin) =>
-  new Request("https://api.example.test/v1/tool-call-logs", {
+  new Request("https://api.example.test/v1/activity-logs", {
     headers: { authorization, origin },
   });
 
-describe("Tool Call Log product boundary", () => {
+describe("Activity Log product boundary", () => {
   test("returns only the safe metadata allowlist", async () => {
     const harness = makeHandler();
     const response = await harness.handler(request());
@@ -92,7 +92,7 @@ describe("Tool Call Log product boundary", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(body).toEqual({
       next_cursor: null,
-      tool_call_logs: [
+      activity_logs: [
         {
           capability: "list_connections",
           channel: "mcp",
@@ -117,7 +117,7 @@ describe("Tool Call Log product boundary", () => {
     );
     expect(harness.telemetry).toEqual([
       {
-        event: "tool_call_log.review.completed",
+        event: "activity_log.review.completed",
         logCount: 1,
         service: "api",
       },
@@ -125,7 +125,7 @@ describe("Tool Call Log product boundary", () => {
   });
 
   test("presents API-channel Activity Logs with allowlisted key identity", async () => {
-    const apiLog: ToolCallLogSummary = {
+    const apiLog: ActivityLogSummary = {
       ...safeLog,
       apiKeyId: "apk_123456789012345678901",
       authorizationId: null,
@@ -138,10 +138,10 @@ describe("Tool Call Log product boundary", () => {
         verify: () => Effect.succeed("user_owner"),
         verifyRecently: () => Effect.die("not used"),
       }),
-      Layer.succeed(ToolCallLogClock, {
+      Layer.succeed(ActivityLogClock, {
         now: Effect.succeed(new Date("2026-08-01T12:01:00.000Z")),
       }),
-      Layer.succeed(ToolCallLogPersistence, {
+      Layer.succeed(ActivityLogPersistence, {
         list: () =>
           Effect.succeed({
             logs: [apiLog],
@@ -152,14 +152,14 @@ describe("Tool Call Log product boundary", () => {
         emit: () => Effect.void,
       }),
     );
-    const response = await createToolCallLogHandler(
+    const response = await createActivityLogHandler(
       layer,
       browserOrigin,
     )(request());
     const body = await response.json();
     expect(body).toEqual({
       next_cursor: null,
-      tool_call_logs: [
+      activity_logs: [
         {
           capability: "list_connections",
           channel: "api",
@@ -205,7 +205,7 @@ describe("Tool Call Log product boundary", () => {
       (
         await makeHandler().handler(
           new Request(
-            "https://api.example.test/v1/tool-call-logs?cursor=not-a-cursor",
+            "https://api.example.test/v1/activity-logs?cursor=not-a-cursor",
             {
               headers: { authorization: "Bearer owner", origin: browserOrigin },
             },
@@ -225,7 +225,7 @@ describe("Tool Call Log product boundary", () => {
     expect(firstBody.next_cursor).toBe(cursor);
     const next = await harness.handler(
       new Request(
-        `https://api.example.test/v1/tool-call-logs?cursor=${cursor}`,
+        `https://api.example.test/v1/activity-logs?cursor=${cursor}`,
         { headers: { authorization: "Bearer owner", origin: browserOrigin } },
       ),
     );

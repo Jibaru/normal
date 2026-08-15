@@ -69,7 +69,7 @@ projector fix. Never copy ciphertext from a Webhook Event into a tombstone.
 The hourly API cleanup schedule selects a deleting Personal Account only after
 its locked marker is durable and every WhatsApp Connection row has completed
 Connection Deletion. The restricted purge function transforms each ordinary
-Tool Call Log into a Security Record containing only category, allowlisted
+Activity Log into a Security Record containing only category, allowlisted
 client class, outcome, counts, timing, and latency, then deletes the Personal
 Account row so its Clerk identity mapping, onboarding profile, and all remaining tenant rows cascade
 away. Security Records keep the source log's original 90-day expiry. The only

@@ -3,11 +3,11 @@ import { makeDatabase, makeQueryConnection } from "./database";
 import type { McpToolConnectionProvider, SendGrantIdentity } from "./mcp-tool";
 import { withPgRequestConnection } from "./request-connection";
 import {
+  activityLogsInApp,
   directoryContactsInApp,
   pendingSendContentsInApp,
   sendOperationsInApp,
   storedMessagesInApp,
-  toolCallLogsInApp,
   whatsappConversationsInApp,
   whatsappGroupsInApp,
 } from "./schema";
@@ -249,7 +249,7 @@ export const makePgAtomicSendRepository = (
           errorCode: string | null,
           sendPublicId: string | null = null,
         ) => {
-          await db.insert(toolCallLogsInApp).values({
+          await db.insert(activityLogsInApp).values({
             id: input.auditLogId,
             personalAccountId: accountId,
             channel: principal.channel,

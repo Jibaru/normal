@@ -284,7 +284,7 @@ export function DashboardShell({
                   personalAccountEndpoint={
                     configuration.personalAccountEndpoint
                   }
-                  toolCallLogsEndpoint={configuration.toolCallLogsEndpoint}
+                  activityLogsEndpoint={configuration.activityLogsEndpoint}
                   view={viewByPathname[pathname] ?? "overview"}
                 />
               )}

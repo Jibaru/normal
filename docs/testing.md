@@ -37,8 +37,10 @@ Personal Account Deletion stays usable after a scoped recipient failure.
 Database coverage separately proves the transition, purge, suppression, and
 restore invariants against migrated Postgres under the production runtime role.
 
-The MCP Authorization management journey lists and revokes through that same
-browser-to-Worker seam. Database coverage separately applies the production
+The signed-in Activity Log review uses `GET /v1/activity-logs` and the
+canonical Activity Log contracts. The persisted table remains `tool_call_logs`
+as a storage name. MCP Authorization management lists and revokes through that
+same browser-to-Worker seam. Database coverage separately applies the production
 migrations and switches to `whatsapp_api_runtime` to prove RLS isolation,
 idempotent atomic authorization/family revocation, and immediate access and
 refresh denial. The HTTP fixture contains only safe product metadata and never

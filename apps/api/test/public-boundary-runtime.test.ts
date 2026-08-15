@@ -397,9 +397,9 @@ describe("public-boundary Worker harness", () => {
     });
   });
 
-  test("lists safe Tool Call Logs through the signed-in product boundary", async () => {
+  test("lists safe Activity Logs through the signed-in product boundary", async () => {
     const response = await exports.default.fetch(
-      new Request("https://api.example.test/v1/tool-call-logs", {
+      new Request("https://api.example.test/v1/activity-logs", {
         headers: {
           authorization: "Bearer signed-test-user",
           origin: "http://127.0.0.1:3000",
@@ -410,7 +410,7 @@ describe("public-boundary Worker harness", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       next_cursor: "tcl_123456789012345678901",
-      tool_call_logs: [
+      activity_logs: [
         {
           capability: "list_connections",
           channel: "mcp",
@@ -480,7 +480,7 @@ describe("public-boundary Worker harness", () => {
     });
 
     const logs = await exports.default.fetch(
-      new Request("https://api.example.test/v1/tool-call-logs", {
+      new Request("https://api.example.test/v1/activity-logs", {
         headers: {
           authorization: "Bearer signed-test-user",
           origin: "http://127.0.0.1:3000",
@@ -488,13 +488,13 @@ describe("public-boundary Worker harness", () => {
       }),
     );
     const logBody = (await logs.json()) as {
-      readonly tool_call_logs: ReadonlyArray<{
+      readonly activity_logs: ReadonlyArray<{
         readonly channel: string;
         readonly client: { readonly name: string };
         readonly capability: string;
       }>;
     };
-    expect(logBody.tool_call_logs[0]).toMatchObject({
+    expect(logBody.activity_logs[0]).toMatchObject({
       capability: "list_connections",
       channel: "api",
       client: { name: "CI" },

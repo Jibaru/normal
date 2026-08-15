@@ -30,7 +30,7 @@ export type ProductAnalyticsEvent =
       feature:
         | "additional_connection_setup"
         | "mcp_guide_opened"
-        | "tool_call_logs_viewed";
+        | "activity_logs_viewed";
     };
 
 export interface ProductAnalytics {
@@ -69,7 +69,7 @@ const connectionSetupOutcomes = new Set([
 const features = new Set([
   "additional_connection_setup",
   "mcp_guide_opened",
-  "tool_call_logs_viewed",
+  "activity_logs_viewed",
 ]);
 
 const hasExactKeys = (

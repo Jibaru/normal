@@ -1,5 +1,11 @@
 import type { Layer } from "effect";
 import {
+  type ActivityLogClockService,
+  type ActivityLogPersistenceService,
+  createActivityLogHandler,
+  isActivityLogRequest,
+} from "./activity-log";
+import {
   type ApiKeyClockService,
   type ApiKeyHmacService,
   type ApiKeyIdentifiersService,
@@ -53,12 +59,6 @@ import {
 } from "./rest";
 import type { SafeTelemetry as SafeTelemetryService } from "./services";
 import {
-  createToolCallLogHandler,
-  isToolCallLogRequest,
-  type ToolCallLogClockService,
-  type ToolCallLogPersistenceService,
-} from "./tool-call-log";
-import {
   handleWebhookDeadLetterBatch,
   handleWebhookEventBatch,
   type WebhookEventRequirements,
@@ -108,8 +108,8 @@ type PublicBoundaryRequirements =
   | RestIdentifiersService
   | RestPersistenceService
   | SafeTelemetryService
-  | ToolCallLogClockService
-  | ToolCallLogPersistenceService
+  | ActivityLogClockService
+  | ActivityLogPersistenceService
   | WebhookIngressRequirements
   | WhatsAppConnectionRequirements;
 
@@ -237,8 +237,8 @@ export const createPublicBoundaryWorker = (
         })(request);
       }
 
-      if (isToolCallLogRequest(request)) {
-        return createToolCallLogHandler(
+      if (isActivityLogRequest(request)) {
+        return createActivityLogHandler(
           options.layerFor(request, environment),
           options.browserOrigin,
         )(request);

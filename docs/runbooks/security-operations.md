@@ -73,7 +73,7 @@ plaintext and credentials.
 Use observability and issuer audit roles only; they receive no content keys,
 database runtime role, R2 object access, provider credential, or OAuth secret.
 Review append-only break-glass events, CloudTrail request and session tags,
-Tool Call Log/Security Record aggregate outcomes, secret-store administrative
+Activity Log/Security Record aggregate outcomes, secret-store administrative
 events, and deployment versions. Correlate by approved opaque incident reference
 and time window. Do not enrich evidence with User, account, connection, network,
 message, contact, object, provider, token, or credential values. Modifying an

@@ -1,5 +1,9 @@
 import { Effect, Layer } from "effect";
 import {
+  ActivityLogClock,
+  ActivityLogPersistence,
+} from "../../src/activity-log";
+import {
   ApiKeyClock,
   ApiKeyHmac,
   ApiKeyIdentifiers,
@@ -65,10 +69,6 @@ import {
 } from "../../src/recipient-exclusion";
 import { RestClock, RestIdentifiers, RestPersistence } from "../../src/rest";
 import { RestoreSafeDeletion, SafeTelemetry } from "../../src/services";
-import {
-  ToolCallLogClock,
-  ToolCallLogPersistence,
-} from "../../src/tool-call-log";
 import {
   WebhookEventClock,
   WebhookEventIdentifiers,
@@ -541,10 +541,10 @@ const makeTestLayer = (
     Layer.succeed(McpAuthorizationClock, {
       now: Effect.succeed(new Date("2026-01-02T03:05:00.000Z")),
     }),
-    Layer.succeed(ToolCallLogClock, {
+    Layer.succeed(ActivityLogClock, {
       now: Effect.succeed(new Date("2026-01-02T03:05:00.000Z")),
     }),
-    Layer.succeed(ToolCallLogPersistence, {
+    Layer.succeed(ActivityLogPersistence, {
       list: (clerkUserId, _observedAt, cursor) =>
         Effect.succeed(
           clerkUserId === "user_test_public_boundary"

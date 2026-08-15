@@ -157,7 +157,7 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
   await expect(
     page.getByRole("region", { name: "Activity Log" }),
   ).toContainText("API Key · CI");
-  await expect(page.getByTestId("tool-call-log").first()).toContainText(
+  await expect(page.getByTestId("activity-log").first()).toContainText(
     "list connections",
   );
 

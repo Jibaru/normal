@@ -223,29 +223,29 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
 
   await page.getByRole("link", { name: "Activity Log" }).click();
   await expect(page).toHaveURL(/\/dashboard\/activity$/u);
-  const toolCallLogs = page.getByRole("region", { name: "Activity Log" });
-  const mcpLogs = toolCallLogs.getByTestId("tool-call-log").filter({
+  const activityLogs = page.getByRole("region", { name: "Activity Log" });
+  const mcpLogs = activityLogs.getByTestId("activity-log").filter({
     hasText: "Approved MCP Client",
   });
   await expect(mcpLogs).toContainText("list connections");
-  await expect(toolCallLogs).toContainText("Approved MCP Client");
-  await expect(toolCallLogs).toContainText("success");
-  await expect(toolCallLogs).toContainText("1");
-  await expect(toolCallLogs).toContainText("120 ms");
-  await expect(toolCallLogs).toContainText("mca_123456789012345678901");
+  await expect(activityLogs).toContainText("Approved MCP Client");
+  await expect(activityLogs).toContainText("success");
+  await expect(activityLogs).toContainText("1");
+  await expect(activityLogs).toContainText("120 ms");
+  await expect(activityLogs).toContainText("mca_123456789012345678901");
   await expect(mcpLogs).not.toContainText(/message text|phone|provider/iu);
-  await toolCallLogs.getByRole("button", { name: "Next page" }).click();
+  await activityLogs.getByRole("button", { name: "Next page" }).click();
   await expect(mcpLogs).toHaveCount(2);
-  await expect(toolCallLogs).toContainText("read messages");
-  await expect(toolCallLogs).toContainText("Page 1 of 1");
-  await toolCallLogs.getByRole("button", { name: "Sort by results" }).click();
+  await expect(activityLogs).toContainText("read messages");
+  await expect(activityLogs).toContainText("Page 1 of 1");
+  await activityLogs.getByRole("button", { name: "Sort by results" }).click();
   await expect(mcpLogs.first()).toContainText("list connections");
-  await toolCallLogs.getByRole("button", { name: "Sort by results" }).click();
+  await activityLogs.getByRole("button", { name: "Sort by results" }).click();
   await expect(mcpLogs.first()).toContainText("read messages");
-  await toolCallLogs.getByLabel("Search Activity Log").fill("list connections");
+  await activityLogs.getByLabel("Search Activity Log").fill("list connections");
   await expect(mcpLogs).toHaveCount(1);
   await expect(mcpLogs).toContainText("list connections");
-  await toolCallLogs.getByLabel("Search Activity Log").fill("");
+  await activityLogs.getByLabel("Search Activity Log").fill("");
   await expect(mcpLogs).toHaveCount(2);
 
   await page.getByRole("link", { name: "WhatsApp Connections" }).click();

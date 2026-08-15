@@ -23,7 +23,7 @@ export function getPersonalAccountConfiguration() {
       apiOrigin,
     ).toString(),
     mcpServerUrl: new URL("/mcp", apiOrigin).toString(),
-    toolCallLogsEndpoint: new URL("/v1/tool-call-logs", apiOrigin).toString(),
+    activityLogsEndpoint: new URL("/v1/activity-logs", apiOrigin).toString(),
     connectionsEndpoint: new URL(
       "/v1/whatsapp-connections",
       apiOrigin,
