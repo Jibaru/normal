@@ -1319,7 +1319,21 @@ const mcpToolPersistenceLayer = (environment: ApiEnvironment) =>
           const connectionString = environment.HYPERDRIVE?.connectionString;
           if (typeof connectionString !== "string")
             throw new Error("database unavailable");
-          return makePgMcpToolRepository(connectionString).getSendStatus(input);
+          return makePgMcpToolRepository(connectionString).getSendStatus({
+            connectionPublicId: input.connectionPublicId,
+            grant: {
+              kind: "mcp",
+              authorization: {
+                authorizationId: input.authorizationId,
+                oauthSubject: input.oauthSubject,
+                ...(input.clientId === undefined
+                  ? {}
+                  : { clientId: input.clientId }),
+              },
+            },
+            observedAt: input.observedAt,
+            sendPublicId: input.sendPublicId,
+          });
         },
         catch: () => new McpToolPersistenceError(),
       }),

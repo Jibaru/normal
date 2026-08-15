@@ -1,9 +1,6 @@
 import { and, desc, eq, gt, isNull, lte, sql } from "drizzle-orm";
 import { makeDatabase, makeQueryConnection } from "./database";
-import type {
-  McpAccessAuthorization,
-  McpToolConnectionProvider,
-} from "./mcp-tool";
+import type { McpToolConnectionProvider, SendGrantIdentity } from "./mcp-tool";
 import { withPgRequestConnection } from "./request-connection";
 import {
   directoryContactsInApp,
@@ -82,23 +79,29 @@ export type CommitSendResult =
       readonly receipt: SendReceiptRecord;
     };
 
+export type { SendGrantIdentity };
+export { apiSendGrant, mcpSendGrant } from "./mcp-tool";
+
+export type CommitSendInput = {
+  readonly auditLogId: string;
+  readonly connectionPublicId: string;
+  readonly fingerprint: string;
+  readonly grant: SendGrantIdentity;
+  readonly hourRequestLimit: number;
+  readonly idempotencyKey: string;
+  readonly minuteRequestLimit: number;
+  readonly observedAt: Date;
+  readonly pendingExpiresAt: Date;
+  readonly recipientPublicId: string;
+  readonly sendDailyLimit: number;
+  readonly sendId: string;
+  readonly sendPublicId: string;
+  readonly sendPerMinuteLimit: number;
+};
+
 export interface AtomicSendRepository {
   readonly commit: (
-    input: McpAccessAuthorization & {
-      readonly auditLogId: string;
-      readonly connectionPublicId: string;
-      readonly fingerprint: string;
-      readonly hourRequestLimit: number;
-      readonly idempotencyKey: string;
-      readonly minuteRequestLimit: number;
-      readonly observedAt: Date;
-      readonly pendingExpiresAt: Date;
-      readonly recipientPublicId: string;
-      readonly sendDailyLimit: number;
-      readonly sendId: string;
-      readonly sendPublicId: string;
-      readonly sendPerMinuteLimit: number;
-    },
+    input: CommitSendInput,
     encrypt: (material: SendEncryptionMaterial) => Promise<SendCiphertext>,
   ) => Promise<CommitSendResult>;
   readonly expireLeases: (observedAt: Date) => Promise<number>;
@@ -159,6 +162,27 @@ const receipt = (row: Record<string, unknown>): SendReceiptRecord => ({
   statusChangedAt: date(row.status_changed_at),
 });
 
+const grantPrincipal = (grant: SendGrantIdentity) =>
+  grant.kind === "mcp"
+    ? {
+        apiKeyId: null as string | null,
+        apiKeyName: null as string | null,
+        apiKeyPublicId: null as string | null,
+        channel: "mcp" as const,
+        grantId: grant.authorization.authorizationId,
+        grantType: "mcp" as const,
+        mcpAuthorizationId: grant.authorization.authorizationId,
+      }
+    : {
+        apiKeyId: grant.apiKey.grantId,
+        apiKeyName: grant.apiKey.name,
+        apiKeyPublicId: grant.apiKey.publicId,
+        channel: "api" as const,
+        grantId: grant.apiKey.grantId,
+        grantType: "api" as const,
+        mcpAuthorizationId: null as string | null,
+      };
+
 export const makePgAtomicSendRepository = (
   provider: McpToolConnectionProvider,
 ): AtomicSendRepository => ({
@@ -168,23 +192,42 @@ export const makePgAtomicSendRepository = (
       let transactionCommitted = false;
       await db.execute(sql`BEGIN`);
       try {
-        const boot = await db.execute<{ personal_account_id: unknown }>(
-          sql`WITH authorized AS MATERIALIZED (
-                SELECT public.bootstrap_mcp_tool_call(
-                  ${input.authorizationId},
-                  ${input.oauthSubject},
-                  ${input.clientId ?? null}
-                ) AS personal_account_id
+        const principal = grantPrincipal(input.grant);
+        const boot =
+          input.grant.kind === "mcp"
+            ? await db.execute<{ personal_account_id: unknown }>(
+                sql`WITH authorized AS MATERIALIZED (
+                      SELECT public.bootstrap_mcp_tool_call(
+                        ${input.grant.authorization.authorizationId},
+                        ${input.grant.authorization.oauthSubject},
+                        ${input.grant.authorization.clientId ?? null}
+                      ) AS personal_account_id
+                    )
+                    SELECT authorized.personal_account_id,
+                           set_config(
+                             'public.personal_account_id',
+                             authorized.personal_account_id::text,
+                             false
+                           ) AS configured_account_id
+                    FROM authorized
+                    WHERE authorized.personal_account_id IS NOT NULL`,
               )
-              SELECT authorized.personal_account_id,
-                     set_config(
-                       'public.personal_account_id',
-                       authorized.personal_account_id::text,
-                       false
-                     ) AS configured_account_id
-              FROM authorized
-              WHERE authorized.personal_account_id IS NOT NULL`,
-        );
+            : await db.execute<{ personal_account_id: unknown }>(
+                sql`WITH authorized AS MATERIALIZED (
+                      SELECT account.id AS personal_account_id
+                      FROM public.personal_accounts AS account
+                      WHERE account.id = ${input.grant.apiKey.personalAccountId}
+                        AND account.state = 'active'
+                    )
+                    SELECT authorized.personal_account_id,
+                           set_config(
+                             'public.personal_account_id',
+                             authorized.personal_account_id::text,
+                             false
+                           ) AS configured_account_id
+                    FROM authorized
+                    WHERE authorized.personal_account_id IS NOT NULL`,
+              );
         const accountId = boot[0]?.personal_account_id;
         if (typeof accountId !== "string") {
           await db.execute(sql`ROLLBACK`);
@@ -202,7 +245,11 @@ export const makePgAtomicSendRepository = (
           await db.insert(toolCallLogsInApp).values({
             id: input.auditLogId,
             personalAccountId: accountId,
-            mcpAuthorizationId: input.authorizationId,
+            channel: principal.channel,
+            mcpAuthorizationId: principal.mcpAuthorizationId,
+            apiKeyId: principal.apiKeyId,
+            apiKeyPublicId: principal.apiKeyPublicId,
+            apiKeyName: principal.apiKeyName,
             toolName: "send_text_message",
             startedAt: input.observedAt.toISOString(),
             completedAt: input.observedAt.toISOString(),
@@ -218,70 +265,133 @@ export const makePgAtomicSendRepository = (
           await db.execute(sql`COMMIT`);
         };
         const authorized = await db.execute<Record<string, unknown>>(
-          sql`WITH locked_account AS MATERIALIZED (
-                SELECT account.id
-                FROM public.personal_accounts AS account
-                WHERE account.id = ${accountId}
-                FOR UPDATE
-              ),
-              locked_authorization AS MATERIALIZED (
-                SELECT auth.id,
-                       auth.personal_account_id,
-                       auth.scopes
-                FROM public.mcp_authorizations AS auth
-                INNER JOIN locked_account
-                  ON locked_account.id = auth.personal_account_id
-                WHERE auth.id = ${input.authorizationId}
-                FOR UPDATE OF auth
-              ),
-              active AS MATERIALIZED (
-                SELECT public.bootstrap_active_mcp_tool_call(
-                  ${input.authorizationId},
-                  ${input.oauthSubject},
-                  ${input.clientId ?? null},
-                  ${input.observedAt}
-                ) AS personal_account_id
-              )
-              SELECT conn.id AS connection_id,
-                     conn.state AS connection_state,
-                     conn.message_retention_days,
-                     bound.id AS bound_id,
-                     bound.public_id AS bound_public_id,
-                     bound.status AS bound_status,
-                     bound.created_at AS bound_created_at,
-                     bound.status_changed_at AS bound_status_changed_at,
-                     bound.lease_expires_at AS bound_lease_expires_at,
-                     bound.request_fingerprint AS bound_request_fingerprint
-              FROM locked_account
-              INNER JOIN locked_authorization
-                ON locked_authorization.personal_account_id = locked_account.id
-              INNER JOIN active
-                ON active.personal_account_id = locked_authorization.personal_account_id
-              INNER JOIN public.mcp_authorization_connections AS selected
-                ON selected.personal_account_id = locked_authorization.personal_account_id
-               AND selected.mcp_authorization_id = locked_authorization.id
-              INNER JOIN public.whatsapp_connections AS conn
-                ON conn.personal_account_id = selected.personal_account_id
-               AND conn.id = selected.whatsapp_connection_id
-              LEFT JOIN LATERAL (
-                SELECT send.id,
-                       send.public_id,
-                       send.status,
-                       send.created_at,
-                       send.status_changed_at,
-                       send.lease_expires_at,
-                       binding.request_fingerprint
-                FROM public.send_idempotency_bindings AS binding
-                INNER JOIN public.send_operations AS send
-                  ON send.id = binding.send_operation_id
-                WHERE binding.mcp_authorization_id = ${input.authorizationId}
-                  AND binding.idempotency_key = ${input.idempotencyKey}
-                  AND binding.expires_at > ${input.observedAt}
-                FOR UPDATE OF binding, send
-              ) AS bound ON true
-              WHERE ${"messages:send"} = ANY(locked_authorization.scopes)
-                AND conn.public_id = ${input.connectionPublicId}
-              FOR UPDATE OF conn`,
+          input.grant.kind === "mcp"
+            ? sql`WITH locked_account AS MATERIALIZED (
+                    SELECT account.id
+                    FROM public.personal_accounts AS account
+                    WHERE account.id = ${accountId}
+                    FOR UPDATE
+                  ),
+                  locked_authorization AS MATERIALIZED (
+                    SELECT auth.id,
+                           auth.personal_account_id,
+                           auth.scopes
+                    FROM public.mcp_authorizations AS auth
+                    INNER JOIN locked_account
+                      ON locked_account.id = auth.personal_account_id
+                    WHERE auth.id = ${input.grant.authorization.authorizationId}
+                    FOR UPDATE OF auth
+                  ),
+                  active AS MATERIALIZED (
+                    SELECT public.bootstrap_active_mcp_tool_call(
+                      ${input.grant.authorization.authorizationId},
+                      ${input.grant.authorization.oauthSubject},
+                      ${input.grant.authorization.clientId ?? null},
+                      ${input.observedAt}
+                    ) AS personal_account_id
+                  )
+                  SELECT conn.id AS connection_id,
+                         conn.state AS connection_state,
+                         conn.message_retention_days,
+                         bound.id AS bound_id,
+                         bound.public_id AS bound_public_id,
+                         bound.status AS bound_status,
+                         bound.created_at AS bound_created_at,
+                         bound.status_changed_at AS bound_status_changed_at,
+                         bound.lease_expires_at AS bound_lease_expires_at,
+                         bound.request_fingerprint AS bound_request_fingerprint
+                  FROM locked_account
+                  INNER JOIN locked_authorization
+                    ON locked_authorization.personal_account_id = locked_account.id
+                  INNER JOIN active
+                    ON active.personal_account_id = locked_authorization.personal_account_id
+                  INNER JOIN public.mcp_authorization_connections AS selected
+                    ON selected.personal_account_id = locked_authorization.personal_account_id
+                   AND selected.mcp_authorization_id = locked_authorization.id
+                  INNER JOIN public.whatsapp_connections AS conn
+                    ON conn.personal_account_id = selected.personal_account_id
+                   AND conn.id = selected.whatsapp_connection_id
+                  LEFT JOIN LATERAL (
+                    SELECT send.id,
+                           send.public_id,
+                           send.status,
+                           send.created_at,
+                           send.status_changed_at,
+                           send.lease_expires_at,
+                           binding.request_fingerprint
+                    FROM public.send_idempotency_bindings AS binding
+                    INNER JOIN public.send_operations AS send
+                      ON send.id = binding.send_operation_id
+                    WHERE binding.grant_id = ${principal.grantId}
+                      AND binding.idempotency_key = ${input.idempotencyKey}
+                      AND binding.expires_at > ${input.observedAt}
+                    FOR UPDATE OF binding, send
+                  ) AS bound ON true
+                  WHERE ${"messages:send"} = ANY(locked_authorization.scopes)
+                    AND conn.public_id = ${input.connectionPublicId}
+                  FOR UPDATE OF conn`
+            : sql`WITH locked_account AS MATERIALIZED (
+                    SELECT account.id
+                    FROM public.personal_accounts AS account
+                    WHERE account.id = ${accountId}
+                      AND account.state = 'active'
+                    FOR UPDATE
+                  ),
+                  locked_key AS MATERIALIZED (
+                    SELECT keys.id,
+                           keys.personal_account_id,
+                           keys.permissions,
+                           keys.state,
+                           keys.expires_at
+                    FROM public.api_keys AS keys
+                    INNER JOIN locked_account
+                      ON locked_account.id = keys.personal_account_id
+                    WHERE keys.id = ${principal.grantId}
+                    FOR UPDATE OF keys
+                  )
+                  SELECT conn.id AS connection_id,
+                         conn.state AS connection_state,
+                         conn.message_retention_days,
+                         bound.id AS bound_id,
+                         bound.public_id AS bound_public_id,
+                         bound.status AS bound_status,
+                         bound.created_at AS bound_created_at,
+                         bound.status_changed_at AS bound_status_changed_at,
+                         bound.lease_expires_at AS bound_lease_expires_at,
+                         bound.request_fingerprint AS bound_request_fingerprint
+                  FROM locked_account
+                  INNER JOIN locked_key
+                    ON locked_key.personal_account_id = locked_account.id
+                  INNER JOIN public.api_key_connections AS selected
+                    ON selected.personal_account_id = locked_key.personal_account_id
+                   AND selected.api_key_id = locked_key.id
+                  INNER JOIN public.whatsapp_connections AS conn
+                    ON conn.personal_account_id = selected.personal_account_id
+                   AND conn.id = selected.whatsapp_connection_id
+                  LEFT JOIN LATERAL (
+                    SELECT send.id,
+                           send.public_id,
+                           send.status,
+                           send.created_at,
+                           send.status_changed_at,
+                           send.lease_expires_at,
+                           binding.request_fingerprint
+                    FROM public.send_idempotency_bindings AS binding
+                    INNER JOIN public.send_operations AS send
+                      ON send.id = binding.send_operation_id
+                    WHERE binding.grant_id = ${principal.grantId}
+                      AND binding.idempotency_key = ${input.idempotencyKey}
+                      AND binding.expires_at > ${input.observedAt}
+                    FOR UPDATE OF binding, send
+                  ) AS bound ON true
+                  WHERE locked_key.state = 'active'
+                    AND (
+                      locked_key.expires_at IS NULL
+                      OR locked_key.expires_at > ${input.observedAt}
+                    )
+                    AND ${"messages:send"} = ANY(locked_key.permissions)
+                    AND conn.public_id = ${input.connectionPublicId}
+                  FOR UPDATE OF conn`,
         );
         if (authorized[0] === undefined) {
           await finishAudit("authorization_denied", "authorization_denied");
@@ -424,8 +534,16 @@ export const makePgAtomicSendRepository = (
              (SELECT (array_agg(started_at ORDER BY started_at DESC))[(${input.minuteRequestLimit}::int)] FROM public.tool_call_logs WHERE personal_account_id=${accountId} AND quota_reserved AND started_at>${minuteStart} AND started_at<=${input.observedAt}) AS request_minute_reset,
              (SELECT count(*)::int FROM public.tool_call_logs WHERE personal_account_id=${accountId} AND quota_reserved AND started_at>${hourStart} AND started_at<=${input.observedAt}) AS request_hour,
              (SELECT (array_agg(started_at ORDER BY started_at DESC))[(${input.hourRequestLimit}::int)] FROM public.tool_call_logs WHERE personal_account_id=${accountId} AND quota_reserved AND started_at>${hourStart} AND started_at<=${input.observedAt}) AS request_hour_reset,
-             (SELECT count(*)::int FROM public.send_quota_reservations WHERE mcp_authorization_id=${input.authorizationId} AND reserved_at>${minuteStart} AND reserved_at<=${input.observedAt}) AS send_minute,
-             (SELECT (array_agg(reserved_at ORDER BY reserved_at DESC))[(${input.sendPerMinuteLimit}::int)] FROM public.send_quota_reservations WHERE mcp_authorization_id=${input.authorizationId} AND reserved_at>${minuteStart} AND reserved_at<=${input.observedAt}) AS send_minute_reset,
+             (SELECT count(*)::int FROM public.send_quota_reservations WHERE ${
+               principal.grantType === "mcp"
+                 ? sql`mcp_authorization_id=${principal.grantId}`
+                 : sql`api_key_id=${principal.grantId}`
+             } AND reserved_at>${minuteStart} AND reserved_at<=${input.observedAt}) AS send_minute,
+             (SELECT (array_agg(reserved_at ORDER BY reserved_at DESC))[(${input.sendPerMinuteLimit}::int)] FROM public.send_quota_reservations WHERE ${
+               principal.grantType === "mcp"
+                 ? sql`mcp_authorization_id=${principal.grantId}`
+                 : sql`api_key_id=${principal.grantId}`
+             } AND reserved_at>${minuteStart} AND reserved_at<=${input.observedAt}) AS send_minute_reset,
              (SELECT count(*)::int FROM public.send_quota_reservations WHERE personal_account_id=${accountId} AND reserved_at>=${dayStart} AND reserved_at<=${input.observedAt}) AS send_day
            FROM public.load_send_key_material(
              ${accountId},
@@ -492,12 +610,15 @@ export const makePgAtomicSendRepository = (
         await db.execute(
           sql`WITH inserted_audit AS (
                 INSERT INTO public.tool_call_logs (
-                  id, personal_account_id, mcp_authorization_id, tool_name,
+                  id, personal_account_id, channel, mcp_authorization_id,
+                  api_key_id, api_key_public_id, api_key_name, tool_name,
                   started_at, completed_at, outcome, error_code, result_count,
                   latency_ms, quota_reserved, expires_at,
                   connection_public_id, send_public_id
                 ) VALUES (
-                  ${input.auditLogId}, ${accountId}, ${input.authorizationId},
+                  ${input.auditLogId}, ${accountId}, ${principal.channel},
+                  ${principal.mcpAuthorizationId}, ${principal.apiKeyId},
+                  ${principal.apiKeyPublicId}, ${principal.apiKeyName},
                   'send_text_message', ${observedAt}, NULL, 'started', NULL,
                   NULL, NULL, true,
                   ${input.observedAt}::timestamptz + interval '90 days',
@@ -507,14 +628,16 @@ export const makePgAtomicSendRepository = (
               ),
               inserted_send AS (
                 INSERT INTO public.send_operations (
-                  id, public_id, personal_account_id, mcp_authorization_id,
-                  tool_call_log_id, whatsapp_connection_id, recipient_type,
-                  recipient_public_id, status, created_at, status_changed_at,
-                  attempt_claimed_at, lease_expires_at, expires_at
+                  id, public_id, personal_account_id, grant_type,
+                  mcp_authorization_id, api_key_id, tool_call_log_id,
+                  whatsapp_connection_id, recipient_type, recipient_public_id,
+                  status, created_at, status_changed_at, attempt_claimed_at,
+                  lease_expires_at, expires_at
                 )
                 SELECT ${input.sendId}, ${input.sendPublicId},
                        inserted_audit.personal_account_id,
-                       ${input.authorizationId}, inserted_audit.id,
+                       ${principal.grantType}, ${principal.mcpAuthorizationId},
+                       ${principal.apiKeyId}, inserted_audit.id,
                        ${connectionId}, ${recipientType},
                        ${input.recipientPublicId}, 'processing', ${observedAt},
                        ${observedAt}, ${observedAt},
@@ -525,12 +648,15 @@ export const makePgAtomicSendRepository = (
               ),
               inserted_binding AS (
                 INSERT INTO public.send_idempotency_bindings (
-                  personal_account_id, mcp_authorization_id, idempotency_key,
+                  personal_account_id, grant_type, grant_id,
+                  mcp_authorization_id, api_key_id, idempotency_key,
                   send_operation_id, request_fingerprint, created_at, expires_at
                 )
                 SELECT inserted_send.personal_account_id,
-                       ${input.authorizationId}, ${input.idempotencyKey},
-                       inserted_send.id, ${input.fingerprint}, ${observedAt},
+                       ${principal.grantType}, ${principal.grantId},
+                       ${principal.mcpAuthorizationId}, ${principal.apiKeyId},
+                       ${input.idempotencyKey}, inserted_send.id,
+                       ${input.fingerprint}, ${observedAt},
                        ${input.observedAt}::timestamptz + interval '90 days'
                 FROM inserted_send
                 RETURNING send_operation_id, personal_account_id
@@ -549,12 +675,13 @@ export const makePgAtomicSendRepository = (
                 RETURNING send_operation_id, personal_account_id
               )
               INSERT INTO public.send_quota_reservations (
-                send_operation_id, personal_account_id,
-                mcp_authorization_id, reserved_at
+                send_operation_id, personal_account_id, grant_type,
+                mcp_authorization_id, api_key_id, reserved_at
               )
               SELECT inserted_pending.send_operation_id,
                      inserted_pending.personal_account_id,
-                     ${input.authorizationId}, ${observedAt}
+                     ${principal.grantType}, ${principal.mcpAuthorizationId},
+                     ${principal.apiKeyId}, ${observedAt}
               FROM inserted_pending`,
         );
         await db.execute(sql`COMMIT`);

@@ -14,6 +14,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { personalAccountsInApp } from "./accounts";
+import { apiKeysInApp } from "./api-keys";
 import { bytea, publicSchema } from "./common";
 import { whatsappConnectionsInApp } from "./connections";
 import { mcpAuthorizationsInApp } from "./mcp-authorizations";
@@ -25,7 +26,9 @@ export const sendOperationsInApp = publicSchema.table(
     id: uuid().primaryKey().notNull(),
     publicId: text("public_id").notNull(),
     personalAccountId: uuid("personal_account_id").notNull(),
-    mcpAuthorizationId: uuid("mcp_authorization_id").notNull(),
+    grantType: text("grant_type").notNull().default("mcp"),
+    mcpAuthorizationId: uuid("mcp_authorization_id"),
+    apiKeyId: uuid("api_key_id"),
     toolCallLogId: uuid("tool_call_log_id").notNull(),
     whatsappConnectionId: uuid("whatsapp_connection_id").notNull(),
     recipientType: text("recipient_type").notNull(),
@@ -68,6 +71,11 @@ export const sendOperationsInApp = publicSchema.table(
         mcpAuthorizationsInApp.personalAccountId,
       ],
       name: "send_operations_personal_account_id_mcp_authorization_id_fkey",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.personalAccountId, table.apiKeyId],
+      foreignColumns: [apiKeysInApp.personalAccountId, apiKeysInApp.id],
+      name: "send_operations_api_key_fkey",
     }).onDelete("cascade"),
     foreignKey({
       columns: [table.personalAccountId, table.whatsappConnectionId],
@@ -122,6 +130,14 @@ export const sendOperationsInApp = publicSchema.table(
       "send_operations_check1",
       sql`expires_at = (created_at + '90 days'::interval)`,
     ),
+    check(
+      "send_operations_grant_type_check",
+      sql`grant_type = ANY (ARRAY['mcp'::text, 'api'::text])`,
+    ),
+    check(
+      "send_operations_grant_principal",
+      sql`((grant_type = 'mcp'::text) AND (mcp_authorization_id IS NOT NULL) AND (api_key_id IS NULL)) OR ((grant_type = 'api'::text) AND (mcp_authorization_id IS NULL) AND (api_key_id IS NOT NULL))`,
+    ),
   ],
 );
 
@@ -130,7 +146,9 @@ export const sendQuotaReservationsInApp = publicSchema.table(
   {
     sendOperationId: uuid("send_operation_id").primaryKey().notNull(),
     personalAccountId: uuid("personal_account_id").notNull(),
-    mcpAuthorizationId: uuid("mcp_authorization_id").notNull(),
+    grantType: text("grant_type").notNull().default("mcp"),
+    mcpAuthorizationId: uuid("mcp_authorization_id"),
+    apiKeyId: uuid("api_key_id"),
     reservedAt: timestamp("reserved_at", {
       withTimezone: true,
       mode: "string",
@@ -147,6 +165,13 @@ export const sendQuotaReservationsInApp = publicSchema.table(
       table.mcpAuthorizationId.asc().nullsLast().op("uuid_ops"),
       table.reservedAt.asc().nullsLast().op("uuid_ops"),
     ),
+    index("send_quota_api_key_time")
+      .using(
+        "btree",
+        table.apiKeyId.asc().nullsLast().op("timestamptz_ops"),
+        table.reservedAt.asc().nullsLast().op("timestamptz_ops"),
+      )
+      .where(sql`(api_key_id IS NOT NULL)`),
     foreignKey({
       columns: [table.personalAccountId],
       foreignColumns: [personalAccountsInApp.id],
@@ -159,6 +184,11 @@ export const sendQuotaReservationsInApp = publicSchema.table(
         mcpAuthorizationsInApp.personalAccountId,
       ],
       name: "send_quota_reservations_personal_account_id_mcp_authorizat_fkey",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.personalAccountId, table.apiKeyId],
+      foreignColumns: [apiKeysInApp.personalAccountId, apiKeysInApp.id],
+      name: "send_quota_reservations_api_key_fkey",
     }).onDelete("cascade"),
     foreignKey({
       columns: [table.sendOperationId, table.personalAccountId],
@@ -175,6 +205,14 @@ export const sendQuotaReservationsInApp = publicSchema.table(
       using: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
       withCheck: sql`(personal_account_id = (NULLIF(current_setting('public.personal_account_id'::text, true), ''::text))::uuid)`,
     }),
+    check(
+      "send_quota_reservations_grant_type_check",
+      sql`grant_type = ANY (ARRAY['mcp'::text, 'api'::text])`,
+    ),
+    check(
+      "send_quota_reservations_grant_principal",
+      sql`((grant_type = 'mcp'::text) AND (mcp_authorization_id IS NOT NULL) AND (api_key_id IS NULL)) OR ((grant_type = 'api'::text) AND (mcp_authorization_id IS NULL) AND (api_key_id IS NOT NULL))`,
+    ),
   ],
 );
 
@@ -234,7 +272,10 @@ export const sendIdempotencyBindingsInApp = publicSchema.table(
   "send_idempotency_bindings",
   {
     personalAccountId: uuid("personal_account_id").notNull(),
-    mcpAuthorizationId: uuid("mcp_authorization_id").notNull(),
+    grantType: text("grant_type").notNull().default("mcp"),
+    grantId: uuid("grant_id").notNull(),
+    mcpAuthorizationId: uuid("mcp_authorization_id"),
+    apiKeyId: uuid("api_key_id"),
     idempotencyKey: text("idempotency_key").notNull(),
     sendOperationId: uuid("send_operation_id").notNull(),
     requestFingerprint: text("request_fingerprint").notNull(),
@@ -264,8 +305,13 @@ export const sendIdempotencyBindingsInApp = publicSchema.table(
       ],
       name: "send_idempotency_bindings_personal_account_id_send_operati_fkey",
     }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.personalAccountId, table.apiKeyId],
+      foreignColumns: [apiKeysInApp.personalAccountId, apiKeysInApp.id],
+      name: "send_idempotency_bindings_api_key_fkey",
+    }).onDelete("cascade"),
     primaryKey({
-      columns: [table.idempotencyKey, table.mcpAuthorizationId],
+      columns: [table.idempotencyKey, table.grantId],
       name: "send_idempotency_bindings_pkey",
     }),
     unique("send_idempotency_bindings_send_operation_id_key").on(
@@ -289,6 +335,14 @@ export const sendIdempotencyBindingsInApp = publicSchema.table(
     check(
       "send_idempotency_bindings_check",
       sql`expires_at = (created_at + '90 days'::interval)`,
+    ),
+    check(
+      "send_idempotency_bindings_grant_type_check",
+      sql`grant_type = ANY (ARRAY['mcp'::text, 'api'::text])`,
+    ),
+    check(
+      "send_idempotency_bindings_grant_principal",
+      sql`((grant_type = 'mcp'::text) AND (grant_id = mcp_authorization_id) AND (mcp_authorization_id IS NOT NULL) AND (api_key_id IS NULL)) OR ((grant_type = 'api'::text) AND (grant_id = api_key_id) AND (mcp_authorization_id IS NULL) AND (api_key_id IS NOT NULL))`,
     ),
   ],
 );

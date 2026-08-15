@@ -6,6 +6,7 @@ import {
   type McpToolConnectionProvider,
   type McpToolRepository,
   makeMcpToolRepository,
+  mcpSendGrant,
 } from "../src/mcp-tool";
 import { runMigrations } from "../src/migrations";
 import type { PersonalAccountConnectionProvider } from "../src/personal-account";
@@ -162,6 +163,7 @@ describe("MCP tool repository", () => {
     clientId: "approved-client",
     oauthSubject,
   } as const;
+  const grant = mcpSendGrant(authorization);
 
   test("discovers current scopes and lists only explicitly selected non-deleting Connections", async () => {
     const inspected = await repository.inspectAuthorization({
@@ -288,10 +290,10 @@ describe("MCP tool repository", () => {
     );
     let encrypted = 0;
     const input = {
-      ...authorization,
       auditLogId: "50000000-0000-4000-8000-000000000099",
       connectionPublicId: connectionA,
       fingerprint: `sf1_${"B".repeat(43)}`,
+      grant,
       hourRequestLimit: 100,
       idempotencyKey: "123456789012345678930",
       minuteRequestLimit: 100,
@@ -318,7 +320,25 @@ describe("MCP tool repository", () => {
       outcome: "created",
       receipt: { status: "processing" },
     });
+    expect(created).not.toHaveProperty("receipt.grantType");
+    expect(created).not.toHaveProperty("receipt.mcpAuthorizationId");
+    expect(created).not.toHaveProperty("receipt.apiKeyId");
     expect(encrypted).toBe(1);
+    const grantRow = await database.query<{
+      api_key_id: string | null;
+      grant_type: string;
+      mcp_authorization_id: string | null;
+    }>(
+      `SELECT grant_type, mcp_authorization_id, api_key_id
+       FROM public.send_operations
+       WHERE id=$1`,
+      [input.sendId],
+    );
+    expect(grantRow.rows[0]).toEqual({
+      api_key_id: null,
+      grant_type: "mcp",
+      mcp_authorization_id: authorizationId,
+    });
 
     await database.query(
       `UPDATE public.whatsapp_connections SET state='degraded'
@@ -484,8 +504,8 @@ describe("MCP tool repository", () => {
     ).resolves.toMatchObject({ status: "sent" });
     await expect(
       repository.getSendStatus({
-        ...authorization,
         connectionPublicId: connectionA,
+        grant,
         observedAt: new Date(observedAt.valueOf() + 16_000),
         sendPublicId: input.sendPublicId,
       }),
@@ -505,8 +525,8 @@ describe("MCP tool repository", () => {
     expect(projected.rows).toEqual([{ pending_count: 0, stored_count: 1 }]);
     await expect(
       repository.getSendStatus({
-        ...authorization,
         connectionPublicId: connectionLater,
+        grant,
         observedAt: new Date(observedAt.valueOf() + 16_000),
         sendPublicId: input.sendPublicId,
       }),
@@ -541,10 +561,10 @@ describe("MCP tool repository", () => {
       nonce: new Uint8Array(12).fill(21),
     });
     const input = {
-      ...authorization,
       auditLogId: "50000000-0000-4000-8000-000000000091",
       connectionPublicId: connectionA,
       fingerprint: `sf1_${"C".repeat(43)}`,
+      grant,
       hourRequestLimit: 100,
       idempotencyKey: "123456789012345678941",
       minuteRequestLimit: 100,
