@@ -191,7 +191,15 @@ describe("atomic send workflow", () => {
       recipientType: "contact",
     };
     const repository: AtomicSendRepository = {
-      commit: async (_request, encrypt) => {
+      commit: async (request, encrypt) => {
+        expect(request.grant).toEqual({
+          kind: "mcp",
+          authorization: {
+            authorizationId: input.authorizationId,
+            clientId: input.clientId,
+            oauthSubject: input.oauthSubject,
+          },
+        });
         order.push("transaction-open");
         await encrypt(material);
         order.push("commit");

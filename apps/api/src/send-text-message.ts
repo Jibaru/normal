@@ -3,9 +3,11 @@ import {
   makeMessageId,
 } from "@whatsapp-mcp/contracts/handles";
 import type { SendTextMessageOutput } from "@whatsapp-mcp/contracts/mcp-schema";
-import type {
-  AtomicSendRepository,
-  SendEncryptionMaterial,
+import {
+  type AtomicSendRepository,
+  mcpSendGrant,
+  type SendEncryptionMaterial,
+  type SendGrantIdentity,
 } from "@whatsapp-mcp/db/send";
 import {
   makeWasenderRecipientRoute,
@@ -68,17 +70,22 @@ const keys = (material: SendEncryptionMaterial) => ({
     version: 1 as const,
   },
 });
+const fingerprintSubject = (grant: SendGrantIdentity): string =>
+  grant.kind === "mcp"
+    ? grant.authorization.authorizationId
+    : `api:${grant.apiKey.grantId}`;
+
 const fingerprint = async (
   key: CryptoKey,
   input: {
-    authorizationId: string;
     connectionId: string;
+    grant: SendGrantIdentity;
     recipientId: string;
     text: string;
   },
 ): Promise<string> => {
   const parts = [
-    input.authorizationId,
+    fingerprintSubject(input.grant),
     input.connectionId,
     input.recipientId,
     input.text,
@@ -141,19 +148,25 @@ export const makeAtomicSendTextMessageService = (
     Effect.tryPromise(async (): Promise<SendTextMessageResult> => {
       const observedAt = options.now();
       const send = options.nextSend();
-      const requestFingerprint = await fingerprint(options.fingerprintKey, {
+      const grant = mcpSendGrant({
         authorizationId: input.authorizationId,
+        oauthSubject: input.oauthSubject,
+        ...(input.clientId === undefined ? {} : { clientId: input.clientId }),
+      });
+      const requestFingerprint = await fingerprint(options.fingerprintKey, {
         connectionId: input.connectionId,
+        grant,
         recipientId: input.recipientId,
         text: input.text,
       });
       const committed = await options.repository.commit(
         {
-          ...input,
           auditLogId: options.nextAuditLogId(),
           connectionPublicId: input.connectionId,
           fingerprint: requestFingerprint,
+          grant,
           hourRequestLimit: options.hourRequestLimit,
+          idempotencyKey: input.idempotencyKey,
           minuteRequestLimit: options.minuteRequestLimit,
           observedAt,
           pendingExpiresAt: new Date(observedAt.valueOf() + 7 * 86_400_000),

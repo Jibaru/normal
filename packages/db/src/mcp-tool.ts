@@ -15,6 +15,7 @@ import { makeDatabase, makeQueryConnection } from "./database";
 import type { McpAuthorizationScope } from "./mcp-authorization";
 import { withPgRequestConnection } from "./request-connection";
 import {
+  apiKeyConnectionsInApp,
   apiKeysInApp,
   ingestionGapsInApp,
   mcpAuthorizationConnectionsInApp,
@@ -322,6 +323,33 @@ export interface ApiKeyActivityPrincipal {
   readonly publicId: string;
 }
 
+export type SendGrantIdentity =
+  | {
+      readonly kind: "mcp";
+      readonly authorization: McpAccessAuthorization;
+    }
+  | {
+      readonly kind: "api";
+      readonly apiKey: ApiKeyActivityPrincipal & {
+        readonly personalAccountId: string;
+        readonly permissions: ReadonlyArray<string>;
+      };
+    };
+
+export const mcpSendGrant = (
+  authorization: McpAccessAuthorization,
+): Extract<SendGrantIdentity, { kind: "mcp" }> => ({
+  kind: "mcp",
+  authorization,
+});
+
+export const apiSendGrant = (
+  apiKey: Extract<SendGrantIdentity, { kind: "api" }>["apiKey"],
+): Extract<SendGrantIdentity, { kind: "api" }> => ({
+  kind: "api",
+  apiKey,
+});
+
 export type BeginProtectedOperationInput = {
   readonly auditLogId: string;
   readonly connectionPublicId?: string;
@@ -401,13 +429,12 @@ export interface McpToolRepository {
     readonly observedAt: Date;
     readonly personalAccountId: string;
   }) => Promise<ReadonlyArray<McpToolConnectionRecord> | null>;
-  readonly getSendStatus: (
-    input: McpAccessAuthorization & {
-      readonly connectionPublicId: string;
-      readonly observedAt: Date;
-      readonly sendPublicId: string;
-    },
-  ) => Promise<McpToolSendStatusRecord | null>;
+  readonly getSendStatus: (input: {
+    readonly connectionPublicId: string;
+    readonly grant: SendGrantIdentity;
+    readonly observedAt: Date;
+    readonly sendPublicId: string;
+  }) => Promise<McpToolSendStatusRecord | null>;
   readonly listGroups: (
     input: McpAccessAuthorization & {
       readonly connectionPublicId: string;
@@ -1679,69 +1706,168 @@ export const makeMcpToolRepository = (
     provider.withConnection((connection) =>
       withTransaction(connection, async () => {
         const db = makeDatabase(connection);
-        if ((await enterAuthorizationContext(connection, input)) === null)
+        if (input.grant.kind === "mcp") {
+          if (
+            (await enterAuthorizationContext(
+              connection,
+              input.grant.authorization,
+            )) === null
+          )
+            return null;
+        } else if (
+          (await enterAccountContext(
+            connection,
+            input.grant.apiKey.personalAccountId,
+          )) === null
+        ) {
           return null;
-        const result = await db
-          .select({
-            public_id: sendOperationsInApp.publicId,
-            status: sendOperationsInApp.status,
-            created_at: sendOperationsInApp.createdAt,
-            status_changed_at: sendOperationsInApp.statusChangedAt,
-          })
-          .from(sendOperationsInApp)
-          .innerJoin(
-            whatsappConnectionsInApp,
-            and(
-              eq(
-                whatsappConnectionsInApp.personalAccountId,
-                sendOperationsInApp.personalAccountId,
-              ),
-              eq(
-                whatsappConnectionsInApp.id,
-                sendOperationsInApp.whatsappConnectionId,
-              ),
-            ),
-          )
-          .innerJoin(
-            mcpAuthorizationsInApp,
-            and(
-              eq(
-                mcpAuthorizationsInApp.personalAccountId,
-                sendOperationsInApp.personalAccountId,
-              ),
-              eq(
-                mcpAuthorizationsInApp.id,
-                sendOperationsInApp.mcpAuthorizationId,
-              ),
-            ),
-          )
-          .innerJoin(
-            mcpAuthorizationConnectionsInApp,
-            and(
-              eq(
-                mcpAuthorizationConnectionsInApp.personalAccountId,
-                sendOperationsInApp.personalAccountId,
-              ),
-              eq(
-                mcpAuthorizationConnectionsInApp.mcpAuthorizationId,
-                mcpAuthorizationsInApp.id,
-              ),
-              eq(
-                mcpAuthorizationConnectionsInApp.whatsappConnectionId,
-                whatsappConnectionsInApp.id,
-              ),
-            ),
-          )
-          .where(
-            and(
-              eq(sendOperationsInApp.mcpAuthorizationId, input.authorizationId),
-              eq(sendOperationsInApp.publicId, input.sendPublicId),
-              eq(whatsappConnectionsInApp.publicId, input.connectionPublicId),
-              gt(sendOperationsInApp.expiresAt, input.observedAt.toISOString()),
-              ne(whatsappConnectionsInApp.state, "deleting"),
-              sql`${"messages:send"} = ANY(${mcpAuthorizationsInApp.scopes})`,
-            ),
-          );
+        }
+        const result =
+          input.grant.kind === "mcp"
+            ? await db
+                .select({
+                  public_id: sendOperationsInApp.publicId,
+                  status: sendOperationsInApp.status,
+                  created_at: sendOperationsInApp.createdAt,
+                  status_changed_at: sendOperationsInApp.statusChangedAt,
+                })
+                .from(sendOperationsInApp)
+                .innerJoin(
+                  whatsappConnectionsInApp,
+                  and(
+                    eq(
+                      whatsappConnectionsInApp.personalAccountId,
+                      sendOperationsInApp.personalAccountId,
+                    ),
+                    eq(
+                      whatsappConnectionsInApp.id,
+                      sendOperationsInApp.whatsappConnectionId,
+                    ),
+                  ),
+                )
+                .innerJoin(
+                  mcpAuthorizationsInApp,
+                  and(
+                    eq(
+                      mcpAuthorizationsInApp.personalAccountId,
+                      sendOperationsInApp.personalAccountId,
+                    ),
+                    eq(
+                      mcpAuthorizationsInApp.id,
+                      sendOperationsInApp.mcpAuthorizationId,
+                    ),
+                  ),
+                )
+                .innerJoin(
+                  mcpAuthorizationConnectionsInApp,
+                  and(
+                    eq(
+                      mcpAuthorizationConnectionsInApp.personalAccountId,
+                      sendOperationsInApp.personalAccountId,
+                    ),
+                    eq(
+                      mcpAuthorizationConnectionsInApp.mcpAuthorizationId,
+                      mcpAuthorizationsInApp.id,
+                    ),
+                    eq(
+                      mcpAuthorizationConnectionsInApp.whatsappConnectionId,
+                      whatsappConnectionsInApp.id,
+                    ),
+                  ),
+                )
+                .where(
+                  and(
+                    eq(sendOperationsInApp.grantType, "mcp"),
+                    eq(
+                      sendOperationsInApp.mcpAuthorizationId,
+                      input.grant.authorization.authorizationId,
+                    ),
+                    eq(sendOperationsInApp.publicId, input.sendPublicId),
+                    eq(
+                      whatsappConnectionsInApp.publicId,
+                      input.connectionPublicId,
+                    ),
+                    gt(
+                      sendOperationsInApp.expiresAt,
+                      input.observedAt.toISOString(),
+                    ),
+                    ne(whatsappConnectionsInApp.state, "deleting"),
+                    sql`${"messages:send"} = ANY(${mcpAuthorizationsInApp.scopes})`,
+                  ),
+                )
+            : await db
+                .select({
+                  public_id: sendOperationsInApp.publicId,
+                  status: sendOperationsInApp.status,
+                  created_at: sendOperationsInApp.createdAt,
+                  status_changed_at: sendOperationsInApp.statusChangedAt,
+                })
+                .from(sendOperationsInApp)
+                .innerJoin(
+                  whatsappConnectionsInApp,
+                  and(
+                    eq(
+                      whatsappConnectionsInApp.personalAccountId,
+                      sendOperationsInApp.personalAccountId,
+                    ),
+                    eq(
+                      whatsappConnectionsInApp.id,
+                      sendOperationsInApp.whatsappConnectionId,
+                    ),
+                  ),
+                )
+                .innerJoin(
+                  apiKeysInApp,
+                  and(
+                    eq(
+                      apiKeysInApp.personalAccountId,
+                      sendOperationsInApp.personalAccountId,
+                    ),
+                    eq(apiKeysInApp.id, sendOperationsInApp.apiKeyId),
+                  ),
+                )
+                .innerJoin(
+                  apiKeyConnectionsInApp,
+                  and(
+                    eq(
+                      apiKeyConnectionsInApp.personalAccountId,
+                      sendOperationsInApp.personalAccountId,
+                    ),
+                    eq(apiKeyConnectionsInApp.apiKeyId, apiKeysInApp.id),
+                    eq(
+                      apiKeyConnectionsInApp.whatsappConnectionId,
+                      whatsappConnectionsInApp.id,
+                    ),
+                  ),
+                )
+                .where(
+                  and(
+                    eq(sendOperationsInApp.grantType, "api"),
+                    eq(
+                      sendOperationsInApp.apiKeyId,
+                      input.grant.apiKey.grantId,
+                    ),
+                    eq(sendOperationsInApp.publicId, input.sendPublicId),
+                    eq(
+                      whatsappConnectionsInApp.publicId,
+                      input.connectionPublicId,
+                    ),
+                    gt(
+                      sendOperationsInApp.expiresAt,
+                      input.observedAt.toISOString(),
+                    ),
+                    ne(whatsappConnectionsInApp.state, "deleting"),
+                    eq(apiKeysInApp.state, "active"),
+                    sql`${"messages:send"} = ANY(${apiKeysInApp.permissions})`,
+                    or(
+                      isNull(apiKeysInApp.expiresAt),
+                      gt(
+                        apiKeysInApp.expiresAt,
+                        input.observedAt.toISOString(),
+                      ),
+                    ),
+                  ),
+                );
         const row = result[0];
         if (row === undefined) return null;
         return {

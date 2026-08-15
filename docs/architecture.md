@@ -88,7 +88,9 @@ flowchart LR
   purge cutoffs the restore coordinator replays before traffic reopens.
 * API Keys authenticate through a purpose-specific HMAC digest and a narrow
   Neon bootstrap. MCP and REST remain separate protocol adapters over shared
-  protected WhatsApp operations, quotas, and Activity Logs.
+  protected WhatsApp operations, quotas, and Activity Logs. Send Operations
+  admit a protocol-neutral grant identity so MCP Authorization and API Key
+  stay distinct principals.
 
 For exact behavior, read [`CONTEXT.md`](../CONTEXT.md), the
 [MCP contract](mcp-contract.md), the [configuration reference](configuration.md),
