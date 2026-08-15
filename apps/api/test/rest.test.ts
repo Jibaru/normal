@@ -319,7 +319,8 @@ const makeContactHarness = (options?: {
   const persistence: RestPersistenceService = {
     beginProtectedOperation: (input) =>
       Effect.succeed(
-        input.requiredPermission !== undefined &&
+        input.channel === "api" &&
+          input.requiredPermission !== undefined &&
           !(input.permissions ?? []).includes(input.requiredPermission)
           ? {
               auditLogId: input.auditLogId,
