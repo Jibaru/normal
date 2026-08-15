@@ -28,19 +28,19 @@ import type {
   RejectToolCallResult,
 } from "@whatsapp-mcp/db/mcp-tool";
 import { normalizeWhatsAppConnectionName } from "@whatsapp-mcp/domain/whatsapp-connection";
-import { Context, Data, Effect, Schema, type Layer } from "effect";
-import {
-  contactSearchIndex,
-  decryptDirectoryString,
-  importDirectoryIndexKey,
-  normalizeContactDisplayName,
-} from "./directory-privacy";
+import { Context, Data, Effect, type Layer, Schema } from "effect";
 import {
   ApiKeyHmac,
   type ApiKeyHmacService,
   ApiKeyPersistence,
   type ApiKeyPersistenceService,
 } from "./api-key";
+import {
+  contactSearchIndex,
+  decryptDirectoryString,
+  importDirectoryIndexKey,
+  normalizeContactDisplayName,
+} from "./directory-privacy";
 import {
   EncryptionError,
   type EnvelopeEncryption,
@@ -161,7 +161,9 @@ export const RestCursorCodec = Context.GenericTag<RestCursorCodecService>(
   "@whatsapp-mcp/api/RestCursorCodec",
 );
 
-export const makeRestCursorCodec = (key: CryptoKey): RestCursorCodecService => ({
+export const makeRestCursorCodec = (
+  key: CryptoKey,
+): RestCursorCodecService => ({
   decode: ({ context, cursor, nowEpochSeconds }) =>
     verifyRestCursor(key, cursor, context, nowEpochSeconds).pipe(
       Effect.mapError(() => new RestCursorError()),
@@ -298,7 +300,7 @@ const revealDisplayName = (
         });
 
 const emitCompletion = (
-  operation: string,
+  operation: "list_connections" | "list_contacts",
   outcome:
     | "audit_unavailable"
     | "authorization_denied"
@@ -375,7 +377,7 @@ const listConnections = (
           keyMinuteLimit: options.keyMinuteLimit,
           minuteLimit: options.minuteLimit,
           observedAt: startedAt,
-          operationName: OPERATION_NAME,
+          operationName: LIST_CONNECTIONS,
           permissions: grant.permissions,
           personalAccountId: grant.personalAccountId,
           requiredPermission: "connections:read" satisfies ApiKeyPermission,
@@ -521,7 +523,9 @@ const listConnections = (
     ),
   );
 
-const parseContactSearch = (value: string | null): string | null | "invalid" => {
+const parseContactSearch = (
+  value: string | null,
+): string | null | "invalid" => {
   if (value === null) return null;
   if (/^\+/u.test(value)) {
     return /^\+[1-9]\d{6,14}$/u.test(value) ? value : "invalid";
@@ -535,9 +539,7 @@ const parseContactLimit = (value: string | null): number | "invalid" => {
   if (value === null) return DEFAULT_PAGE_SIZE;
   if (!/^[1-9][0-9]*$/u.test(value)) return "invalid";
   const limit = Number(value);
-  return Number.isSafeInteger(limit) &&
-    limit >= 1 &&
-    limit <= MAX_PAGE_SIZE
+  return Number.isSafeInteger(limit) && limit >= 1 && limit <= MAX_PAGE_SIZE
     ? limit
     : "invalid";
 };
@@ -580,7 +582,8 @@ const listContacts = (
       const cursors = yield* RestCursorCodec;
       const startedAt = yield* clock.now;
       const cursorContext: RestCursorContext = {
-        connectionId: Schema.decodeUnknownSync(ConnectionId)(connectionPublicId),
+        connectionId:
+          Schema.decodeUnknownSync(ConnectionId)(connectionPublicId),
         filters: { search },
         grantId: grant.grantId,
         operationId: LIST_CONTACTS_OPERATION_ID,
@@ -846,7 +849,7 @@ const listContacts = (
                   Math.floor(startedAt.valueOf() / 1_000) + CURSOR_TTL_SECONDS,
               })
               .pipe(Effect.either)
-          : ({ _tag: "Right" as const, right: null });
+          : { _tag: "Right" as const, right: null };
       if (nextCursorResult._tag === "Left") {
         return yield* failAfterAudit("service_unavailable");
       }

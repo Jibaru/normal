@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { Effect, Encoding, Schema } from "effect";
 import {
   type CursorContext,
-  type RestCursorContext,
   InvalidCursorError,
   importCursorSigningKey,
+  type RestCursorContext,
   signCursor,
   signRestCursor,
   verifyCursor,
