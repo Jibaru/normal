@@ -78,7 +78,7 @@ interface PublicBoundaryJourneyProps {
   readonly onboardingProfileEndpoint: string;
   readonly personalAccountEndpoint: string;
   readonly personalAccountDeletionEndpoint: string;
-  readonly toolCallLogsEndpoint: string;
+  readonly activityLogsEndpoint: string;
   readonly view?: PersonalAccountView;
 }
 
@@ -112,7 +112,7 @@ interface McpAuthorization {
 
 type AuthorizationState = "idle" | "loading" | "ok" | "unavailable";
 
-interface ToolCallLog {
+interface ActivityLog {
   readonly capability: string;
   readonly channel: "api" | "mcp";
   readonly client: { readonly id: string; readonly name: string };
@@ -133,12 +133,12 @@ interface ToolCallLog {
   readonly startedAt: string;
 }
 
-interface ToolCallLogPage {
-  readonly logs: ReadonlyArray<ToolCallLog>;
+interface ActivityLogPage {
+  readonly logs: ReadonlyArray<ActivityLog>;
   readonly nextCursor: string | null;
 }
 
-type ToolCallLogSort =
+type ActivityLogSort =
   | "capability"
   | "startedAt"
   | "results"
@@ -147,7 +147,7 @@ type ToolCallLogSort =
 
 type SortDirection = "ascending" | "descending";
 
-const toolCallLogOutcomes: ReadonlyArray<ToolCallLog["outcome"]> = [
+const activityLogOutcomes: ReadonlyArray<ActivityLog["outcome"]> = [
   "started",
   "success",
   "execution_error",
@@ -164,11 +164,11 @@ const compareOptionalNumbers = (
   return left - right;
 };
 
-const decodeToolCallLogs = (value: unknown): ToolCallLogPage | null => {
+const decodeActivityLogs = (value: unknown): ActivityLogPage | null => {
   if (
     typeof value !== "object" ||
     value === null ||
-    !Array.isArray((value as { tool_call_logs?: unknown }).tool_call_logs)
+    !Array.isArray((value as { activity_logs?: unknown }).activity_logs)
   ) {
     return null;
   }
@@ -180,9 +180,9 @@ const decodeToolCallLogs = (value: unknown): ToolCallLogPage | null => {
   ) {
     return null;
   }
-  const decoded: ToolCallLog[] = [];
-  for (const candidate of (value as { tool_call_logs: unknown[] })
-    .tool_call_logs) {
+  const decoded: ActivityLog[] = [];
+  for (const candidate of (value as { activity_logs: unknown[] })
+    .activity_logs) {
     if (typeof candidate !== "object" || candidate === null) return null;
     const log = candidate as Record<string, unknown>;
     const client = log.client as Record<string, unknown> | undefined;
@@ -410,7 +410,7 @@ export function PublicBoundaryJourney({
   onboardingProfileEndpoint,
   personalAccountEndpoint,
   personalAccountDeletionEndpoint,
-  toolCallLogsEndpoint,
+  activityLogsEndpoint,
   view = "overview",
 }: PublicBoundaryJourneyProps) {
   const { getToken: getClerkToken, isLoaded, isSignedIn } = useAuth();
@@ -430,27 +430,27 @@ export function PublicBoundaryJourney({
   const [authorizations, setAuthorizations] = useState<
     ReadonlyArray<McpAuthorization>
   >([]);
-  const [toolCallLogState, setToolCallLogState] =
+  const [activityLogState, setActivityLogState] =
     useState<AuthorizationState>("idle");
-  const [toolCallLogs, setToolCallLogs] = useState<ReadonlyArray<ToolCallLog>>(
+  const [activityLogs, setActivityLogs] = useState<ReadonlyArray<ActivityLog>>(
     [],
   );
-  const [toolCallLogCursor, setToolCallLogCursor] = useState<string | null>(
+  const [activityLogCursor, setActivityLogCursor] = useState<string | null>(
     null,
   );
-  const [toolCallLogPageState, setToolCallLogPageState] = useState<
+  const [activityLogPageState, setActivityLogPageState] = useState<
     "idle" | "loading" | "unavailable"
   >("idle");
-  const [toolCallLogSearch, setToolCallLogSearch] = useState("");
-  const [toolCallLogOutcome, setToolCallLogOutcome] = useState<
-    "all" | ToolCallLog["outcome"]
+  const [activityLogSearch, setActivityLogSearch] = useState("");
+  const [activityLogOutcome, setActivityLogOutcome] = useState<
+    "all" | ActivityLog["outcome"]
   >("all");
-  const [toolCallLogSort, setToolCallLogSort] =
-    useState<ToolCallLogSort>("startedAt");
-  const [toolCallLogSortDirection, setToolCallLogSortDirection] =
+  const [activityLogSort, setActivityLogSort] =
+    useState<ActivityLogSort>("startedAt");
+  const [activityLogSortDirection, setActivityLogSortDirection] =
     useState<SortDirection>("descending");
-  const [toolCallLogPage, setToolCallLogPage] = useState(0);
-  const [toolCallLogPageSize, setToolCallLogPageSize] = useState(10);
+  const [activityLogPage, setActivityLogPage] = useState(0);
+  const [activityLogPageSize, setActivityLogPageSize] = useState(10);
   const [revokingAuthorization, setRevokingAuthorization] = useState<
     string | null
   >(null);
@@ -518,24 +518,24 @@ export function PublicBoundaryJourney({
   const observationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const automaticallyInitialized = useRef(false);
 
-  const normalizedToolCallLogSearch = toolCallLogSearch.trim().toLowerCase();
-  const filteredToolCallLogs = toolCallLogs.filter((log) => {
-    if (toolCallLogOutcome !== "all" && log.outcome !== toolCallLogOutcome) {
+  const normalizedActivityLogSearch = activityLogSearch.trim().toLowerCase();
+  const filteredActivityLogs = activityLogs.filter((log) => {
+    if (activityLogOutcome !== "all" && log.outcome !== activityLogOutcome) {
       return false;
     }
-    if (normalizedToolCallLogSearch.length === 0) return true;
+    if (normalizedActivityLogSearch.length === 0) return true;
     return [
       log.capability.replaceAll("_", " "),
       log.client.name,
       log.outcome.replaceAll("_", " "),
       ...log.references,
     ].some((value) =>
-      value.toLowerCase().includes(normalizedToolCallLogSearch),
+      value.toLowerCase().includes(normalizedActivityLogSearch),
     );
   });
-  const sortedToolCallLogs = [...filteredToolCallLogs].sort((left, right) => {
+  const sortedActivityLogs = [...filteredActivityLogs].sort((left, right) => {
     let comparison: number;
-    switch (toolCallLogSort) {
+    switch (activityLogSort) {
       case "capability":
         comparison = left.capability.localeCompare(right.capability);
         break;
@@ -555,31 +555,31 @@ export function PublicBoundaryJourney({
         comparison = left.outcome.localeCompare(right.outcome);
         break;
     }
-    return toolCallLogSortDirection === "ascending" ? comparison : -comparison;
+    return activityLogSortDirection === "ascending" ? comparison : -comparison;
   });
-  const toolCallLogPageCount = Math.max(
+  const activityLogPageCount = Math.max(
     1,
-    Math.ceil(sortedToolCallLogs.length / toolCallLogPageSize),
+    Math.ceil(sortedActivityLogs.length / activityLogPageSize),
   );
-  const currentToolCallLogPage = Math.min(
-    toolCallLogPage,
-    toolCallLogPageCount - 1,
+  const currentActivityLogPage = Math.min(
+    activityLogPage,
+    activityLogPageCount - 1,
   );
-  const visibleToolCallLogs = sortedToolCallLogs.slice(
-    currentToolCallLogPage * toolCallLogPageSize,
-    (currentToolCallLogPage + 1) * toolCallLogPageSize,
+  const visibleActivityLogs = sortedActivityLogs.slice(
+    currentActivityLogPage * activityLogPageSize,
+    (currentActivityLogPage + 1) * activityLogPageSize,
   );
 
-  const changeToolCallLogSort = (sort: ToolCallLogSort) => {
-    setToolCallLogPage(0);
-    if (toolCallLogSort === sort) {
-      setToolCallLogSortDirection((current) =>
+  const changeActivityLogSort = (sort: ActivityLogSort) => {
+    setActivityLogPage(0);
+    if (activityLogSort === sort) {
+      setActivityLogSortDirection((current) =>
         current === "ascending" ? "descending" : "ascending",
       );
       return;
     }
-    setToolCallLogSort(sort);
-    setToolCallLogSortDirection(
+    setActivityLogSort(sort);
+    setActivityLogSortDirection(
       sort === "startedAt" ? "descending" : "ascending",
     );
   };
@@ -622,37 +622,37 @@ export function PublicBoundaryJourney({
     }
   };
 
-  const loadMoreToolCallLogs = async (): Promise<boolean> => {
-    if (toolCallLogCursor === null || toolCallLogPageState === "loading")
+  const loadMoreActivityLogs = async (): Promise<boolean> => {
+    if (activityLogCursor === null || activityLogPageState === "loading")
       return false;
-    setToolCallLogPageState("loading");
+    setActivityLogPageState("loading");
     try {
       const token = await getToken();
       if (token === null) throw new Error("signed out");
-      const nextPageUrl = new URL(toolCallLogsEndpoint);
-      nextPageUrl.searchParams.set("cursor", toolCallLogCursor);
+      const nextPageUrl = new URL(activityLogsEndpoint);
+      nextPageUrl.searchParams.set("cursor", activityLogCursor);
       const response = await fetch(nextPageUrl, {
         headers: { authorization: `Bearer ${token}` },
       });
-      const page = decodeToolCallLogs(await response.json());
+      const page = decodeActivityLogs(await response.json());
       if (!response.ok || page === null) throw new Error("logs unavailable");
-      setToolCallLogs((current) => [...current, ...page.logs]);
-      setToolCallLogCursor(page.nextCursor);
-      setToolCallLogPageState("idle");
+      setActivityLogs((current) => [...current, ...page.logs]);
+      setActivityLogCursor(page.nextCursor);
+      setActivityLogPageState("idle");
       return page.logs.length > 0;
     } catch {
-      setToolCallLogPageState("unavailable");
+      setActivityLogPageState("unavailable");
       return false;
     }
   };
 
-  const goToNextToolCallLogPage = async () => {
-    if (currentToolCallLogPage < toolCallLogPageCount - 1) {
-      setToolCallLogPage(currentToolCallLogPage + 1);
+  const goToNextActivityLogPage = async () => {
+    if (currentActivityLogPage < activityLogPageCount - 1) {
+      setActivityLogPage(currentActivityLogPage + 1);
       return;
     }
-    if (await loadMoreToolCallLogs()) {
-      setToolCallLogPage(currentToolCallLogPage + 1);
+    if (await loadMoreActivityLogs()) {
+      setActivityLogPage(currentActivityLogPage + 1);
     }
   };
 
@@ -1237,13 +1237,13 @@ export function PublicBoundaryJourney({
       }
       setState("ok");
       setAuthorizationState("loading");
-      setToolCallLogState("loading");
+      setActivityLogState("loading");
       try {
         const [authorizationsResponse, logsResponse] = await Promise.all([
           fetch(mcpAuthorizationsEndpoint, {
             headers: { authorization: `Bearer ${token}` },
           }),
-          fetch(toolCallLogsEndpoint, {
+          fetch(activityLogsEndpoint, {
             headers: { authorization: `Bearer ${token}` },
           }),
         ]);
@@ -1253,7 +1253,7 @@ export function PublicBoundaryJourney({
         ]);
         const decodedAuthorizations =
           decodeMcpAuthorizations(authorizationsBody);
-        const decodedLogs = decodeToolCallLogs(logsBody);
+        const decodedLogs = decodeActivityLogs(logsBody);
         if (!authorizationsResponse.ok || decodedAuthorizations === null) {
           setAuthorizationState("unavailable");
         } else {
@@ -1261,16 +1261,16 @@ export function PublicBoundaryJourney({
           setAuthorizationState("ok");
         }
         if (!logsResponse.ok || decodedLogs === null) {
-          setToolCallLogState("unavailable");
+          setActivityLogState("unavailable");
         } else {
-          setToolCallLogs(decodedLogs.logs);
-          setToolCallLogCursor(decodedLogs.nextCursor);
-          setToolCallLogPageState("idle");
-          setToolCallLogState("ok");
+          setActivityLogs(decodedLogs.logs);
+          setActivityLogCursor(decodedLogs.nextCursor);
+          setActivityLogPageState("idle");
+          setActivityLogState("ok");
         }
       } catch {
         setAuthorizationState("unavailable");
-        setToolCallLogState("unavailable");
+        setActivityLogState("unavailable");
       }
     } catch {
       setState("unavailable");
@@ -1299,7 +1299,7 @@ export function PublicBoundaryJourney({
     if (view !== "activity") return;
     captureProductAnalyticsEvent({
       event: "feature_used",
-      feature: "tool_call_logs_viewed",
+      feature: "activity_logs_viewed",
     });
   }, [view]);
 
@@ -1741,13 +1741,13 @@ export function PublicBoundaryJourney({
                   Message content and full numbers are never shown here.
                 </p>
               </div>
-              {toolCallLogState === "loading" ? (
+              {activityLogState === "loading" ? (
                 <p aria-live="polite">Loading Activity Log…</p>
-              ) : toolCallLogState === "unavailable" ? (
+              ) : activityLogState === "unavailable" ? (
                 <p aria-live="polite">
                   Activity Log is temporarily unavailable.
                 </p>
-              ) : toolCallLogs.length === 0 ? (
+              ) : activityLogs.length === 0 ? (
                 <p>No tool activity in the last 90 days.</p>
               ) : (
                 <div className="flex flex-col gap-3">
@@ -1759,12 +1759,12 @@ export function PublicBoundaryJourney({
                       <Input
                         id="log-search"
                         onChange={(event) => {
-                          setToolCallLogSearch(event.target.value);
-                          setToolCallLogPage(0);
+                          setActivityLogSearch(event.target.value);
+                          setActivityLogPage(0);
                         }}
                         placeholder="Search tools, clients, or references…"
                         type="search"
-                        value={toolCallLogSearch}
+                        value={activityLogSearch}
                       />
                     </Field>
                     <Field className="sm:w-fit">
@@ -1774,19 +1774,19 @@ export function PublicBoundaryJourney({
                       <Select
                         items={[
                           { label: "All outcomes", value: "all" },
-                          ...toolCallLogOutcomes.map((outcome) => ({
+                          ...activityLogOutcomes.map((outcome) => ({
                             label: outcome.replaceAll("_", " "),
                             value: outcome,
                           })),
                         ]}
                         onValueChange={(value) => {
                           if (value === null) return;
-                          setToolCallLogOutcome(
-                            value as "all" | ToolCallLog["outcome"],
+                          setActivityLogOutcome(
+                            value as "all" | ActivityLog["outcome"],
                           );
-                          setToolCallLogPage(0);
+                          setActivityLogPage(0);
                         }}
-                        value={toolCallLogOutcome}
+                        value={activityLogOutcome}
                       >
                         <SelectTrigger id="log-outcome">
                           <SelectValue />
@@ -1794,7 +1794,7 @@ export function PublicBoundaryJourney({
                         <SelectContent>
                           <SelectGroup>
                             <SelectItem value="all">All outcomes</SelectItem>
-                            {toolCallLogOutcomes.map((outcome) => (
+                            {activityLogOutcomes.map((outcome) => (
                               <SelectItem key={outcome} value={outcome}>
                                 <span className="capitalize">
                                   {outcome.replaceAll("_", " ")}
@@ -1812,8 +1812,8 @@ export function PublicBoundaryJourney({
                         <TableRow>
                           <TableHead
                             aria-sort={
-                              toolCallLogSort === "capability"
-                                ? toolCallLogSortDirection
+                              activityLogSort === "capability"
+                                ? activityLogSortDirection
                                 : "none"
                             }
                             className="px-4"
@@ -1822,7 +1822,7 @@ export function PublicBoundaryJourney({
                               aria-label="Sort by tool"
                               className="-ml-2"
                               onClick={() =>
-                                changeToolCallLogSort("capability")
+                                changeActivityLogSort("capability")
                               }
                               size="sm"
                               type="button"
@@ -1834,8 +1834,8 @@ export function PublicBoundaryJourney({
                           </TableHead>
                           <TableHead
                             aria-sort={
-                              toolCallLogSort === "startedAt"
-                                ? toolCallLogSortDirection
+                              activityLogSort === "startedAt"
+                                ? activityLogSortDirection
                                 : "none"
                             }
                             className="px-4"
@@ -1843,7 +1843,7 @@ export function PublicBoundaryJourney({
                             <Button
                               aria-label="Sort by started time"
                               className="-ml-2"
-                              onClick={() => changeToolCallLogSort("startedAt")}
+                              onClick={() => changeActivityLogSort("startedAt")}
                               size="sm"
                               type="button"
                               variant="ghost"
@@ -1854,8 +1854,8 @@ export function PublicBoundaryJourney({
                           </TableHead>
                           <TableHead
                             aria-sort={
-                              toolCallLogSort === "results"
-                                ? toolCallLogSortDirection
+                              activityLogSort === "results"
+                                ? activityLogSortDirection
                                 : "none"
                             }
                             className="px-4"
@@ -1863,7 +1863,7 @@ export function PublicBoundaryJourney({
                             <Button
                               aria-label="Sort by results"
                               className="-ml-2"
-                              onClick={() => changeToolCallLogSort("results")}
+                              onClick={() => changeActivityLogSort("results")}
                               size="sm"
                               type="button"
                               variant="ghost"
@@ -1874,8 +1874,8 @@ export function PublicBoundaryJourney({
                           </TableHead>
                           <TableHead
                             aria-sort={
-                              toolCallLogSort === "latencyMs"
-                                ? toolCallLogSortDirection
+                              activityLogSort === "latencyMs"
+                                ? activityLogSortDirection
                                 : "none"
                             }
                             className="px-4"
@@ -1883,7 +1883,7 @@ export function PublicBoundaryJourney({
                             <Button
                               aria-label="Sort by latency"
                               className="-ml-2"
-                              onClick={() => changeToolCallLogSort("latencyMs")}
+                              onClick={() => changeActivityLogSort("latencyMs")}
                               size="sm"
                               type="button"
                               variant="ghost"
@@ -1895,8 +1895,8 @@ export function PublicBoundaryJourney({
                           <TableHead className="px-4">References</TableHead>
                           <TableHead
                             aria-sort={
-                              toolCallLogSort === "outcome"
-                                ? toolCallLogSortDirection
+                              activityLogSort === "outcome"
+                                ? activityLogSortDirection
                                 : "none"
                             }
                             className="px-4 text-right"
@@ -1904,7 +1904,7 @@ export function PublicBoundaryJourney({
                             <Button
                               aria-label="Sort by outcome"
                               className="-mr-2"
-                              onClick={() => changeToolCallLogSort("outcome")}
+                              onClick={() => changeActivityLogSort("outcome")}
                               size="sm"
                               type="button"
                               variant="ghost"
@@ -1916,9 +1916,9 @@ export function PublicBoundaryJourney({
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {visibleToolCallLogs.map((log, index) => (
+                        {visibleActivityLogs.map((log, index) => (
                           <TableRow
-                            data-testid="tool-call-log"
+                            data-testid="activity-log"
                             key={`${log.startedAt}:${log.references[0]}:${index}`}
                           >
                             <TableCell className="px-4 py-3 align-top">
@@ -1958,7 +1958,7 @@ export function PublicBoundaryJourney({
                             </TableCell>
                           </TableRow>
                         ))}
-                        {visibleToolCallLogs.length === 0 ? (
+                        {visibleActivityLogs.length === 0 ? (
                           <TableRow>
                             <TableCell
                               className="h-24 text-center text-muted-foreground"
@@ -1974,13 +1974,13 @@ export function PublicBoundaryJourney({
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <span>
-                        {sortedToolCallLogs.length === 0
+                        {sortedActivityLogs.length === 0
                           ? "0 rows"
-                          : `${currentToolCallLogPage * toolCallLogPageSize + 1}–${Math.min(
-                              (currentToolCallLogPage + 1) *
-                                toolCallLogPageSize,
-                              sortedToolCallLogs.length,
-                            )} of ${sortedToolCallLogs.length} loaded rows`}
+                          : `${currentActivityLogPage * activityLogPageSize + 1}–${Math.min(
+                              (currentActivityLogPage + 1) *
+                                activityLogPageSize,
+                              sortedActivityLogs.length,
+                            )} of ${sortedActivityLogs.length} loaded rows`}
                       </span>
                       <Select
                         items={[10, 25, 50].map((size) => ({
@@ -1989,10 +1989,10 @@ export function PublicBoundaryJourney({
                         }))}
                         onValueChange={(value) => {
                           if (value === null) return;
-                          setToolCallLogPageSize(Number(value));
-                          setToolCallLogPage(0);
+                          setActivityLogPageSize(Number(value));
+                          setActivityLogPage(0);
                         }}
-                        value={String(toolCallLogPageSize)}
+                        value={String(activityLogPageSize)}
                       >
                         <SelectTrigger aria-label="Rows per page" size="sm">
                           <SelectValue />
@@ -2010,14 +2010,14 @@ export function PublicBoundaryJourney({
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-muted-foreground">
-                        Page {currentToolCallLogPage + 1} of{" "}
-                        {toolCallLogPageCount}
+                        Page {currentActivityLogPage + 1} of{" "}
+                        {activityLogPageCount}
                       </span>
                       <Button
                         aria-label="Previous page"
-                        disabled={currentToolCallLogPage === 0}
+                        disabled={currentActivityLogPage === 0}
                         onClick={() =>
-                          setToolCallLogPage(currentToolCallLogPage - 1)
+                          setActivityLogPage(currentActivityLogPage - 1)
                         }
                         size="icon-sm"
                         type="button"
@@ -2028,16 +2028,16 @@ export function PublicBoundaryJourney({
                       <Button
                         aria-label="Next page"
                         disabled={
-                          toolCallLogPageState === "loading" ||
-                          (currentToolCallLogPage >= toolCallLogPageCount - 1 &&
-                            toolCallLogCursor === null)
+                          activityLogPageState === "loading" ||
+                          (currentActivityLogPage >= activityLogPageCount - 1 &&
+                            activityLogCursor === null)
                         }
-                        onClick={goToNextToolCallLogPage}
+                        onClick={goToNextActivityLogPage}
                         size="icon-sm"
                         type="button"
                         variant="outline"
                       >
-                        {toolCallLogPageState === "loading" ? (
+                        {activityLogPageState === "loading" ? (
                           <Spinner />
                         ) : (
                           <ChevronRightIcon />
@@ -2047,7 +2047,7 @@ export function PublicBoundaryJourney({
                   </div>
                 </div>
               )}
-              {toolCallLogPageState === "unavailable" ? (
+              {activityLogPageState === "unavailable" ? (
                 <p aria-live="polite">
                   More Activity Log entries are unavailable.
                 </p>

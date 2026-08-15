@@ -129,7 +129,7 @@ Connections from Neon alone.
 authoritative MCP minute and hour request quotas. Its query is limited to 256
 Unicode scalar values and eight unique normalized terms; result limits default
 to and cannot exceed 20. Plaintext queries, normalized terms, HMAC values,
-message text, and snippets are prohibited from Tool Call Logs, telemetry,
+message text, and snippets are prohibited from Activity Logs, telemetry,
 traces, database logs, cursor payloads, and error details. Cursor binding uses
 only a domain-separated keyed query digest. During bounded newest-to-oldest
 application backfill, responses expose the indexed coverage boundary and
@@ -312,7 +312,7 @@ name. Never add the User, Personal Account, API Key handle or internal ID,
 credential, digest, hint, name, Connection, permission set, timestamp, or
 request path.
 
-Migration 0017 adds the RLS-protected, metadata-only Tool Call Log and the
+Migration 0017 adds the RLS-protected, metadata-only Activity Log and the
 stateless MCP `list_connections` boundary. Migration 0018 adds encrypted group
 projections and `list_groups`. Each invocation first locks its Personal Account
 quota subject, rechecks the current MCP Authorization and the tool's
@@ -327,7 +327,7 @@ serving.
 Activity Logs expire after 90 days and contain only the tenant, channel,
 allowlisted MCP Client or API Key presentation, operation name, timestamps,
 normalized outcome and error code, bounded result count, latency, and whether
-request quota was reserved. The signed-in `GET /v1/tool-call-logs` view
+request quota was reserved. The signed-in `GET /v1/activity-logs` view
 resolves the owning MCP Client or API Key and records applicable public
 `mca_`, `apk_`, `con_`, and `snd_` handles plus an additive `channel` field.
 Its response is an explicit allowlist and never exposes internal IDs, message
@@ -348,12 +348,12 @@ opaque `next_cursor` until it is `null` to traverse the complete unexpired
 history. Cursors use dedicated random `tcl_` handles for keyset traversal and
 are not internal database IDs.
 
-The hourly Worker schedule removes expired Tool Call Logs in bounded batches
-through `app_private.purge_expired_tool_call_logs`. The runtime role can execute
+The hourly Worker schedule removes expired Activity Logs in bounded batches
+through `public.purge_expired_tool_call_logs`. The runtime role can execute
 that fixed-search-path function, but the function derives its expiry cutoff
 from database time and cannot be directed to delete future or unexpired rows.
 The role has no broad cross-tenant table delete grant.
-Review telemetry contains only `tool_call_log.review.completed`, a bounded log
+Review telemetry contains only `activity_log.review.completed`, a bounded log
 count, and the API service name; do not add tenant, Client, authorization,
 Connection, send, network, or capability identifiers.
 
@@ -462,7 +462,7 @@ readable after restore.
 
 The first Connection Setup is rejected at the API boundary until a completed
 profile exists, except when the Personal Account already retains a WhatsApp
-Connection (grandfathered). Profile values never enter Tool Call Logs, Security
+Connection (grandfathered). Profile values never enter Activity Logs, Security
 Records, or worker telemetry beyond the allowlisted outcome event
 `onboarding_profile.upsert.completed`.
 

@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { PGlite } from "@electric-sql/pglite";
+import {
+  type ActivityLogRepository,
+  makeActivityLogRepository,
+} from "../src/activity-log";
 import { makeMcpAuthorizationRepository } from "../src/mcp-authorization";
 import { runMigrations } from "../src/migrations";
-import {
-  makeToolCallLogRepository,
-  type ToolCallLogRepository,
-} from "../src/tool-call-log";
 
 const accountId = "10000000-0000-4000-8000-000000000036";
 const authorizationId = "40000000-0000-4000-8000-000000000036";
@@ -18,9 +18,9 @@ const otherClerkUserId = "user_toolcalllogs37";
 const otherConnectionId = "20000000-0000-4000-8000-000000000037";
 const otherConnectionPublicId = "con_123456789012345678902";
 
-describe("Tool Call Log repository", () => {
+describe("Activity Log repository", () => {
   let database: PGlite;
-  let repository: ToolCallLogRepository;
+  let repository: ActivityLogRepository;
 
   beforeEach(async () => {
     database = new PGlite();
@@ -114,7 +114,7 @@ describe("Tool Call Log repository", () => {
       reverifiedAt: new Date("2026-06-01T11:59:00.000Z"),
       scopes: ["connections:read"],
     });
-    repository = makeToolCallLogRepository(provider);
+    repository = makeActivityLogRepository(provider);
   });
 
   afterEach(async () => {

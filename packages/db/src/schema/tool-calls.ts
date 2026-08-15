@@ -16,7 +16,7 @@ import { personalAccountsInApp } from "./accounts";
 import { publicSchema } from "./common";
 import { mcpAuthorizationsInApp } from "./mcp-authorizations";
 
-export const toolCallLogsInApp = publicSchema.table(
+export const activityLogsInApp = publicSchema.table(
   "tool_call_logs",
   {
     id: uuid().primaryKey().notNull(),

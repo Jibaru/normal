@@ -687,7 +687,7 @@ public fields, and a newly initialized session behaves identically. Repeat
 discovery with an authorization that lacks `connections:read` and confirm the
 tool is absent. Revoke the first authorization and confirm the next call is
 denied even with its unexpired access token. Through the restricted API database
-role, confirm each attempted invocation has one metadata-only Tool Call Log and
+role, confirm each attempted invocation has one metadata-only Activity Log and
 that successful invocations reserve request quota. Do not print or retain the
 access token, OAuth subject, internal IDs, Connection fields, or log rows as
 deployment evidence; retain only normalized counts and outcomes.
@@ -924,8 +924,8 @@ At the first hourly boundary after source expiry, confirm
 `message_retention.purge.completed` reports only the number of Stored Messages
 whose readable content expired. Investigate repeated failures of the hourly
 schedule. The same run calls the bounded
-`app_private.purge_expired_tool_call_logs` function until fewer than 500 rows
-remain, ensuring no Tool Call Log can be listed after its 90-day expiry. Verify
+`public.purge_expired_tool_call_logs` function until fewer than 500 rows
+remain, ensuring no Activity Log can be listed after its 90-day expiry. Verify
 that the restricted API role can call only the integer-limit function and that
 the function uses database time; never grant that role a caller-controlled
 cutoff or broad cross-tenant table deletion. Do not release retained-media quota manually. The worker first marks
@@ -1119,14 +1119,14 @@ exact replay can perform the same convergence before the schedule runs and
 must never dispatch. Monitor `send.dispatch_lease.sweep_completed` by its count
 only; a sustained nonzero count indicates interrupted or overlong attempts.
 Do not delete a Send Operation, idempotency binding, fingerprint, lease, or
-quota reservation to force a retry. A post-attempt Tool Call Log update failure
+quota reservation to force a retry. A post-attempt Activity Log update failure
 is investigated as audit degradation; the Send Operation remains authoritative.
 
 During the send smoke check, repeat the exact authorization, Connection,
 WhatsApp Recipient, text bytes, and idempotency key after marking the test
 Connection degraded and its Directory projection stale. Confirm the original
 Send Operation is returned with `idempotent_replay: true`, no provider request
-or send-quota reservation is added, and the replay Tool Call Log has
+or send-quota reservation is added, and the replay Activity Log has
 `quota_reserved = false`. Restore the test state, then reuse the bound key with
 one changed Connection, recipient, and exact-text case in turn. Each must return
 the non-retryable `idempotency_conflict` before recipient or connection-health
@@ -1174,7 +1174,7 @@ connection. Confirm each creates one encrypted Stored Message and that
 handle, recipient handle and safe Directory metadata, activity time, direction,
 and freshness fields. Replay and reorder the deliveries and confirm the latest
 message time still determines activity. Receipt, reaction, status, newsletter,
-and call fixtures must not create a conversation. Worker telemetry and Tool Call
+and call fixtures must not create a conversation. Worker telemetry and Activity
 Logs may contain only the tool name, outcome, counts, timing, and opaque handles;
 never print message text, provider identities, recipient locators, ciphertext,
 or cursor contents during this check.

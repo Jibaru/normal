@@ -11,6 +11,7 @@ import {
   makeSendId,
 } from "@whatsapp-mcp/contracts/handles";
 import type { ProviderControlService } from "@whatsapp-mcp/contracts/provider-control";
+import { makePgActivityLogRepository } from "@whatsapp-mcp/db/activity-log";
 import { makePgApiKeyRepository } from "@whatsapp-mcp/db/api-key";
 import {
   type ConnectionHealthRepository,
@@ -45,7 +46,6 @@ import {
   makePgStoredMediaRepository,
   type PendingStoredMediaCandidate,
 } from "@whatsapp-mcp/db/stored-media";
-import { makePgToolCallLogRepository } from "@whatsapp-mcp/db/tool-call-log";
 import { makePgWhatsAppConnectionRepository } from "@whatsapp-mcp/db/whatsapp-connection";
 import type { SessionAuthority } from "@whatsapp-mcp/wasender/control";
 import { makeWasenderMediaRetrievalLayer } from "@whatsapp-mcp/wasender/media";
@@ -58,6 +58,13 @@ import {
   type WasenderIdentityProtectionKey,
 } from "@whatsapp-mcp/wasender/session";
 import { Config, ConfigProvider, Data, Effect, Layer, Redacted } from "effect";
+import {
+  ActivityLogClock,
+  ActivityLogPersistence,
+  ActivityLogPersistenceError,
+  createActivityLogHandler,
+  isActivityLogRequest,
+} from "./activity-log";
 import {
   ApiKeyClock,
   ApiKeyHmac,
@@ -252,13 +259,6 @@ import {
   type SafeTelemetryEvent,
 } from "./services";
 import { processStoredMedia } from "./stored-media-ingestion";
-import {
-  createToolCallLogHandler,
-  isToolCallLogRequest,
-  ToolCallLogClock,
-  ToolCallLogPersistence,
-  ToolCallLogPersistenceError,
-} from "./tool-call-log";
 import {
   handleWebhookDeadLetterBatch,
   handleWebhookEventBatch,
@@ -1446,12 +1446,12 @@ const mcpToolPersistenceLayer = (environment: ApiEnvironment) =>
       }),
   });
 
-const toolCallLogLayer = (environment: ApiEnvironment) =>
+const activityLogLayer = (environment: ApiEnvironment) =>
   Layer.mergeAll(
-    Layer.succeed(ToolCallLogClock, {
+    Layer.succeed(ActivityLogClock, {
       now: Effect.sync(() => new Date()),
     }),
-    Layer.succeed(ToolCallLogPersistence, {
+    Layer.succeed(ActivityLogPersistence, {
       list: (clerkUserId, observedAt, cursor) =>
         Effect.tryPromise({
           try: () => {
@@ -1459,14 +1459,14 @@ const toolCallLogLayer = (environment: ApiEnvironment) =>
             if (typeof connectionString !== "string") {
               throw new Error("database unavailable");
             }
-            return makePgToolCallLogRepository(connectionString).listForUser(
+            return makePgActivityLogRepository(connectionString).listForUser(
               clerkUserId,
               observedAt,
               cursor,
               100,
             );
           },
-          catch: () => new ToolCallLogPersistenceError(),
+          catch: () => new ActivityLogPersistenceError(),
         }),
     }),
   );
@@ -2035,7 +2035,7 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     makeWebhookIngressProductionLayer(environment),
     mcpToolPersistenceLayer(environment),
     mcpToolRuntimeLayer(environment),
-    toolCallLogLayer(environment),
+    activityLogLayer(environment),
     sendLayer,
     mcpCursorSigningLayer(environment),
   );
@@ -2069,7 +2069,7 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
     layer,
     environment.CLERK_AUTHORIZED_PARTY ?? "",
   );
-  const toolCallLogHandler = createToolCallLogHandler(
+  const activityLogHandler = createActivityLogHandler(
     layer,
     environment.CLERK_AUTHORIZED_PARTY ?? "",
   );
@@ -2200,8 +2200,8 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
             minuteLimit: requestQuota.minuteLimit,
           })(nextRequest);
         }
-        if (isToolCallLogRequest(nextRequest)) {
-          return toolCallLogHandler(nextRequest);
+        if (isActivityLogRequest(nextRequest)) {
+          return activityLogHandler(nextRequest);
         }
         if (isWhatsAppConnectionRequest(nextRequest)) {
           return whatsAppConnectionHandler(nextRequest);
@@ -2904,7 +2904,7 @@ export const createProductionScheduledHandler =
         observedAt: string,
         limit: number,
       ) => Promise<number>;
-      readonly purgeExpiredToolCallLogs?: (limit: number) => Promise<number>;
+      readonly purgeExpiredActivityLogs?: (limit: number) => Promise<number>;
       readonly purgePersonalAccounts?: (observedAt: string) => Promise<void>;
       readonly now?: () => string;
       readonly retainWebhookSources?: (observedAt: string) => Promise<void>;
@@ -3042,9 +3042,9 @@ export const createProductionScheduledHandler =
       }
       while (true) {
         const count = await (
-          dependencies.purgeExpiredToolCallLogs ??
+          dependencies.purgeExpiredActivityLogs ??
           ((limit) =>
-            makePgToolCallLogRepository(connectionString).purgeExpired(limit))
+            makePgActivityLogRepository(connectionString).purgeExpired(limit))
         )(500);
         if (count < 500) break;
       }

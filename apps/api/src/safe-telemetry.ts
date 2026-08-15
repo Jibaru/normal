@@ -129,7 +129,7 @@ export const safeTelemetryFieldsByEvent = {
     "outcome",
     "plaintextBytes",
   ],
-  "tool_call_log.review.completed": [...common, "logCount"],
+  "activity_log.review.completed": [...common, "logCount"],
   "webhook_event.dead_letter.completed": [
     ...common,
     "incidentReference",

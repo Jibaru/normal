@@ -18,7 +18,7 @@ import { apiKeysInApp } from "./api-keys";
 import { bytea, publicSchema } from "./common";
 import { whatsappConnectionsInApp } from "./connections";
 import { mcpAuthorizationsInApp } from "./mcp-authorizations";
-import { toolCallLogsInApp } from "./tool-calls";
+import { activityLogsInApp } from "./tool-calls";
 
 export const sendOperationsInApp = publicSchema.table(
   "send_operations",
@@ -29,7 +29,7 @@ export const sendOperationsInApp = publicSchema.table(
     grantType: text("grant_type").notNull().default("mcp"),
     mcpAuthorizationId: uuid("mcp_authorization_id"),
     apiKeyId: uuid("api_key_id"),
-    toolCallLogId: uuid("tool_call_log_id").notNull(),
+    activityLogId: uuid("tool_call_log_id").notNull(),
     whatsappConnectionId: uuid("whatsapp_connection_id").notNull(),
     recipientType: text("recipient_type").notNull(),
     recipientPublicId: text("recipient_public_id").notNull(),
@@ -86,15 +86,15 @@ export const sendOperationsInApp = publicSchema.table(
       name: "send_operations_personal_account_id_whatsapp_connection_id_fkey",
     }).onDelete("cascade"),
     foreignKey({
-      columns: [table.personalAccountId, table.toolCallLogId],
+      columns: [table.personalAccountId, table.activityLogId],
       foreignColumns: [
-        toolCallLogsInApp.id,
-        toolCallLogsInApp.personalAccountId,
+        activityLogsInApp.id,
+        activityLogsInApp.personalAccountId,
       ],
       name: "send_operations_personal_account_id_tool_call_log_id_fkey",
     }).onDelete("cascade"),
     unique("send_operations_public_id_key").on(table.publicId),
-    unique("send_operations_tool_call_log_id_key").on(table.toolCallLogId),
+    unique("send_operations_tool_call_log_id_key").on(table.activityLogId),
     unique("send_operations_personal_account_id_id_key").on(
       table.id,
       table.personalAccountId,

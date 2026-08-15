@@ -2,15 +2,15 @@ import { and, desc, eq, gt, lt, or, sql } from "drizzle-orm";
 import { makeDatabase, withPgQueryConnection } from "./database";
 import type { PersonalAccountConnectionProvider } from "./personal-account";
 import {
+  activityLogsInApp,
   mcpAuthorizationsInApp,
   personalAccountsInApp,
   sendOperationsInApp,
-  toolCallLogsInApp,
   whatsappConnectionsInApp,
 } from "./schema";
 import { withTransaction } from "./transaction";
 
-export interface ToolCallLogSummary {
+export interface ActivityLogSummary {
   readonly apiKeyId: string | null;
   readonly authorizationId: string | null;
   readonly channel: "api" | "mcp";
@@ -33,30 +33,30 @@ export interface ToolCallLogSummary {
   readonly toolName: string;
 }
 
-export interface ToolCallLogPage {
-  readonly logs: ReadonlyArray<ToolCallLogSummary>;
+export interface ActivityLogPage {
+  readonly logs: ReadonlyArray<ActivityLogSummary>;
   readonly nextCursor: string | null;
 }
 
-export interface ToolCallLogRepository {
+export interface ActivityLogRepository {
   readonly listForUser: (
     clerkUserId: string,
     observedAt: Date,
     cursor: string | null,
     limit: number,
-  ) => Promise<ToolCallLogPage | null>;
+  ) => Promise<ActivityLogPage | null>;
   readonly purgeExpired: (limit: number) => Promise<number>;
 }
 
-export const makeToolCallLogRepository = (
+export const makeActivityLogRepository = (
   provider: PersonalAccountConnectionProvider,
-): ToolCallLogRepository => ({
+): ActivityLogRepository => ({
   listForUser: (clerkUserId, observedAt, cursor, limit) =>
     provider.withConnection((connection) =>
       withTransaction(connection, async () => {
         const db = makeDatabase(connection);
         if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
-          throw new Error("invalid Tool Call Log page limit");
+          throw new Error("invalid Activity Log page limit");
         }
         const context = await db.execute<{
           personal_account_id: string | null;
@@ -86,17 +86,17 @@ export const makeToolCallLogRepository = (
             : (
                 await db
                   .select({
-                    publicId: toolCallLogsInApp.publicId,
-                    startedAt: toolCallLogsInApp.startedAt,
+                    publicId: activityLogsInApp.publicId,
+                    startedAt: activityLogsInApp.startedAt,
                   })
-                  .from(toolCallLogsInApp)
+                  .from(activityLogsInApp)
                   .where(
                     and(
                       eq(
-                        toolCallLogsInApp.personalAccountId,
+                        activityLogsInApp.personalAccountId,
                         personalAccountId,
                       ),
-                      eq(toolCallLogsInApp.publicId, cursor),
+                      eq(activityLogsInApp.publicId, cursor),
                     ),
                   )
               )[0];
@@ -105,46 +105,46 @@ export const makeToolCallLogRepository = (
             ? []
             : await db
                 .select({
-                  apiKeyName: toolCallLogsInApp.apiKeyName,
-                  apiKeyPublicId: toolCallLogsInApp.apiKeyPublicId,
+                  apiKeyName: activityLogsInApp.apiKeyName,
+                  apiKeyPublicId: activityLogsInApp.apiKeyPublicId,
                   authorizationPublicId: sql<
                     string | null
                   >`${mcpAuthorizationsInApp.publicId}`.as(
                     "authorization_public_id",
                   ),
-                  channel: toolCallLogsInApp.channel,
+                  channel: activityLogsInApp.channel,
                   clientId: mcpAuthorizationsInApp.clientId,
                   clientName: mcpAuthorizationsInApp.clientName,
-                  completedAt: toolCallLogsInApp.completedAt,
+                  completedAt: activityLogsInApp.completedAt,
                   connectionPublicId: sql<string | null>`COALESCE(
-                    ${toolCallLogsInApp.connectionPublicId},
+                    ${activityLogsInApp.connectionPublicId},
                     ${whatsappConnectionsInApp.publicId}
                   )`.as("connection_public_id"),
-                  errorCode: toolCallLogsInApp.errorCode,
-                  latencyMs: toolCallLogsInApp.latencyMs,
-                  mediaBytesReserved: toolCallLogsInApp.mediaBytesReserved,
-                  outcome: toolCallLogsInApp.outcome,
-                  publicId: sql<string>`${toolCallLogsInApp.publicId}`.as(
+                  errorCode: activityLogsInApp.errorCode,
+                  latencyMs: activityLogsInApp.latencyMs,
+                  mediaBytesReserved: activityLogsInApp.mediaBytesReserved,
+                  outcome: activityLogsInApp.outcome,
+                  publicId: sql<string>`${activityLogsInApp.publicId}`.as(
                     "log_public_id",
                   ),
-                  resultCount: toolCallLogsInApp.resultCount,
+                  resultCount: activityLogsInApp.resultCount,
                   sendPublicId: sql<string | null>`COALESCE(
-                    ${toolCallLogsInApp.sendPublicId}, ${sendOperationsInApp.publicId}
+                    ${activityLogsInApp.sendPublicId}, ${sendOperationsInApp.publicId}
                   )`.as("send_public_id"),
-                  startedAt: toolCallLogsInApp.startedAt,
-                  toolName: toolCallLogsInApp.toolName,
+                  startedAt: activityLogsInApp.startedAt,
+                  toolName: activityLogsInApp.toolName,
                 })
-                .from(toolCallLogsInApp)
+                .from(activityLogsInApp)
                 .leftJoin(
                   mcpAuthorizationsInApp,
                   and(
                     eq(
                       mcpAuthorizationsInApp.personalAccountId,
-                      toolCallLogsInApp.personalAccountId,
+                      activityLogsInApp.personalAccountId,
                     ),
                     eq(
                       mcpAuthorizationsInApp.id,
-                      toolCallLogsInApp.mcpAuthorizationId,
+                      activityLogsInApp.mcpAuthorizationId,
                     ),
                   ),
                 )
@@ -153,9 +153,9 @@ export const makeToolCallLogRepository = (
                   and(
                     eq(
                       sendOperationsInApp.personalAccountId,
-                      toolCallLogsInApp.personalAccountId,
+                      activityLogsInApp.personalAccountId,
                     ),
-                    eq(sendOperationsInApp.toolCallLogId, toolCallLogsInApp.id),
+                    eq(sendOperationsInApp.activityLogId, activityLogsInApp.id),
                   ),
                 )
                 .leftJoin(
@@ -173,26 +173,26 @@ export const makeToolCallLogRepository = (
                 )
                 .where(
                   and(
-                    eq(toolCallLogsInApp.personalAccountId, personalAccountId),
-                    gt(toolCallLogsInApp.expiresAt, observedAt.toISOString()),
+                    eq(activityLogsInApp.personalAccountId, personalAccountId),
+                    gt(activityLogsInApp.expiresAt, observedAt.toISOString()),
                     boundary === undefined
                       ? undefined
                       : or(
-                          lt(toolCallLogsInApp.startedAt, boundary.startedAt),
+                          lt(activityLogsInApp.startedAt, boundary.startedAt),
                           and(
-                            eq(toolCallLogsInApp.startedAt, boundary.startedAt),
-                            lt(toolCallLogsInApp.publicId, boundary.publicId),
+                            eq(activityLogsInApp.startedAt, boundary.startedAt),
+                            lt(activityLogsInApp.publicId, boundary.publicId),
                           ),
                         ),
                   ),
                 )
                 .orderBy(
-                  desc(toolCallLogsInApp.startedAt),
-                  desc(toolCallLogsInApp.publicId),
+                  desc(activityLogsInApp.startedAt),
+                  desc(activityLogsInApp.publicId),
                 )
                 .limit(limit + 1);
         const pageRows = result.slice(0, limit);
-        const logs: ToolCallLogSummary[] = pageRows.map((row) => {
+        const logs: ActivityLogSummary[] = pageRows.map((row) => {
           const channel = row.channel === "api" ? "api" : "mcp";
           const apiKeyId = row.apiKeyPublicId;
           const clientId =
@@ -212,7 +212,7 @@ export const makeToolCallLogRepository = (
             errorCode: row.errorCode,
             latencyMs: row.latencyMs,
             mediaBytes: Number(row.mediaBytesReserved),
-            outcome: row.outcome as ToolCallLogSummary["outcome"],
+            outcome: row.outcome as ActivityLogSummary["outcome"],
             resultCount: row.resultCount,
             sendId: row.sendPublicId,
             startedAt: new Date(row.startedAt),
@@ -241,7 +241,7 @@ const makePgConnectionProvider = (
   withConnection: (use) => withPgQueryConnection(connectionString, use),
 });
 
-export const makePgToolCallLogRepository = (
+export const makePgActivityLogRepository = (
   connectionString: string,
-): ToolCallLogRepository =>
-  makeToolCallLogRepository(makePgConnectionProvider(connectionString));
+): ActivityLogRepository =>
+  makeActivityLogRepository(makePgConnectionProvider(connectionString));

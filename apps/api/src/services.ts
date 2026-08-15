@@ -340,8 +340,8 @@ export interface McpToolCallCompletedEvent {
     | "search_messages";
 }
 
-export interface ToolCallLogReviewCompletedEvent {
-  readonly event: "tool_call_log.review.completed";
+export interface ActivityLogReviewCompletedEvent {
+  readonly event: "activity_log.review.completed";
   readonly logCount: number;
   readonly service: "api";
 }
@@ -487,7 +487,7 @@ export type SafeTelemetryEvent =
   | RecipientExclusionTransitionCompletedEvent
   | SendDispatchLeaseSweepCompletedEvent
   | StoredMediaContainerEvent
-  | ToolCallLogReviewCompletedEvent
+  | ActivityLogReviewCompletedEvent
   | WebhookEventDeadLetterCompletedEvent
   | WebhookEventReplayCompletedEvent
   | WebhookEventSourceRetentionCompletedEvent

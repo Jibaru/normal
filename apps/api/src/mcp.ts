@@ -2938,7 +2938,7 @@ const searchMessages = (
     if (persistence.searchMessages === undefined)
       return yield* fail("service_unavailable", undefined, "configuration");
 
-    // Key use starts only after the durable Tool Call Log reservation above.
+    // Key use starts only after the durable Activity Log reservation above.
     const searchInput = {
       ...authorization,
       connectionPublicId: input.connection_id,
