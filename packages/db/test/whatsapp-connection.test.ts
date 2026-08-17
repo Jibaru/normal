@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { PGlite } from "@electric-sql/pglite";
+import { makeApiKeyRepository } from "../src/api-key";
 import {
   type ConnectionSetupConnectionProvider,
   makeConnectionSetupRepository,
@@ -406,6 +407,22 @@ describe("WhatsApp Connection repository", () => {
   test("makes Connection Deletion terminal and revokes keys and inventory atomically", async () => {
     const repository = makeWhatsAppConnectionRepository(provider);
     await repository.activate(activationInput);
+    const apiKeyPublicId = "apk_000000000000000000031";
+    expect(
+      await makeApiKeyRepository(provider).create({
+        clerkUserId: "user_connectiona",
+        connectionIds: [publicId],
+        createdAt: new Date("2026-07-31T12:05:00.000Z"),
+        credentialDigest: new Uint8Array(32).fill(31),
+        credentialHint: `normal_${apiKeyPublicId}.…wxyz`,
+        expiresAt: null,
+        id: "50000000-0000-4000-8000-000000000031",
+        name: "Lifecycle",
+        permissions: ["connections:read"],
+        publicId: apiKeyPublicId,
+        reverifiedAt: new Date("2026-07-31T12:04:30.000Z"),
+      }),
+    ).toMatchObject({ outcome: "created" });
 
     const prepared = await repository.prepareDeletion({
       clerkUserId: "user_connectiona",
@@ -442,6 +459,9 @@ describe("WhatsApp Connection repository", () => {
     });
 
     const state = await database.query<{
+      api_key_digest: Uint8Array | null;
+      api_key_grant_count: number;
+      api_key_state: string;
       grant_count: number;
       key_ciphertext: Uint8Array | null;
       key_unavailable_at: Date | null;
@@ -450,12 +470,21 @@ describe("WhatsApp Connection repository", () => {
           keys.ciphertext AS key_ciphertext,
           keys.unavailable_at AS key_unavailable_at,
           (SELECT count(*)::integer FROM public.mcp_authorization_connections
-           WHERE whatsapp_connection_id = connections.id) AS grant_count
+           WHERE whatsapp_connection_id = connections.id) AS grant_count,
+          (SELECT count(*)::integer FROM public.api_key_connections
+           WHERE whatsapp_connection_id = connections.id) AS api_key_grant_count,
+          api_keys.state AS api_key_state,
+          api_keys.credential_digest AS api_key_digest
         FROM public.whatsapp_connections connections
         JOIN public.whatsapp_connection_key_envelopes keys
           ON keys.whatsapp_connection_id = connections.id
+        JOIN public.api_keys api_keys
+          ON api_keys.personal_account_id = connections.personal_account_id
         WHERE connections.id = '${connectionId}'`);
     expect(state.rows[0]).toMatchObject({
+      api_key_digest: null,
+      api_key_grant_count: 0,
+      api_key_state: "revoked",
       grant_count: 0,
       key_ciphertext: null,
       state: "deleting",

@@ -41,6 +41,7 @@ const makeHarness = (options?: {
   readonly authenticate?: ApiKeyPersistenceService["authenticate"];
   readonly begin?: RestPersistenceService["beginProtectedOperation"];
   readonly hmacFails?: boolean;
+  readonly listConnections?: RestPersistenceService["listConnections"];
   readonly permissions?: ReadonlyArray<
     "connections:read" | "directory:read" | "messages:read" | "messages:send"
   >;
@@ -74,20 +75,22 @@ const makeHarness = (options?: {
               },
         )),
     completeToolCall: () => Effect.void,
-    listConnections: () =>
-      Effect.succeed([
-        {
-          accountKey: null,
-          connectionId: "20000000-0000-4000-8000-000000000079",
-          connectionKey: null,
-          displayName: null,
-          displayNameFallback: "Personal WhatsApp",
-          numberLastFour: "0000",
-          publicId: connectionId,
-          state: "connected" as const,
-          stateChangedAt: "2026-08-14T12:00:00.000Z",
-        },
-      ]),
+    listConnections:
+      options?.listConnections ??
+      (() =>
+        Effect.succeed([
+          {
+            accountKey: null,
+            connectionId: "20000000-0000-4000-8000-000000000079",
+            connectionKey: null,
+            displayName: null,
+            displayNameFallback: "Personal WhatsApp",
+            numberLastFour: "0000",
+            publicId: connectionId,
+            state: "connected" as const,
+            stateChangedAt: "2026-08-14T12:00:00.000Z",
+          },
+        ])),
     loadContactReadMaterial: () => Effect.succeed(null),
     listEncryptedContacts: () => Effect.succeed(null),
     listChats: () => Effect.succeed(null),
@@ -328,6 +331,85 @@ describe("REST Connections tracer", () => {
       status: 401,
     });
   });
+
+  test("treats last-selected Connection Deletion like an invalid credential", async () => {
+    const deleted = await makeHarness({
+      authenticate: () => Effect.succeed(null),
+    }).handler(request());
+    const unknown = await makeHarness({
+      authenticate: () => Effect.succeed(null),
+    }).handler(request("/v1/connections", { authorization: null }));
+    expect(deleted.status).toBe(401);
+    expect(await deleted.json()).toEqual(await unknown.json());
+  });
+
+  test("lists only remaining selected Connections after Connection Deletion", async () => {
+    const retainedId = "con_123456789012345678902";
+    const harness = makeHarness({
+      authenticate: () =>
+        Effect.succeed({
+          connectionIds: [retainedId],
+          expiresAt: null,
+          grantId,
+          id: publicId,
+          name: "CI",
+          permissions: ["connections:read"],
+          personalAccountId,
+        }),
+      listConnections: () =>
+        Effect.succeed([
+          {
+            accountKey: null,
+            connectionId: "20000000-0000-4000-8000-000000000080",
+            connectionKey: null,
+            displayName: null,
+            displayNameFallback: "Retained WhatsApp",
+            numberLastFour: "7890",
+            publicId: retainedId,
+            state: "connected" as const,
+            stateChangedAt: "2026-08-14T12:00:00.000Z",
+          },
+        ]),
+    });
+    const listed = await harness.handler(request());
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toEqual({
+      data: [
+        {
+          connection_id: retainedId,
+          display_name: "Retained WhatsApp",
+          number_last_four: "7890",
+          state: "connected",
+          state_changed_at: "2026-08-14T12:00:00.000Z",
+        },
+      ],
+      pagination: { has_more: false, next_cursor: null },
+    });
+  });
+
+  test("keeps a disconnected selected Connection readable", async () => {
+    const harness = makeHarness({
+      listConnections: () =>
+        Effect.succeed([
+          {
+            accountKey: null,
+            connectionId: "20000000-0000-4000-8000-000000000079",
+            connectionKey: null,
+            displayName: null,
+            displayNameFallback: "Personal WhatsApp",
+            numberLastFour: "0000",
+            publicId: connectionId,
+            state: "disconnected" as const,
+            stateChangedAt: "2026-08-14T12:05:00.000Z",
+          },
+        ]),
+    });
+    const listed = await harness.handler(request());
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toMatchObject({
+      data: [{ connection_id: connectionId, state: "disconnected" }],
+    });
+  });
 });
 
 const contactMaterial = {
@@ -553,6 +635,19 @@ describe("REST Directory contacts", () => {
       code: "not_found",
       status: 404,
     });
+
+    const deleted = await makeContactHarness({
+      persistence: {
+        loadContactReadMaterial: () => Effect.succeed(null),
+      },
+    }).handler(request(`/v1/connections/${connectionId}/contacts`));
+    const unknownHandle = await makeContactHarness({
+      persistence: {
+        loadContactReadMaterial: () => Effect.succeed(null),
+      },
+    }).handler(request("/v1/connections/con_999999999999999999999/contacts"));
+    expect(deleted.status).toBe(404);
+    expect(await deleted.json()).toEqual(await unknownHandle.json());
   });
 
   test("rejects extra query parameters and invalid search or limit before auth", async () => {

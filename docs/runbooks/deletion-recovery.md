@@ -55,7 +55,11 @@ projector fix. Never copy ciphertext from a Webhook Event into a tombstone.
    `app_private.make_personal_account_key_unavailable`. These functions are
    idempotent and leave an unavailable tombstone even if no envelope existed.
    Ordinary runtime can insert and load an initial available envelope, but
-   cannot update, delete, or replace the tombstone.
+   cannot update, delete, or replace the tombstone. The same Connection
+   Deletion transaction removes the WhatsApp Connection from every API Key
+   before protected access can continue. A key that loses its last selected
+   Connection is permanently revoked and its credential digest is cleared.
+   Disconnection does not remove selection or revoke the key.
 5. Start asynchronous provider reconciliation. The marker is never removed.
    The Deletion Capsule remains until the isolated deletion coordinator
    confirms provider absence and durably records that fact through its narrow
