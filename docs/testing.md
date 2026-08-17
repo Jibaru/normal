@@ -56,15 +56,17 @@ production migrations under `whatsapp_api_runtime` to prove digest-only
 persistence, the ten-active key limit, unique active names, disconnected
 Connection selection, selected-Connection listing, constant not-found for
 unknown or cross-tenant handles, idempotent revocation that clears the digest,
-RLS isolation, and Personal Account Deletion that revokes every API Key and
-clears every digest before the bounded purge cascades the rows. API Activity
-Logs become the same unlinkable Security Records as MCP events. Worker tests never put fixture credentials in the production
-composition root. REST Worker tests prove bearer parsing, Problem Details,
-no-CORS protected JSON, current permission checks, immediate revocation
-without an authorization cache, Directory contact paging, WhatsApp Conversation
-paging, REST-only cursors, and audit-before-release. Migrated-Postgres tests
-prove API Key contact and conversation listing share MCP ordering, selected-
-Connection isolation, Recipient Exclusion, and kind or search filters.
+and RLS isolation. Personal Account Deletion tests prove both the product and
+verified Clerk entry points revoke every API Key, clear every digest, and later
+cascade those rows during the bounded purge while API Activity Logs become
+the same unlinkable Security Records as MCP events. Worker tests never put
+fixture credentials in the production composition root. REST Worker tests prove
+bearer parsing, Problem Details, no-CORS protected JSON, current permission
+checks, immediate revocation without an authorization cache, Directory contact
+paging, WhatsApp Conversation paging, REST-only cursors, and
+audit-before-release. Migrated-Postgres tests prove API Key contact and
+conversation listing share MCP ordering, selected-Connection isolation,
+Recipient Exclusion, and kind or search filters.
 
 The browser always renders `apps/web/src/app/home-experience.tsx`; there is no
 test component alias or selectable web composition root. Playwright supplies
