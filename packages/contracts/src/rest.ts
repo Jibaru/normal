@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { ConnectionId } from "./handles";
+import { ConnectionId, ContactId, ConversationId } from "./handles";
 import { makePublicObjectContract, UtcTimestamp } from "./mcp-schema";
 
 export const RestConnectionState = Schema.Literal(
@@ -33,11 +33,37 @@ export const RestConnectionListContract = makePublicObjectContract({
 });
 export type RestConnectionList = typeof RestConnectionListContract.schema.Type;
 
+export const RestContact = Schema.Struct({
+  contact_id: ContactId,
+  conversation_id: Schema.NullOr(ConversationId),
+  display_name: Schema.NullOr(Schema.String),
+  phone_last_four: Schema.NullOr(
+    Schema.String.pipe(Schema.pattern(/^[0-9]{4}$/)),
+  ),
+});
+export type RestContact = typeof RestContact.Type;
+
+export const RestDirectoryMeta = Schema.Struct({
+  as_of: UtcTimestamp,
+  partial: Schema.Boolean,
+  stale: Schema.Boolean,
+});
+export type RestDirectoryMeta = typeof RestDirectoryMeta.Type;
+
+export const RestContactListContract = makePublicObjectContract({
+  data: Schema.Array(RestContact).pipe(Schema.maxItems(50)),
+  meta: RestDirectoryMeta,
+  pagination: RestPagination,
+});
+export type RestContactList = typeof RestContactListContract.schema.Type;
+
 export const ProblemStatus = Schema.Literal(400, 401, 403, 404, 409, 429, 503);
 
 export const ProblemCode = Schema.Literal(
   "invalid_credentials",
   "insufficient_permission",
+  "invalid_cursor",
+  "invalid_request",
   "not_found",
   "rate_limited",
   "unavailable",
@@ -65,6 +91,11 @@ export const problemType = (code: ProblemCode): ProblemDetails["type"] =>
 
 export const decodeRestConnectionList = Schema.decodeUnknownSync(
   RestConnectionListContract.schema,
+  { onExcessProperty: "error" },
+);
+
+export const decodeRestContactList = Schema.decodeUnknownSync(
+  RestContactListContract.schema,
   { onExcessProperty: "error" },
 );
 
