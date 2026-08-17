@@ -79,9 +79,11 @@ flowchart LR
 * Stored Messages and Stored Media use application layer envelope encryption.
   KMS keys are purpose specific, and the deletion coordinator cannot decrypt
   tenant content.
-* Connection Deletion revokes access and key use immediately. The deletion and
-  restore coordinators preserve that terminal state through provider cleanup
-  and database restore.
+* Connection Deletion revokes access and key use immediately, including API
+  Key selection for that WhatsApp Connection and automatic revocation of a key
+  that loses its last selected Connection. The deletion and restore
+  coordinators preserve that terminal state through provider cleanup and
+  database restore. Disconnection keeps retained-history API Key access.
 * A WhatsApp Recipient Exclusion is a User-owned rule enforced beneath every
   MCP Authorization and API Key. Neon holds current state; a locked,
   restore-external R2 journal holds the append-only transitions and permanent
