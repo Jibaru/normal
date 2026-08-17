@@ -71,12 +71,19 @@ checks, immediate revocation without an authorization cache, Directory contact
 paging, WhatsApp Conversation paging, REST-only cursors, audit-before-release,
 last-selected Connection Deletion as invalid credentials, constant-shape not
 found for a deleted or unselected Connection, and retained disconnected reads.
-Migrated-Postgres tests prove API Key contact and conversation listing share
-MCP ordering, selected-Connection isolation, Recipient Exclusion, and kind or
-search filters, and that Connection Deletion removes selection, revokes a
-last-selected key and clears its digest, keeps remaining grants, leaves
-disconnection in place, and rejects new sends while remaining selected
-Connections can still send.
+REST Send Operation tests prove
+`POST /v1/connections/{connection_id}/send-operations` requires
+`messages:send`, an `Idempotency-Key`, exact text, and a `ctc_` or `grp_`
+recipient; exact replay and payload conflict stay on the shared send
+operation; failed and unknown post-boundary outcomes remain Send Operation
+resources; and pre-operation failures use Problem Details. MCP and REST share
+that grant-aware send service so fingerprints, quota, and receipts cannot
+diverge by adapter. Migrated-Postgres tests prove API Key contact and
+conversation listing share MCP ordering, selected-Connection isolation,
+Recipient Exclusion, and kind or search filters, and that Connection Deletion
+removes selection, revokes a last-selected key and clears its digest, keeps
+remaining grants, leaves disconnection in place, and rejects new sends while
+remaining selected Connections can still send.
 
 The browser always renders `apps/web/src/app/home-experience.tsx`; there is no
 test component alias or selectable web composition root. Playwright supplies

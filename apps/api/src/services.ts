@@ -303,10 +303,15 @@ export interface ApiKeyRetentionCompletedEvent {
 
 export interface RestOperationCompletedEvent {
   readonly event: "rest.operation.completed";
-  readonly operation: "list_connections" | "list_contacts" | "list_chats";
+  readonly operation:
+    | "list_chats"
+    | "list_connections"
+    | "list_contacts"
+    | "send_text_message";
   readonly outcome:
     | "audit_unavailable"
     | "authorization_denied"
+    | "execution_error"
     | "invalid_cursor"
     | "rate_limited"
     | "success"
