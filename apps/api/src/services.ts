@@ -304,9 +304,10 @@ export interface ApiKeyRetentionCompletedEvent {
 export interface RestOperationCompletedEvent {
   readonly event: "rest.operation.completed";
   readonly operation:
-    | "list_chats"
     | "list_connections"
     | "list_contacts"
+    | "list_groups"
+    | "list_chats"
     | "send_text_message";
   readonly outcome:
     | "audit_unavailable"

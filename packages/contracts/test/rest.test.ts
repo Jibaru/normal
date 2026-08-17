@@ -7,6 +7,7 @@ import {
   decodeRestContactList,
   decodeRestConversationList,
   decodeRestCreateSendOperation,
+  decodeRestGroupList,
   decodeRestSendOperation,
   ProblemDetailsContract,
   problemType,
@@ -14,6 +15,7 @@ import {
   RestContactListContract,
   RestConversationListContract,
   RestCreateSendOperationContract,
+  RestGroupListContract,
   RestSendOperationContract,
 } from "../src/rest";
 
@@ -127,6 +129,60 @@ describe("REST contracts", () => {
     ).toThrow();
   });
 
+  test("keeps Directory group pages closed and distinct from conversation handles", () => {
+    const groups = {
+      data: [
+        {
+          group_id: "grp_xxxxxxxxxxxxxxxxxxxxx",
+          display_name: "Family",
+        },
+      ],
+      meta: {
+        as_of: "2026-08-14T12:00:00.000Z",
+        partial: false,
+        stale: false,
+      },
+      pagination: {
+        has_more: false,
+        next_cursor: null,
+      },
+    } as const;
+    expect(decodeRestGroupList(groups) as unknown).toEqual(groups);
+    expect(() =>
+      decodeRestGroupList({
+        ...groups,
+        data: [
+          {
+            ...groups.data[0],
+            conversation_id: "cvs_xxxxxxxxxxxxxxxxxxxxx",
+          },
+        ],
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeRestGroupList({
+        ...groups,
+        data: [
+          {
+            ...groups.data[0],
+            group_id: "cvs_xxxxxxxxxxxxxxxxxxxxx",
+          },
+        ],
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeRestGroupList({
+        ...groups,
+        data: [
+          {
+            ...groups.data[0],
+            group_id: "ctc_xxxxxxxxxxxxxxxxxxxxx",
+          },
+        ],
+      }),
+    ).toThrow();
+  });
+
   test("keeps conversation pages closed without snippets, unread, or full phones", () => {
     const conversations = {
       data: [
@@ -206,6 +262,12 @@ describe("REST contracts", () => {
       }),
       expect.objectContaining({
         method: "GET",
+        operationId: "listGroups",
+        path: "/v1/connections/{connection_id}/groups",
+        permission: "directory:read",
+      }),
+      expect.objectContaining({
+        method: "GET",
         operationId: "listConversations",
         path: "/v1/connections/{connection_id}/conversations",
         permission: "messages:read",
@@ -220,6 +282,7 @@ describe("REST contracts", () => {
     const serialized = JSON.stringify(openApiDocument);
     expect(serialized).toContain('"operationId":"listConnections"');
     expect(serialized).toContain('"operationId":"listContacts"');
+    expect(serialized).toContain('"operationId":"listGroups"');
     expect(serialized).toContain('"operationId":"listConversations"');
     expect(serialized).toContain('"operationId":"createSendOperation"');
     expect(serialized).toContain('"Idempotency-Key"');
@@ -227,6 +290,7 @@ describe("REST contracts", () => {
     expect(serialized).toContain('"scheme":"bearer"');
     expect(serialized).toContain("con_xxxxxxxxxxxxxxxxxxxxx");
     expect(serialized).toContain("ctc_xxxxxxxxxxxxxxxxxxxxx");
+    expect(serialized).toContain("grp_xxxxxxxxxxxxxxxxxxxxx");
     expect(serialized).toContain("cvs_xxxxxxxxxxxxxxxxxxxxx");
     expect(serialized).not.toMatch(
       /normal_apk_[A-Za-z0-9_-]{21}\.[A-Za-z0-9_-]+/u,
@@ -234,6 +298,8 @@ describe("REST contracts", () => {
     expect(serialized).not.toContain("confirmed");
     expect(serialized).not.toContain("+1555");
     expect(serialized).not.toContain("+12025550199");
+    expect(serialized).not.toContain("tools/call");
+    expect(serialized).not.toContain("structuredContent");
     expect(serialized).not.toContain("list_chats");
     const schemas = (
       openApiDocument.components as { schemas: Record<string, unknown> }
@@ -248,6 +314,7 @@ describe("REST contracts", () => {
     expect(schemas.CreateSendOperation).toEqual(
       RestCreateSendOperationContract.jsonSchema,
     );
+    expect(schemas.GroupList).toEqual(RestGroupListContract.jsonSchema);
     expect(schemas.SendOperation).toEqual(RestSendOperationContract.jsonSchema);
   });
 

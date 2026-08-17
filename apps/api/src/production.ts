@@ -1279,6 +1279,32 @@ const restPersistenceLayer = (environment: ApiEnvironment) =>
           },
           catch: () => new RestPersistenceError(),
         }),
+      loadGroupSearchMaterial: (input) =>
+        Effect.tryPromise({
+          try: () => {
+            const connectionString = environment.HYPERDRIVE?.connectionString;
+            if (typeof connectionString !== "string") {
+              throw new Error("database unavailable");
+            }
+            return makePgMcpToolRepository(
+              connectionString,
+            ).loadApiKeyGroupSearchMaterial(input);
+          },
+          catch: () => new RestPersistenceError(),
+        }),
+      listGroups: (input) =>
+        Effect.tryPromise({
+          try: () => {
+            const connectionString = environment.HYPERDRIVE?.connectionString;
+            if (typeof connectionString !== "string") {
+              throw new Error("database unavailable");
+            }
+            return makePgMcpToolRepository(connectionString).listApiKeyGroups(
+              input,
+            );
+          },
+          catch: () => new RestPersistenceError(),
+        }),
       listChats: (input) =>
         Effect.tryPromise({
           try: () => {

@@ -538,6 +538,21 @@ export interface McpToolRepository {
     readonly searchIndex: string | null;
     readonly searchKind: "name" | "phone" | null;
   }) => Promise<McpToolEncryptedContactPage | null>;
+  readonly loadApiKeyGroupSearchMaterial: (input: {
+    readonly apiKeyGrantId: string;
+    readonly connectionPublicId: string;
+    readonly observedAt: Date;
+    readonly personalAccountId: string;
+    readonly permissions: ReadonlyArray<string>;
+  }) => Promise<McpToolGroupSearchMaterial | null>;
+  readonly listApiKeyGroups: (input: {
+    readonly apiKeyGrantId: string;
+    readonly connectionPublicId: string;
+    readonly observedAt: Date;
+    readonly permissions: ReadonlyArray<string>;
+    readonly personalAccountId: string;
+    readonly searchIndex: string | null;
+  }) => Promise<McpToolGroupPage | null>;
   readonly listApiKeyChats: (input: {
     readonly apiKeyGrantId: string;
     readonly connectionPublicId: string;
@@ -809,6 +824,58 @@ const loadGroupProjectionMaterial = async (
   }
   return { ...parsed, partial: row.partial, stale: row.stale };
 };
+
+const encryptedGroupRecords = (
+  persistedGroups: ReadonlyArray<{
+    readonly display_name_ciphertext: unknown;
+    readonly display_name_ciphertext_version: unknown;
+    readonly display_name_key_version: unknown;
+    readonly display_name_nonce: unknown;
+    readonly id: unknown;
+    readonly public_id: unknown;
+  }>,
+): ReadonlyArray<McpToolGroupRecord> =>
+  persistedGroups.map((group) => {
+    const id = group.id;
+    const publicId = group.public_id;
+    const ciphertext = bytes(group.display_name_ciphertext);
+    const nonce = bytes(group.display_name_nonce);
+    const version = positiveInteger(group.display_name_ciphertext_version);
+    const keyVersion = positiveInteger(group.display_name_key_version);
+    if (
+      typeof id !== "string" ||
+      typeof publicId !== "string" ||
+      !/^grp_[A-Za-z0-9_-]{21}$/u.test(publicId)
+    ) {
+      throw new Error("invalid persisted WhatsApp group");
+    }
+    if (
+      ciphertext === null &&
+      nonce === null &&
+      version === null &&
+      keyVersion === null
+    ) {
+      return { displayName: null, id, publicId };
+    }
+    if (
+      ciphertext === null ||
+      nonce === null ||
+      version !== 1 ||
+      keyVersion === null
+    ) {
+      throw new Error("invalid encrypted WhatsApp group display name");
+    }
+    return {
+      displayName: {
+        ciphertext: base64(ciphertext),
+        keyVersion,
+        nonce: base64(nonce),
+        version: 1 as const,
+      },
+      id,
+      publicId,
+    };
+  });
 
 const loadGroupIndexMaterial = async (
   connection: McpToolConnection,
@@ -3005,49 +3072,7 @@ export const makeMcpToolRepository = (
                 : sql`${whatsappGroupsInApp.namePrefixIndexes} @> ARRAY[${input.searchIndex}::public.group_name_blind_index]`,
             ),
           );
-        const groups = persistedGroups.map((group) => {
-          const id = group.id;
-          const publicId = group.public_id;
-          const ciphertext = bytes(group.display_name_ciphertext);
-          const nonce = bytes(group.display_name_nonce);
-          const version = positiveInteger(
-            group.display_name_ciphertext_version,
-          );
-          const keyVersion = positiveInteger(group.display_name_key_version);
-          if (
-            typeof id !== "string" ||
-            typeof publicId !== "string" ||
-            !/^grp_[A-Za-z0-9_-]{21}$/u.test(publicId)
-          ) {
-            throw new Error("invalid persisted WhatsApp group");
-          }
-          if (
-            ciphertext === null &&
-            nonce === null &&
-            version === null &&
-            keyVersion === null
-          ) {
-            return { displayName: null, id, publicId };
-          }
-          if (
-            ciphertext === null ||
-            nonce === null ||
-            version !== 1 ||
-            keyVersion === null
-          ) {
-            throw new Error("invalid encrypted WhatsApp group display name");
-          }
-          return {
-            displayName: {
-              ciphertext: base64(ciphertext),
-              keyVersion,
-              nonce: base64(nonce),
-              version: 1 as const,
-            },
-            id,
-            publicId,
-          };
-        });
+        const groups = encryptedGroupRecords(persistedGroups);
         return {
           accountKey: material.accountKey,
           asOf: material.asOf,
@@ -3613,6 +3638,198 @@ export const makeMcpToolRepository = (
           partial: projection.projection_partial,
           snapshotObservedAt,
           stale: projection.projection_stale,
+        };
+      }),
+    ),
+  loadApiKeyGroupSearchMaterial: (input) =>
+    provider.withConnection((connection) =>
+      withTransaction(connection, async () => {
+        if (
+          (await enterAccountContext(connection, input.personalAccountId)) ===
+            null ||
+          !input.permissions.includes("directory:read")
+        ) {
+          return null;
+        }
+        const material = await makeDatabase(connection).execute<
+          Record<string, unknown>
+        >(sql`
+          SELECT
+            connections.id AS connection_id,
+            connections.personal_account_id,
+            account_keys.key_version AS account_key_version,
+            account_keys.kms_key_id AS account_kms_key_id,
+            account_keys.ciphertext AS account_key_ciphertext,
+            connection_keys.account_key_version AS connection_key_account_version,
+            connection_keys.key_version AS connection_key_version,
+            connection_keys.nonce AS connection_key_nonce,
+            connection_keys.ciphertext AS connection_key_ciphertext,
+            identity_keys.credential_ciphertext_version AS identity_ciphertext_version,
+            identity_keys.credential_key_version AS identity_key_version,
+            identity_keys.credential_nonce AS identity_nonce,
+            identity_keys.credential_ciphertext AS identity_ciphertext
+          FROM public.api_keys AS grants
+          JOIN public.personal_accounts AS accounts
+            ON accounts.id = grants.personal_account_id
+          JOIN public.api_key_connections AS selected
+            ON selected.personal_account_id = grants.personal_account_id
+           AND selected.api_key_id = grants.id
+          JOIN public.whatsapp_connections AS connections
+            ON connections.personal_account_id = selected.personal_account_id
+           AND connections.id = selected.whatsapp_connection_id
+          JOIN public.whatsapp_connection_key_envelopes AS connection_keys
+            ON connection_keys.personal_account_id = connections.personal_account_id
+           AND connection_keys.whatsapp_connection_id = connections.id
+          JOIN public.personal_account_key_envelopes AS account_keys
+            ON account_keys.personal_account_id = connections.personal_account_id
+           AND account_keys.key_version = connection_keys.account_key_version
+          JOIN public.whatsapp_connection_secrets AS identity_keys
+            ON identity_keys.personal_account_id = connections.personal_account_id
+           AND identity_keys.whatsapp_connection_id = connections.id
+           AND identity_keys.credential_key_version = connection_keys.key_version
+          WHERE grants.id = ${input.apiKeyGrantId}
+            AND grants.personal_account_id = ${input.personalAccountId}
+            AND grants.state = 'active'
+            AND (grants.expires_at IS NULL OR grants.expires_at > ${input.observedAt})
+            AND 'directory:read' = ANY(grants.permissions)
+            AND connections.public_id = ${input.connectionPublicId}
+            AND connections.state <> 'deleting'
+            AND accounts.state = 'active'
+            AND account_keys.unavailable_at IS NULL
+            AND account_keys.ciphertext IS NOT NULL
+            AND connection_keys.unavailable_at IS NULL
+            AND connection_keys.nonce IS NOT NULL
+            AND connection_keys.ciphertext IS NOT NULL
+        `);
+        return parseGroupSearchMaterial(material[0]);
+      }),
+    ),
+  listApiKeyGroups: (input) =>
+    provider.withConnection((connection) =>
+      withTransaction(connection, async () => {
+        const db = makeDatabase(connection);
+        if (
+          !/^con_[A-Za-z0-9_-]{21}$/u.test(input.connectionPublicId) ||
+          (input.searchIndex !== null &&
+            !/^gi1_[A-Za-z0-9_-]{43}$/u.test(input.searchIndex))
+        ) {
+          throw new Error("invalid API group query");
+        }
+        if (
+          (await enterAccountContext(connection, input.personalAccountId)) ===
+            null ||
+          !input.permissions.includes("directory:read")
+        ) {
+          return null;
+        }
+        const materialRows = await db.execute<Record<string, unknown>>(sql`
+          SELECT
+            connections.id AS connection_id,
+            connections.created_at AS connection_created_at,
+            connections.personal_account_id,
+            states.as_of,
+            coalesce(states.stale, true) AS stale,
+            coalesce(states.partial, true) AS partial,
+            account_keys.key_version AS account_key_version,
+            account_keys.kms_key_id AS account_kms_key_id,
+            account_keys.ciphertext AS account_key_ciphertext,
+            connection_keys.account_key_version AS connection_key_account_version,
+            connection_keys.key_version AS connection_key_version,
+            connection_keys.nonce AS connection_key_nonce,
+            connection_keys.ciphertext AS connection_key_ciphertext
+          FROM public.api_key_connections AS selected
+          JOIN public.api_keys AS grants
+            ON grants.personal_account_id = selected.personal_account_id
+           AND grants.id = selected.api_key_id
+          JOIN public.whatsapp_connections AS connections
+            ON connections.personal_account_id = selected.personal_account_id
+           AND connections.id = selected.whatsapp_connection_id
+          JOIN public.whatsapp_connection_key_envelopes AS connection_keys
+            ON connection_keys.personal_account_id = connections.personal_account_id
+           AND connection_keys.whatsapp_connection_id = connections.id
+          JOIN public.personal_account_key_envelopes AS account_keys
+            ON account_keys.personal_account_id = connections.personal_account_id
+           AND account_keys.key_version = connection_keys.account_key_version
+          LEFT JOIN public.whatsapp_group_directory_states AS states
+            ON states.personal_account_id = connections.personal_account_id
+           AND states.whatsapp_connection_id = connections.id
+          WHERE selected.api_key_id = ${input.apiKeyGrantId}
+            AND grants.state = 'active'
+            AND (grants.expires_at IS NULL OR grants.expires_at > ${input.observedAt})
+            AND connections.public_id = ${input.connectionPublicId}
+            AND connections.state <> 'deleting'
+        `);
+        const parsed = parseGroupMaterial(materialRows[0]);
+        if (parsed === null) return null;
+        const freshness = await db.execute<Record<string, unknown>>(sql`SELECT
+             CASE
+               WHEN states.snapshot_observed_at IS NULL THEN true
+               ELSE public.directory_projection_stale(
+                 states.personal_account_id,
+                 states.whatsapp_connection_id,
+                 ${input.observedAt},
+                 states.snapshot_observed_at,
+                 states.stale
+               )
+             END AS stale,
+             CASE
+               WHEN states.snapshot_observed_at IS NULL THEN true
+               ELSE public.directory_projection_partial(
+                 states.personal_account_id,
+                 states.whatsapp_connection_id,
+                 states.snapshot_observed_at,
+                 states.partial,
+                 states.retention_limited
+               )
+             END AS partial
+           FROM public.whatsapp_group_directory_states AS states
+           WHERE states.personal_account_id = ${parsed.accountKey.personalAccountId}
+             AND states.whatsapp_connection_id = ${parsed.connectionKey.connectionId}`);
+        const freshnessRow = freshness[0];
+        const material =
+          freshnessRow === undefined
+            ? { ...parsed, partial: true, stale: true }
+            : typeof freshnessRow.stale === "boolean" &&
+                typeof freshnessRow.partial === "boolean"
+              ? {
+                  ...parsed,
+                  partial: freshnessRow.partial,
+                  stale: freshnessRow.stale,
+                }
+              : (() => {
+                  throw new Error("invalid API group projection freshness");
+                })();
+        const personalAccountId = material.accountKey.personalAccountId;
+        const connectionId = material.connectionKey.connectionId;
+        const persistedGroups = await db
+          .select({
+            id: whatsappGroupsInApp.id,
+            public_id: whatsappGroupsInApp.publicId,
+            display_name_ciphertext_version:
+              whatsappGroupsInApp.displayNameCiphertextVersion,
+            display_name_key_version: whatsappGroupsInApp.displayNameKeyVersion,
+            display_name_nonce: whatsappGroupsInApp.displayNameNonce,
+            display_name_ciphertext: whatsappGroupsInApp.displayNameCiphertext,
+          })
+          .from(whatsappGroupsInApp)
+          .where(
+            and(
+              eq(whatsappGroupsInApp.personalAccountId, personalAccountId),
+              eq(whatsappGroupsInApp.whatsappConnectionId, connectionId),
+              eq(whatsappGroupsInApp.joined, true),
+              sql`NOT public.whatsapp_recipient_excluded(${whatsappGroupsInApp.personalAccountId}, ${whatsappGroupsInApp.whatsappConnectionId}, 'group', ${whatsappGroupsInApp.providerLocator})`,
+              input.searchIndex === null
+                ? undefined
+                : sql`${whatsappGroupsInApp.namePrefixIndexes} @> ARRAY[${input.searchIndex}::public.group_name_blind_index]`,
+            ),
+          );
+        return {
+          accountKey: material.accountKey,
+          asOf: material.asOf,
+          connectionKey: material.connectionKey,
+          groups: encryptedGroupRecords(persistedGroups),
+          partial: material.partial,
+          stale: material.stale,
         };
       }),
     ),

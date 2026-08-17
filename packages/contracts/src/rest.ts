@@ -103,6 +103,19 @@ export const RestContactListContract = makePublicObjectContract({
 });
 export type RestContactList = typeof RestContactListContract.schema.Type;
 
+export const RestGroup = Schema.Struct({
+  group_id: GroupId,
+  display_name: Schema.NullOr(Schema.String),
+});
+export type RestGroup = typeof RestGroup.Type;
+
+export const RestGroupListContract = makePublicObjectContract({
+  data: Schema.Array(RestGroup).pipe(Schema.maxItems(50)),
+  meta: RestDirectoryMeta,
+  pagination: RestPagination,
+});
+export type RestGroupList = typeof RestGroupListContract.schema.Type;
+
 export const RestConversationKind = Schema.Literal("direct", "group");
 export type RestConversationKind = typeof RestConversationKind.Type;
 
@@ -184,6 +197,11 @@ export const decodeRestConnectionList = Schema.decodeUnknownSync(
 
 export const decodeRestContactList = Schema.decodeUnknownSync(
   RestContactListContract.schema,
+  { onExcessProperty: "error" },
+);
+
+export const decodeRestGroupList = Schema.decodeUnknownSync(
+  RestGroupListContract.schema,
   { onExcessProperty: "error" },
 );
 

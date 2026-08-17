@@ -11,6 +11,7 @@ import {
   decodeRestContactList,
   decodeRestConversationList,
   decodeRestCreateSendOperation,
+  decodeRestGroupList,
   decodeRestSendOperation,
   type ProblemCode,
   type ProblemDetails,
@@ -18,6 +19,7 @@ import {
   type RestConnectionList,
   type RestContactList,
   type RestConversationList,
+  type RestGroupList,
 } from "@whatsapp-mcp/contracts/rest";
 import type {
   ApiKeyPermission,
@@ -30,6 +32,8 @@ import type {
   McpToolConnectionRecord,
   McpToolContactReadMaterial,
   McpToolEncryptedContactPage,
+  McpToolGroupPage,
+  McpToolGroupSearchMaterial,
   RejectToolCallResult,
 } from "@whatsapp-mcp/db/mcp-tool";
 import { apiSendGrant } from "@whatsapp-mcp/db/send";
@@ -52,6 +56,11 @@ import {
   type EnvelopeEncryption,
   EnvelopeEncryptionService,
 } from "./encryption/envelope";
+import {
+  groupSearchIndex,
+  importGroupDirectoryIndexKey,
+  normalizeGroupDisplayName,
+} from "./group-privacy";
 import { noStoreJsonResponse, noStoreResponse } from "./http-response";
 import { SendTextMessage, type SendTextMessageService } from "./mcp";
 import {
@@ -61,6 +70,7 @@ import {
 
 const CONNECTIONS_PATH = "/v1/connections";
 const CONTACTS_PATH = /^\/v1\/connections\/(con_[A-Za-z0-9_-]{21})\/contacts$/u;
+const GROUPS_PATH = /^\/v1\/connections\/(con_[A-Za-z0-9_-]{21})\/groups$/u;
 const CONVERSATIONS_PATH =
   /^\/v1\/connections\/(con_[A-Za-z0-9_-]{21})\/conversations$/u;
 const SEND_OPERATIONS_PATH =
@@ -71,10 +81,13 @@ const SEND_OPERATION = "send_text_message" as const;
 const decodeIdempotencyKey = Schema.decodeUnknownSync(IdempotencyKey);
 const LIST_CONNECTIONS = "list_connections";
 const LIST_CONTACTS = "list_contacts";
+const LIST_GROUPS = "list_groups";
 const LIST_CHATS = "list_chats";
 const LIST_CONTACTS_OPERATION_ID = "listContacts";
+const LIST_GROUPS_OPERATION_ID = "listGroups";
 const LIST_CONVERSATIONS_OPERATION_ID = "listConversations";
 const CONTACT_SORT_VERSION = "contacts-v1";
+const GROUP_SORT_VERSION = "groups-v1";
 const CONVERSATION_SORT_VERSION = "conversations-v1";
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 50;
@@ -122,6 +135,21 @@ export interface RestPersistenceService {
     readonly searchIndex: string | null;
     readonly searchKind: "name" | "phone" | null;
   }) => Effect.Effect<McpToolEncryptedContactPage | null, RestPersistenceError>;
+  readonly loadGroupSearchMaterial: (input: {
+    readonly apiKeyGrantId: string;
+    readonly connectionPublicId: string;
+    readonly observedAt: Date;
+    readonly personalAccountId: string;
+    readonly permissions: ReadonlyArray<string>;
+  }) => Effect.Effect<McpToolGroupSearchMaterial | null, RestPersistenceError>;
+  readonly listGroups: (input: {
+    readonly apiKeyGrantId: string;
+    readonly connectionPublicId: string;
+    readonly observedAt: Date;
+    readonly permissions: ReadonlyArray<string>;
+    readonly personalAccountId: string;
+    readonly searchIndex: string | null;
+  }) => Effect.Effect<McpToolGroupPage | null, RestPersistenceError>;
   readonly listChats: (input: {
     readonly apiKeyGrantId: string;
     readonly connectionPublicId: string;
@@ -336,9 +364,10 @@ const revealDisplayName = (
 
 const emitCompletion = (
   operation:
-    | "list_chats"
     | "list_connections"
     | "list_contacts"
+    | "list_groups"
+    | "list_chats"
     | "send_text_message",
   outcome:
     | "audit_unavailable"
@@ -955,6 +984,390 @@ const listContacts = (
     ),
   );
 
+const parseGroupSearch = (value: string | null): string | null | "invalid" => {
+  if (value === null) return null;
+  const normalized = normalizeGroupDisplayName(value);
+  const length = Array.from(normalized).length;
+  return length >= 3 && length <= 64 ? normalized : "invalid";
+};
+
+const compareText = (left: string, right: string): number =>
+  left < right ? -1 : left > right ? 1 : 0;
+
+const listGroups = (
+  request: Request,
+  connectionPublicId: string,
+  options: RestHandlerOptions,
+  layer: Layer.Layer<RestRequirements, unknown>,
+): Promise<Response> =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const url = new URL(request.url);
+      const queryKeys = [...url.searchParams.keys()];
+      if (
+        queryKeys.some(
+          (key) => key !== "cursor" && key !== "limit" && key !== "search",
+        ) ||
+        url.searchParams.getAll("cursor").length > 1 ||
+        url.searchParams.getAll("limit").length > 1 ||
+        url.searchParams.getAll("search").length > 1
+      ) {
+        return problemResponse("invalid_request", 400);
+      }
+      const search = parseGroupSearch(url.searchParams.get("search"));
+      const limit = parseContactLimit(url.searchParams.get("limit"));
+      const cursor = url.searchParams.get("cursor");
+      if (
+        search === "invalid" ||
+        limit === "invalid" ||
+        (cursor !== null && (cursor.length < 1 || cursor.length > 4_096))
+      ) {
+        return problemResponse("invalid_request", 400);
+      }
+
+      const grant = yield* authenticate(request);
+      const clock = yield* RestClock;
+      const identifiers = yield* RestIdentifiers;
+      const persistence = yield* RestPersistence;
+      const cursors = yield* RestCursorCodec;
+      const startedAt = yield* clock.now;
+      const cursorContext: RestCursorContext = {
+        connectionId:
+          Schema.decodeUnknownSync(ConnectionId)(connectionPublicId),
+        filters: { search },
+        grantId: grant.grantId,
+        operationId: LIST_GROUPS_OPERATION_ID,
+        pageSize: limit,
+        sortVersion: GROUP_SORT_VERSION,
+      };
+      let boundary: readonly [string, string] | null = null;
+      if (cursor !== null) {
+        const decoded = yield* cursors
+          .decode({
+            context: cursorContext,
+            cursor,
+            nowEpochSeconds: Math.floor(startedAt.valueOf() / 1_000),
+          })
+          .pipe(Effect.either);
+        if (
+          decoded._tag === "Left" ||
+          decoded.right.length !== 2 ||
+          typeof decoded.right[0] !== "string" ||
+          typeof decoded.right[1] !== "string" ||
+          !/^grp_[A-Za-z0-9_-]{21}$/u.test(decoded.right[1])
+        ) {
+          const auditLogId = yield* identifiers.nextAuditLogId;
+          const rejected = yield* persistence
+            .rejectProtectedOperation({
+              apiKey: {
+                grantId: grant.grantId,
+                name: grant.name,
+                publicId: grant.id,
+              },
+              auditLogId,
+              connectionPublicId,
+              errorCode: "invalid_cursor",
+              observedAt: startedAt,
+              operationName: LIST_GROUPS,
+              permissions: grant.permissions,
+              personalAccountId: grant.personalAccountId,
+              requiredPermission: "directory:read",
+            })
+            .pipe(Effect.either);
+          if (rejected._tag === "Left") {
+            yield* emitCompletion(LIST_GROUPS, "audit_unavailable");
+            return problemResponse("unavailable", 503);
+          }
+          if (rejected.right === "authorization_denied") {
+            yield* emitCompletion(LIST_GROUPS, "authorization_denied");
+            return grant.permissions.includes("directory:read")
+              ? problemResponse("invalid_credentials", 401)
+              : problemResponse("insufficient_permission", 403);
+          }
+          yield* emitCompletion(LIST_GROUPS, "invalid_cursor");
+          return problemResponse("invalid_cursor", 400);
+        }
+        boundary = [decoded.right[0], decoded.right[1]];
+      }
+
+      const auditLogId = yield* identifiers.nextAuditLogId;
+      const started = yield* persistence
+        .beginProtectedOperation({
+          apiKey: {
+            grantId: grant.grantId,
+            name: grant.name,
+            publicId: grant.id,
+          },
+          auditLogId,
+          channel: "api",
+          connectionPublicId,
+          hourLimit: options.hourLimit,
+          keyHourLimit: options.keyHourLimit,
+          keyMinuteLimit: options.keyMinuteLimit,
+          minuteLimit: options.minuteLimit,
+          observedAt: startedAt,
+          operationName: LIST_GROUPS,
+          permissions: grant.permissions,
+          personalAccountId: grant.personalAccountId,
+          requiredPermission: "directory:read" satisfies ApiKeyPermission,
+        })
+        .pipe(Effect.either);
+      if (started._tag === "Left") {
+        yield* emitCompletion(LIST_GROUPS, "audit_unavailable");
+        return problemResponse("unavailable", 503);
+      }
+      if (started.right.outcome === "authorization_denied") {
+        yield* emitCompletion(LIST_GROUPS, "authorization_denied");
+        return grant.permissions.includes("directory:read")
+          ? problemResponse("invalid_credentials", 401)
+          : problemResponse("insufficient_permission", 403);
+      }
+      if (started.right.outcome === "rate_limited") {
+        yield* emitCompletion(LIST_GROUPS, "rate_limited");
+        return problemResponse("rate_limited", 429, {
+          retry_after_seconds: started.right.retryAfterSeconds,
+          retryable: true,
+          resets_at:
+            started.right.resetsAt.toISOString() as ProblemDetails["resets_at"],
+        });
+      }
+
+      const failAfterAudit = (errorCode: string, denied = false) =>
+        Effect.gen(function* () {
+          const completed = yield* persistence
+            .completeToolCall({
+              auditLogId,
+              completedAt: yield* clock.now,
+              errorCode,
+              outcome: denied ? "authorization_denied" : "execution_error",
+              resultCount: null,
+            })
+            .pipe(Effect.either);
+          yield* emitCompletion(
+            LIST_GROUPS,
+            completed._tag === "Left"
+              ? "audit_unavailable"
+              : denied
+                ? "authorization_denied"
+                : "unavailable",
+          );
+          return completed._tag === "Left"
+            ? problemResponse("unavailable", 503)
+            : denied
+              ? problemResponse("not_found", 404)
+              : problemResponse("unavailable", 503);
+        });
+
+      let searchIndex: string | null = null;
+      if (search !== null) {
+        const materialResult = yield* persistence
+          .loadGroupSearchMaterial({
+            apiKeyGrantId: grant.grantId,
+            connectionPublicId,
+            observedAt: yield* clock.now,
+            personalAccountId: grant.personalAccountId,
+            permissions: grant.permissions,
+          })
+          .pipe(Effect.either);
+        if (materialResult._tag === "Left") {
+          return yield* failAfterAudit("service_unavailable");
+        }
+        const material = materialResult.right;
+        if (material === null) {
+          return yield* failAfterAudit("authorization_denied", true);
+        }
+        const encryption = yield* EnvelopeEncryptionService;
+        const identityBytesResult = yield* encryption
+          .decrypt({
+            accountKey: material.accountKey,
+            ciphertext: material.identityKey,
+            connectionKey: material.connectionKey,
+            context: {
+              accountId: material.accountKey.personalAccountId,
+              connectionId: material.connectionKey.connectionId,
+              entity: "whatsapp-connection",
+              fieldOrObjectPurpose: "webhook-identity-key",
+              recordId: material.connectionKey.connectionId,
+            },
+          })
+          .pipe(Effect.either);
+        if (identityBytesResult._tag === "Left") {
+          return yield* failAfterAudit("service_unavailable");
+        }
+        const indexed = yield* Effect.acquireUseRelease(
+          Effect.succeed(identityBytesResult.right),
+          (identityBytes) =>
+            importGroupDirectoryIndexKey(identityBytes).pipe(
+              Effect.flatMap((key) =>
+                groupSearchIndex(
+                  key,
+                  material.connectionKey.connectionId,
+                  search,
+                ),
+              ),
+            ),
+          (identityBytes) =>
+            Effect.sync(() => {
+              identityBytes.fill(0);
+            }),
+        ).pipe(Effect.either);
+        if (indexed._tag === "Left") {
+          return yield* failAfterAudit("service_unavailable");
+        }
+        searchIndex = indexed.right;
+      }
+
+      const readAt = yield* clock.now;
+      const loaded = yield* persistence
+        .listGroups({
+          apiKeyGrantId: grant.grantId,
+          connectionPublicId,
+          observedAt: readAt,
+          permissions: grant.permissions,
+          personalAccountId: grant.personalAccountId,
+          searchIndex,
+        })
+        .pipe(Effect.either);
+      if (loaded._tag === "Left") {
+        return yield* failAfterAudit("service_unavailable");
+      }
+      if (loaded.right === null) {
+        return yield* failAfterAudit("authorization_denied", true);
+      }
+
+      const page = loaded.right;
+      const encryption = yield* EnvelopeEncryptionService;
+      const decrypted = yield* Effect.forEach(
+        page.groups,
+        (group) =>
+          group.displayName === null
+            ? Effect.succeed({
+                displayName: null as string | null,
+                normalizedName: "",
+                publicId: group.publicId,
+              })
+            : encryption
+                .decrypt({
+                  accountKey: page.accountKey,
+                  ciphertext: group.displayName,
+                  connectionKey: page.connectionKey,
+                  context: {
+                    accountId: page.accountKey.personalAccountId,
+                    connectionId: page.connectionKey.connectionId,
+                    entity: "whatsapp-group",
+                    fieldOrObjectPurpose: "display-name",
+                    recordId: group.id,
+                  },
+                })
+                .pipe(
+                  Effect.flatMap((bytes) =>
+                    Effect.acquireUseRelease(
+                      Effect.succeed(bytes),
+                      (value) =>
+                        Effect.try({
+                          try: () =>
+                            new TextDecoder("utf-8", {
+                              fatal: true,
+                              ignoreBOM: false,
+                            }).decode(value),
+                          catch: () => new RestPersistenceError(),
+                        }),
+                      (value) => Effect.sync(() => value.fill(0)),
+                    ),
+                  ),
+                  Effect.map((displayName) => ({
+                    displayName,
+                    normalizedName: normalizeGroupDisplayName(displayName),
+                    publicId: group.publicId,
+                  })),
+                ),
+        { concurrency: 16 },
+      ).pipe(Effect.either);
+      if (decrypted._tag === "Left") {
+        return yield* failAfterAudit("service_unavailable");
+      }
+
+      const ordered = decrypted.right
+        .filter(
+          (group) => search === null || group.normalizedName.startsWith(search),
+        )
+        .sort(
+          (left, right) =>
+            compareText(left.normalizedName, right.normalizedName) ||
+            compareText(left.publicId, right.publicId),
+        )
+        .filter((group) => {
+          if (boundary === null) return true;
+          const [name, publicId] = boundary;
+          return (
+            compareText(group.normalizedName, name) > 0 ||
+            (group.normalizedName === name &&
+              compareText(group.publicId, publicId) > 0)
+          );
+        });
+      const selected = ordered.slice(0, limit);
+      const hasMore = ordered.length > limit;
+      const last = selected.at(-1);
+      const nextCursorResult =
+        hasMore && last !== undefined
+          ? yield* cursors
+              .encode({
+                boundary: [last.normalizedName, last.publicId],
+                context: cursorContext,
+                expiresAtEpochSeconds:
+                  Math.floor(startedAt.valueOf() / 1_000) + CURSOR_TTL_SECONDS,
+              })
+              .pipe(Effect.either)
+          : { _tag: "Right" as const, right: null };
+      if (nextCursorResult._tag === "Left") {
+        return yield* failAfterAudit("service_unavailable");
+      }
+      const asOf = new Date(page.asOf);
+      const body: RestGroupList = decodeRestGroupList({
+        data: selected.map((group) => ({
+          display_name: group.displayName,
+          group_id: group.publicId,
+        })),
+        meta: {
+          as_of: page.asOf,
+          partial: page.partial,
+          stale:
+            page.stale ||
+            !Number.isFinite(asOf.valueOf()) ||
+            readAt.valueOf() - asOf.valueOf() > 10 * 60 * 1_000,
+        },
+        pagination: {
+          has_more: hasMore,
+          next_cursor: nextCursorResult.right,
+        },
+      });
+      const completed = yield* persistence
+        .completeToolCall({
+          auditLogId,
+          completedAt: yield* clock.now,
+          errorCode: null,
+          outcome: "success",
+          resultCount: body.data.length,
+        })
+        .pipe(Effect.either);
+      if (completed._tag === "Left") {
+        yield* emitCompletion(LIST_GROUPS, "audit_unavailable");
+        return problemResponse("unavailable", 503);
+      }
+      yield* emitCompletion(LIST_GROUPS, "success", body.data.length);
+      return noStoreJsonResponse(body, 200);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.match({
+        onFailure: (failure) =>
+          failure instanceof Response
+            ? failure
+            : problemResponse("unavailable", 503),
+        onSuccess: (response) => response,
+      }),
+    ),
+  );
+
 const listConversations = (
   request: Request,
   connectionPublicId: string,
@@ -1476,6 +1889,10 @@ export const createRestHandler =
     const contactsMatch = CONTACTS_PATH.exec(path);
     if (request.method === "GET" && contactsMatch?.[1] !== undefined) {
       return listContacts(request, contactsMatch[1], options, layer);
+    }
+    const groupsMatch = GROUPS_PATH.exec(path);
+    if (request.method === "GET" && groupsMatch?.[1] !== undefined) {
+      return listGroups(request, groupsMatch[1], options, layer);
     }
     const conversationsMatch = CONVERSATIONS_PATH.exec(path);
     if (request.method === "GET" && conversationsMatch?.[1] !== undefined) {

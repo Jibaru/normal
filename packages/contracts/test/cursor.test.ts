@@ -355,4 +355,43 @@ describe("REST authorization-bound cursors", () => {
       ),
     ).toBeInstanceOf(InvalidCursorError);
   });
+
+  test("binds a groups cursor to listGroups and rejects contact interchange", async () => {
+    const key = await run(importCursorSigningKey(secret));
+    const groupsContext = {
+      ...restContext,
+      filters: { search: "fam" },
+      operationId: "listGroups",
+      sortVersion: "groups-v1",
+    };
+    const groupsCursor = await run(
+      signRestCursor(key, {
+        context: groupsContext,
+        boundary: ["family", "grp_123456789012345678901"],
+        expiresAtEpochSeconds,
+      }),
+    );
+    const contactsCursor = await run(
+      signRestCursor(key, {
+        context: restContext,
+        boundary: ["ada", "ctc_123456789012345678901"],
+        expiresAtEpochSeconds,
+      }),
+    );
+    expect(
+      await run(
+        verifyRestCursor(key, groupsCursor, groupsContext, nowEpochSeconds),
+      ),
+    ).toEqual(["family", "grp_123456789012345678901"]);
+    expect(
+      await runError(
+        verifyRestCursor(key, groupsCursor, restContext, nowEpochSeconds),
+      ),
+    ).toBeInstanceOf(InvalidCursorError);
+    expect(
+      await runError(
+        verifyRestCursor(key, contactsCursor, groupsContext, nowEpochSeconds),
+      ),
+    ).toBeInstanceOf(InvalidCursorError);
+  });
 });
