@@ -1047,6 +1047,7 @@ const makeTestLayer = (
       listEncryptedContacts: () => Effect.succeed(null),
       loadGroupSearchMaterial: () => Effect.succeed(null),
       listGroups: () => Effect.succeed(null),
+      listChats: () => Effect.succeed(null),
       rejectProtectedOperation: (input) =>
         Effect.sync(() => {
           if (

@@ -3,6 +3,7 @@ import {
   ProblemDetailsContract,
   RestConnectionListContract,
   RestContactListContract,
+  RestConversationListContract,
   RestGroupListContract,
 } from "./rest";
 
@@ -15,10 +16,14 @@ export interface RestRouteMetadata {
   readonly path:
     | "/v1/connections"
     | "/v1/connections/{connection_id}/contacts"
-    | "/v1/connections/{connection_id}/groups";
+    | "/v1/connections/{connection_id}/groups"
+    | "/v1/connections/{connection_id}/conversations";
   readonly permission: (typeof API_KEY_PERMISSIONS)[number];
   readonly summary: string;
-  readonly tags: readonly ["Connections"] | readonly ["Directory"];
+  readonly tags:
+    | readonly ["Connections"]
+    | readonly ["Conversations"]
+    | readonly ["Directory"];
 }
 
 export const restRouteRegistry = [
@@ -51,6 +56,16 @@ export const restRouteRegistry = [
     permission: "directory:read",
     summary: "Page joined WhatsApp groups",
     tags: ["Directory"],
+  },
+  {
+    description:
+      "Page WhatsApp Conversations with observed Stored Message activity for one explicitly selected WhatsApp Connection. Filter by `kind` (`all`, `direct`, or `group`; default `all`). Results sort by Conversation Activity descending, then conversation handle. Responses include Directory freshness and never return snippets, unread state, provider fields, or a full phone number. Cursors bind the calling API Key, this operation, the Connection, kind filter, limit, and sort version, and expire after 15 minutes.",
+    method: "GET",
+    operationId: "listConversations",
+    path: "/v1/connections/{connection_id}/conversations",
+    permission: "messages:read",
+    summary: "Page WhatsApp Conversations",
+    tags: ["Conversations"],
   },
 ] as const satisfies ReadonlyArray<RestRouteMetadata>;
 
@@ -108,6 +123,29 @@ const groupListExample = {
   },
 };
 
+const conversationListExample = {
+  data: [
+    {
+      conversation_id: "cvs_xxxxxxxxxxxxxxxxxxxxx",
+      display_name: "Ada",
+      kind: "direct",
+      last_activity_at: "2026-08-14T11:59:00.000Z",
+      last_activity_direction: "inbound",
+      phone_last_four: "0199",
+      recipient_id: "ctc_xxxxxxxxxxxxxxxxxxxxx",
+    },
+  ],
+  meta: {
+    as_of: "2026-08-14T12:00:00.000Z",
+    partial: false,
+    stale: false,
+  },
+  pagination: {
+    has_more: false,
+    next_cursor: null,
+  },
+};
+
 const problemExample = {
   code: "invalid_credentials",
   detail: "The API Key is missing, malformed, expired, or revoked.",
@@ -147,6 +185,11 @@ export const generateOpenApiDocument = (): Record<string, unknown> => ({
       description:
         "WhatsApp Directory contacts and groups for one selected WhatsApp Connection.",
       name: "Directory",
+    },
+    {
+      description:
+        "WhatsApp Conversations with observed Stored Message activity for one selected WhatsApp Connection.",
+      name: "Conversations",
     },
   ],
   paths: {
@@ -420,11 +463,124 @@ export const generateOpenApiDocument = (): Record<string, unknown> => ({
         "x-normal-permission": restRouteRegistry[2].permission,
       },
     },
+    "/v1/connections/{connection_id}/conversations": {
+      get: {
+        description: restRouteRegistry[3].description,
+        operationId: restRouteRegistry[3].operationId,
+        parameters: [
+          {
+            description:
+              "Opaque handle of the explicitly selected WhatsApp Connection.",
+            in: "path",
+            name: "connection_id",
+            required: true,
+            schema: { type: "string", pattern: "^con_[A-Za-z0-9_-]{21}$" },
+          },
+          {
+            description:
+              "Conversation kind filter. Defaults to `all`. Results still include only conversations with observed Stored Message activity.",
+            in: "query",
+            name: "kind",
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["all", "direct", "group"],
+              default: "all",
+            },
+          },
+          {
+            description: "Page size from 1 through 50. Defaults to 20.",
+            in: "query",
+            name: "limit",
+            required: false,
+            schema: { type: "integer", minimum: 1, maximum: 50, default: 20 },
+          },
+          {
+            description:
+              "Opaque REST cursor from a prior call with identical bound inputs.",
+            in: "query",
+            name: "cursor",
+            required: false,
+            schema: { type: "string", minLength: 1, maxLength: 4096 },
+          },
+        ],
+        responses: {
+          "200": {
+            content: {
+              "application/json": {
+                example: conversationListExample,
+                schema: { $ref: "#/components/schemas/ConversationList" },
+              },
+            },
+            description:
+              "A page of WhatsApp Conversations with observed Stored Message activity.",
+          },
+          "400": {
+            content: {
+              "application/problem+json": {
+                schema: { $ref: "#/components/schemas/ProblemDetails" },
+              },
+            },
+            description:
+              "The cursor is expired, tampered, bound to another grant or query, or an MCP cursor.",
+          },
+          "401": {
+            content: {
+              "application/problem+json": {
+                example: problemExample,
+                schema: { $ref: "#/components/schemas/ProblemDetails" },
+              },
+            },
+            description:
+              "The API Key is missing, malformed, expired, or revoked.",
+          },
+          "403": {
+            content: {
+              "application/problem+json": {
+                schema: { $ref: "#/components/schemas/ProblemDetails" },
+              },
+            },
+            description: "The API Key does not include `messages:read`.",
+          },
+          "404": {
+            content: {
+              "application/problem+json": {
+                schema: { $ref: "#/components/schemas/ProblemDetails" },
+              },
+            },
+            description:
+              "The WhatsApp Connection is unknown, unselected, deleted, or not visible to this key.",
+          },
+          "429": {
+            content: {
+              "application/problem+json": {
+                schema: { $ref: "#/components/schemas/ProblemDetails" },
+              },
+            },
+            description:
+              "Personal Account or API Key request quota is exhausted.",
+          },
+          "503": {
+            content: {
+              "application/problem+json": {
+                schema: { $ref: "#/components/schemas/ProblemDetails" },
+              },
+            },
+            description: "Authentication or audit authority is unavailable.",
+          },
+        },
+        security: [{ apiKey: [] }],
+        summary: restRouteRegistry[3].summary,
+        tags: [...restRouteRegistry[3].tags],
+        "x-normal-permission": restRouteRegistry[3].permission,
+      },
+    },
   },
   components: {
     schemas: {
       ConnectionList: jsonSchema(RestConnectionListContract),
       ContactList: jsonSchema(RestContactListContract),
+      ConversationList: jsonSchema(RestConversationListContract),
       GroupList: jsonSchema(RestGroupListContract),
       ProblemDetails: jsonSchema(ProblemDetailsContract),
     },
