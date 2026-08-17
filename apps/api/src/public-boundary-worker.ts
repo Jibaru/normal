@@ -25,6 +25,7 @@ import {
 } from "./connection-setup-provisioning";
 import type { EnvelopeEncryption } from "./encryption/envelope";
 import { noStoreJsonResponse } from "./http-response";
+import type { SendTextMessageService } from "./mcp";
 import {
   createMcpAuthorizationManagementHandler,
   isMcpAuthorizationManagementRequest,
@@ -110,6 +111,7 @@ type PublicBoundaryRequirements =
   | RestIdentifiersService
   | RestPersistenceService
   | SafeTelemetryService
+  | SendTextMessageService
   | ActivityLogClockService
   | ActivityLogPersistenceService
   | WebhookIngressRequirements

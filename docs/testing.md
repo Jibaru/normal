@@ -69,7 +69,14 @@ fixture credentials in the production composition root. REST Worker tests prove
 bearer parsing, Problem Details, no-CORS protected JSON, current permission
 checks, immediate revocation without an authorization cache, Directory contact
 paging, WhatsApp Conversation paging, REST-only cursors, and
-audit-before-release. Migrated-Postgres tests prove API Key contact and
+audit-before-release. REST Send Operation tests prove
+`POST /v1/connections/{connection_id}/send-operations` requires
+`messages:send`, an `Idempotency-Key`, exact text, and a `ctc_` or `grp_`
+recipient; exact replay and payload conflict stay on the shared send
+operation; failed and unknown post-boundary outcomes remain Send Operation
+resources; and pre-operation failures use Problem Details. MCP and REST share
+that grant-aware send service so fingerprints, quota, and receipts cannot
+diverge by adapter. Migrated-Postgres tests prove API Key contact and
 conversation listing share MCP ordering, selected-Connection isolation,
 Recipient Exclusion, and kind or search filters.
 
