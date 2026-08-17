@@ -307,10 +307,12 @@ export interface RestOperationCompletedEvent {
     | "list_connections"
     | "list_contacts"
     | "list_groups"
-    | "list_chats";
+    | "list_chats"
+    | "send_text_message";
   readonly outcome:
     | "audit_unavailable"
     | "authorization_denied"
+    | "execution_error"
     | "invalid_cursor"
     | "rate_limited"
     | "success"

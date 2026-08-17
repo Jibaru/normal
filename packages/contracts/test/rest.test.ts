@@ -6,13 +6,17 @@ import {
   decodeRestConnectionList,
   decodeRestContactList,
   decodeRestConversationList,
+  decodeRestCreateSendOperation,
   decodeRestGroupList,
+  decodeRestSendOperation,
   ProblemDetailsContract,
   problemType,
   RestConnectionListContract,
   RestContactListContract,
   RestConversationListContract,
+  RestCreateSendOperationContract,
   RestGroupListContract,
+  RestSendOperationContract,
 } from "../src/rest";
 
 const connectionId = "con_xxxxxxxxxxxxxxxxxxxxx";
@@ -268,12 +272,20 @@ describe("REST contracts", () => {
         path: "/v1/connections/{connection_id}/conversations",
         permission: "messages:read",
       }),
+      expect.objectContaining({
+        method: "POST",
+        operationId: "createSendOperation",
+        path: "/v1/connections/{connection_id}/send-operations",
+        permission: "messages:send",
+      }),
     ]);
     const serialized = JSON.stringify(openApiDocument);
     expect(serialized).toContain('"operationId":"listConnections"');
     expect(serialized).toContain('"operationId":"listContacts"');
     expect(serialized).toContain('"operationId":"listGroups"');
     expect(serialized).toContain('"operationId":"listConversations"');
+    expect(serialized).toContain('"operationId":"createSendOperation"');
+    expect(serialized).toContain('"Idempotency-Key"');
     expect(serialized).toContain('"type":"http"');
     expect(serialized).toContain('"scheme":"bearer"');
     expect(serialized).toContain("con_xxxxxxxxxxxxxxxxxxxxx");
@@ -283,25 +295,94 @@ describe("REST contracts", () => {
     expect(serialized).not.toMatch(
       /normal_apk_[A-Za-z0-9_-]{21}\.[A-Za-z0-9_-]+/u,
     );
+    expect(serialized).not.toContain("confirmed");
+    expect(serialized).not.toContain("+1555");
     expect(serialized).not.toContain("+12025550199");
     expect(serialized).not.toContain("tools/call");
     expect(serialized).not.toContain("structuredContent");
     expect(serialized).not.toContain("list_chats");
+    const schemas = (
+      openApiDocument.components as { schemas: Record<string, unknown> }
+    ).schemas;
+    expect(schemas.ConnectionList).toEqual(
+      RestConnectionListContract.jsonSchema,
+    );
+    expect(schemas.ContactList).toEqual(RestContactListContract.jsonSchema);
+    expect(schemas.ConversationList).toEqual(
+      RestConversationListContract.jsonSchema,
+    );
+    expect(schemas.CreateSendOperation).toEqual(
+      RestCreateSendOperationContract.jsonSchema,
+    );
+    expect(schemas.GroupList).toEqual(RestGroupListContract.jsonSchema);
+    expect(schemas.SendOperation).toEqual(RestSendOperationContract.jsonSchema);
+  });
+
+  test("rejects excess Send Operation properties and unaccepted destinations", () => {
+    const created = {
+      recipient_id: "ctc_xxxxxxxxxxxxxxxxxxxxx",
+      text: " exact\ne\u0301 ",
+    } as const;
+    expect(decodeRestCreateSendOperation(created) as unknown).toEqual(created);
     expect(
-      (openApiDocument.components as { schemas: Record<string, unknown> })
-        .schemas.ConnectionList,
-    ).toEqual(RestConnectionListContract.jsonSchema);
-    expect(
-      (openApiDocument.components as { schemas: Record<string, unknown> })
-        .schemas.ContactList,
-    ).toEqual(RestContactListContract.jsonSchema);
-    expect(
-      (openApiDocument.components as { schemas: Record<string, unknown> })
-        .schemas.GroupList,
-    ).toEqual(RestGroupListContract.jsonSchema);
-    expect(
-      (openApiDocument.components as { schemas: Record<string, unknown> })
-        .schemas.ConversationList,
-    ).toEqual(RestConversationListContract.jsonSchema);
+      decodeRestCreateSendOperation({
+        recipient_id: "grp_xxxxxxxxxxxxxxxxxxxxx",
+        text: "hello",
+      }) as unknown,
+    ).toEqual({
+      recipient_id: "grp_xxxxxxxxxxxxxxxxxxxxx",
+      text: "hello",
+    });
+    expect(() =>
+      decodeRestCreateSendOperation({
+        ...created,
+        confirmed: true,
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeRestCreateSendOperation({
+        ...created,
+        conversation_id: "cvs_xxxxxxxxxxxxxxxxxxxxx",
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeRestCreateSendOperation({
+        recipient_id: "+15551234567",
+        text: "hello",
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeRestCreateSendOperation({
+        recipient_id: "120363123456789012@g.us",
+        text: "hello",
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeRestCreateSendOperation({
+        recipient_id: "cvs_xxxxxxxxxxxxxxxxxxxxx",
+        text: "hello",
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeRestCreateSendOperation({
+        recipient_id: created.recipient_id,
+        text: "   \n\t",
+      }),
+    ).toThrow();
+
+    const receipt = {
+      send_id: "snd_xxxxxxxxxxxxxxxxxxxxx",
+      status: "unknown",
+      created_at: "2026-08-17T12:00:00.000Z",
+      status_changed_at: "2026-08-17T12:00:01.000Z",
+      idempotent_replay: false,
+    } as const;
+    expect(decodeRestSendOperation(receipt) as unknown).toEqual(receipt);
+    expect(() =>
+      decodeRestSendOperation({
+        ...receipt,
+        text: "do-not-echo",
+      }),
+    ).toThrow();
   });
 });

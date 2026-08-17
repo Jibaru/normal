@@ -5,12 +5,14 @@ import {
   signRestCursor,
   verifyRestCursor,
 } from "@whatsapp-mcp/contracts/cursor";
-import { ConnectionId } from "@whatsapp-mcp/contracts/handles";
+import { ConnectionId, IdempotencyKey } from "@whatsapp-mcp/contracts/handles";
 import {
   decodeRestConnectionList,
   decodeRestContactList,
   decodeRestConversationList,
+  decodeRestCreateSendOperation,
   decodeRestGroupList,
+  decodeRestSendOperation,
   type ProblemCode,
   type ProblemDetails,
   problemType,
@@ -34,6 +36,7 @@ import type {
   McpToolGroupSearchMaterial,
   RejectToolCallResult,
 } from "@whatsapp-mcp/db/mcp-tool";
+import { apiSendGrant } from "@whatsapp-mcp/db/send";
 import { normalizeWhatsAppConnectionName } from "@whatsapp-mcp/domain/whatsapp-connection";
 import { Context, Data, Effect, type Layer, Schema } from "effect";
 import {
@@ -59,6 +62,7 @@ import {
   normalizeGroupDisplayName,
 } from "./group-privacy";
 import { noStoreJsonResponse, noStoreResponse } from "./http-response";
+import { SendTextMessage, type SendTextMessageService } from "./mcp";
 import {
   SafeTelemetry,
   type SafeTelemetry as SafeTelemetryService,
@@ -69,7 +73,12 @@ const CONTACTS_PATH = /^\/v1\/connections\/(con_[A-Za-z0-9_-]{21})\/contacts$/u;
 const GROUPS_PATH = /^\/v1\/connections\/(con_[A-Za-z0-9_-]{21})\/groups$/u;
 const CONVERSATIONS_PATH =
   /^\/v1\/connections\/(con_[A-Za-z0-9_-]{21})\/conversations$/u;
+const SEND_OPERATIONS_PATH =
+  /^\/v1\/connections\/(con_[A-Za-z0-9_-]{21})\/send-operations$/u;
 const MAX_AUTHORIZATION_LENGTH = 128;
+const MAX_SEND_BODY_BYTES = 32_768;
+const SEND_OPERATION = "send_text_message" as const;
+const decodeIdempotencyKey = Schema.decodeUnknownSync(IdempotencyKey);
 const LIST_CONNECTIONS = "list_connections";
 const LIST_CONTACTS = "list_contacts";
 const LIST_GROUPS = "list_groups";
@@ -231,7 +240,8 @@ type RestRequirements =
   | RestCursorCodecService
   | RestIdentifiersService
   | RestPersistenceService
-  | SafeTelemetryService;
+  | SafeTelemetryService
+  | SendTextMessageService;
 
 export interface RestHandlerOptions {
   readonly hourLimit: number;
@@ -241,6 +251,8 @@ export interface RestHandlerOptions {
 }
 
 const problemTitles: Record<ProblemCode, string> = {
+  connection_unavailable: "Connection unavailable",
+  idempotency_conflict: "Idempotency conflict",
   insufficient_permission: "Insufficient permission",
   invalid_credentials: "Invalid credentials",
   invalid_cursor: "Invalid cursor",
@@ -251,13 +263,17 @@ const problemTitles: Record<ProblemCode, string> = {
 };
 
 const problemDetails: Record<ProblemCode, string> = {
+  connection_unavailable:
+    "The WhatsApp Connection is not connected for a new Send Operation.",
+  idempotency_conflict:
+    "This Idempotency-Key is already bound to a different Send Operation.",
   insufficient_permission:
     "The API Key does not include the required permission.",
   invalid_credentials:
     "The API Key is missing, malformed, expired, or revoked.",
   invalid_cursor:
     "The cursor is expired, tampered, or bound to another grant or query.",
-  invalid_request: "The request parameters are invalid.",
+  invalid_request: "The request body, headers, or parameters are invalid.",
   not_found: "The requested resource was not found.",
   rate_limited: "The request quota is exhausted.",
   unavailable: "The service is temporarily unavailable.",
@@ -351,10 +367,12 @@ const emitCompletion = (
     | "list_connections"
     | "list_contacts"
     | "list_groups"
-    | "list_chats",
+    | "list_chats"
+    | "send_text_message",
   outcome:
     | "audit_unavailable"
     | "authorization_denied"
+    | "execution_error"
     | "invalid_cursor"
     | "rate_limited"
     | "success"
@@ -1730,12 +1748,140 @@ const listConversations = (
     ),
   );
 
+const headerCount = (request: Request, name: string): number => {
+  let count = 0;
+  for (const [header] of request.headers) {
+    if (header.toLowerCase() === name) count += 1;
+  }
+  return count;
+};
+
+const parseIdempotencyKey = (request: Request): string | null => {
+  if (headerCount(request, "idempotency-key") !== 1) return null;
+  const raw = request.headers.get("idempotency-key");
+  if (raw === null) return null;
+  try {
+    return decodeIdempotencyKey(raw);
+  } catch {
+    return null;
+  }
+};
+
+const parseSendBody = async (request: Request) => {
+  const contentType = request.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().startsWith("application/json")) {
+    return null;
+  }
+  const raw = await request.text();
+  if (new TextEncoder().encode(raw).byteLength > MAX_SEND_BODY_BYTES) {
+    return null;
+  }
+  try {
+    return decodeRestCreateSendOperation(JSON.parse(raw) as unknown);
+  } catch {
+    return null;
+  }
+};
+
+const createSendOperation = (
+  request: Request,
+  connectionId: string,
+  layer: Layer.Layer<RestRequirements, unknown>,
+  deferProviderAttempt?: (attempt: Promise<void>) => void,
+): Promise<Response> =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const grant = yield* authenticate(request);
+      const idempotencyKey = parseIdempotencyKey(request);
+      const body = yield* Effect.tryPromise({
+        try: () => parseSendBody(request),
+        catch: () => problemResponse("invalid_request", 400),
+      });
+      if (idempotencyKey === null || body === null) {
+        return problemResponse("invalid_request", 400);
+      }
+      const send = yield* SendTextMessage;
+      const result = yield* send.send(
+        {
+          connectionId,
+          grant: apiSendGrant({
+            grantId: grant.grantId,
+            name: grant.name,
+            permissions: grant.permissions,
+            personalAccountId: grant.personalAccountId,
+            publicId: grant.id,
+          }),
+          idempotencyKey,
+          recipientId: body.recipient_id,
+          text: body.text,
+        },
+        deferProviderAttempt,
+      );
+      if (result.outcome === "receipt") {
+        const receipt = decodeRestSendOperation(result.receipt);
+        yield* emitCompletion(SEND_OPERATION, "success", 1);
+        return noStoreJsonResponse(
+          receipt,
+          receipt.idempotent_replay ? 200 : 201,
+        );
+      }
+      if (result.outcome === "rate_limited") {
+        yield* emitCompletion(SEND_OPERATION, "rate_limited");
+        return problemResponse("rate_limited", 429, {
+          retry_after_seconds: result.retryAfterSeconds,
+          retryable: true,
+          resets_at:
+            result.resetsAt.toISOString() as ProblemDetails["resets_at"],
+        });
+      }
+      if (result.outcome === "authorization_denied") {
+        yield* emitCompletion(SEND_OPERATION, "authorization_denied");
+        return grant.permissions.includes("messages:send")
+          ? problemResponse("not_found", 404)
+          : problemResponse("insufficient_permission", 403);
+      }
+      if (result.outcome === "recipient_not_found") {
+        yield* emitCompletion(SEND_OPERATION, "execution_error");
+        return problemResponse("not_found", 404);
+      }
+      if (result.outcome === "idempotency_conflict") {
+        yield* emitCompletion(SEND_OPERATION, "execution_error");
+        return problemResponse("idempotency_conflict", 409);
+      }
+      if (result.outcome === "connection_unavailable") {
+        yield* emitCompletion(SEND_OPERATION, "execution_error");
+        return problemResponse("connection_unavailable", 409, {
+          retryable: true,
+        });
+      }
+      yield* emitCompletion(
+        SEND_OPERATION,
+        result.outcome === "audit_unavailable"
+          ? "audit_unavailable"
+          : "unavailable",
+      );
+      return problemResponse("unavailable", 503);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.match({
+        onFailure: (failure) =>
+          failure instanceof Response
+            ? failure
+            : problemResponse("unavailable", 503),
+        onSuccess: (response) => response,
+      }),
+    ),
+  );
+
 export const createRestHandler =
   (
     layer: Layer.Layer<RestRequirements, unknown>,
     options: RestHandlerOptions,
   ) =>
-  async (request: Request): Promise<Response> => {
+  async (
+    request: Request,
+    deferProviderAttempt?: (attempt: Promise<void>) => void,
+  ): Promise<Response> => {
     const path = new URL(request.url).pathname;
     if (path !== CONNECTIONS_PATH && !path.startsWith(`${CONNECTIONS_PATH}/`)) {
       return problemResponse("not_found", 404);
@@ -1751,6 +1897,15 @@ export const createRestHandler =
     const conversationsMatch = CONVERSATIONS_PATH.exec(path);
     if (request.method === "GET" && conversationsMatch?.[1] !== undefined) {
       return listConversations(request, conversationsMatch[1], options, layer);
+    }
+    const sendMatch = SEND_OPERATIONS_PATH.exec(path);
+    if (request.method === "POST" && sendMatch?.[1] !== undefined) {
+      return createSendOperation(
+        request,
+        sendMatch[1],
+        layer,
+        deferProviderAttempt,
+      );
     }
     if (request.method !== "GET" || path !== CONNECTIONS_PATH) {
       const parsed = parseBearerCredential(request);

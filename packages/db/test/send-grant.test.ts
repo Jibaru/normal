@@ -15,6 +15,7 @@ import {
   type AtomicSendRepository,
   makePgAtomicSendRepository,
 } from "../src/send";
+import { makeWhatsAppConnectionRepository } from "../src/whatsapp-connection";
 
 const accountId = "10000000-0000-4000-8000-000000000087";
 const authorizationId = "40000000-0000-4000-8000-000000000087";
@@ -404,5 +405,232 @@ describe("Send Operation grant identities", () => {
         sendPublicId: "snd_12345678901234567898c",
       }),
     ).resolves.toBeNull();
+  });
+
+  test("rejects new sends after disconnection and after Connection Deletion", async () => {
+    await database.query(
+      `UPDATE public.whatsapp_connections
+       SET state = 'disconnected'
+       WHERE public_id = $1`,
+      [connectionPublicId],
+    );
+    expect(
+      await sends.commit(
+        commitInput(apiGrantA, {
+          auditLogId: "51000000-0000-4000-8000-000000000091",
+          fingerprint: `sf1_${"D".repeat(43)}`,
+          idempotencyKey: "123456789012345678991",
+          sendId: "60000000-0000-4000-8000-000000000091",
+          sendPublicId: "snd_123456789012345678991",
+        }),
+        encrypt,
+      ),
+    ).toEqual({ outcome: "connection_unavailable" });
+
+    const deleted = await makeWhatsAppConnectionRepository({
+      withConnection: async (use) => {
+        await database.exec("SET ROLE whatsapp_api_runtime");
+        try {
+          return await use(database);
+        } finally {
+          await database.exec("RESET ROLE");
+        }
+      },
+    }).finishDeletion({
+      clerkUserId,
+      deletionMarkerId: "d".repeat(64),
+      publicId: connectionPublicId,
+      requestedAt: "2026-08-15T12:05:00.000Z",
+    });
+    expect(deleted).toMatchObject({ publicId: connectionPublicId });
+
+    const afterDeletion = await sends.commit(
+      commitInput(apiGrantA, {
+        auditLogId: "51000000-0000-4000-8000-000000000092",
+        fingerprint: `sf1_${"E".repeat(43)}`,
+        idempotencyKey: "123456789012345678992",
+        sendId: "60000000-0000-4000-8000-000000000092",
+        sendPublicId: "snd_123456789012345678992",
+      }),
+      encrypt,
+    );
+    const unknownConnection = await sends.commit(
+      {
+        ...commitInput(apiGrantB, {
+          auditLogId: "51000000-0000-4000-8000-000000000093",
+          fingerprint: `sf1_${"F".repeat(43)}`,
+          idempotencyKey: "123456789012345678993",
+          sendId: "60000000-0000-4000-8000-000000000093",
+          sendPublicId: "snd_123456789012345678993",
+        }),
+        connectionPublicId: "con_999999999999999999999",
+      },
+      encrypt,
+    );
+    expect(afterDeletion).toEqual({ outcome: "authorization_denied" });
+    expect(unknownConnection).toEqual(afterDeletion);
+  });
+
+  test("keeps sends on a remaining selected Connection after another is deleted", async () => {
+    const retainedPublicId = "con_123456789012345678994";
+    const retainedConnectionId = "20000000-0000-4000-8000-000000000094";
+    const retainedKeyId = "50000000-0000-4000-8000-000000000094";
+    const retainedKeyPublicId = "apk_123456789012345678994";
+    await database.query(
+      `INSERT INTO public.whatsapp_connections (
+          id, personal_account_id, webhook_ingress_id,
+          display_name_fallback, public_id, number_suffix, state,
+          state_changed_at
+        ) VALUES (
+          $1, $2, '30000000-0000-4000-8000-000000000094', 'Calm Falcon',
+          $3, '5678', 'connected', $4
+        )`,
+      [retainedConnectionId, accountId, retainedPublicId, observedAt],
+    );
+    await database.query(
+      `INSERT INTO public.whatsapp_connection_key_envelopes (
+         personal_account_id, whatsapp_connection_id, account_key_version,
+         key_version, nonce, ciphertext
+       ) VALUES (
+          $1, $2, 1, 1,
+          decode(repeat('13', 12), 'hex'), decode(repeat('14', 32), 'hex')
+        )`,
+      [accountId, retainedConnectionId],
+    );
+    await database.query(
+      `INSERT INTO public.whatsapp_connection_secrets (
+         personal_account_id, whatsapp_connection_id, credential_ciphertext,
+         credential_ciphertext_version, credential_key_version, credential_nonce,
+         message_search_key_ciphertext_version, message_search_key_version,
+         message_search_key_nonce, message_search_key_ciphertext
+       ) VALUES (
+         $1, $2,
+         decode(repeat('15', 32), 'hex'), 1, 1,
+          decode(repeat('16', 12), 'hex'), 1, 1,
+          decode(repeat('17', 12), 'hex'), decode(repeat('18', 32), 'hex')
+       )`,
+      [accountId, retainedConnectionId],
+    );
+    await database.query(
+      `INSERT INTO public.whatsapp_connection_provider_sessions (
+         personal_account_id, whatsapp_connection_id,
+         locator_ciphertext_version, locator_key_version,
+         locator_nonce, locator_ciphertext,
+         authority_ciphertext_version, authority_key_version,
+         authority_nonce, authority_ciphertext, created_at, updated_at
+       ) VALUES (
+         $1, $2,
+         1, 1, decode(repeat('1b', 12), 'hex'), decode(repeat('1c', 32), 'hex'),
+         1, 1, decode(repeat('1d', 12), 'hex'), decode(repeat('1e', 32), 'hex'),
+         $3, $3
+       )`,
+      [accountId, retainedConnectionId, observedAt],
+    );
+    await database.query(
+      `INSERT INTO public.directory_contact_projections (
+         personal_account_id, whatsapp_connection_id, as_of, stale, partial
+       ) VALUES ($1, $2, $3, false, false)`,
+      [accountId, retainedConnectionId, observedAt],
+    );
+    await database.query(
+      `INSERT INTO public.directory_contacts (
+         personal_account_id, whatsapp_connection_id, public_id,
+         provider_identity_index, provider_identity_ciphertext_version,
+         provider_identity_key_version, provider_identity_nonce,
+         provider_identity_ciphertext, display_name_sort, active,
+         received_at
+       ) VALUES (
+         $1, $2, $3, $4, 1, 1,
+         decode(repeat('19', 12), 'hex'), decode(repeat('1a', 32), 'hex'),
+         '', true, $5
+       )`,
+      [
+        accountId,
+        retainedConnectionId,
+        "ctc_123456789012345678994",
+        `di1_${"B".repeat(43)}`,
+        observedAt,
+      ],
+    );
+    const apiKeys = makeApiKeyRepository({
+      withConnection: async (use) => {
+        await database.exec("SET ROLE whatsapp_api_runtime");
+        try {
+          return await use(database);
+        } finally {
+          await database.exec("RESET ROLE");
+        }
+      },
+    });
+    expect(
+      await apiKeys.create({
+        clerkUserId,
+        connectionIds: [connectionPublicId, retainedPublicId],
+        createdAt: observedAt,
+        credentialDigest: new Uint8Array(32).fill(9),
+        credentialHint: `normal_${retainedKeyPublicId}.…wxyz`,
+        expiresAt: null,
+        id: retainedKeyId,
+        name: "Both Connections",
+        permissions: ["connections:read", "messages:send"],
+        publicId: retainedKeyPublicId,
+        reverifiedAt: new Date("2026-08-15T11:59:00.000Z"),
+      }),
+    ).toMatchObject({ outcome: "created" });
+    const retainedGrant = apiSendGrant({
+      grantId: retainedKeyId,
+      name: "Both Connections",
+      permissions: ["connections:read", "messages:send"],
+      personalAccountId: accountId,
+      publicId: retainedKeyPublicId,
+    });
+
+    await makeWhatsAppConnectionRepository({
+      withConnection: async (use) => {
+        await database.exec("SET ROLE whatsapp_api_runtime");
+        try {
+          return await use(database);
+        } finally {
+          await database.exec("RESET ROLE");
+        }
+      },
+    }).finishDeletion({
+      clerkUserId,
+      deletionMarkerId: "e".repeat(64),
+      publicId: connectionPublicId,
+      requestedAt: "2026-08-15T12:06:00.000Z",
+    });
+
+    expect(
+      await sends.commit(
+        commitInput(retainedGrant, {
+          auditLogId: "51000000-0000-4000-8000-000000000094",
+          fingerprint: `sf1_${"G".repeat(43)}`,
+          idempotencyKey: "123456789012345678994",
+          sendId: "60000000-0000-4000-8000-000000000094",
+          sendPublicId: "snd_123456789012345678994",
+        }),
+        encrypt,
+      ),
+    ).toEqual({ outcome: "authorization_denied" });
+    expect(
+      await sends.commit(
+        {
+          ...commitInput(retainedGrant, {
+            auditLogId: "51000000-0000-4000-8000-000000000095",
+            fingerprint: `sf1_${"H".repeat(43)}`,
+            idempotencyKey: "123456789012345678995",
+            sendId: "60000000-0000-4000-8000-000000000095",
+            sendPublicId: "snd_123456789012345678995",
+          }),
+          connectionPublicId: retainedPublicId,
+          recipientPublicId: "ctc_123456789012345678994",
+        },
+        encrypt,
+      ),
+    ).toMatchObject({
+      outcome: "created",
+      receipt: { publicId: "snd_123456789012345678995" },
+    });
   });
 });
