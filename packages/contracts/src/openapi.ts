@@ -3,6 +3,7 @@ import {
   ProblemDetailsContract,
   RestConnectionListContract,
   RestContactListContract,
+  RestGroupListContract,
 } from "./rest";
 
 export const REST_API_VERSION = "1.0.0";
@@ -11,7 +12,10 @@ export interface RestRouteMetadata {
   readonly description: string;
   readonly method: "GET";
   readonly operationId: string;
-  readonly path: "/v1/connections" | "/v1/connections/{connection_id}/contacts";
+  readonly path:
+    | "/v1/connections"
+    | "/v1/connections/{connection_id}/contacts"
+    | "/v1/connections/{connection_id}/groups";
   readonly permission: (typeof API_KEY_PERMISSIONS)[number];
   readonly summary: string;
   readonly tags: readonly ["Connections"] | readonly ["Directory"];
@@ -36,6 +40,16 @@ export const restRouteRegistry = [
     path: "/v1/connections/{connection_id}/contacts",
     permission: "directory:read",
     summary: "Page Directory contacts",
+    tags: ["Directory"],
+  },
+  {
+    description:
+      "Page currently joined WhatsApp groups for one explicitly selected WhatsApp Connection. Search accepts a display-name prefix of three to 64 characters. Responses include projection freshness and never return a roster, description, or provider identifier. `group_id` is a WhatsApp Recipient handle and cannot be used as a WhatsApp Conversation handle. Cursors bind the calling API Key, this operation, the Connection, normalized filters, limit, and sort version, and expire after 15 minutes.",
+    method: "GET",
+    operationId: "listGroups",
+    path: "/v1/connections/{connection_id}/groups",
+    permission: "directory:read",
+    summary: "Page joined WhatsApp groups",
     tags: ["Directory"],
   },
 ] as const satisfies ReadonlyArray<RestRouteMetadata>;
@@ -63,6 +77,24 @@ const contactListExample = {
       conversation_id: null,
       display_name: "Ada",
       phone_last_four: "0199",
+    },
+  ],
+  meta: {
+    as_of: "2026-08-14T12:00:00.000Z",
+    partial: false,
+    stale: false,
+  },
+  pagination: {
+    has_more: false,
+    next_cursor: null,
+  },
+};
+
+const groupListExample = {
+  data: [
+    {
+      group_id: "grp_xxxxxxxxxxxxxxxxxxxxx",
+      display_name: "Family",
     },
   ],
   meta: {
@@ -281,11 +313,119 @@ export const generateOpenApiDocument = (): Record<string, unknown> => ({
         "x-normal-permission": restRouteRegistry[1].permission,
       },
     },
+    "/v1/connections/{connection_id}/groups": {
+      get: {
+        description: restRouteRegistry[2].description,
+        operationId: restRouteRegistry[2].operationId,
+        parameters: [
+          {
+            description:
+              "Opaque handle of the explicitly selected WhatsApp Connection.",
+            in: "path",
+            name: "connection_id",
+            required: true,
+            schema: { type: "string", pattern: "^con_[A-Za-z0-9_-]{21}$" },
+          },
+          {
+            description:
+              "Group display-name prefix of three to 64 characters after normalization.",
+            in: "query",
+            name: "search",
+            required: false,
+            schema: { type: "string" },
+          },
+          {
+            description: "Page size from 1 through 50. Defaults to 20.",
+            in: "query",
+            name: "limit",
+            required: false,
+            schema: { type: "integer", minimum: 1, maximum: 50, default: 20 },
+          },
+          {
+            description:
+              "Opaque REST cursor from a prior call with identical bound inputs.",
+            in: "query",
+            name: "cursor",
+            required: false,
+            schema: { type: "string", minLength: 1, maxLength: 4096 },
+          },
+        ],
+        responses: {
+          "200": {
+            content: {
+              "application/json": {
+                example: groupListExample,
+                schema: { $ref: "#/components/schemas/GroupList" },
+              },
+            },
+            description: "A page of currently joined WhatsApp groups.",
+          },
+          "400": {
+            content: {
+              "application/problem+json": {
+                schema: { $ref: "#/components/schemas/ProblemDetails" },
+              },
+            },
+            description:
+              "The cursor is expired, tampered, bound to another grant or query, or an MCP cursor.",
+          },
+          "401": {
+            content: {
+              "application/problem+json": {
+                example: problemExample,
+                schema: { $ref: "#/components/schemas/ProblemDetails" },
+              },
+            },
+            description:
+              "The API Key is missing, malformed, expired, or revoked.",
+          },
+          "403": {
+            content: {
+              "application/problem+json": {
+                schema: { $ref: "#/components/schemas/ProblemDetails" },
+              },
+            },
+            description: "The API Key does not include `directory:read`.",
+          },
+          "404": {
+            content: {
+              "application/problem+json": {
+                schema: { $ref: "#/components/schemas/ProblemDetails" },
+              },
+            },
+            description:
+              "The WhatsApp Connection is unknown, unselected, deleted, or not visible to this key.",
+          },
+          "429": {
+            content: {
+              "application/problem+json": {
+                schema: { $ref: "#/components/schemas/ProblemDetails" },
+              },
+            },
+            description:
+              "Personal Account or API Key request quota is exhausted.",
+          },
+          "503": {
+            content: {
+              "application/problem+json": {
+                schema: { $ref: "#/components/schemas/ProblemDetails" },
+              },
+            },
+            description: "Authentication or audit authority is unavailable.",
+          },
+        },
+        security: [{ apiKey: [] }],
+        summary: restRouteRegistry[2].summary,
+        tags: [...restRouteRegistry[2].tags],
+        "x-normal-permission": restRouteRegistry[2].permission,
+      },
+    },
   },
   components: {
     schemas: {
       ConnectionList: jsonSchema(RestConnectionListContract),
       ContactList: jsonSchema(RestContactListContract),
+      GroupList: jsonSchema(RestGroupListContract),
       ProblemDetails: jsonSchema(ProblemDetailsContract),
     },
     securitySchemes: {

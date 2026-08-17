@@ -71,6 +71,8 @@ const makeHarness = (options?: {
       ]),
     loadContactReadMaterial: () => Effect.succeed(null),
     listEncryptedContacts: () => Effect.succeed(null),
+    loadGroupSearchMaterial: () => Effect.succeed(null),
+    listGroups: () => Effect.succeed(null),
     rejectProtectedOperation: (input) =>
       Effect.succeed(
         input.requiredPermission !== undefined &&
@@ -334,6 +336,8 @@ const makeContactHarness = (options?: {
     completeToolCall: () => Effect.void,
     listConnections: () => Effect.succeed([]),
     loadContactReadMaterial: () => Effect.succeed(contactMaterial),
+    loadGroupSearchMaterial: () => Effect.succeed(null),
+    listGroups: () => Effect.succeed(null),
     listEncryptedContacts: () =>
       Effect.succeed({
         asOf: "2026-08-14T12:00:00.000Z",
@@ -552,5 +556,284 @@ describe("REST Directory contacts", () => {
       status: 503,
     });
     expect(JSON.stringify(body)).not.toContain("Ada");
+  });
+});
+
+const groupPage = {
+  accountKey: contactMaterial.accountKey,
+  asOf: "2026-08-14T12:00:00.000Z",
+  connectionKey: contactMaterial.connectionKey,
+  groups: [
+    {
+      displayName: {
+        ciphertext: "Zg==",
+        keyVersion: 1,
+        nonce: "BQUFBQUFBQUFBQUF",
+        version: 1 as const,
+      },
+      id: "30000000-0000-4000-8000-000000000082",
+      publicId: "grp_123456789012345678901",
+    },
+    {
+      displayName: {
+        ciphertext: "Zw==",
+        keyVersion: 1,
+        nonce: "BgYGBgYGBgYGBgYG",
+        version: 1 as const,
+      },
+      id: "30000000-0000-4000-8000-000000000083",
+      publicId: "grp_123456789012345678902",
+    },
+  ],
+  partial: false,
+  stale: false,
+};
+
+const makeGroupHarness = (options?: {
+  readonly permissions?: ReadonlyArray<
+    "connections:read" | "directory:read" | "messages:read" | "messages:send"
+  >;
+  readonly persistence?: Partial<RestPersistenceService>;
+}) => {
+  const telemetry: Array<SafeTelemetryEvent> = [];
+  const persistence: RestPersistenceService = {
+    beginProtectedOperation: (input) =>
+      Effect.succeed(
+        input.channel === "api" &&
+          input.requiredPermission !== undefined &&
+          !(input.permissions ?? []).includes(input.requiredPermission)
+          ? {
+              auditLogId: input.auditLogId,
+              outcome: "authorization_denied" as const,
+            }
+          : {
+              auditLogId: input.auditLogId,
+              outcome: "started" as const,
+            },
+      ),
+    completeToolCall: () => Effect.void,
+    listConnections: () => Effect.succeed([]),
+    loadContactReadMaterial: () => Effect.succeed(null),
+    listEncryptedContacts: () => Effect.succeed(null),
+    loadGroupSearchMaterial: () =>
+      Effect.succeed({
+        accountKey: contactMaterial.accountKey,
+        connectionKey: contactMaterial.connectionKey,
+        identityKey: contactMaterial.identityKey,
+      }),
+    listGroups: () => Effect.succeed(groupPage),
+    rejectProtectedOperation: (input) =>
+      Effect.succeed(
+        input.requiredPermission !== undefined &&
+          !input.permissions.includes(input.requiredPermission)
+          ? ("authorization_denied" as const)
+          : ("rejected" as const),
+      ),
+    ...options?.persistence,
+  };
+  const layer = Layer.mergeAll(
+    Layer.succeed(ApiKeyHmac, {
+      digest: () => Effect.succeed(digest),
+    }),
+    Layer.succeed(ApiKeyPersistence, {
+      authenticate: () =>
+        Effect.succeed({
+          connectionIds: [connectionId],
+          expiresAt: null,
+          grantId,
+          id: publicId,
+          name: "CI",
+          permissions: options?.permissions ?? [
+            "connections:read",
+            "directory:read",
+          ],
+          personalAccountId,
+        }),
+      create: () => Effect.succeed({ outcome: "not_found" as const }),
+      list: () => Effect.succeed([]),
+      revoke: () => Effect.succeed(null),
+    }),
+    Layer.succeed(RestClock, { now: Effect.succeed(observedAt) }),
+    Layer.succeed(RestIdentifiers, {
+      nextAuditLogId: Effect.succeed("50000000-0000-4000-8000-000000000080"),
+    }),
+    Layer.succeed(RestCursorCodec, {
+      decode: () => Effect.fail(new RestCursorError()),
+      encode: () => Effect.succeed("rest-cursor"),
+    }),
+    Layer.succeed(RestPersistence, persistence),
+    Layer.succeed(EnvelopeEncryptionService, {
+      createConnectionKey: () => Effect.die("unused"),
+      createPersonalAccountKey: () => Effect.die("unused"),
+      decrypt: (input) =>
+        Effect.succeed(
+          input.context.fieldOrObjectPurpose === "webhook-identity-key"
+            ? new Uint8Array(32).fill(17)
+            : input.context.entity === "whatsapp-group" &&
+                input.context.recordId ===
+                  "30000000-0000-4000-8000-000000000083"
+              ? new TextEncoder().encode("Neighbors")
+              : new TextEncoder().encode("Family"),
+        ),
+      decryptMany: () => Effect.die("unused"),
+      encrypt: () => Effect.die("unused"),
+    }),
+    Layer.succeed(SafeTelemetry, {
+      emit: (event) =>
+        Effect.sync(() => {
+          telemetry.push(event);
+        }),
+    }),
+  );
+  return {
+    handler: createRestHandler(layer, {
+      hourLimit: 3,
+      keyHourLimit: 2,
+      keyMinuteLimit: 1,
+      minuteLimit: 2,
+    }),
+    telemetry,
+  };
+};
+
+describe("REST Directory groups", () => {
+  test("pages joined groups with the REST envelope and freshness", async () => {
+    const harness = makeGroupHarness();
+    const response = await harness.handler(
+      request(`/v1/connections/${connectionId}/groups`),
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("access-control-allow-origin")).toBeNull();
+    const body = await response.json();
+    expect(body).toEqual({
+      data: [
+        {
+          group_id: "grp_123456789012345678901",
+          display_name: "Family",
+        },
+        {
+          group_id: "grp_123456789012345678902",
+          display_name: "Neighbors",
+        },
+      ],
+      meta: {
+        as_of: "2026-08-14T12:00:00.000Z",
+        partial: false,
+        stale: false,
+      },
+      pagination: {
+        has_more: false,
+        next_cursor: null,
+      },
+    });
+    expect(harness.telemetry).toEqual([
+      {
+        event: "rest.operation.completed",
+        operation: "list_groups",
+        outcome: "success",
+        resultCount: 2,
+        service: "api",
+      },
+    ]);
+    expect(JSON.stringify(harness.telemetry)).not.toContain(credential);
+    expect(JSON.stringify(body)).not.toContain("cvs_");
+  });
+
+  test("requires directory:read and hides unknown Connections", async () => {
+    const forbidden = await makeGroupHarness({
+      permissions: ["connections:read"],
+    }).handler(request(`/v1/connections/${connectionId}/groups`));
+    expect(forbidden.status).toBe(403);
+    expect(await forbidden.json()).toMatchObject({
+      code: "insufficient_permission",
+      status: 403,
+    });
+
+    const missing = await makeGroupHarness({
+      persistence: {
+        listGroups: () => Effect.succeed(null),
+      },
+    }).handler(request(`/v1/connections/${connectionId}/groups`));
+    expect(missing.status).toBe(404);
+    expect(await missing.json()).toMatchObject({
+      code: "not_found",
+      status: 404,
+    });
+  });
+
+  test("rejects extra query parameters and invalid search or limit before auth", async () => {
+    const harness = makeGroupHarness();
+    for (const path of [
+      `/v1/connections/${connectionId}/groups?include_left=true`,
+      `/v1/connections/${connectionId}/groups?search=Fa`,
+      `/v1/connections/${connectionId}/groups?limit=0`,
+      `/v1/connections/${connectionId}/groups?limit=51`,
+    ]) {
+      const response = await harness.handler(request(path));
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        code: "invalid_request",
+        status: 400,
+      });
+    }
+    expect(harness.telemetry).toEqual([]);
+  });
+
+  test("rejects MCP cursors and other invalid cursors before quota reservation", async () => {
+    const harness = makeGroupHarness();
+    const response = await harness.handler(
+      request(`/v1/connections/${connectionId}/groups?cursor=mcp-or-tampered`),
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      code: "invalid_cursor",
+      status: 400,
+    });
+    expect(harness.telemetry).toEqual([
+      {
+        event: "rest.operation.completed",
+        operation: "list_groups",
+        outcome: "invalid_cursor",
+        service: "api",
+      },
+    ]);
+  });
+
+  test("pages with a bound REST cursor and withholds results if audit completion fails", async () => {
+    const paged = await makeGroupHarness().handler(
+      request(`/v1/connections/${connectionId}/groups?limit=1`),
+    );
+    expect(paged.status).toBe(200);
+    expect(await paged.json()).toEqual({
+      data: [
+        {
+          group_id: "grp_123456789012345678901",
+          display_name: "Family",
+        },
+      ],
+      meta: {
+        as_of: "2026-08-14T12:00:00.000Z",
+        partial: false,
+        stale: false,
+      },
+      pagination: {
+        has_more: true,
+        next_cursor: "rest-cursor",
+      },
+    });
+
+    const withheld = await makeGroupHarness({
+      persistence: {
+        completeToolCall: () => Effect.fail(new RestPersistenceError()),
+      },
+    }).handler(request(`/v1/connections/${connectionId}/groups`));
+    expect(withheld.status).toBe(503);
+    const body = await withheld.json();
+    expect(body).toMatchObject({
+      code: "unavailable",
+      status: 503,
+    });
+    expect(JSON.stringify(body)).not.toContain("Family");
   });
 });

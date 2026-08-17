@@ -113,7 +113,10 @@ is complete. `list_contacts` rechecks the live authorization, selected
 connection, and contact state, decrypts only inside the API Worker, and returns
 at most a nullable display name plus the final four phone digits. A projection
 older than ten minutes is reported as stale even if the last provider read had
-succeeded.
+succeeded. `list_groups` and `GET /v1/connections/{connection_id}/groups`
+recheck the live grant, selected Connection, and joined state, decrypt only
+inside the API Worker, and return at most a nullable display name with a
+`grp_` recipient handle that is never a WhatsApp Conversation handle.
 
 Stored Message exact-word search adds no deployment environment secret. Each
 WhatsApp Connection owns a dedicated random 32-byte message-search key wrapped
@@ -338,8 +341,8 @@ payloads. MCP-channel rows remain compatible; API-channel rows omit
 telemetry is limited to `mcp.tool_call.completed`, the fixed
 `list_connections` or `list_groups` tool name, an allowlisted outcome, the API service name, and
 the bounded result count on success. REST telemetry is limited to
-`rest.operation.completed`, the fixed `list_connections` or `list_contacts`
-operation name, an allowlisted outcome, the API service name, and the bounded
+`rest.operation.completed`, the fixed `list_connections`, `list_contacts`, or
+`list_groups` operation name, an allowlisted outcome, the API service name, and the bounded
 result count on success. Do not enrich either event with tenant, authorization, client,
 Connection, quota, credential, request, or response fields.
 

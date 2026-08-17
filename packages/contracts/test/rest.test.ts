@@ -5,10 +5,12 @@ import {
   decodeProblemDetails,
   decodeRestConnectionList,
   decodeRestContactList,
+  decodeRestGroupList,
   ProblemDetailsContract,
   problemType,
   RestConnectionListContract,
   RestContactListContract,
+  RestGroupListContract,
 } from "../src/rest";
 
 const connectionId = "con_xxxxxxxxxxxxxxxxxxxxx";
@@ -121,6 +123,60 @@ describe("REST contracts", () => {
     ).toThrow();
   });
 
+  test("keeps Directory group pages closed and distinct from conversation handles", () => {
+    const groups = {
+      data: [
+        {
+          group_id: "grp_xxxxxxxxxxxxxxxxxxxxx",
+          display_name: "Family",
+        },
+      ],
+      meta: {
+        as_of: "2026-08-14T12:00:00.000Z",
+        partial: false,
+        stale: false,
+      },
+      pagination: {
+        has_more: false,
+        next_cursor: null,
+      },
+    } as const;
+    expect(decodeRestGroupList(groups) as unknown).toEqual(groups);
+    expect(() =>
+      decodeRestGroupList({
+        ...groups,
+        data: [
+          {
+            ...groups.data[0],
+            conversation_id: "cvs_xxxxxxxxxxxxxxxxxxxxx",
+          },
+        ],
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeRestGroupList({
+        ...groups,
+        data: [
+          {
+            ...groups.data[0],
+            group_id: "cvs_xxxxxxxxxxxxxxxxxxxxx",
+          },
+        ],
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeRestGroupList({
+        ...groups,
+        data: [
+          {
+            ...groups.data[0],
+            group_id: "ctc_xxxxxxxxxxxxxxxxxxxxx",
+          },
+        ],
+      }),
+    ).toThrow();
+  });
+
   test("generates a partial OpenAPI 3.1 document with stable operation IDs", () => {
     expect(openApiDocument.openapi).toBe("3.1.0");
     expect(restRouteRegistry).toEqual([
@@ -136,18 +192,28 @@ describe("REST contracts", () => {
         path: "/v1/connections/{connection_id}/contacts",
         permission: "directory:read",
       }),
+      expect.objectContaining({
+        method: "GET",
+        operationId: "listGroups",
+        path: "/v1/connections/{connection_id}/groups",
+        permission: "directory:read",
+      }),
     ]);
     const serialized = JSON.stringify(openApiDocument);
     expect(serialized).toContain('"operationId":"listConnections"');
     expect(serialized).toContain('"operationId":"listContacts"');
+    expect(serialized).toContain('"operationId":"listGroups"');
     expect(serialized).toContain('"type":"http"');
     expect(serialized).toContain('"scheme":"bearer"');
     expect(serialized).toContain("con_xxxxxxxxxxxxxxxxxxxxx");
     expect(serialized).toContain("ctc_xxxxxxxxxxxxxxxxxxxxx");
+    expect(serialized).toContain("grp_xxxxxxxxxxxxxxxxxxxxx");
     expect(serialized).not.toMatch(
       /normal_apk_[A-Za-z0-9_-]{21}\.[A-Za-z0-9_-]+/u,
     );
     expect(serialized).not.toContain("+12025550199");
+    expect(serialized).not.toContain("tools/call");
+    expect(serialized).not.toContain("structuredContent");
     expect(
       (openApiDocument.components as { schemas: Record<string, unknown> })
         .schemas.ConnectionList,
@@ -156,5 +222,9 @@ describe("REST contracts", () => {
       (openApiDocument.components as { schemas: Record<string, unknown> })
         .schemas.ContactList,
     ).toEqual(RestContactListContract.jsonSchema);
+    expect(
+      (openApiDocument.components as { schemas: Record<string, unknown> })
+        .schemas.GroupList,
+    ).toEqual(RestGroupListContract.jsonSchema);
   });
 });

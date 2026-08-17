@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { ConnectionId, ContactId, ConversationId } from "./handles";
+import { ConnectionId, ContactId, ConversationId, GroupId } from "./handles";
 import { makePublicObjectContract, UtcTimestamp } from "./mcp-schema";
 
 export const RestConnectionState = Schema.Literal(
@@ -57,6 +57,19 @@ export const RestContactListContract = makePublicObjectContract({
 });
 export type RestContactList = typeof RestContactListContract.schema.Type;
 
+export const RestGroup = Schema.Struct({
+  group_id: GroupId,
+  display_name: Schema.NullOr(Schema.String),
+});
+export type RestGroup = typeof RestGroup.Type;
+
+export const RestGroupListContract = makePublicObjectContract({
+  data: Schema.Array(RestGroup).pipe(Schema.maxItems(50)),
+  meta: RestDirectoryMeta,
+  pagination: RestPagination,
+});
+export type RestGroupList = typeof RestGroupListContract.schema.Type;
+
 export const ProblemStatus = Schema.Literal(400, 401, 403, 404, 409, 429, 503);
 
 export const ProblemCode = Schema.Literal(
@@ -96,6 +109,11 @@ export const decodeRestConnectionList = Schema.decodeUnknownSync(
 
 export const decodeRestContactList = Schema.decodeUnknownSync(
   RestContactListContract.schema,
+  { onExcessProperty: "error" },
+);
+
+export const decodeRestGroupList = Schema.decodeUnknownSync(
+  RestGroupListContract.schema,
   { onExcessProperty: "error" },
 );
 
