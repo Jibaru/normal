@@ -512,6 +512,21 @@ describe("Send Operation grant identities", () => {
       [accountId, retainedConnectionId],
     );
     await database.query(
+      `INSERT INTO public.whatsapp_connection_provider_sessions (
+         personal_account_id, whatsapp_connection_id,
+         locator_ciphertext_version, locator_key_version,
+         locator_nonce, locator_ciphertext,
+         authority_ciphertext_version, authority_key_version,
+         authority_nonce, authority_ciphertext, created_at, updated_at
+       ) VALUES (
+         $1, $2,
+         1, 1, decode(repeat('1b', 12), 'hex'), decode(repeat('1c', 32), 'hex'),
+         1, 1, decode(repeat('1d', 12), 'hex'), decode(repeat('1e', 32), 'hex'),
+         $3, $3
+       )`,
+      [accountId, retainedConnectionId, observedAt],
+    );
+    await database.query(
       `INSERT INTO public.directory_contact_projections (
          personal_account_id, whatsapp_connection_id, as_of, stale, partial
        ) VALUES ($1, $2, $3, false, false)`,
