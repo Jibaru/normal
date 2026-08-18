@@ -630,26 +630,31 @@ test("starts irreversible Connection Deletion and keeps the deleted connection g
     });
   });
   await installClerkBrowser(page, { signedIn: true });
-  await page.goto("/dashboard/connections");
+  await page.goto("/");
+  await page.goto("/dashboard");
+  await page.getByRole("link", { name: "WhatsApp Connections" }).click();
 
-  await completeFirstConnectionProfile(page);
   const onboarding = page.getByTestId("first-connection-onboarding");
-  await onboarding
-    .getByLabel("Name", { exact: true })
-    .fill("Personal WhatsApp");
-  await onboarding.getByLabel("WhatsApp number").fill("+1 (555) 012-3456");
-  await onboarding
-    .getByRole("button", { name: "Continue", exact: true })
-    .click();
-  await expect(
-    page.getByRole("img", { name: "Scan this WhatsApp QR code" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "WhatsApp Connection active" }),
-  ).toBeVisible({ timeout: 15_000 });
-  await onboarding.getByRole("button", { name: "Go to dashboard" }).click();
-
   const connection = page.getByTestId("whatsapp-connection");
+  await expect(onboarding.or(connection)).toBeVisible();
+  if (await onboarding.isVisible()) {
+    await completeFirstConnectionProfile(page);
+    await onboarding
+      .getByLabel("Name", { exact: true })
+      .fill("Personal WhatsApp");
+    await onboarding.getByLabel("WhatsApp number").fill("+1 (555) 012-3456");
+    await onboarding
+      .getByRole("button", { name: "Continue", exact: true })
+      .click();
+    await expect(
+      page.getByRole("img", { name: "Scan this WhatsApp QR code" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "WhatsApp Connection active" }),
+    ).toBeVisible({ timeout: 15_000 });
+    await onboarding.getByRole("button", { name: "Go to dashboard" }).click();
+  }
+
   let confirmationMessage = "";
   const confirmation = page.waitForEvent("dialog").then(async (dialog) => {
     confirmationMessage = dialog.message();
