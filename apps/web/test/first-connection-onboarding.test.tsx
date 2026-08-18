@@ -23,6 +23,7 @@ describe("first-connection onboarding verification prompt", () => {
       displayName: "Personal WhatsApp",
       numberSuffix: "3456",
       retentionDays: 30,
+      state: "connected",
     } as const;
 
     const claude = buildVerificationPromptCopy("claude", connection);
@@ -49,6 +50,7 @@ describe("first-connection onboarding verification prompt", () => {
             displayName: "Personal WhatsApp",
             numberSuffix: "3456",
             retentionDays: 30,
+            state: "connected",
           }}
           getToken={async () => null}
           initialProfile={{
@@ -78,6 +80,7 @@ describe("first-connection onboarding verification prompt", () => {
       expect(html).toContain(
         `Verify ${intendedMcpClient === "claude" ? "Claude" : "ChatGPT"} can see this WhatsApp Connection`,
       );
+      expect(html).toContain("Connect your MCP Client");
       expect(html).toContain("Spanish prompt");
       expect(html).toContain("English equivalent");
       expect(html).toContain("Personal WhatsApp, número terminado en 3456.");

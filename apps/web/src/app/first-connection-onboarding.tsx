@@ -4,7 +4,9 @@ import { Check, Copy } from "lucide-react";
 import {
   type FormEvent,
   type FormEventHandler,
+  useCallback,
   useEffect,
+  useId,
   useRef,
   useState,
 } from "react";
@@ -58,6 +60,22 @@ export type OnboardingStage =
   | "security"
   | "connection_setup"
   | "success";
+
+const onboardingStageOrder = [
+  "welcome",
+  "profile",
+  "security",
+  "connection_setup",
+  "success",
+] as const satisfies ReadonlyArray<OnboardingStage>;
+
+const onboardingStageLabels: Record<OnboardingStage, string> = {
+  welcome: "Welcome",
+  profile: "Profile",
+  security: "Security",
+  connection_setup: "Connection Setup",
+  success: "Connect MCP Client",
+};
 
 export type PrimaryUseCase =
   | "conversation_search"
@@ -238,6 +256,18 @@ const setupCompletionFailures = new Map<
   ["provisioning_failed", "failed"],
   ["provisioning_quarantined", "failed"],
   ["unavailable", "failed"],
+]);
+
+const completedStagesForSetupOutcome = new Map<
+  Exclude<ConnectionSetupState, "connected">,
+  OnboardingStage
+>([
+  ["cancelled", "connection_setup"],
+  ["expired", "connection_setup"],
+  ["provider_capacity_unavailable", "connection_setup"],
+  ["provisioning_failed", "connection_setup"],
+  ["provisioning_quarantined", "connection_setup"],
+  ["unavailable", "connection_setup"],
 ]);
 
 function isIsoDate(value: unknown): value is string {
@@ -524,6 +554,42 @@ function CopyPrompt({
   );
 }
 
+function ProgressSteps({ stage }: { readonly stage: OnboardingStage }) {
+  const currentIndex = onboardingStageOrder.indexOf(stage);
+
+  return (
+    <ol aria-label="Onboarding progress" className="grid gap-2 sm:grid-cols-5">
+      {onboardingStageOrder.map((step, index) => {
+        const state =
+          index < currentIndex
+            ? "complete"
+            : index === currentIndex
+              ? "current"
+              : "upcoming";
+
+        return (
+          <li
+            aria-current={state === "current" ? "step" : undefined}
+            className={
+              state === "current"
+                ? "rounded-xl border bg-card px-3 py-2 ring-1 ring-foreground/10"
+                : state === "complete"
+                  ? "rounded-xl border bg-muted/30 px-3 py-2"
+                  : "rounded-xl border border-dashed bg-background px-3 py-2"
+            }
+            key={step}
+          >
+            <p className="text-xs text-muted-foreground">Step {index + 1}</p>
+            <p className="mt-1 text-sm font-medium">
+              {onboardingStageLabels[step]}
+            </p>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 export function buildVerificationPromptCopy(
   client: VerificationClient,
   connection: FirstConnectionConnection,
@@ -769,6 +835,8 @@ export function FirstConnectionOnboarding({
   const activeConnection = isActiveConnection(connectedConnection)
     ? connectedConnection
     : null;
+  const headingId = useId();
+  const headingRef = useRef<HTMLHeadingElement | null>(null);
   const [profile, setProfile] = useState(initialProfile);
   const [draft, setDraft] = useState<ProfileDraft>(() =>
     makeDraft(initialProfile),
@@ -786,8 +854,33 @@ export function FirstConnectionOnboarding({
           : "security",
   );
   const viewedStages = useRef<Set<OnboardingStage>>(new Set());
+  const completedStages = useRef<Set<OnboardingStage>>(new Set());
+  const abandonedStages = useRef<Set<OnboardingStage>>(new Set());
   const reportedSetupOutcome = useRef(false);
   const completedConnectionSetupStage = useRef(false);
+  const latestStage = useRef(stage);
+
+  latestStage.current = stage;
+
+  const markStageCompleted = useCallback((completedStage: OnboardingStage) => {
+    if (completedStages.current.has(completedStage)) return;
+    completedStages.current.add(completedStage);
+    captureProductAnalyticsEvent({
+      event: "onboarding_stage_completed",
+      stage: completedStage,
+    });
+  }, []);
+
+  const reportStageAbandonment = useCallback(() => {
+    const currentStage = latestStage.current;
+    if (completedStages.current.has(currentStage)) return;
+    if (abandonedStages.current.has(currentStage)) return;
+    abandonedStages.current.add(currentStage);
+    captureProductAnalyticsEvent({
+      event: "onboarding_stage_abandoned",
+      stage: currentStage,
+    });
+  }, []);
 
   useEffect(() => {
     if (viewedStages.current.has(stage)) return;
@@ -802,26 +895,35 @@ export function FirstConnectionOnboarding({
   }, [stage]);
 
   useEffect(() => {
-    if (
-      setupForm.setupState === "connected" &&
-      activeConnection !== null &&
-      stage !== "success"
-    ) {
-      if (!reportedSetupOutcome.current) {
-        reportedSetupOutcome.current = true;
-        captureProductAnalyticsEvent({
-          event: "connection_setup_completed",
-          outcome: "success",
-        });
+    headingRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    const handlePageHide = () => reportStageAbandonment();
+    window.addEventListener("pagehide", handlePageHide);
+
+    return () => {
+      window.removeEventListener("pagehide", handlePageHide);
+      reportStageAbandonment();
+    };
+  }, [reportStageAbandonment]);
+
+  useEffect(() => {
+    if (setupForm.setupState === "connected") {
+      if (activeConnection !== null && stage !== "success") {
+        if (!reportedSetupOutcome.current) {
+          reportedSetupOutcome.current = true;
+          captureProductAnalyticsEvent({
+            event: "connection_setup_completed",
+            outcome: "success",
+          });
+        }
+        if (!completedConnectionSetupStage.current) {
+          completedConnectionSetupStage.current = true;
+          markStageCompleted("connection_setup");
+        }
+        setStage("success");
       }
-      if (!completedConnectionSetupStage.current) {
-        completedConnectionSetupStage.current = true;
-        captureProductAnalyticsEvent({
-          event: "onboarding_stage_completed",
-          stage: "connection_setup",
-        });
-      }
-      setStage("success");
       return;
     }
     const outcome = setupCompletionFailures.get(setupForm.setupState);
@@ -832,16 +934,19 @@ export function FirstConnectionOnboarding({
         outcome,
       });
     }
-  }, [activeConnection, setupForm.setupState, stage]);
+    const completedStage = completedStagesForSetupOutcome.get(
+      setupForm.setupState,
+    );
+    if (completedStage !== undefined) {
+      markStageCompleted(completedStage);
+    }
+  }, [activeConnection, markStageCompleted, setupForm.setupState, stage]);
 
   const completeStage = (
     completedStage: OnboardingStage,
     next: OnboardingStage,
   ) => {
-    captureProductAnalyticsEvent({
-      event: "onboarding_stage_completed",
-      stage: completedStage,
-    });
+    markStageCompleted(completedStage);
     setStage(next);
   };
 
@@ -875,10 +980,7 @@ export function FirstConnectionOnboarding({
       setDraft(makeDraft(savedProfile));
       onProfileSaved(savedProfile);
       setProfileState("idle");
-      captureProductAnalyticsEvent({
-        event: "onboarding_stage_completed",
-        stage: "profile",
-      });
+      markStageCompleted("profile");
       captureProductAnalyticsEvent({ event: "onboarding_profile_completed" });
       setStage("security");
     } catch {
@@ -893,10 +995,7 @@ export function FirstConnectionOnboarding({
   };
 
   const finishOnboarding = () => {
-    captureProductAnalyticsEvent({
-      event: "onboarding_stage_completed",
-      stage: "success",
-    });
+    markStageCompleted("success");
     captureProductAnalyticsEvent({ event: "onboarding_completed" });
     onComplete();
   };
@@ -919,38 +1018,41 @@ export function FirstConnectionOnboarding({
 
   return (
     <section
-      aria-labelledby="first-connection-onboarding-heading"
+      aria-labelledby={headingId}
       className="flex flex-col gap-6"
       data-testid="first-connection-onboarding"
     >
+      <ProgressSteps stage={stage} />
       <div className="rounded-2xl bg-card p-5 text-card-foreground ring-1 ring-foreground/10">
         <p className="text-sm font-medium text-muted-foreground">
           First WhatsApp Connection
         </p>
         <h2
           className="mt-1 text-2xl font-semibold tracking-tight"
-          id="first-connection-onboarding-heading"
+          id={headingId}
+          ref={headingRef}
+          tabIndex={-1}
         >
           {stage === "welcome"
             ? "Connect WhatsApp to Normal"
             : stage === "profile"
-              ? "Tell us how you plan to use Normal"
+              ? "Save your onboarding profile"
               : stage === "security"
-                ? "Security and control"
+                ? "Review security before you scan"
                 : stage === "connection_setup"
                   ? "Start Connection Setup"
-                  : "WhatsApp Connection active"}
+                  : "Connect your MCP Client"}
         </h2>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
           {stage === "welcome"
-            ? "Set up your first WhatsApp Connection inside the dashboard."
+            ? "Move from sign-in to a working MCP Client in five short steps."
             : stage === "profile"
-              ? "Choose fixed options so we can tailor the first MCP Client next step."
+              ? "Choose fixed options once so we can resume this journey and tailor the MCP client next step."
               : stage === "security"
-                ? "Review the controls before you scan an ephemeral QR code."
+                ? "Keep the security disclosures, then continue to the ephemeral QR step."
                 : stage === "connection_setup"
-                  ? "Use your phone to scan the QR code when it appears."
-                  : "Your first WhatsApp Connection is ready for MCP Authorization."}
+                  ? "Name the WhatsApp Connection, enter the number, then scan the QR code on your phone."
+                  : "Your WhatsApp Connection is active. Authorize your MCP Client next, then run the read-only verification prompt."}
         </p>
       </div>
 
@@ -987,7 +1089,7 @@ export function FirstConnectionOnboarding({
               onClick={() => completeStage("welcome", "profile")}
               type="button"
             >
-              Continue
+              Start onboarding
             </Button>
           </div>
         </div>
@@ -998,6 +1100,10 @@ export function FirstConnectionOnboarding({
           className="rounded-2xl bg-background p-5 ring-1 ring-border"
           onSubmit={saveProfile}
         >
+          <p className="mb-5 max-w-2xl text-sm leading-6 text-muted-foreground">
+            These fixed answers are stored on your Personal Account so the first
+            Connection Setup can resume without repeating completed steps.
+          </p>
           <FieldGroup>
             <SelectField
               description="Pick the closest fit."
@@ -1053,21 +1159,30 @@ export function FirstConnectionOnboarding({
               options={intendedMcpClientOptions}
               value={draft.intendedMcpClient}
             />
-            <SelectField
-              id="onboarding-research-call-interest"
-              label="Interested in a short research call?"
-              onChange={(value) => {
-                if (isResearchCallInterest(value)) {
-                  setDraft((current) => ({
-                    ...current,
-                    researchCallInterest: value,
-                  }));
-                }
-              }}
-              options={researchCallInterestOptions}
-              value={draft.researchCallInterest}
-            />
           </FieldGroup>
+          <div className="mt-5 rounded-xl bg-muted/40 p-4">
+            <p className="text-sm font-medium">Optional research follow-up</p>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">
+              This does not affect Connection Setup or MCP access. We only use
+              it to know whether we can ask about your onboarding later.
+            </p>
+            <div className="mt-4">
+              <SelectField
+                id="onboarding-research-call-interest"
+                label="Interested in a short research call?"
+                onChange={(value) => {
+                  if (isResearchCallInterest(value)) {
+                    setDraft((current) => ({
+                      ...current,
+                      researchCallInterest: value,
+                    }));
+                  }
+                }}
+                options={researchCallInterestOptions}
+                value={draft.researchCallInterest}
+              />
+            </div>
+          </div>
           {profileState === "unavailable" ? (
             <p
               aria-live="polite"
@@ -1092,6 +1207,11 @@ export function FirstConnectionOnboarding({
 
       {stage === "security" ? (
         <div className="rounded-2xl bg-background p-5 ring-1 ring-border">
+          <p className="mb-5 max-w-2xl text-sm leading-6 text-muted-foreground">
+            The QR code is short-lived, outbound sends always require Client
+            Confirmation in the MCP Client, and send authority stays separate
+            from message read authority.
+          </p>
           <ul className="grid gap-3 md:grid-cols-2">
             {[
               "Sensitive fields use scoped encryption tied to the Personal Account and WhatsApp Connection.",
@@ -1115,7 +1235,7 @@ export function FirstConnectionOnboarding({
               onClick={() => completeStage("security", "connection_setup")}
               type="button"
             >
-              Continue to Connection Setup
+              Review complete. Start Connection Setup
             </Button>
           </div>
         </div>
@@ -1123,6 +1243,10 @@ export function FirstConnectionOnboarding({
 
       {stage === "connection_setup" ? (
         <div className="rounded-2xl bg-background p-5 ring-1 ring-border">
+          <p className="mb-5 max-w-2xl text-sm leading-6 text-muted-foreground">
+            If this page refreshes after setup starts, Normal resumes the same
+            Connection Setup instead of creating another one.
+          </p>
           <ConnectionSetupForm
             {...setupForm}
             idPrefix="first-connection"
@@ -1181,23 +1305,29 @@ export function FirstConnectionOnboarding({
               Normal observes supported WhatsApp Conversations from activation
               forward. Earlier WhatsApp history is not imported.
             </p>
-            <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="mt-5 flex flex-col gap-3">
               <p className="text-sm leading-6 text-muted-foreground">
                 Create the MCP Authorization in {selectedClientName} next so it
                 can access only the WhatsApp Connections and permissions you
                 choose.
               </p>
               {nextActionHref !== null ? (
-                <a
-                  className={buttonVariants()}
-                  href={nextActionHref}
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  Open {selectedClientName}
-                </a>
+                <div className="flex flex-wrap items-center gap-3">
+                  <a
+                    className={buttonVariants({ size: "lg" })}
+                    href={nextActionHref}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    Open {selectedClientName}
+                  </a>
+                  <p className="text-sm text-muted-foreground">
+                    Return here after authorization to copy the verification
+                    prompt.
+                  </p>
+                </div>
               ) : (
-                <div className="min-w-0 sm:max-w-sm">
+                <div className="max-w-xl">
                   <CopyServerUrl serverUrl={mcpServerUrl} />
                 </div>
               )}
@@ -1206,7 +1336,7 @@ export function FirstConnectionOnboarding({
           {intendedMcpClient === "claude" || intendedMcpClient === "chatgpt" ? (
             <VerificationPromptCard
               client={intendedMcpClient}
-              connection={connectedConnection}
+              connection={activeConnection}
             />
           ) : null}
           {intendedMcpClient === "claude" || intendedMcpClient === "chatgpt" ? (
@@ -1219,6 +1349,7 @@ export function FirstConnectionOnboarding({
                 })
               }
               serverUrl={mcpServerUrl}
+              showGuideLaunchAction={false}
             />
           ) : (
             <section className="rounded-2xl bg-background p-5 ring-1 ring-border">

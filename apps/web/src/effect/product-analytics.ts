@@ -17,6 +17,15 @@ export type ProductAnalyticsEvent =
         | "connection_setup"
         | "success";
     }
+  | {
+      event: "onboarding_stage_abandoned";
+      stage:
+        | "welcome"
+        | "profile"
+        | "security"
+        | "connection_setup"
+        | "success";
+    }
   | { event: "onboarding_profile_completed" }
   | { event: "onboarding_security_reached" }
   | { event: "connection_setup_started" }
@@ -45,6 +54,7 @@ export interface ProductAnalyticsConfiguration {
 const allowedEventNames = new Set<ProductAnalyticsEvent["event"]>([
   "onboarding_stage_viewed",
   "onboarding_stage_completed",
+  "onboarding_stage_abandoned",
   "onboarding_profile_completed",
   "onboarding_security_reached",
   "connection_setup_started",
@@ -97,7 +107,8 @@ const decodeEvent = (value: unknown): ProductAnalyticsEvent | null => {
   }
   if (
     event.event === "onboarding_stage_viewed" ||
-    event.event === "onboarding_stage_completed"
+    event.event === "onboarding_stage_completed" ||
+    event.event === "onboarding_stage_abandoned"
   ) {
     return hasExactKeys(event, ["event", "stage"]) &&
       typeof event.stage === "string" &&
