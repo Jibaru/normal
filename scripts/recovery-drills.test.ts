@@ -11,7 +11,8 @@ const monthly: DrillEvidence = {
   environment: "production",
   started_at: "2026-08-01T00:00:00.000Z",
   completed_at: "2026-08-01T00:12:00.000Z",
-  source_point_at: "2026-07-17T00:00:00.000Z",
+  source_point_at: "2026-07-27T00:00:00.000Z",
+  recovery_branch_id: "br-recovery-evidence-123456",
   serving: false,
   achieved_rpo_seconds: 120,
   achieved_rto_seconds: 720,
@@ -23,6 +24,19 @@ const monthly: DrillEvidence = {
     first_party_availability_percent: 99.5,
   },
   dependencies: { wasender_percent: 98.1, whatsapp_percent: 97.4 },
+  replay: {
+    deletion_markers_enumerated: 10,
+    deletion_marker_failures: 0,
+    deleted_entities_repurged: 2,
+    recipient_transitions_replayed: 4,
+    recipient_transition_failures: 0,
+    unresolved_recipient_prefixes: 1,
+    expired_records_purged: 3,
+    api_keys_revoked: 2,
+    api_key_digests_cleared: 2,
+    object_deletion_intents_simulated: 1,
+    object_deletion_failures: 0,
+  },
   checks: {
     schema_compatible: true,
     rls_isolated: true,
@@ -32,6 +46,10 @@ const monthly: DrillEvidence = {
     audit_valid: true,
     current_time_expiry_applied: true,
     deletion_markers_replayed: true,
+    recipient_transitions_replayed: true,
+    recipient_purge_cutoffs_applied: true,
+    prepared_recipient_transitions_drained: true,
+    object_deletion_intents_drained: true,
     deleted_identifiers_absent: true,
     api_keys_revoked: true,
     api_key_digests_cleared: true,
@@ -122,9 +140,29 @@ describe("recovery drill evidence", () => {
         new Date("2026-08-02"),
       ),
     ).toEqual([
-      "restore branch must be non-serving",
+      "restore branch must be explicitly non-serving",
       "monthly_restore check rls_isolated did not pass",
     ]);
+  });
+
+  test("requires an exact metadata-only evidence shape", () => {
+    const failures = validateDrillEvidence(
+      {
+        ...monthly,
+        serving: undefined,
+        tenant_id: "must-not-be-retained",
+        objectives: {
+          ...monthly.objectives,
+          branch_id: "must-not-be-retained",
+        },
+        checks: { ...monthly.checks, invented_check: true },
+      },
+      new Date("2026-08-02"),
+    );
+    expect(failures).toContain("restore branch must be explicitly non-serving");
+    expect(failures).toContain("evidence contains unknown field tenant_id");
+    expect(failures).toContain("objectives contains unknown field branch_id");
+    expect(failures).toContain("checks contains unknown field invented_check");
   });
 
   test("requires restore verification during quarterly game days", () => {
@@ -139,6 +177,25 @@ describe("recovery drill evidence", () => {
     ).toContain(
       "quarterly_game_day check deletion_markers_replayed did not pass",
     );
+  });
+
+  test("requires branch-bound aggregate replay evidence and measured RTO", () => {
+    const failures = validateDrillEvidence(
+      {
+        ...monthly,
+        recovery_branch_id: "not-a-branch",
+        achieved_rto_seconds: 1,
+        replay: { ...monthly.replay, deletion_marker_failures: 1 },
+      },
+      new Date("2026-08-02"),
+    );
+    expect(failures).toContain(
+      "recovery evidence is not bound to a Neon branch",
+    );
+    expect(failures).toContain(
+      "achieved RTO is shorter than the measured drill duration",
+    );
+    expect(failures).toContain("restore replay recorded aggregate failures");
   });
 
   test("launch gate fails closed on stale evidence or incomplete governance", () => {
