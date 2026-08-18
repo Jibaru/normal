@@ -454,7 +454,7 @@ function connectionSetupPanelCopy(
   if (setupState === "provisioning_failed") {
     return {
       body: "Normal could not finish preparing this Connection Setup before the QR step.",
-      hint: "Use Start again to request a fresh QR code.",
+      hint: "Cancel setup below, then start again to request a fresh QR code.",
       title: "Connection Setup could not be prepared",
     };
   }
@@ -751,8 +751,9 @@ export function ConnectionSetupForm({
           Cancel setup
         </Button>
       ) : null}
-      {setupId !== null &&
-      (setupState === "expired" || setupState === "unavailable") ? (
+      {setupState === "cancelled" ||
+      (setupId !== null &&
+        (setupState === "expired" || setupState === "unavailable")) ? (
         <Button onClick={onResetSetup} type="button" variant="outline">
           Start again
         </Button>

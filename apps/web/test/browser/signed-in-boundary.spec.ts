@@ -553,11 +553,21 @@ test.describe("Connection Setup loading UI", () => {
     page,
     request,
   }) => {
+    const delayedSetupNumber = "+1 (555) 012-3476";
     let releaseSetup: (() => void) | undefined;
     const setupCanContinue = new Promise<void>((resolve) => {
       releaseSetup = resolve;
     });
-    const qrCanContinue = new Promise<void>(() => {});
+    let releaseFirstQr: (() => void) | undefined;
+    const firstQrCanContinue = new Promise<void>((resolve) => {
+      releaseFirstQr = resolve;
+    });
+    let releaseQrPoll: (() => void) | undefined;
+    const qrPollCanContinue = new Promise<void>((resolve) => {
+      releaseQrPoll = resolve;
+    });
+    let qrRequests = 0;
+    let firstQrResponseStatus: number | null = null;
 
     await page.route("https://api.example.test/**", async (route) => {
       const original = route.request();
@@ -574,7 +584,12 @@ test.describe("Connection Setup loading UI", () => {
           localUrl.pathname,
         )
       ) {
-        await qrCanContinue;
+        qrRequests += 1;
+        if (qrRequests === 1) {
+          await firstQrCanContinue;
+        } else {
+          await qrPollCanContinue;
+        }
       }
       localUrl.protocol = "http:";
       localUrl.hostname = "127.0.0.1";
@@ -587,8 +602,12 @@ test.describe("Connection Setup loading UI", () => {
         },
         method: original.method(),
       });
+      const responseBody = await response.body();
+      if (qrRequests === 1 && localUrl.pathname.endsWith("/qr")) {
+        firstQrResponseStatus = response.status();
+      }
       await route.fulfill({
-        body: await response.body(),
+        body: responseBody,
         headers: {
           ...response.headers(),
           "access-control-allow-origin": webOrigin,
@@ -607,12 +626,13 @@ test.describe("Connection Setup loading UI", () => {
     await onboarding
       .getByLabel("Name", { exact: true })
       .fill("Personal WhatsApp");
-    await onboarding.getByLabel("WhatsApp number").fill("+1 (555) 012-3456");
+    await onboarding.getByLabel("WhatsApp number").fill(delayedSetupNumber);
     await onboarding
       .getByRole("button", { name: "Continue", exact: true })
       .click();
 
     const panel = onboarding.getByTestId("connection-setup-panel");
+    const placeholder = panel.locator("div[aria-hidden='true'].size-64");
     await expect(panel).toBeVisible();
     await expect(page.getByTestId("connection-setup-status")).toHaveText(
       "Starting Connection Setup.",
@@ -629,11 +649,37 @@ test.describe("Connection Setup loading UI", () => {
     );
     await expect(onboarding).toContainText("Preparing your QR code");
     await expect(panel).toBeVisible();
+    await expect(placeholder).toBeVisible();
     await expect(
       page.getByRole("img", { name: "Scan this WhatsApp QR code" }),
     ).toHaveCount(0);
 
-    await expect(panel).toBeVisible();
+    const placeholderBox = await placeholder.boundingBox();
+    expect(placeholderBox).not.toBeNull();
+    releaseFirstQr?.();
+    await expect.poll(() => firstQrResponseStatus).toBe(200);
+
+    const qrImage = page.getByRole("img", {
+      name: "Scan this WhatsApp QR code",
+    });
+    await expect(qrImage).toBeVisible();
+    await expect(page.getByTestId("connection-setup-status")).toHaveText(
+      "Scan this QR code with WhatsApp.",
+    );
+    const qrBox = await qrImage.boundingBox();
+    expect(qrBox).not.toBeNull();
+    expect(
+      Math.abs((qrBox?.height ?? 0) - (placeholderBox?.height ?? 0)),
+    ).toBeLessThanOrEqual(24);
+
+    await onboarding.getByRole("button", { name: "Cancel setup" }).click();
+    await expect(page.getByTestId("connection-setup-status")).toHaveText(
+      /Connection Setup cancelled\./u,
+    );
+    releaseQrPoll?.();
+    await expect(
+      onboarding.getByRole("button", { name: "Start again" }),
+    ).toBeVisible();
   });
 });
 
@@ -641,6 +687,7 @@ test("shows a terminal provisioning failure during Connection Setup", async ({
   page,
   request,
 }) => {
+  const failedSetupNumber = "+1 (555) 012-3486";
   await page.route("https://api.example.test/**", async (route) => {
     const original = route.request();
     const localUrl = new URL(original.url());
@@ -691,7 +738,7 @@ test("shows a terminal provisioning failure during Connection Setup", async ({
   await onboarding
     .getByLabel("Name", { exact: true })
     .fill("Personal WhatsApp");
-  await onboarding.getByLabel("WhatsApp number").fill("+1 (555) 012-3456");
+  await onboarding.getByLabel("WhatsApp number").fill(failedSetupNumber);
   await onboarding
     .getByRole("button", { name: "Continue", exact: true })
     .click();
@@ -703,7 +750,7 @@ test("shows a terminal provisioning failure during Connection Setup", async ({
     "Normal could not finish preparing this Connection Setup before the QR step.",
   );
   await expect(onboarding).toContainText(
-    "Use Start again to request a fresh QR code.",
+    "Cancel setup below, then start again to request a fresh QR code.",
   );
   await expect(
     page.getByRole("img", { name: "Scan this WhatsApp QR code" }),
