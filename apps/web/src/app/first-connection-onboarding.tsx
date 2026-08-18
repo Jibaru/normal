@@ -1435,7 +1435,7 @@ export function FirstConnectionOnboarding({
           {intendedMcpClient === "claude" || intendedMcpClient === "chatgpt" ? (
             <VerificationPromptCard
               client={intendedMcpClient}
-              connection={connectedConnection}
+              connection={successModel.connection}
             />
           ) : null}
           {intendedMcpClient === "claude" || intendedMcpClient === "chatgpt" ? (
