@@ -8,9 +8,12 @@ describe("deployment rules", () => {
   test("names every independently deployed application", () => {
     expect(deployableNames).toEqual([
       "web",
+      "docs",
       "api",
       "provider-control",
       "deletion-coordinator",
+      "restore-coordinator",
+      "recovery-control",
     ]);
   });
 

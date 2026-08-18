@@ -8,13 +8,15 @@ import {
   type RecipientJournalBucket,
   readTransitions,
 } from "@whatsapp-mcp/api/recipient/journal";
-import type { RestoreRepository } from "@whatsapp-mcp/db/restore";
+import type {
+  RestoreObjectDeletion,
+  RestoreRepository,
+} from "@whatsapp-mcp/db/restore";
 import { Effect, type Redacted } from "effect";
 
-export interface RestoreBuckets {
-  readonly stored_media: Pick<R2Bucket, "delete">;
-  readonly webhook_ingress: Pick<R2Bucket, "delete">;
-}
+export type RestoreObjectDeletionHandler = (
+  deletion: RestoreObjectDeletion,
+) => Promise<void>;
 
 const recipientScanBatch = 500;
 
@@ -84,7 +86,8 @@ const replayRecipientTransitions = async (input: {
 
 export const replayRestore = async (input: {
   readonly branchId: string;
-  readonly buckets: RestoreBuckets;
+  readonly currentTime?: () => string;
+  readonly handleObjectDeletion: RestoreObjectDeletionHandler;
   readonly environment: "development" | "preview" | "production";
   readonly hmacSecret: Redacted.Redacted<string>;
   readonly markers: DeletionMarkerStore;
@@ -130,11 +133,18 @@ export const replayRestore = async (input: {
   });
 
   let expiredRecordCount = 0;
-  for (;;) {
-    const purged = await input.repository.purgeExpired(input.observedAt, 1000);
-    expiredRecordCount += purged;
-    if (purged < 1000) break;
-  }
+  let latestObservedAt = input.observedAt;
+  const purgeExpired = async () => {
+    let total = 0;
+    const observedAt = input.currentTime?.() ?? input.observedAt;
+    latestObservedAt = observedAt;
+    for (;;) {
+      const purged = await input.repository.purgeExpired(observedAt, 1000);
+      total += purged;
+      if (purged < 1000) return total;
+    }
+  };
+  expiredRecordCount += await purgeExpired();
   // Restored API Keys must lose every digest before readiness. Incomplete
   // batches leave the gate closed because complete_restore_replay fails
   // while any authenticable grant remains.
@@ -149,17 +159,27 @@ export const replayRestore = async (input: {
     apiKeyDigestsCleared += invalidated.digestsCleared;
     if (invalidated.revoked < 1000 && invalidated.digestsCleared < 1000) break;
   }
-  for (;;) {
-    const deletions = await input.repository.listObjectDeletions(1000);
-    for (const deletion of deletions) {
-      await input.buckets[deletion.bucket].delete(deletion.objectKey);
-      await input.repository.finishObjectDeletion(deletion);
+  const drainObjectDeletions = async () => {
+    let total = 0;
+    for (;;) {
+      const deletions = await input.repository.listObjectDeletions(1000);
+      for (const deletion of deletions) {
+        await input.handleObjectDeletion(deletion);
+        await input.repository.finishObjectDeletion(deletion);
+        total += 1;
+      }
+      if (deletions.length < 1000) return total;
     }
-    if (deletions.length < 1000) break;
-  }
+  };
+  let objectDeletionCount = await drainObjectDeletions();
+  // Drills use a live clock so content that expires during a long replay is
+  // purged, and any resulting object intents are drained, immediately before
+  // readiness is recorded.
+  expiredRecordCount += await purgeExpired();
+  objectDeletionCount += await drainObjectDeletions();
   await input.repository.complete({
     branchId: input.branchId,
-    completedAt: input.observedAt,
+    completedAt: latestObservedAt,
     deletedEntityCount,
     expiredRecordCount,
     markerCount: markerReferences.length,
@@ -170,6 +190,7 @@ export const replayRestore = async (input: {
     deletedEntityCount,
     expiredRecordCount,
     markerCount: markerReferences.length,
+    objectDeletionCount,
     recipientTransitionCount: recipients.recipientTransitionCount,
     unresolvedRecipientPrefixCount: recipients.unresolvedPrefixCount,
   };

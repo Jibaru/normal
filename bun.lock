@@ -90,6 +90,24 @@
         "wrangler": "4.116.0",
       },
     },
+    "apps/recovery-control": {
+      "name": "@whatsapp-mcp/recovery-control",
+      "version": "0.1.0",
+      "dependencies": {
+        "@whatsapp-mcp/api": "workspace:*",
+        "@whatsapp-mcp/db": "workspace:*",
+        "@whatsapp-mcp/neon-recovery": "workspace:*",
+        "@whatsapp-mcp/restore-coordinator": "workspace:*",
+        "effect": "3.22.1",
+        "zod": "4.4.3",
+      },
+      "devDependencies": {
+        "@cloudflare/vitest-pool-workers": "0.19.1",
+        "typescript": "^5",
+        "vitest": "4.1.10",
+        "wrangler": "4.116.0",
+      },
+    },
     "apps/restore-coordinator": {
       "name": "@whatsapp-mcp/restore-coordinator",
       "version": "0.1.0",
@@ -974,6 +992,8 @@
     "@whatsapp-mcp/neon-recovery": ["@whatsapp-mcp/neon-recovery@workspace:packages/neon-recovery"],
 
     "@whatsapp-mcp/provider-control": ["@whatsapp-mcp/provider-control@workspace:apps/provider-control"],
+
+    "@whatsapp-mcp/recovery-control": ["@whatsapp-mcp/recovery-control@workspace:apps/recovery-control"],
 
     "@whatsapp-mcp/restore-coordinator": ["@whatsapp-mcp/restore-coordinator@workspace:apps/restore-coordinator"],
 

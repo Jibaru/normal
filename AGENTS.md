@@ -12,7 +12,7 @@
 - `apps/docs`: static Astro/Scalar API reference on a separate Vercel project. It must not proxy authenticated requests or retain API Keys.
 - `apps/api`: public Cloudflare Worker for HTTP, OAuth, MCP, REST, webhooks, reconciliation, Queue consumers, and scheduled work.
 - `apps/provider-control`: private Cloudflare RPC service for provider provisioning/control. Provider credentials and provider-specific behavior stay here and in `packages/wasender`.
-- `apps/deletion-coordinator` and `apps/restore-coordinator`: scheduled Workers that preserve deletion and recovery invariants.
+- `apps/deletion-coordinator` and `apps/restore-coordinator`: scheduled Workers that preserve deletion and serving-branch recovery invariants. `apps/recovery-control` is the authenticated, serialized Workflow boundary for non-serving production drills and has no production object-delete binding.
 - `packages/domain`: pure rules; `packages/contracts`: schemas, public handles, and OpenAPI; `packages/db`: migrations and RLS-aware repositories; `packages/wasender`: provider-neutral Effect capabilities.
 - Shared packages expose explicit subpaths. Do not add root or catch-all barrel exports.
 - Runtime configuration may select only `development`, `preview`, or `production`. Production and test composition roots are statically separate; no request or runtime switch may select test wiring.
@@ -93,7 +93,7 @@ cd apps/web
 bun x playwright test test/browser/api-keys.spec.ts
 ```
 
-- API and provider-control use the pinned Cloudflare Vitest pool. The deletion and restore coordinators currently use ordinary Vitest.
+- API, provider-control, and recovery-control use the pinned Cloudflare Vitest pool. The deletion and restore coordinators currently use ordinary Vitest.
 - Database tests apply production migrations in PGlite and switch to restricted production runtime roles with RLS; do not replace repository behavior with in-memory fakes.
 - Fake external systems only through dedicated test roots. When adding controlled test values or markers, update production bundle-exclusion checks.
 
@@ -116,7 +116,7 @@ bun run --cwd packages/db test
 ## Operations
 
 - Deployment, replay, recovery, deletion, key rotation, break-glass access, and teardown are runbook-driven. Do not improvise commands from local manifests.
-- Production deployment order is encoded in `.github/workflows/deploy-production.yml`: migrate/check DB, provider-control, deletion coordinator, restore coordinator, rendered API, web, docs, then smoke.
+- Production deployment order is encoded in `.github/workflows/deploy-production.yml`: migrate/check DB, provider-control, deletion coordinator, restore coordinator, recovery control, rendered API, web, docs, then smoke.
 - Development, preview, and production infrastructure/state are separate. `validate:infra` and `infra:validate` are distinct checks; CI pins OpenTofu `1.12.5`.
 
 <!-- BEGIN:nextjs-agent-rules -->

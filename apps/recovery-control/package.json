@@ -1,11 +1,8 @@
 {
-  "name": "@whatsapp-mcp/restore-coordinator",
+  "name": "@whatsapp-mcp/recovery-control",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": {
-    "./replay": "./src/replay.ts"
-  },
   "scripts": {
     "build": "CI=true wrangler deploy --dry-run --env production --outdir dist",
     "lint": "biome check .",
@@ -15,10 +12,13 @@
   "dependencies": {
     "@whatsapp-mcp/api": "workspace:*",
     "@whatsapp-mcp/db": "workspace:*",
-    "effect": "3.22.1"
+    "@whatsapp-mcp/neon-recovery": "workspace:*",
+    "@whatsapp-mcp/restore-coordinator": "workspace:*",
+    "effect": "3.22.1",
+    "zod": "4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "5.20260730.1",
+    "@cloudflare/vitest-pool-workers": "0.19.1",
     "typescript": "^5",
     "vitest": "4.1.10",
     "wrangler": "4.116.0"

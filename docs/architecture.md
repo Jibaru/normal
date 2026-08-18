@@ -23,6 +23,7 @@ flowchart LR
         provider[provider control Worker<br/>Private provider boundary]
         deletion[deletion coordinator Worker]
         restore[restore coordinator Worker]
+        recovery[recovery control Worker<br/>Authenticated non-serving drills]
         oauth[(OAuth KV<br/>Protocol state only)]
         queues[(Queues<br/>Provisioning and ingestion)]
         webhook[(Private R2<br/>Encrypted Webhook Events)]
@@ -35,6 +36,7 @@ flowchart LR
     subgraph data[Authoritative data and keys]
         neon[(Neon Postgres<br/>Authoritative application state)]
         kms[AWS KMS<br/>Purpose specific root keys]
+        neonControl[Neon control plane<br/>Project-scoped recovery only]
     end
 
     user -->|sign in and manage| web
@@ -66,6 +68,10 @@ flowchart LR
     api -->|append only transition journal| transitions
     restore -->|replay recipient transitions| transitions
     restore -->|reapply terminal deletion state| neon
+    recovery -->|guarded PITR child lifecycle| neonControl
+    recovery -->|restricted replay on disposable child| neon
+    recovery -->|read locked evidence| lifecycle
+    recovery -->|read locked evidence| transitions
 ```
 
 ## Boundary notes
@@ -79,6 +85,15 @@ flowchart LR
   Worker. Development and preview use isolated docs projects and hostnames.
 * `provider-control` is private. Provider API Credentials and provider specific
   behavior do not cross its boundary or the `packages/wasender` seam.
+* `recovery-control` is public only on its dedicated custom domain for the
+  protected GitHub recovery environment. A constant-time bearer check precedes
+  its closed start/status contract, a Durable Object serializes runs, and a
+  Workflow reconciles an exact annotated non-serving Neon PITR child. It can
+  read locked markers and Recipient Exclusion transitions, but it has no Stored
+  Media or Webhook Ingress binding and therefore simulates and acknowledges
+  child-branch deletion intents without deleting shared production objects.
+  Completion requires a separate authenticated evidence authority; missing
+  verifier or observability inputs fail the drill closed.
 * Neon is authoritative for identity mappings, tenant data, authorization,
   quota reservations, audit records, and lifecycle state. KV, R2, and Queues do
   not become alternate authorities.

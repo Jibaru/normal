@@ -4,6 +4,8 @@ locals {
   provider_control_worker_name             = "whatsapp-mcp-provider-control${local.environment_suffix}"
   deletion_coordinator_worker_name         = "whatsapp-mcp-deletion-coordinator${local.environment_suffix}"
   restore_coordinator_worker_name          = "whatsapp-mcp-restore-coordinator${local.environment_suffix}"
+  recovery_control_worker_name             = "whatsapp-mcp-recovery-control${local.environment_suffix}"
+  recovery_workflow_name                   = "whatsapp-mcp-production-recovery${local.environment_suffix}"
   web_project_name                         = "whatsapp-mcp-web${local.environment_suffix}"
   docs_project_name                        = "whatsapp-mcp-docs${local.environment_suffix}"
   webhook_ingress_bucket_name              = "whatsapp-mcp-webhook-ingress${local.environment_suffix}"
@@ -20,6 +22,7 @@ locals {
   provider_control_bundle_path             = abspath("${path.root}/../../apps/provider-control/dist/index.js")
   deletion_coordinator_bundle_path         = abspath("${path.root}/../../apps/deletion-coordinator/dist/index.js")
   restore_coordinator_bundle_path          = abspath("${path.root}/../../apps/restore-coordinator/dist/index.js")
+  recovery_control_bundle_path             = abspath("${path.root}/../../apps/recovery-control/dist/index.js")
 }
 
 resource "cloudflare_r2_bucket" "webhook_ingress" {
@@ -414,6 +417,95 @@ resource "cloudflare_workers_cron_trigger" "restore_coordinator" {
   script_name = cloudflare_worker.restore_coordinator.name
   schedules   = [{ cron = "*/5 * * * *" }]
   depends_on  = [cloudflare_workers_deployment.restore_coordinator]
+}
+
+resource "cloudflare_worker" "recovery_control" {
+  account_id = var.cloudflare_account_id
+  name       = local.recovery_control_worker_name
+  subdomain = {
+    enabled          = false
+    previews_enabled = false
+  }
+  observability = {
+    enabled            = true
+    head_sampling_rate = 1
+    logs = {
+      enabled            = true
+      head_sampling_rate = 1
+      invocation_logs    = true
+      persist            = true
+    }
+    traces = {
+      enabled            = true
+      head_sampling_rate = 1
+      persist            = true
+    }
+  }
+}
+
+resource "cloudflare_workflow" "production_recovery" {
+  account_id    = var.cloudflare_account_id
+  workflow_name = local.recovery_workflow_name
+  script_name   = cloudflare_worker.recovery_control.name
+  class_name    = "ProductionRecoveryWorkflow"
+  limits = {
+    steps = 100
+  }
+
+  depends_on = [cloudflare_workers_deployment.recovery_control]
+}
+
+resource "cloudflare_worker_version" "recovery_control" {
+  account_id          = var.cloudflare_account_id
+  worker_id           = cloudflare_worker.recovery_control.id
+  main_module         = "index.js"
+  compatibility_date  = "2026-07-31"
+  compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
+  modules = [{
+    name         = "index.js"
+    content_file = local.recovery_control_bundle_path
+    content_type = "application/javascript+module"
+  }]
+  migrations = {
+    new_tag            = "v1"
+    new_sqlite_classes = ["RecoveryGate"]
+  }
+  bindings = [
+    { name = "DEPLOYMENT_ENVIRONMENT", text = var.deployment_environment, type = "plain_text" },
+    { name = "RECOVERY_BRANCH_PREFIX", text = "recovery/${var.deployment_environment}-", type = "plain_text" },
+    { name = "RECOVERY_DATABASE_NAME", text = "neondb", type = "plain_text" },
+    { name = "DELETION_MARKER_HMAC_SECRET", type = "inherit" },
+    { name = "NEON_RECOVERY_API_KEY", type = "inherit" },
+    { name = "NEON_PARENT_BRANCH_ID", type = "inherit" },
+    { name = "NEON_PROJECT_ID", type = "inherit" },
+    { name = "RECIPIENT_TRANSITION_HMAC_SECRET", type = "inherit" },
+    { name = "RECOVERY_CONTROL_TOKEN", type = "inherit" },
+    { name = "RECOVERY_EVIDENCE_TOKEN", type = "inherit" },
+    { name = "RECOVERY_EVIDENCE_URL", type = "inherit" },
+    { name = "DELETION_MARKERS", bucket_name = cloudflare_r2_bucket.deletion_markers.name, type = "r2_bucket" },
+    { name = "RECIPIENT_TRANSITIONS", bucket_name = cloudflare_r2_bucket.recipient_transitions.name, type = "r2_bucket" },
+    { name = "RECOVERY_GATE", class_name = "RecoveryGate", script_name = cloudflare_worker.recovery_control.name, type = "durable_object_namespace" },
+    { name = "RECOVERY_WORKFLOW", class_name = "ProductionRecoveryWorkflow", workflow_name = local.recovery_workflow_name, type = "workflow" }
+  ]
+}
+
+resource "cloudflare_workers_deployment" "recovery_control" {
+  account_id  = var.cloudflare_account_id
+  script_name = cloudflare_worker.recovery_control.name
+  strategy    = "percentage"
+  versions = [{
+    percentage = 100
+    version_id = cloudflare_worker_version.recovery_control.id
+  }]
+}
+
+resource "cloudflare_workers_custom_domain" "recovery_control" {
+  account_id = var.cloudflare_account_id
+  zone_id    = var.cloudflare_zone_id
+  hostname   = var.recovery_hostname
+  service    = cloudflare_worker.recovery_control.name
+
+  depends_on = [cloudflare_workers_deployment.recovery_control]
 }
 
 resource "cloudflare_worker" "api" {

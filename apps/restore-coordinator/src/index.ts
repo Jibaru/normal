@@ -32,10 +32,6 @@ const scheduled: ExportedHandlerScheduledHandler<Environment> = async (
 ) => {
   const result = await replayRestore({
     branchId: required(environment.NEON_BRANCH_ID, "Neon branch identity"),
-    buckets: {
-      stored_media: environment.STORED_MEDIA,
-      webhook_ingress: environment.WEBHOOK_INGRESS,
-    },
     environment: environment.DEPLOYMENT_ENVIRONMENT,
     hmacSecret: Redacted.make(
       required(
@@ -43,6 +39,11 @@ const scheduled: ExportedHandlerScheduledHandler<Environment> = async (
         "Deletion marker HMAC secret",
       ),
     ),
+    handleObjectDeletion: async (deletion) => {
+      await environment[
+        deletion.bucket === "stored_media" ? "STORED_MEDIA" : "WEBHOOK_INGRESS"
+      ].delete(deletion.objectKey);
+    },
     markers: makeDeletionMarkerStore({
       bucket: environment.DELETION_MARKERS as unknown as DeletionMarkerBucket,
       environment: environment.DEPLOYMENT_ENVIRONMENT,

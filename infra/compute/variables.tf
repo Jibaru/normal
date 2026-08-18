@@ -71,6 +71,22 @@ variable "api_hostname" {
   }
 }
 
+variable "recovery_hostname" {
+  description = "Authenticated production recovery-control hostname used only by the isolated drill workflow."
+  type        = string
+
+  validation {
+    condition = (
+      can(regex("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$", var.recovery_hostname)) &&
+      !endswith(var.recovery_hostname, ".workers.dev") &&
+      var.recovery_hostname != var.api_hostname &&
+      var.recovery_hostname != var.web_hostname &&
+      var.recovery_hostname != var.docs_hostname
+    )
+    error_message = "recovery_hostname must be a distinct lowercase custom DNS hostname outside workers.dev."
+  }
+}
+
 variable "web_hostname" {
   description = "Public custom hostname assigned to the Vercel web project."
   type        = string

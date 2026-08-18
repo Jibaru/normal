@@ -30,6 +30,7 @@ describe("restore replay", () => {
       "10000000-0000-4000-8000-000000000001",
     );
     const calls: string[] = [];
+    let expiryRuns = 0;
     const result = await replayRestore({
       branchId: "br-restored",
       environment: "production",
@@ -53,17 +54,12 @@ describe("restore replay", () => {
             },
           ]),
       },
-      buckets: {
-        stored_media: {
-          delete: async () => {
-            calls.push("delete-object");
-          },
-        },
-        webhook_ingress: {
-          delete: async () => {
-            calls.push("delete-webhook");
-          },
-        },
+      handleObjectDeletion: async (deletion) => {
+        calls.push(
+          deletion.bucket === "stored_media"
+            ? "delete-object"
+            : "delete-webhook",
+        );
       },
       repository: {
         begin: async () => [
@@ -89,7 +85,8 @@ describe("restore replay", () => {
         },
         purgeExpired: async () => {
           calls.push("expire");
-          return 2;
+          expiryRuns += 1;
+          return expiryRuns === 1 ? 2 : 0;
         },
         listObjectDeletions: async () =>
           calls.includes("delete-object")
@@ -109,6 +106,7 @@ describe("restore replay", () => {
       deletedEntityCount: 1,
       expiredRecordCount: 2,
       markerCount: 1,
+      objectDeletionCount: 1,
       recipientTransitionCount: 0,
       unresolvedRecipientPrefixCount: 0,
     });
@@ -119,6 +117,7 @@ describe("restore replay", () => {
       "invalidate-api-keys",
       "delete-object",
       "finish-object",
+      "expire",
       "ready",
     ]);
   });
@@ -185,10 +184,7 @@ describe("restore replay", () => {
 
     const result = await replayRestore({
       branchId: "br-restored",
-      buckets: {
-        stored_media: { delete: async () => undefined },
-        webhook_ingress: { delete: async () => undefined },
-      },
+      handleObjectDeletion: async () => undefined,
       environment: "production",
       hmacSecret: Redacted.make("ab".repeat(32)),
       markers: { create: vi.fn(), enumerate: () => Effect.succeed([]) },
@@ -249,10 +245,7 @@ describe("restore replay", () => {
 
     const result = await replayRestore({
       branchId: "br-restored",
-      buckets: {
-        stored_media: { delete: async () => undefined },
-        webhook_ingress: { delete: async () => undefined },
-      },
+      handleObjectDeletion: async () => undefined,
       environment: "production",
       hmacSecret: Redacted.make("ab".repeat(32)),
       markers: { create: vi.fn(), enumerate: () => Effect.succeed([]) },
@@ -317,10 +310,7 @@ describe("restore replay", () => {
     await expect(
       replayRestore({
         branchId: "br-restored",
-        buckets: {
-          stored_media: { delete: async () => undefined },
-          webhook_ingress: { delete: async () => undefined },
-        },
+        handleObjectDeletion: async () => undefined,
         environment: "production",
         hmacSecret: Redacted.make("ab".repeat(32)),
         markers: { create: vi.fn(), enumerate: () => Effect.succeed([]) },
@@ -366,10 +356,7 @@ describe("restore replay", () => {
 
     const result = await replayRestore({
       branchId: "br-restored",
-      buckets: {
-        stored_media: { delete: async () => undefined },
-        webhook_ingress: { delete: async () => undefined },
-      },
+      handleObjectDeletion: async () => undefined,
       environment: "production",
       hmacSecret: Redacted.make("ab".repeat(32)),
       markers: { create: vi.fn(), enumerate: () => Effect.succeed([]) },
@@ -406,10 +393,7 @@ describe("restore replay", () => {
     await expect(
       replayRestore({
         branchId: "br-restored",
-        buckets: {
-          stored_media: { delete: async () => undefined },
-          webhook_ingress: { delete: async () => undefined },
-        },
+        handleObjectDeletion: async () => undefined,
         environment: "production",
         hmacSecret: Redacted.make("ab".repeat(32)),
         markers: { create: vi.fn(), enumerate: () => Effect.succeed([]) },

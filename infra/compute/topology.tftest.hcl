@@ -16,6 +16,7 @@ run "development_topology" {
     webhook_hyperdrive_id         = "22222222222222222222222222222222"
     vercel_team_id                = "team_developmentvalidation"
     api_hostname                  = "api.dev.example.com"
+    recovery_hostname             = "recovery.dev.example.com"
     web_hostname                  = "app.dev.example.com"
     docs_hostname                 = "docs.dev.example.com"
     clerk_issuer                  = "https://clerk.dev.example.com"
@@ -36,6 +37,43 @@ run "development_topology" {
   assert {
     condition     = cloudflare_worker.provider_control.name == "whatsapp-mcp-provider-control-development"
     error_message = "Development must have an environment-specific provider-control Worker."
+  }
+
+  assert {
+    condition = (
+      cloudflare_worker.recovery_control.name == "whatsapp-mcp-recovery-control-development" &&
+      cloudflare_workflow.production_recovery.workflow_name == "whatsapp-mcp-production-recovery-development" &&
+      cloudflare_workflow.production_recovery.class_name == "ProductionRecoveryWorkflow" &&
+      cloudflare_worker.recovery_control.subdomain.enabled == false &&
+      cloudflare_worker.recovery_control.subdomain.previews_enabled == false &&
+      cloudflare_workers_custom_domain.recovery_control.hostname == "recovery.dev.example.com" &&
+      output.recovery_control_origin == "https://recovery.dev.example.com/drills"
+    )
+    error_message = "Recovery control must use only its isolated authenticated custom domain."
+  }
+
+  assert {
+    condition = toset([
+      for binding in cloudflare_worker_version.recovery_control.bindings :
+      "${binding.type}:${binding.name}"
+      ]) == toset([
+      "plain_text:DEPLOYMENT_ENVIRONMENT",
+      "plain_text:RECOVERY_BRANCH_PREFIX",
+      "plain_text:RECOVERY_DATABASE_NAME",
+      "inherit:DELETION_MARKER_HMAC_SECRET",
+      "inherit:NEON_RECOVERY_API_KEY",
+      "inherit:NEON_PARENT_BRANCH_ID",
+      "inherit:NEON_PROJECT_ID",
+      "inherit:RECIPIENT_TRANSITION_HMAC_SECRET",
+      "inherit:RECOVERY_CONTROL_TOKEN",
+      "inherit:RECOVERY_EVIDENCE_TOKEN",
+      "inherit:RECOVERY_EVIDENCE_URL",
+      "r2_bucket:DELETION_MARKERS",
+      "r2_bucket:RECIPIENT_TRANSITIONS",
+      "durable_object_namespace:RECOVERY_GATE",
+      "workflow:RECOVERY_WORKFLOW",
+    ])
+    error_message = "Recovery control must have only guarded Neon, replay evidence, serialization, and Workflow authority."
   }
 
   assert {
@@ -258,6 +296,7 @@ run "preview_topology" {
     webhook_hyperdrive_id         = "44444444444444444444444444444444"
     vercel_team_id                = "team_previewvalidation"
     api_hostname                  = "api.preview.example.com"
+    recovery_hostname             = "recovery.preview.example.com"
     web_hostname                  = "app.preview.example.com"
     docs_hostname                 = "docs.preview.example.com"
     clerk_issuer                  = "https://clerk.preview.example.com"
@@ -314,6 +353,7 @@ run "production_topology" {
     webhook_hyperdrive_id         = "66666666666666666666666666666666"
     vercel_team_id                = "team_productionvalidation"
     api_hostname                  = "api.example.com"
+    recovery_hostname             = "recovery.example.com"
     web_hostname                  = "app.example.com"
     docs_hostname                 = "docs.example.com"
     clerk_issuer                  = "https://clerk.example.com"
@@ -334,6 +374,14 @@ run "production_topology" {
   assert {
     condition     = cloudflare_worker.provider_control.name == "whatsapp-mcp-provider-control"
     error_message = "Production must retain the canonical provider-control Worker name."
+  }
+
+  assert {
+    condition = (
+      cloudflare_worker.recovery_control.name == "whatsapp-mcp-recovery-control" &&
+      cloudflare_workers_custom_domain.recovery_control.hostname == "recovery.example.com"
+    )
+    error_message = "Production recovery control must retain its canonical private-operations identity."
   }
 
   assert {

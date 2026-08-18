@@ -56,6 +56,12 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
+      - name: Deploy recovery control
+        run: bun run --cwd apps/recovery-control wrangler deploy --env production
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
       - name: Render production API manifest
         run: bun scripts/render-api-wrangler.ts apps/api/.wrangler/production.jsonc production
         env:

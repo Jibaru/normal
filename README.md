@@ -8,7 +8,7 @@ The platform is currently built for a private beta. Privacy, deletion, auditabil
 
 ## What is in this repo
 
-This is a Bun and Turbo monorepo with six deployable apps:
+This is a Bun and Turbo monorepo with seven deployable apps:
 
 | Path | Purpose | Runtime |
 | --- | --- | --- |
@@ -18,6 +18,7 @@ This is a Bun and Turbo monorepo with six deployable apps:
 | `apps/provider-control` | Private boundary for provider provisioning and control | Cloudflare Workers |
 | `apps/deletion-coordinator` | Continues deletion after access and key use have stopped | Cloudflare Workers |
 | `apps/restore-coordinator` | Reconciles restored data with deletion markers and recovery rules | Cloudflare Workers |
+| `apps/recovery-control` | Runs authenticated, serialized, non-serving production recovery drills | Cloudflare Workers and Workflows |
 
 Shared code is split by responsibility:
 
@@ -59,6 +60,7 @@ cp apps/api/.dev.vars.example apps/api/.dev.vars
 cp apps/provider-control/.dev.vars.example apps/provider-control/.dev.vars
 cp apps/deletion-coordinator/.dev.vars.example apps/deletion-coordinator/.dev.vars
 cp apps/restore-coordinator/.dev.vars.example apps/restore-coordinator/.dev.vars
+cp apps/recovery-control/.dev.vars.example apps/recovery-control/.dev.vars
 cp apps/web/.env.example apps/web/.env.local
 ```
 
@@ -114,7 +116,7 @@ Install the pinned browser once before the first full test run:
 bun x playwright install --with-deps chromium
 ```
 
-Tests intentionally exercise production-shaped boundaries. API and provider-control tests use the pinned Cloudflare Vitest runtime; the coordinator suites currently use ordinary Vitest. Browser tests use a production Next.js build and a test-only Wrangler API, while database tests apply production migrations in PGlite and switch to restricted runtime roles with RLS. Test composition roots must never become selectable from a production build.
+Tests intentionally exercise production-shaped boundaries. API, provider-control, and recovery-control tests use the pinned Cloudflare Vitest runtime; the deletion and restore coordinator suites use ordinary Vitest. Browser tests use a production Next.js build and a test-only Wrangler API, while database tests apply production migrations in PGlite and switch to restricted runtime roles with RLS. Test composition roots must never become selectable from a production build.
 
 `bun run build` also dry-runs production Worker bundles and scans Worker, source-map, Next.js, and docs output for test fixtures, controlled credentials, and fault-injection markers.
 
@@ -174,7 +176,7 @@ The most important rules are simple:
 
 Development, preview, and production have separate configuration and infrastructure authority. Do not deploy by improvising commands from local manifests.
 
-Follow [`docs/runbooks/deployment.md`](docs/runbooks/deployment.md), but use [the production workflow](.github/workflows/deploy-production.yml) as the executable deployment order: migrate and check the database, then deploy provider-control, deletion coordinator, restore coordinator, the rendered API, web, docs, and finally smoke the release. Production recovery, key rotation, replay, break-glass access, and environment teardown each have dedicated runbooks under `docs/runbooks`.
+Follow [`docs/runbooks/deployment.md`](docs/runbooks/deployment.md), but use [the production workflow](.github/workflows/deploy-production.yml) as the executable deployment order: migrate and check the database, then deploy provider-control, deletion coordinator, restore coordinator, recovery control, the rendered API, web, docs, and finally smoke the release. Production recovery, key rotation, replay, break-glass access, and environment teardown each have dedicated runbooks under `docs/runbooks`.
 
 ## Sandcastle
 

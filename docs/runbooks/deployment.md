@@ -12,7 +12,7 @@
 - A Vercel team for each authority scope
 - A separate Clerk instance or satellite domain for each authority scope, with
   its publishable key and custom-JWT PEM public key available to the deployer
-- Approved API, web, and documentation custom domains
+- Approved API, recovery-control, web, and documentation custom domains
 - An encrypted, versioned S3 remote-state bucket and KMS key in `us-east-1`
   for each environment
 - Short-lived `NEON_API_KEY`, `CLOUDFLARE_API_TOKEN`, `VERCEL_API_TOKEN`, and
@@ -44,7 +44,8 @@ production roles or read production CI secrets.
 
 Use one change record and one reviewed commit for the entire release. The
 ordered path is **infrastructure → environment population → migration →
-provider-control → API → web → docs → smoke check**. The deployer may stop between
+provider-control → deletion coordinator → restore coordinator → recovery control
+→ API → web → docs → smoke check**. The deployer may stop between
 steps, but must not reorder them or serve traffic from a partially compatible
 set.
 
@@ -61,7 +62,8 @@ set.
    least-privilege roles. Production has no selectable test Layer or fake.
 5. Run `bun run db:migrate` followed by `bun run db:check` with the direct
    migration-owner connection, then remove that connection from the shell.
-6. Deploy in dependency order: **provider-control → API → web → docs**. Keep public
+6. Deploy in dependency order: **provider-control → deletion coordinator → restore
+   coordinator → recovery control → API → web → docs**. Keep public
    traffic closed if migration readiness or any private service binding fails.
 7. Run the non-interactive `bun run deploy:smoke` boundary and retain only its
    normalized results, reviewed commit, deployment versions, plan digest, and
@@ -159,13 +161,16 @@ distinct and from the same environment. The compute plan binds them as
 `HYPERDRIVE` and `WEBHOOK_HYPERDRIVE`; no post-deployment dashboard edit is
 permitted.
 
-For a new environment only, create both Worker shells before the full plan so
+For a new environment only, create the Worker shells before the full plan so
 Cloudflare has targets for their version-scoped secrets. Review and apply this
 bootstrap target; it contains no Worker version or secret value:
 
 ```sh
 tofu -chdir=infra/compute plan \
   -target=cloudflare_worker.provider_control \
+  -target=cloudflare_worker.deletion_coordinator \
+  -target=cloudflare_worker.restore_coordinator \
+  -target=cloudflare_worker.recovery_control \
   -target=cloudflare_worker.api \
   -var-file="$TFVARS_PATH" \
   -out="$DEPLOYMENT_ENVIRONMENT-worker-shell-bootstrap.tfplan"
@@ -203,6 +208,20 @@ The secret list must contain exactly the two names; it never returns their
 values. Delete the bootstrap plan after the Worker shell and bindings exist.
 For an existing environment where the list already contains both names, skip
 the bootstrap target and bulk upload.
+
+Populate recovery control only after the project-scoped Neon key, exact project
+and parent branch, independent control token, and separate evidence authority
+are available. Bulk upload exactly `NEON_RECOVERY_API_KEY`, `NEON_PROJECT_ID`,
+`NEON_PARENT_BRANCH_ID`, `RECOVERY_CONTROL_TOKEN`, `RECOVERY_EVIDENCE_URL`,
+`RECOVERY_EVIDENCE_TOKEN`, `DELETION_MARKER_HMAC_SECRET`, and
+`RECIPIENT_TRANSITION_HMAC_SECRET` to the recovery-control Worker. It receives
+only the locked marker and transition R2 bindings, its serialization Durable
+Object, and its Workflow. Never add `MIGRATION_DATABASE_URL`, Stored Media,
+Webhook Ingress, API/Clerk/provider credentials, KMS, KV, Queue, Hyperdrive, or
+ordinary runtime authority. Set the protected `production-recovery`
+`RECOVERY_AUTOMATION_URL` to the `recovery_control_origin` output and its token
+to the same `RECOVERY_CONTROL_TOKEN`. Missing verifier/monitoring authority must
+leave drills failing closed.
 
 In the same environment's Clerk dashboard, create the `whatsapp-api` custom JWT
 template with a 60-second lifetime and only an `aud` claim whose value is the

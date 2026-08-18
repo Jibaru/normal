@@ -4,6 +4,7 @@ const deployables = [
   "api",
   "deletion-coordinator",
   "provider-control",
+  "recovery-control",
   "restore-coordinator",
 ] as const;
 const oauthKvValidationId = "22222222222222222222222222222222";
@@ -112,6 +113,77 @@ for (const deployable of deployables) {
         (key) => `Deletion coordinator must not declare ${key}.`,
       );
     }
+  } else if (deployable === "recovery-control") {
+    const configurations = manifestConfigurations(manifest);
+    const required = [
+      "DELETION_MARKER_HMAC_SECRET",
+      "NEON_PARENT_BRANCH_ID",
+      "NEON_PROJECT_ID",
+      "NEON_RECOVERY_API_KEY",
+      "RECIPIENT_TRANSITION_HMAC_SECRET",
+      "RECOVERY_CONTROL_TOKEN",
+      "RECOVERY_EVIDENCE_TOKEN",
+      "RECOVERY_EVIDENCE_URL",
+    ].sort();
+    for (const [name, configuration] of configurations) {
+      if (!hasSameStrings(requiredSecrets(configuration), required)) {
+        throw new Error(
+          `Recovery control ${name} must require only its isolated control, Neon, replay, and evidence credentials.`,
+        );
+      }
+      assertAbsent(
+        configuration,
+        ["d1_databases", "hyperdrive", "kv_namespaces", "queues", "services"],
+        (key) => `Recovery control must not declare ${key}.`,
+      );
+      const buckets = (configuration.r2_buckets ?? []) as ReadonlyArray<{
+        readonly binding?: unknown;
+      }>;
+      if (
+        !hasSameStrings(
+          buckets.map((bucket) => String(bucket.binding)).sort(),
+          ["DELETION_MARKERS", "RECIPIENT_TRANSITIONS"],
+        )
+      )
+        throw new Error(
+          `Recovery control ${name} must receive only restore-external R2 evidence bindings.`,
+        );
+      const durableBindings = (
+        configuration.durable_objects as
+          | { readonly bindings?: ReadonlyArray<Record<string, unknown>> }
+          | undefined
+      )?.bindings;
+      if (
+        durableBindings?.length !== 1 ||
+        durableBindings[0]?.name !== "RECOVERY_GATE" ||
+        durableBindings[0]?.class_name !== "RecoveryGate"
+      )
+        throw new Error(
+          `Recovery control ${name} must have only its serialization gate.`,
+        );
+      const workflows = configuration.workflows as
+        | ReadonlyArray<Record<string, unknown>>
+        | undefined;
+      if (
+        workflows?.length !== 1 ||
+        workflows[0]?.binding !== "RECOVERY_WORKFLOW" ||
+        workflows[0]?.class_name !== "ProductionRecoveryWorkflow" ||
+        (workflows[0]?.limits as { readonly steps?: unknown } | undefined)
+          ?.steps !== 100
+      )
+        throw new Error(
+          `Recovery control ${name} must have the exact bounded production recovery Workflow.`,
+        );
+    }
+    const compatibilityFlags = manifest.compatibility_flags;
+    if (
+      !Array.isArray(compatibilityFlags) ||
+      !compatibilityFlags.includes("global_fetch_strictly_public") ||
+      !compatibilityFlags.includes("nodejs_compat")
+    )
+      throw new Error(
+        "Recovery control must enable Node.js compatibility and strict public global fetch.",
+      );
   } else if (deployable === "restore-coordinator") {
     const configurations = manifestConfigurations(manifest);
     const required = [
@@ -407,6 +479,26 @@ for (const deployable of deployables) {
       throw new Error(
         `Provider-control ${environment} must receive no OAuth, Queue, or R2 authority.`,
       );
+    } else if (deployable === "recovery-control") {
+      for (const binding of [
+        `env.RECOVERY_GATE (RecoveryGate)`,
+        `env.RECOVERY_WORKFLOW (ProductionRecoveryWorkflow)`,
+        `env.DELETION_MARKERS (whatsapp-mcp-deletion-markers${workerSuffix})`,
+        `env.RECIPIENT_TRANSITIONS (whatsapp-mcp-recipient-transitions${workerSuffix})`,
+      ]) {
+        if (!output.includes(binding))
+          throw new Error(
+            `Recovery control ${environment} is missing required binding ${binding}.`,
+          );
+      }
+      if (
+        output.includes("STORED_MEDIA") ||
+        output.includes("WEBHOOK_INGRESS") ||
+        output.includes("API_KEY_HMAC_SECRET")
+      )
+        throw new Error(
+          `Recovery control ${environment} received forbidden data-plane authority.`,
+        );
     } else if (deployable === "restore-coordinator") {
       for (const binding of [
         `env.DELETION_MARKERS (whatsapp-mcp-deletion-markers${workerSuffix})`,

@@ -1,8 +1,11 @@
 export const deployableNames = [
   "web",
+  "docs",
   "api",
   "provider-control",
   "deletion-coordinator",
+  "restore-coordinator",
+  "recovery-control",
 ] as const;
 
 export type DeployableName = (typeof deployableNames)[number];

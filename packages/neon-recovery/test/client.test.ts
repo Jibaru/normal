@@ -104,6 +104,28 @@ describe("Neon recovery control-plane client", () => {
     );
   });
 
+  test("finds an old exact child for cleanup without creating it", async () => {
+    const methods: string[] = [];
+    const client = createNeonRecoveryClient(config(), {
+      now: () => Date.parse("2026-09-18T12:00:00.000Z"),
+      fetch: async (_input, init) => {
+        methods.push(String(init?.method));
+        return json({
+          branches: [branch()],
+          annotations: { [branchId]: annotation() },
+          pagination: { sort_by: "created_at", sort_order: "desc" },
+        });
+      },
+    });
+    await expect(
+      client.findGuardedPitrBranch({
+        name: branchName,
+        parentTimestamp: timestamp,
+      }),
+    ).resolves.toEqual(expected);
+    expect(methods).toEqual(["GET"]);
+  });
+
   test("creates the exact child, polls its operations, and verifies fresh identity", async () => {
     const requests: Array<{ url: string; init: RequestInit | undefined }> = [];
     const responses = [

@@ -1,0 +1,8 @@
+RECOVERY_CONTROL_TOKEN=replace-with-random-token
+NEON_RECOVERY_API_KEY=replace-with-project-scoped-key
+NEON_PARENT_BRANCH_ID=br-replace-with-production-parent
+NEON_PROJECT_ID=replace-with-neon-project-id
+DELETION_MARKER_HMAC_SECRET=replace-with-64-hex-characters
+RECIPIENT_TRANSITION_HMAC_SECRET=replace-with-64-hex-characters
+RECOVERY_EVIDENCE_URL=https://recovery-evidence.example.test/verify
+RECOVERY_EVIDENCE_TOKEN=replace-with-random-token

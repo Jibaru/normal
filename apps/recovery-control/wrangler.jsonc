@@ -1,0 +1,174 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "whatsapp-mcp-recovery-control",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-31",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "DEPLOYMENT_ENVIRONMENT": "production",
+    "RECOVERY_BRANCH_PREFIX": "recovery/production-",
+    "RECOVERY_DATABASE_NAME": "neondb"
+  },
+  "secrets": {
+    "required": [
+      "DELETION_MARKER_HMAC_SECRET",
+      "NEON_RECOVERY_API_KEY",
+      "NEON_PARENT_BRANCH_ID",
+      "NEON_PROJECT_ID",
+      "RECIPIENT_TRANSITION_HMAC_SECRET",
+      "RECOVERY_CONTROL_TOKEN",
+      "RECOVERY_EVIDENCE_TOKEN",
+      "RECOVERY_EVIDENCE_URL"
+    ]
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "RECOVERY_GATE", "class_name": "RecoveryGate" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RecoveryGate"] }],
+  "r2_buckets": [
+    {
+      "binding": "DELETION_MARKERS",
+      "bucket_name": "whatsapp-mcp-deletion-markers"
+    },
+    {
+      "binding": "RECIPIENT_TRANSITIONS",
+      "bucket_name": "whatsapp-mcp-recipient-transitions"
+    }
+  ],
+  "workflows": [
+    {
+      "binding": "RECOVERY_WORKFLOW",
+      "name": "whatsapp-mcp-production-recovery",
+      "class_name": "ProductionRecoveryWorkflow",
+      "limits": { "steps": 100 }
+    }
+  ],
+  "observability": { "enabled": true },
+  "env": {
+    "development": {
+      "name": "whatsapp-mcp-recovery-control-development",
+      "vars": {
+        "DEPLOYMENT_ENVIRONMENT": "development",
+        "RECOVERY_BRANCH_PREFIX": "recovery/development-",
+        "RECOVERY_DATABASE_NAME": "neondb"
+      },
+      "secrets": {
+        "required": [
+          "DELETION_MARKER_HMAC_SECRET",
+          "NEON_RECOVERY_API_KEY",
+          "NEON_PARENT_BRANCH_ID",
+          "NEON_PROJECT_ID",
+          "RECIPIENT_TRANSITION_HMAC_SECRET",
+          "RECOVERY_CONTROL_TOKEN",
+          "RECOVERY_EVIDENCE_TOKEN",
+          "RECOVERY_EVIDENCE_URL"
+        ]
+      },
+      "durable_objects": {
+        "bindings": [{ "name": "RECOVERY_GATE", "class_name": "RecoveryGate" }]
+      },
+      "r2_buckets": [
+        {
+          "binding": "DELETION_MARKERS",
+          "bucket_name": "whatsapp-mcp-deletion-markers-development"
+        },
+        {
+          "binding": "RECIPIENT_TRANSITIONS",
+          "bucket_name": "whatsapp-mcp-recipient-transitions-development"
+        }
+      ],
+      "workflows": [
+        {
+          "binding": "RECOVERY_WORKFLOW",
+          "name": "whatsapp-mcp-production-recovery-development",
+          "class_name": "ProductionRecoveryWorkflow",
+          "limits": { "steps": 100 }
+        }
+      ]
+    },
+    "preview": {
+      "name": "whatsapp-mcp-recovery-control-preview",
+      "vars": {
+        "DEPLOYMENT_ENVIRONMENT": "preview",
+        "RECOVERY_BRANCH_PREFIX": "recovery/preview-",
+        "RECOVERY_DATABASE_NAME": "neondb"
+      },
+      "secrets": {
+        "required": [
+          "DELETION_MARKER_HMAC_SECRET",
+          "NEON_RECOVERY_API_KEY",
+          "NEON_PARENT_BRANCH_ID",
+          "NEON_PROJECT_ID",
+          "RECIPIENT_TRANSITION_HMAC_SECRET",
+          "RECOVERY_CONTROL_TOKEN",
+          "RECOVERY_EVIDENCE_TOKEN",
+          "RECOVERY_EVIDENCE_URL"
+        ]
+      },
+      "durable_objects": {
+        "bindings": [{ "name": "RECOVERY_GATE", "class_name": "RecoveryGate" }]
+      },
+      "r2_buckets": [
+        {
+          "binding": "DELETION_MARKERS",
+          "bucket_name": "whatsapp-mcp-deletion-markers-preview"
+        },
+        {
+          "binding": "RECIPIENT_TRANSITIONS",
+          "bucket_name": "whatsapp-mcp-recipient-transitions-preview"
+        }
+      ],
+      "workflows": [
+        {
+          "binding": "RECOVERY_WORKFLOW",
+          "name": "whatsapp-mcp-production-recovery-preview",
+          "class_name": "ProductionRecoveryWorkflow",
+          "limits": { "steps": 100 }
+        }
+      ]
+    },
+    "production": {
+      "name": "whatsapp-mcp-recovery-control",
+      "vars": {
+        "DEPLOYMENT_ENVIRONMENT": "production",
+        "RECOVERY_BRANCH_PREFIX": "recovery/production-",
+        "RECOVERY_DATABASE_NAME": "neondb"
+      },
+      "secrets": {
+        "required": [
+          "DELETION_MARKER_HMAC_SECRET",
+          "NEON_RECOVERY_API_KEY",
+          "NEON_PARENT_BRANCH_ID",
+          "NEON_PROJECT_ID",
+          "RECIPIENT_TRANSITION_HMAC_SECRET",
+          "RECOVERY_CONTROL_TOKEN",
+          "RECOVERY_EVIDENCE_TOKEN",
+          "RECOVERY_EVIDENCE_URL"
+        ]
+      },
+      "durable_objects": {
+        "bindings": [{ "name": "RECOVERY_GATE", "class_name": "RecoveryGate" }]
+      },
+      "r2_buckets": [
+        {
+          "binding": "DELETION_MARKERS",
+          "bucket_name": "whatsapp-mcp-deletion-markers"
+        },
+        {
+          "binding": "RECIPIENT_TRANSITIONS",
+          "bucket_name": "whatsapp-mcp-recipient-transitions"
+        }
+      ],
+      "workflows": [
+        {
+          "binding": "RECOVERY_WORKFLOW",
+          "name": "whatsapp-mcp-production-recovery",
+          "class_name": "ProductionRecoveryWorkflow",
+          "limits": { "steps": 100 }
+        }
+      ]
+    }
+  }
+}

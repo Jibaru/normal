@@ -652,6 +652,44 @@ export const createNeonRecoveryClient = (
     return { id: branch.id, ...expected };
   };
 
+  const findGuardedPitrBranch = async (input: {
+    readonly name: string;
+    readonly parentTimestamp: string;
+  }): Promise<RecoveryBranch | "absent"> => {
+    const name = z
+      .string()
+      .min(1)
+      .max(256)
+      .regex(/^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/u)
+      .parse(input.name);
+    const parentTimestamp = canonicalTimestampSchema.parse(
+      input.parentTimestamp,
+    );
+    if (!name.startsWith(config.branchNamePrefix))
+      throw new NeonRecoveryError(
+        "Recovery branch name is outside the configured prefix",
+      );
+    const matches = await listNamedBranches(name);
+    if (matches.length > 1)
+      throw new NeonRecoveryError(
+        "Multiple Neon branches have the recovery branch name",
+      );
+    const match = matches[0];
+    if (match === undefined) return "absent";
+    const expected = {
+      id: match.branch.id,
+      name,
+      parentId: config.parentBranchId,
+      parentTimestamp,
+    };
+    if (
+      !exactBranch(match.branch, expected, config.projectId) ||
+      !exactRecoveryAnnotation(match.annotation, match.branch.id)
+    )
+      throw new NeonRecoveryError("Neon recovery branch cleanup guard failed");
+    return expected;
+  };
+
   const resetRestoreRuntimePassword = async (
     branch: RecoveryBranch,
   ): Promise<void> => {
@@ -827,6 +865,7 @@ export const createNeonRecoveryClient = (
   }
 
   return {
+    findGuardedPitrBranch,
     reconcilePitrBranch,
     resetRestoreRuntimePassword,
     getDirectRestoreUri,

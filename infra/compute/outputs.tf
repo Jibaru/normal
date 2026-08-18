@@ -3,6 +3,11 @@ output "api_origin" {
   value       = "https://${cloudflare_workers_custom_domain.api.hostname}"
 }
 
+output "recovery_control_origin" {
+  description = "Authenticated recovery-control origin for the isolated GitHub drill environment."
+  value       = "https://${cloudflare_workers_custom_domain.recovery_control.hostname}/drills"
+}
+
 output "web_origin" {
   description = "Public Vercel web origin."
   value       = "https://${vercel_project_domain.web.domain}"

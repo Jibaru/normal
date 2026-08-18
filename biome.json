@@ -18,6 +18,7 @@
       "!**/*.astro",
       "!**/dist",
       "!**/build",
+      "!**/worker-configuration.d.ts",
       "!**/apps/docs/public/vendor",
       "!**/apps/docs/public/openapi.json"
     ]
