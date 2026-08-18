@@ -278,12 +278,20 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   });
   await whatsappNumber.fill("+1 (555) 012-3456");
   await startConnectionSetup.click();
+  await expect(onboarding.getByTestId("connection-setup-panel")).toBeVisible();
+  await expect(page.getByTestId("connection-setup-status")).toHaveText(
+    "Starting Connection Setup.",
+  );
   await expect(whatsappNumber).toBeDisabled();
   await expect(startConnectionSetup).toBeDisabled();
   releaseFirstSetup?.();
   await expect(page.getByTestId("connection-setup-status")).toHaveText(
     "Connection Setup started. Preparing your QR code.",
   );
+  await expect(onboarding).toContainText("Preparing your QR code");
+  await expect(
+    page.getByRole("img", { name: "Scan this WhatsApp QR code" }),
+  ).toHaveCount(0);
   await page.getByRole("link", { name: "Activity Log" }).click();
   await page.getByRole("link", { name: "WhatsApp Connections" }).click();
   await expect(
@@ -538,7 +546,98 @@ test("resumes first-connection onboarding after a completed profile without repe
   ).toBeVisible();
 });
 
-test("bootstraps another Clerk User and shows provider capacity failure during Connection Setup", async ({
+test.describe("Connection Setup loading UI", () => {
+  test.use({ viewport: { height: 844, width: 390 } });
+
+  test("keeps a stable QR placeholder on mobile while the QR response is delayed", async ({
+    page,
+    request,
+  }) => {
+    let releaseSetup: (() => void) | undefined;
+    const setupCanContinue = new Promise<void>((resolve) => {
+      releaseSetup = resolve;
+    });
+    const qrCanContinue = new Promise<void>(() => {});
+
+    await page.route("https://api.example.test/**", async (route) => {
+      const original = route.request();
+      const localUrl = new URL(original.url());
+      if (
+        localUrl.pathname === "/v1/connection-setups" &&
+        original.method() === "POST"
+      ) {
+        await setupCanContinue;
+      }
+      if (
+        original.method() === "GET" &&
+        /^\/v1\/connection-setups\/cst_[A-Za-z0-9_-]{21}\/qr$/u.test(
+          localUrl.pathname,
+        )
+      ) {
+        await qrCanContinue;
+      }
+      localUrl.protocol = "http:";
+      localUrl.hostname = "127.0.0.1";
+      localUrl.port = apiPort;
+      const response = await request.fetch(localUrl.toString(), {
+        data: original.postDataBuffer(),
+        headers: {
+          ...original.headers(),
+          origin: "http://127.0.0.1:3000",
+        },
+        method: original.method(),
+      });
+      await route.fulfill({
+        body: await response.body(),
+        headers: {
+          ...response.headers(),
+          "access-control-allow-origin": webOrigin,
+        },
+        status: response.status(),
+      });
+    });
+
+    await installClerkBrowser(page, {
+      signedIn: true,
+      token: "signed-second-test-user",
+    });
+    await page.goto("/dashboard/connections");
+    await completeFirstConnectionProfile(page);
+    const onboarding = page.getByTestId("first-connection-onboarding");
+    await onboarding
+      .getByLabel("Name", { exact: true })
+      .fill("Personal WhatsApp");
+    await onboarding.getByLabel("WhatsApp number").fill("+1 (555) 012-3456");
+    await onboarding
+      .getByRole("button", { name: "Continue", exact: true })
+      .click();
+
+    const panel = onboarding.getByTestId("connection-setup-panel");
+    await expect(panel).toBeVisible();
+    await expect(page.getByTestId("connection-setup-status")).toHaveText(
+      "Starting Connection Setup.",
+    );
+    await expect(onboarding).toContainText("Starting Connection Setup");
+    await expect(
+      page.getByRole("img", { name: "Scan this WhatsApp QR code" }),
+    ).toHaveCount(0);
+
+    releaseSetup?.();
+
+    await expect(page.getByTestId("connection-setup-status")).toHaveText(
+      "Connection Setup started. Preparing your QR code.",
+    );
+    await expect(onboarding).toContainText("Preparing your QR code");
+    await expect(panel).toBeVisible();
+    await expect(
+      page.getByRole("img", { name: "Scan this WhatsApp QR code" }),
+    ).toHaveCount(0);
+
+    await expect(panel).toBeVisible();
+  });
+});
+
+test("shows a terminal provisioning failure during Connection Setup", async ({
   page,
   request,
 }) => {
@@ -552,10 +651,10 @@ test("bootstraps another Clerk User and shows provider capacity failure during C
       )
     ) {
       await route.fulfill({
-        body: JSON.stringify({ error: "provider_capacity_unavailable" }),
+        body: JSON.stringify({ error: "provisioning_failed" }),
         contentType: "application/json",
         headers: { "access-control-allow-origin": webOrigin },
-        status: 409,
+        status: 503,
       });
       return;
     }
@@ -596,9 +695,19 @@ test("bootstraps another Clerk User and shows provider capacity failure during C
   await onboarding
     .getByRole("button", { name: "Continue", exact: true })
     .click();
+  await expect(onboarding.getByTestId("connection-setup-panel")).toBeVisible();
   await expect(page.getByTestId("connection-setup-status")).toHaveText(
-    "WhatsApp Connection capacity is temporarily unavailable. Please try again later.",
+    "Connection Setup could not be prepared.",
   );
+  await expect(onboarding).toContainText(
+    "Normal could not finish preparing this Connection Setup before the QR step.",
+  );
+  await expect(onboarding).toContainText(
+    "Use Start again to request a fresh QR code.",
+  );
+  await expect(
+    page.getByRole("img", { name: "Scan this WhatsApp QR code" }),
+  ).toHaveCount(0);
 });
 
 test("keeps the Personal Account usable when MCP Authorization listing is unavailable", async ({
