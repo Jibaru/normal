@@ -4,18 +4,12 @@ import { checkDatabaseReadiness } from "./connectivity";
 import { SchemaVersionMismatch } from "./readiness";
 
 const program = migrationConfig.pipe(
-  Effect.flatMap((config) =>
-    Effect.tryPromise({
-      try: () =>
-        checkDatabaseReadiness(Redacted.value(config.migrationDatabaseUrl)),
-      catch: (cause) => cause,
-    }),
-  ),
   Effect.withConfigProvider(ConfigProvider.fromEnv()),
 );
 
 try {
-  await Effect.runPromise(program);
+  const config = await Effect.runPromise(program);
+  await checkDatabaseReadiness(Redacted.value(config.migrationDatabaseUrl));
   console.info(JSON.stringify({ event: "database.schema.ready" }));
 } catch (error) {
   const detail =
