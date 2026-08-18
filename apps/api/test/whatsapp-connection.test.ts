@@ -65,6 +65,7 @@ const makeHarness = (
     readonly disconnectFailureState?: "connected" | "degraded" | "disconnected";
     readonly identityValid?: boolean;
     readonly initialFailureCode?: string;
+    readonly numberVerification?: "match" | "mismatch" | "unverified";
     readonly initialSetupState?:
       | "activated"
       | "pending"
@@ -92,6 +93,7 @@ const makeHarness = (
   let disconnectFailed = false;
   let lifecycleClaimId: string | null = null;
   let setupState = options.initialSetupState ?? "provisioned";
+  let setupFailureCode = options.initialFailureCode ?? "unavailable";
   let lastEncryptedName = "Personal WhatsApp";
   let deletionReceipt: {
     deletionMarkerId: string;
@@ -270,11 +272,17 @@ const makeHarness = (
                 }
               : setupState === "provisioning_failed"
                 ? {
-                    failureCode: options.initialFailureCode ?? "unavailable",
+                    failureCode: setupFailureCode,
                     outcome: "provisioning_failed" as const,
                   }
                 : { outcome: setupState },
       ),
+    failSetupActivation: ({ failureCode }) =>
+      Effect.sync(() => {
+        setupState = "provisioning_failed";
+        setupFailureCode = failureCode;
+        return true;
+      }),
   };
 
   const provider: WhatsAppConnectionProviderService = {
@@ -339,6 +347,14 @@ const makeHarness = (
                 : ("disconnected" as const),
             },
           },
+          };
+        }),
+    verifyNumber: () =>
+      Effect.sync(() => {
+        providerCalls.push("verifySessionNumber");
+        return {
+          ok: true as const,
+          value: { outcome: options.numberVerification ?? "match" },
         };
       }),
   };
@@ -502,7 +518,10 @@ describe("WhatsApp Connection HTTP boundary", () => {
     expect(observed.status).toBe(204);
     expect(replay.status).toBe(204);
     expect(harness.connections).toHaveLength(1);
-    expect(harness.providerCalls).toEqual(["reconcileSession"]);
+    expect(harness.providerCalls).toEqual([
+      "reconcileSession",
+      "verifySessionNumber",
+    ]);
     expect(harness.encryptedPurposes).toEqual([
       "display-name",
       "provider-session-locator",
@@ -569,6 +588,44 @@ describe("WhatsApp Connection HTTP boundary", () => {
       error: "provider_capacity_unavailable",
     });
     expect(harness.providerCalls).toEqual([]);
+  });
+
+  test("fails closed when the scanned WhatsApp account does not match the reserved number", async () => {
+    const harness = makeHarness({ numberVerification: "mismatch" });
+    harness.scanQr();
+
+    const response = await harness.handler(request(qrEndpoint));
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: "number_confirmation_failed",
+      message: "Retry by scanning the same WhatsApp account you entered.",
+    });
+    expect(harness.connections).toEqual([]);
+    expect(harness.providerCalls).toEqual([
+      "reconcileSession",
+      "verifySessionNumber",
+    ]);
+    expect(JSON.stringify(harness.events)).not.toContain("+15550123456");
+    expect(JSON.stringify(harness.providerCalls)).not.toContain("wsl_");
+  });
+
+  test("fails closed when provider identity evidence is unavailable", async () => {
+    const harness = makeHarness({ numberVerification: "unverified" });
+    harness.scanQr();
+
+    const response = await harness.handler(request(qrEndpoint));
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: "number_confirmation_failed",
+      message: "Retry by scanning the same WhatsApp account you entered.",
+    });
+    expect(harness.connections).toEqual([]);
+    expect(harness.providerCalls).toEqual([
+      "reconcileSession",
+      "verifySessionNumber",
+    ]);
   });
 
   test("makes deletion immediately terminal and idempotent at the authenticated boundary", async () => {

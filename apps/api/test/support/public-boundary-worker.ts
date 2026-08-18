@@ -216,6 +216,7 @@ let providerConnectionState:
   | "disconnected"
   | "reconnect_required"
   | "degraded" = "disconnected";
+const activationFailureCodes = new Map<string, string>();
 let lifecycleClaimId: string | null = null;
 const retentionPolicies = new Map<string, number | null>();
 const recipientExclusions = new Map<string, boolean>();
@@ -243,6 +244,7 @@ const whatsAppConnections: Array<{
   displayName: string;
   numberSuffix: string;
   publicId: string;
+  setupId: string;
   state:
     | "connected"
     | "connecting"
@@ -254,6 +256,7 @@ const whatsAppConnections: Array<{
 const publishedWebhookMessages: WebhookIngressQueueMessage[] = [];
 const encryptedWebhookPayloads = new Map<string, Uint8Array>();
 const encryptedDisplayNames = new Map<string, string>();
+const encryptedWhatsAppNumbers = new Map<string, string>();
 const testAccountKey = {
   ciphertext: "AQID",
   keyVersion: 1,
@@ -1306,7 +1309,9 @@ const makeTestLayer = (
     Layer.succeed(WhatsAppConnectionPersistence, {
       activate: (input) =>
         Effect.sync(() => {
-          const existing = whatsAppConnections[0];
+          const existing = whatsAppConnections.find(
+            (candidate) => candidate.setupId === input.setupId,
+          );
           if (existing !== undefined) return protectedTestConnection(existing);
           const connection = {
             displayName:
@@ -1315,6 +1320,7 @@ const makeTestLayer = (
               )?.displayName ?? "Test WhatsApp",
             numberSuffix: input.numberSuffix,
             publicId: input.publicId,
+            setupId: input.setupId,
             state: "connected" as const,
             stateChangedAt: input.connectedAt,
           };
@@ -1425,7 +1431,16 @@ const makeTestLayer = (
             ({ setup }) => setup.setupId === setupId,
           );
           if (!exists) return null;
-          const connection = whatsAppConnections[0];
+          const failureCode = activationFailureCodes.get(setupId);
+          if (failureCode !== undefined) {
+            return {
+              failureCode,
+              outcome: "provisioning_failed" as const,
+            };
+          }
+          const connection = whatsAppConnections.find(
+            (candidate) => candidate.setupId === setupId,
+          );
           if (connection !== undefined) {
             return {
               connection: protectedTestConnection(connection),
@@ -1472,6 +1487,11 @@ const makeTestLayer = (
               webhookIngressId: "30000000-0000-4000-8000-000000000018",
             },
           };
+        }),
+      failSetupActivation: ({ failureCode, setupId }) =>
+        Effect.sync(() => {
+          activationFailureCodes.set(setupId, failureCode);
+          return true;
         }),
     }),
     Layer.succeed(WhatsAppConnectionProvider, {
@@ -1538,6 +1558,16 @@ const makeTestLayer = (
             },
           };
         }),
+      verifyNumber: ({ phoneNumber }) =>
+        Effect.sync(() => {
+          providerObservations.push("verifySessionNumber");
+          return {
+            ok: true as const,
+            value: {
+              outcome: phoneNumber === "+15550123456" ? "match" : "mismatch",
+            },
+          };
+        }),
     }),
     Layer.succeed(RestoreSafeDeletion, {
       markers: {
@@ -1571,7 +1601,11 @@ const makeTestLayer = (
         }),
       decrypt: ({ context }) =>
         context.fieldOrObjectPurpose === "whatsapp-number"
-          ? Effect.succeed(new TextEncoder().encode("+15550123456"))
+          ? Effect.succeed(
+              new TextEncoder().encode(
+                encryptedWhatsAppNumbers.get(context.recordId) ?? "+15550123456",
+              ),
+            )
           : context.fieldOrObjectPurpose === "display-name"
             ? Effect.succeed(
                 new TextEncoder().encode(
@@ -1618,6 +1652,12 @@ const makeTestLayer = (
           }
           if (context.fieldOrObjectPurpose === "display-name") {
             encryptedDisplayNames.set(
+              context.recordId,
+              new TextDecoder().decode(plaintext),
+            );
+          }
+          if (context.fieldOrObjectPurpose === "whatsapp-number") {
+            encryptedWhatsAppNumbers.set(
               context.recordId,
               new TextDecoder().decode(plaintext),
             );

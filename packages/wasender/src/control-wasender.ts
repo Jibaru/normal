@@ -12,6 +12,7 @@ import {
   type LifecycleSession,
   type LifecycleSessionLocator,
   type QrCodeObservation,
+  type SessionNumberVerification,
   type SessionAuthority,
   type SessionDeletionObservation,
   SessionLifecycle,
@@ -79,6 +80,10 @@ interface ProviderSession {
   readonly webhookEvents: ReadonlyArray<string> | null;
   readonly webhookSecret: string | null;
   readonly webhookUrl: string | null;
+}
+
+interface SessionUserInfo {
+  readonly id: string;
 }
 
 interface BoundedBody {
@@ -199,6 +204,14 @@ const parseData = (value: unknown): unknown =>
   isRecord(value) && value.success === true && "data" in value
     ? value.data
     : undefined;
+
+const parseSessionUserInfo = (value: unknown): SessionUserInfo => {
+  const data = parseData(value);
+  if (!isRecord(data) || typeof data.id !== "string" || data.id.length === 0) {
+    throw safeFailure("invalid_response");
+  }
+  return { id: data.id };
+};
 
 const parseSessionList = (value: unknown): ReadonlyArray<ProviderSession> => {
   const data = parseData(value);
@@ -495,6 +508,94 @@ export const makeWasenderSessionLifecycle = (
     throw safeFailure("unavailable");
   };
 
+  const safeJsonWithSessionCredential = async (
+    path: string,
+    sessionCredential: string,
+  ): Promise<BoundedBody> => {
+    const startedAt = now();
+    for (let attempt = 1; attempt <= safeReadMaximumAttempts; attempt += 1) {
+      const remaining = safeReadTotalTimeoutMs - (now() - startedAt);
+      if (remaining <= 0) throw safeFailure("timed_out");
+      const attemptStartedAt = now();
+      const controller = new AbortController();
+      const timer = setTimeout(
+        () => controller.abort(),
+        Math.min(safeReadAttemptTimeoutMs, remaining),
+      );
+      try {
+        const response = await fetchRequest(
+          new Request(`${providerOrigin}${path}`, {
+            headers: {
+              accept: "application/json",
+              authorization: `Bearer ${sessionCredential}`,
+            },
+            method: "GET",
+            signal: controller.signal,
+          }),
+        );
+        const body = await readBoundedJson(response);
+        if (response.ok) {
+          if (!body.jsonValid) {
+            emit({
+              attempt,
+              durationMs: Math.max(0, now() - attemptStartedAt),
+              operation: "safe-read",
+              outcome: "invalid_response",
+              responseBytes: body.bytes.byteLength,
+            });
+            throw safeFailure("invalid_response");
+          }
+          emit({
+            attempt,
+            durationMs: Math.max(0, now() - attemptStartedAt),
+            operation: "safe-read",
+            outcome: "success",
+            responseBytes: body.bytes.byteLength,
+          });
+          return body;
+        }
+        const code = classifyStatus(response.status);
+        const retryAfter = retryAfterMilliseconds(response, body.value, now());
+        emit({
+          attempt,
+          durationMs: Math.max(0, now() - attemptStartedAt),
+          operation: "safe-read",
+          outcome: code,
+          responseBytes: body.bytes.byteLength,
+        });
+        const eligible =
+          response.status === 408 ||
+          response.status === 429 ||
+          response.status >= 500;
+        if (eligible && attempt < safeReadMaximumAttempts) {
+          const jitteredBackoff = Math.floor(
+            250 * 2 ** (attempt - 1) * (0.5 + random()),
+          );
+          const delay = retryAfter ?? jitteredBackoff;
+          if (now() - startedAt + delay < safeReadTotalTimeoutMs) {
+            await sleep(delay);
+            continue;
+          }
+        }
+        throw safeFailure(code, retryAfter);
+      } catch (cause) {
+        if (isProviderFailure(cause)) throw cause;
+        const code = isAbort(cause) ? "timed_out" : "unavailable";
+        if (attempt < safeReadMaximumAttempts) {
+          const delay = Math.floor(250 * 2 ** (attempt - 1) * (0.5 + random()));
+          if (now() - startedAt + delay < safeReadTotalTimeoutMs) {
+            await sleep(delay);
+            continue;
+          }
+        }
+        throw safeFailure(code);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    throw safeFailure("unavailable");
+  };
+
   const writeJson = async (
     path: string,
     init: {
@@ -599,6 +700,12 @@ export const makeWasenderSessionLifecycle = (
     );
     if (detail.id !== id) throw safeFailure("invalid_response");
     return detail;
+  };
+
+  const normalizedPhoneFromUserId = (value: string): string | null => {
+    const trimmed = value.trim().toLowerCase();
+    const match = /^([1-9]\d{7,14})@s\.whatsapp\.net$/u.exec(trimmed);
+    return match?.[1] ? `+${match[1]}` : null;
   };
 
   const toLifecycleSession = async (
@@ -806,6 +913,27 @@ export const makeWasenderSessionLifecycle = (
           if (isProviderFailure(cause)) throw cause;
           throw safeFailure("invalid_response");
         }
+      }),
+    verifySessionNumber: ({ phoneNumber, session }) =>
+      effect(async (): Promise<SessionNumberVerification> => {
+        const expectedNumber = Redacted.value(phoneNumber);
+        const providerSession = await resolveProviderSession(session);
+        if (!providerSession?.apiKey) throw safeFailure("invalid_response");
+        const user = parseSessionUserInfo(
+          (
+            await safeJsonWithSessionCredential(
+              "/api/user",
+              providerSession.apiKey,
+            )
+          ).value,
+        );
+        const actualNumber = normalizedPhoneFromUserId(user.id);
+        if (actualNumber === null) {
+          return { outcome: "unverified" };
+        }
+        return {
+          outcome: actualNumber === expectedNumber ? "match" : "mismatch",
+        };
       }),
     listSessions: ({ setupMarker }) => effect(() => listSessions(setupMarker)),
     reconcileSession: ({ setupMarker, webhookEndpoint }) =>

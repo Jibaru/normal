@@ -331,6 +331,78 @@ describe("real Wasender lifecycle adapter", () => {
     expect(methods).toEqual(["GET", "GET", "GET"]);
   });
 
+  test("verifies the exact normalized scanned account number from provider-backed session user info", async () => {
+    const lifecycle = makeWasenderSessionLifecycle(
+      { credential, referenceSecret },
+      {
+        fetch: async (request) => {
+          if (request.url.endsWith("/api/whatsapp-sessions")) {
+            return json({ success: true, data: [providerSession()] });
+          }
+          if (request.url.endsWith("/api/whatsapp-sessions/41")) {
+            return json({ success: true, data: providerSession() });
+          }
+          if (request.url.endsWith("/api/user")) {
+            return json({
+              success: true,
+              data: {
+                id: "15550123456@s.whatsapp.net",
+                lid: "linked-device-id",
+                name: "Owner",
+              },
+            });
+          }
+          return json({}, { status: 500 });
+        },
+      },
+    );
+
+    const sessions = await Effect.runPromise(
+      lifecycle.listSessions({ setupMarker }),
+    );
+    const verified = await Effect.runPromise(
+      lifecycle.verifySessionNumber({ phoneNumber, session: sessions[0]!.session }),
+    );
+
+    expect(verified).toEqual({ outcome: "match" });
+  });
+
+  test("fails closed when provider session user info does not expose an exact phone-number identity", async () => {
+    const lifecycle = makeWasenderSessionLifecycle(
+      { credential, referenceSecret },
+      {
+        fetch: async (request) => {
+          if (request.url.endsWith("/api/whatsapp-sessions")) {
+            return json({ success: true, data: [providerSession()] });
+          }
+          if (request.url.endsWith("/api/whatsapp-sessions/41")) {
+            return json({ success: true, data: providerSession() });
+          }
+          if (request.url.endsWith("/api/user")) {
+            return json({
+              success: true,
+              data: {
+                id: "123456789@lid",
+                lid: "linked-device-id",
+                name: "Owner",
+              },
+            });
+          }
+          return json({}, { status: 500 });
+        },
+      },
+    );
+
+    const sessions = await Effect.runPromise(
+      lifecycle.listSessions({ setupMarker }),
+    );
+    const verified = await Effect.runPromise(
+      lifecycle.verifySessionNumber({ phoneNumber, session: sessions[0]!.session }),
+    );
+
+    expect(verified).toEqual({ outcome: "unverified" });
+  });
+
   test("honors bounded throttling delay within the safe-read retry budget", async () => {
     const sleeps: number[] = [];
     const telemetry: WasenderLifecycleTelemetryEvent[] = [];

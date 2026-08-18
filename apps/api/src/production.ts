@@ -673,6 +673,7 @@ const configLayer = (environment: ApiEnvironment) =>
               "listSessions",
               "reconcileSession",
               "repairSessionConfiguration",
+              "verifySessionNumber",
             ])
           ) {
             return yield* Effect.fail(new MissingProviderControlBinding());
