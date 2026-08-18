@@ -6,15 +6,15 @@ promise: Use WhatsApp context from ChatGPT without handing over blanket access.
 order: 3
 ---
 
-ChatGPT's current docs place custom MCP setup under Apps and the Plugins surface. Once custom MCP access is available in your workspace, you can connect Normal through OAuth and choose the exact WhatsApp Connections and capabilities ChatGPT may use.
+ChatGPT's current docs place custom MCP setup under Apps with developer mode enabled where your plan requires it. Once custom MCP access is available in your workspace, you can connect Normal through OAuth and choose the exact WhatsApp Connections and capabilities ChatGPT may use.
 
 ## Connect ChatGPT
 
 1. In ChatGPT, open `Settings -> Apps`.
-2. If your workspace requires it, turn on Developer mode under `Settings -> Apps -> Advanced Settings`, or ask your workspace admin to enable custom MCP apps.
-3. Open `Apps -> Create` or the Plugins flow shown by ChatGPT, add the Normal MCP server with OAuth, and finish tool scanning if ChatGPT prompts for it.
+2. If your workspace requires it, turn on Developer mode under `Settings -> Apps -> Advanced Settings`, or ask your workspace admin to enable custom MCP apps in workspace settings.
+3. Open `Apps -> Create`, add the Normal MCP server with OAuth, and finish tool scanning if ChatGPT prompts for it.
 4. Sign in to Normal and explicitly select each allowed WhatsApp Connection and each permission area you want ChatGPT to use.
-5. Start a new chat, enable Normal from the tools menu, and test with a read request.
+5. Start a new chat, enable Normal from the apps or tools menu, and test with a read request.
 
 ## Need to reconnect Normal later?
 

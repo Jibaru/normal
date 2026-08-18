@@ -6,22 +6,22 @@ promise: Restore ChatGPT access to Normal without confusing it with reconnecting
 order: 5
 ---
 
-Use this guide when ChatGPT lost access to Normal because authorization expired, you revoked access, or the saved app entry disappeared. This is separate from reconnecting a WhatsApp Connection inside Normal.
+Use this guide when ChatGPT lost access to Normal because authorization expired, you revoked access, ChatGPT needs you to reauthenticate, or the saved app entry disappeared. This is separate from reconnecting a WhatsApp Connection inside Normal.
 
 ## First decide which thing broke
 
-- If ChatGPT cannot find Normal, asks you to connect again, or no longer runs Normal tools, continue here.
+- If ChatGPT cannot find Normal, asks you to connect again, asks you to reauthenticate, or no longer runs Normal tools, continue here.
 - If Normal is still connected but the affected WhatsApp Connection shows `reconnect_required`, `disconnected`, `degraded`, or another unavailable state, use the separate [WhatsApp Connection reconnect flow](/dashboard/connections) in Normal instead.
 
 ## Re-enable the existing Normal app
 
-1. Start a new ChatGPT conversation and open the tools or app picker.
+1. Start a new ChatGPT conversation and open the apps or tools picker.
 2. If `Normal` is listed, enable it for that chat and retry your request.
-3. If your workspace shows the Plugins Directory, open the Normal plugin or app detail page and use any available `Connect`, `Reconnect`, or `Refresh` action before retrying.
+3. In `Settings -> Apps -> Enabled Apps`, open `Normal` and use any available `Reconnect`, `Reauthenticate`, or `Refresh` action before retrying.
 
 ## Authorize Normal again
 
-1. In ChatGPT, open `Settings -> Apps` and find `Normal` in your connected or enabled apps. If your workspace uses the Plugins Directory, open the plugin entry that contains Normal.
+1. In ChatGPT, open `Settings -> Apps` and find `Normal` in `Enabled Apps`.
 2. Choose the connection or reauthentication action ChatGPT shows and complete OAuth again.
 3. In Normal, select the WhatsApp Connections you want ChatGPT to use and confirm each permission area separately.
 4. Review the new grant before you allow access. Reauthorization creates a new MCP Authorization. It does not silently restore an older grant, and a WhatsApp Connection added later is still outside the new grant.
@@ -29,11 +29,11 @@ Use this guide when ChatGPT lost access to Normal because authorization expired,
 ## Re-add the MCP server when the saved entry is gone
 
 1. Confirm your workspace still allows custom MCP apps. If ChatGPT requires Developer mode for your account, turn it on under `Settings -> Apps -> Advanced Settings`.
-2. Open `Settings -> Apps -> Create` or the Plugins connection flow shown by ChatGPT.
+2. Open `Settings -> Apps -> Create`.
 3. Add the Normal MCP server URL with OAuth and let ChatGPT scan tools if it prompts you.
 4. Finish sign in with Normal and select the exact WhatsApp Connections and permissions again.
 
-If you do not see `Create`, the Plugins connection flow, or the Normal plugin at all, your workspace admin may need to enable it first.
+If you do not see `Create` or `Enabled Apps` at all, your workspace admin may need to enable developer mode or custom MCP app access first.
 
 ## Verify safely
 
@@ -48,3 +48,5 @@ It should return only the WhatsApp Connections you selected, such as `Personal W
 ## Revoke stale access first when needed
 
 If you want to remove an older or unwanted ChatGPT grant before reconnecting, open [MCP Authorizations](/dashboard/authorizations) in Normal and revoke the entry you no longer want. Then reconnect from ChatGPT and create a fresh authorization.
+
+If ChatGPT still shows Normal as connected after you revoke the grant, return to `Settings -> Apps -> Enabled Apps`, refresh or remove the saved app entry, and complete the connection flow again.
