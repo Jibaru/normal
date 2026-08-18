@@ -110,6 +110,11 @@ describe("static Scalar documentation", () => {
     );
     expect(vercelManifest.rewrites).toBeUndefined();
     expect(vercelManifest.routes).toBeUndefined();
+    expect(vercelManifest.headers?.map(({ source }) => source)).toEqual([
+      "/(.*)",
+      "/vendor/scalar/(.*)",
+      "/openapi.json",
+    ]);
     expect(headerValue("/vendor/scalar/(.*)", "Cache-Control")).toBe(
       SCALAR_BUNDLE_CACHE_CONTROL,
     );
