@@ -143,6 +143,7 @@ export type ConnectionSetupProvisioningClaim =
           readonly personalAccountId: string;
           readonly version: 1;
         };
+        readonly createdAt: string;
         readonly connectionKey: {
           readonly accountKeyVersion: number;
           readonly ciphertext: string;
@@ -505,6 +506,7 @@ interface ProvisioningClaimRow extends Record<string, unknown> {
   readonly connection_key_ciphertext: unknown;
   readonly connection_key_nonce: unknown;
   readonly connection_key_version: unknown;
+  readonly created_at?: unknown;
   readonly number_ciphertext: unknown;
   readonly number_ciphertext_version: unknown;
   readonly number_key_version: unknown;
@@ -585,6 +587,7 @@ const provisioningClaim = (
   );
   const numberKeyVersion = positiveInteger(row?.number_key_version);
   const numberNonce = bytes(row?.number_nonce);
+  const createdAt = timestamp(row?.created_at);
   if (
     row?.outcome !== "claimed" ||
     typeof row.personal_account_id !== "string" ||
@@ -595,6 +598,7 @@ const provisioningClaim = (
     connectionKeyCiphertext === null ||
     connectionKeyNonce === null ||
     connectionKeyVersion === null ||
+    createdAt === null ||
     numberCiphertext === null ||
     numberCiphertextVersion !== 1 ||
     numberKeyVersion === null ||
@@ -616,6 +620,7 @@ const provisioningClaim = (
         personalAccountId: row.personal_account_id,
         version: 1,
       },
+      createdAt,
       connectionKey: {
         accountKeyVersion: connectionKeyAccountVersion,
         ciphertext: encodeBase64(connectionKeyCiphertext),

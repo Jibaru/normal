@@ -35,6 +35,11 @@ Confirm the `alert-delivery-canary` arrives in the ticket destination with only 
 - REST `rest.operation.completed` is an allowlisted Worker telemetry event with
   only operation name, outcome, optional result count, and service. Do not add
   credentials, search terms, message content, raw bodies, or tenant identifiers.
+- Connection Setup timing uses three privacy-safe surfaces: anonymous browser
+  timing events for `setup_to_code` and `linking_to_active`, API telemetry for
+  queue delay and total elapsed setup age, and provider-control telemetry for
+  per-method RPC latency. None may include identifiers, numbers, names, code
+  payloads, or provider session values.
 - API Key retention telemetry is limited to `api_key.retention.completed`, the
   bounded expired and purged counts, and the API service name. Do not add
   handles, names, hints, digests, credentials, or tenant identifiers.

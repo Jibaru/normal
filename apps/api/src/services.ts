@@ -101,6 +101,7 @@ export interface ConnectionSetupProvisionCompletedEvent {
     | "provisioned"
     | "quarantined"
     | "retry";
+  readonly queueDelayMs?: number | undefined;
   readonly service: "api";
 }
 
@@ -111,6 +112,7 @@ export interface ConnectionSetupProvisionRecoveryEnqueuedEvent {
 }
 
 export interface ConnectionSetupQrCompletedEvent {
+  readonly durationMs?: number | undefined;
   readonly event: "connection_setup.qr.completed";
   readonly outcome:
     | "connected"

@@ -82,6 +82,39 @@ describe("safe telemetry serialization", () => {
     });
   });
 
+  test("keeps connection setup timing fields on the allowlist", () => {
+    expect(
+      JSON.parse(
+        serializeSafeTelemetry({
+          event: "connection_setup.provision.completed",
+          outcome: "provisioned",
+          queueDelayMs: 42,
+          service: "api",
+        }),
+      ),
+    ).toEqual({
+      event: "connection_setup.provision.completed",
+      outcome: "provisioned",
+      queueDelayMs: 42,
+      service: "api",
+    });
+    expect(
+      JSON.parse(
+        serializeSafeTelemetry({
+          durationMs: 84,
+          event: "connection_setup.qr.completed",
+          outcome: "connecting",
+          service: "api",
+        }),
+      ),
+    ).toEqual({
+      durationMs: 84,
+      event: "connection_setup.qr.completed",
+      outcome: "connecting",
+      service: "api",
+    });
+  });
+
   test("drops credential material added to timeout and break-glass-shaped events", () => {
     const serialized = serializeSafeTelemetry({
       event: "provider.text_send.completed",

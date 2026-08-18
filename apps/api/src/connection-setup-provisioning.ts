@@ -246,6 +246,7 @@ const encryptProviderSession = (
 const emit = (
   outcome: "failed" | "ignored" | "provisioned" | "quarantined" | "retry",
   failureCode?: string,
+  queueDelayMs?: number,
 ) =>
   Effect.gen(function* () {
     const telemetry = yield* SafeTelemetry;
@@ -253,9 +254,20 @@ const emit = (
       event: "connection_setup.provision.completed",
       ...(failureCode === undefined ? {} : { failureCode }),
       outcome,
+      ...(queueDelayMs === undefined ? {} : { queueDelayMs }),
       service: "api",
     });
   });
+
+const elapsedMs = (startedAt: string, finishedAt: string): number | null => {
+  const started = Date.parse(startedAt);
+  const finished = Date.parse(finishedAt);
+  return Number.isFinite(started) &&
+    Number.isFinite(finished) &&
+    finished >= started
+    ? Math.max(0, finished - started)
+    : null;
+};
 
 const releaseForRetry = (
   setupId: string,
@@ -315,8 +327,9 @@ const finish = (
     );
     const clock = yield* ConnectionSetupProvisioningClock;
     const persistence = yield* ConnectionSetupProvisioningPersistence;
+    const observedAt = yield* clock.now;
     const committed = yield* persistence.finish({
-      observedAt: yield* clock.now,
+      observedAt,
       outcome,
       sessions: encryptedSessions,
       setupId: setup.setupId,
@@ -326,7 +339,11 @@ const finish = (
       yield* emit("retry", "lease_lost");
       return retry();
     }
-    yield* emit(outcome);
+    yield* emit(
+      outcome,
+      undefined,
+      elapsedMs(setup.createdAt, observedAt) ?? undefined,
+    );
     return { outcome } as const;
   });
 

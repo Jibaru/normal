@@ -110,17 +110,21 @@ export type WhatsAppConnectionLifecycleClaim =
 
 export type ConnectionSetupActivation =
   | {
+      readonly createdAt: string;
       readonly outcome: "pending" | "provisioning_quarantined";
     }
   | {
+      readonly createdAt: string;
       readonly failureCode: string;
       readonly outcome: "provisioning_failed";
     }
   | {
+      readonly createdAt: string;
       readonly outcome: "activated";
       readonly connection: WhatsAppConnectionRecord;
     }
   | {
+      readonly createdAt: string;
       readonly outcome: "provisioned";
       readonly setup: {
         readonly accountKey: AccountKeyEnvelope;
@@ -314,6 +318,7 @@ interface ConnectionRow extends Record<string, unknown> {
   readonly connection_public_id?: unknown;
   readonly connection_state?: unknown;
   readonly connection_state_changed_at?: unknown;
+  readonly created_at?: unknown;
   readonly display_name?: unknown;
   readonly display_name_ciphertext?: unknown;
   readonly display_name_ciphertext_version?: unknown;
@@ -679,8 +684,12 @@ const activation = (
   row: ActivationRow | undefined,
 ): ConnectionSetupActivation | null => {
   if (row === undefined) return null;
+  const createdAt = timestamp(row.created_at);
+  if (createdAt === null) {
+    throw new Error("invalid Connection Setup creation time");
+  }
   if (row.outcome === "pending" || row.outcome === "provisioning_quarantined") {
-    return { outcome: row.outcome };
+    return { createdAt, outcome: row.outcome };
   }
   if (row.outcome === "provisioning_failed") {
     throw new Error("Connection Setup failure code was not loaded");
@@ -690,7 +699,7 @@ const activation = (
     if (connection === null) {
       throw new Error("invalid activated WhatsApp Connection");
     }
-    return { connection, outcome: "activated" };
+    return { connection, createdAt, outcome: "activated" };
   }
 
   const accountKeyCiphertext = bytes(row.account_key_ciphertext);
@@ -735,6 +744,7 @@ const activation = (
     throw new Error("invalid Connection Setup activation material");
   }
   return {
+    createdAt,
     outcome: "provisioned",
     setup: {
       accountKey: {
@@ -1105,6 +1115,7 @@ export const makeWhatsAppConnectionRepository = (
         );
         let row = rows[0];
         if (row?.outcome === "provisioning_failed") {
+          const createdAt = timestamp(row.created_at);
           const failures = await db.execute<{ failure_code: unknown }>(
             sql`SELECT public.load_connection_setup_failure_code_for_user(
             ${input.clerkUserId}, ${input.setupId}
@@ -1117,7 +1128,10 @@ export const makeWhatsAppConnectionRepository = (
           ) {
             throw new Error("invalid Connection Setup failure code");
           }
-          return { failureCode, outcome: "provisioning_failed" };
+          if (createdAt === null) {
+            throw new Error("invalid Connection Setup creation time");
+          }
+          return { createdAt, failureCode, outcome: "provisioning_failed" };
         }
         if (row?.outcome === "provisioned") {
           await authorizeUser(db, input.clerkUserId);
@@ -1159,7 +1173,11 @@ export const makeWhatsAppConnectionRepository = (
           );
           if (connection === null)
             throw new Error("invalid activated WhatsApp Connection");
-          return { connection, outcome: "activated" };
+          const createdAt = timestamp(row.created_at);
+          if (createdAt === null) {
+            throw new Error("invalid Connection Setup creation time");
+          }
+          return { connection, createdAt, outcome: "activated" };
         }
         return activation(input.setupId, row);
       }),

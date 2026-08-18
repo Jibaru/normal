@@ -562,11 +562,12 @@ events through a small analytics boundary that:
 
 Allowed funnel events cover onboarding stage viewed/completed, profile
 completed, security education reached, Connection Setup started/completed by
-normalized outcome, onboarding completed, and selected aggregate feature-use
-events. Events must not contain or derive from Clerk IDs, email, Personal
-Account IDs, public handles, WhatsApp Connection IDs, WhatsApp Numbers,
-connection names, profile answers tied to a persistent User identity, message,
-contact, media, provider, request-body, or QR material.
+normalized outcome, anonymous Connection Setup timing by bounded phase and
+duration, onboarding completed, and selected aggregate feature-use events.
+Events must not contain or derive from Clerk IDs, email, Personal Account IDs,
+public handles, WhatsApp Connection IDs, WhatsApp Numbers, connection names,
+profile answers tied to a persistent User identity, message, contact, media,
+provider, request-body, or code material.
 
 `NEXT_PUBLIC_POSTHOG_KEY` and `NEXT_PUBLIC_POSTHOG_HOST` are public browser
 configuration validated per environment. When either is absent, analytics is
@@ -756,12 +757,22 @@ and receives no Provider API Credential, database binding, KMS authority, or
 provider-control binding. Production cannot select the protocol-observable
 provider used by the acceptance tests.
 
-Safe QR telemetry is limited to `connection_setup.qr.completed`, service, and
-one normalized outcome. Safe listing telemetry adds only the connection count
+Safe QR telemetry is limited to `connection_setup.qr.completed`, service, one
+normalized outcome, and total elapsed setup duration in milliseconds. Safe
+provision telemetry adds only normalized outcome, optional normalized failure
+code, and queue delay in milliseconds. Safe listing telemetry adds only the connection count
 to `whatsapp_connection.list.completed`. Neither event contains a User,
 Personal Account, Connection Setup, WhatsApp Connection, number, QR byte,
 provider value, credential, ingress identity, secret, ciphertext, or key
 reference.
+
+In the signed-in browser/API harness, the old fixed 750 ms observation loop was
+the dominant first-party delay once provisioning or linking had already moved
+forward. The approved setup poll schedule now starts at 250 ms, steps up by
+250 ms, and caps at 1 s before code display or 2 s while waiting for linking to
+finish. This preserves prompt first observations, cuts earliest code and active
+confirmation lag to 250 ms, and reduces repeated reads during longer external
+waits.
 
 ## WhatsApp Connection disconnect and reconnect
 

@@ -58,6 +58,10 @@ import {
 } from "@/components/ui/table";
 import { captureProductAnalyticsEvent } from "../effect/product-analytics";
 import {
+  nextConnectionSetupPollDelayMs,
+  observationMetricDurationMs,
+} from "./connection-setup-observation";
+import {
   type ConnectionSetupCleanupState,
   ConnectionSetupForm,
   type ConnectionSetupState,
@@ -501,6 +505,7 @@ export function PublicBoundaryJourney({
     readonly url: string;
   } | null>(null);
   const [qrImageUrl, setQrImageUrl] = useState<string | null>(null);
+  const setupStateRef = useRef<ConnectionSetupState>("idle");
   const [whatsappNumber, setWhatsappNumber] = useState("");
   const [deletionState, setDeletionState] = useState<
     "idle" | "deleting" | "unavailable"
@@ -515,6 +520,16 @@ export function PublicBoundaryJourney({
   const lifecycleGeneration = useRef(0);
   const lifecycleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const observationGeneration = useRef(0);
+  const observationAttempt = useRef(0);
+  const setupObservationMetrics = useRef<{
+    readonly connectingStartedAtMs: number | null;
+    readonly setupStartedAtMs: number | null;
+    readonly setupToCodeCaptured: boolean;
+  }>({
+    connectingStartedAtMs: null,
+    setupStartedAtMs: null,
+    setupToCodeCaptured: false,
+  });
   const observationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const automaticallyInitialized = useRef(false);
 
@@ -706,6 +721,7 @@ export function PublicBoundaryJourney({
 
   const stopObserving = () => {
     observationGeneration.current += 1;
+    observationAttempt.current = 0;
     if (observationTimer.current !== null) {
       clearTimeout(observationTimer.current);
       observationTimer.current = null;
@@ -713,11 +729,22 @@ export function PublicBoundaryJourney({
     replaceQrImage(null);
   };
 
+  useEffect(() => {
+    if (identityState === "signed_in") return;
+    stopObserving();
+  }, [identityState]);
+
   const resetSetupForDraftChange = () => {
     stopObserving();
     setupIntent.current = null;
+    setupObservationMetrics.current = {
+      connectingStartedAtMs: null,
+      setupStartedAtMs: null,
+      setupToCodeCaptured: false,
+    };
     setSetupCleanupState(null);
     setSetupId(null);
+    setupStateRef.current = "idle";
     setSetupState("idle");
   };
 
@@ -734,9 +761,15 @@ export function PublicBoundaryJourney({
   const clearSetupDraft = () => {
     stopObserving();
     setupIntent.current = null;
+    setupObservationMetrics.current = {
+      connectingStartedAtMs: null,
+      setupStartedAtMs: null,
+      setupToCodeCaptured: false,
+    };
     setConnectionName("");
     setSetupCleanupState(null);
     setSetupId(null);
+    setupStateRef.current = "idle";
     setSetupState("idle");
     setWhatsappNumber("");
   };
@@ -1114,10 +1147,66 @@ export function PublicBoundaryJourney({
   ): Promise<void> => {
     const isCurrent = () => observationGeneration.current === generation;
     const observeAgain = () => {
+      const delayMs = nextConnectionSetupPollDelayMs(
+        setupStateRef.current,
+        observationAttempt.current,
+      );
+      observationAttempt.current += 1;
       observationTimer.current = setTimeout(() => {
         observationTimer.current = null;
         void observeSetup(setupId, generation);
-      }, 750);
+      }, delayMs);
+    };
+    const markState = (nextState: SetupState) => {
+      const previousState = setupStateRef.current;
+      if (previousState !== nextState) {
+        observationAttempt.current = 0;
+      }
+      setupStateRef.current = nextState;
+      setSetupState(nextState);
+      if (
+        nextState === "qr_available" &&
+        !setupObservationMetrics.current.setupToCodeCaptured
+      ) {
+        const durationMs = observationMetricDurationMs(
+          setupObservationMetrics.current.setupStartedAtMs,
+          performance.now(),
+        );
+        if (durationMs !== null) {
+          captureProductAnalyticsEvent({
+            durationMs,
+            event: "connection_setup_timing_recorded",
+            phase: "setup_to_code",
+          });
+          setupObservationMetrics.current = {
+            ...setupObservationMetrics.current,
+            setupToCodeCaptured: true,
+          };
+        }
+      }
+      if (
+        nextState === "connecting" &&
+        previousState === "qr_available" &&
+        setupObservationMetrics.current.connectingStartedAtMs === null
+      ) {
+        setupObservationMetrics.current = {
+          ...setupObservationMetrics.current,
+          connectingStartedAtMs: performance.now(),
+        };
+      }
+      if (nextState === "connected") {
+        const durationMs = observationMetricDurationMs(
+          setupObservationMetrics.current.connectingStartedAtMs,
+          performance.now(),
+        );
+        if (durationMs !== null) {
+          captureProductAnalyticsEvent({
+            durationMs,
+            event: "connection_setup_timing_recorded",
+            phase: "linking_to_active",
+          });
+        }
+      }
     };
 
     try {
@@ -1125,7 +1214,7 @@ export function PublicBoundaryJourney({
       if (!isCurrent()) return;
       if (token === null) {
         replaceQrImage(null);
-        setSetupState("unavailable");
+        markState("unavailable");
         return;
       }
       const response = await fetch(`${connectionSetupEndpoint}/${setupId}/qr`, {
@@ -1136,13 +1225,13 @@ export function PublicBoundaryJourney({
         const image = await response.blob();
         if (!isCurrent()) return;
         replaceQrImage(URL.createObjectURL(image));
-        setSetupState("qr_available");
+        markState("qr_available");
         observeAgain();
         return;
       }
       if (response.status === 202) {
         replaceQrImage(null);
-        setSetupState(
+        markState(
           response.headers.get("x-connection-setup-state") === "connecting"
             ? "connecting"
             : "pending",
@@ -1152,9 +1241,9 @@ export function PublicBoundaryJourney({
       }
       if (response.status === 204) {
         replaceQrImage(null);
-        setSetupState("connected");
+        markState("connected");
         if ((await loadConnections(token)) === null) {
-          if (isCurrent()) setSetupState("unavailable");
+          if (isCurrent()) markState("unavailable");
         }
         return;
       }
@@ -1166,20 +1255,21 @@ export function PublicBoundaryJourney({
         body.error === "provisioning_failed" ||
         body.error === "provisioning_quarantined"
       ) {
-        setSetupState(body.error);
+        markState(body.error);
         return;
       }
-      setSetupState("unavailable");
+      markState("unavailable");
     } catch {
       if (isCurrent()) {
         replaceQrImage(null);
-        setSetupState("unavailable");
+        markState("unavailable");
       }
     }
   };
 
   const startObserving = (setupId: string) => {
     stopObserving();
+    observationAttempt.current = 0;
     void observeSetup(setupId, observationGeneration.current);
   };
 
@@ -1359,6 +1449,12 @@ export function PublicBoundaryJourney({
     event.preventDefault();
     stopObserving();
     const requestGeneration = observationGeneration.current;
+    setupObservationMetrics.current = {
+      connectingStartedAtMs: null,
+      setupStartedAtMs: performance.now(),
+      setupToCodeCaptured: false,
+    };
+    setupStateRef.current = "loading";
     setSetupState("loading");
     setSetupCleanupState(null);
 
@@ -1377,6 +1473,7 @@ export function PublicBoundaryJourney({
       const token = await getToken();
       if (observationGeneration.current !== requestGeneration) return;
       if (token === null) {
+        setupStateRef.current = "unavailable";
         setSetupState("unavailable");
         return;
       }
@@ -1411,6 +1508,8 @@ export function PublicBoundaryJourney({
         ) {
           setSetupId(setup.id);
           if (setup.state === "pending") {
+            setupStateRef.current =
+              setup.idempotent_replay === true ? "replayed" : "pending";
             setSetupState(
               setup.idempotent_replay === true ? "replayed" : "pending",
             );
@@ -1425,6 +1524,8 @@ export function PublicBoundaryJourney({
             setup.state === "provisioning_failed" ||
             setup.state === "provisioning_quarantined"
           ) {
+            setupStateRef.current =
+              setup.state === "activated" ? "connected" : setup.state;
             setSetupState(
               setup.state === "activated" ? "connected" : setup.state,
             );
@@ -1435,6 +1536,7 @@ export function PublicBoundaryJourney({
               (await loadConnections(token)) === null &&
               observationGeneration.current === requestGeneration
             ) {
+              setupStateRef.current = "unavailable";
               setSetupState("unavailable");
             }
             return;
@@ -1442,6 +1544,7 @@ export function PublicBoundaryJourney({
         }
       }
       if (body.error === "invalid_request") {
+        setupStateRef.current = "invalid";
         setSetupState("invalid");
         return;
       }
@@ -1449,6 +1552,10 @@ export function PublicBoundaryJourney({
         body.error === "whatsapp_number_unavailable" ||
         body.error === "connection_limit_reached"
       ) {
+        setupStateRef.current =
+          body.error === "whatsapp_number_unavailable"
+            ? "number_unavailable"
+            : body.error;
         setSetupState(
           body.error === "whatsapp_number_unavailable"
             ? "number_unavailable"
@@ -1456,8 +1563,10 @@ export function PublicBoundaryJourney({
         );
         return;
       }
+      setupStateRef.current = "unavailable";
       setSetupState("unavailable");
     } catch {
+      setupStateRef.current = "unavailable";
       setSetupState("unavailable");
     }
   };
@@ -1465,11 +1574,18 @@ export function PublicBoundaryJourney({
   const cancelSetup = async () => {
     if (setupId === null) return;
     stopObserving();
+    setupObservationMetrics.current = {
+      connectingStartedAtMs: null,
+      setupStartedAtMs: null,
+      setupToCodeCaptured: false,
+    };
+    setupStateRef.current = "cancelling";
     setSetupState("cancelling");
 
     try {
       const token = await getToken();
       if (token === null) {
+        setupStateRef.current = "unavailable";
         setSetupState("unavailable");
         return;
       }
@@ -1498,11 +1614,14 @@ export function PublicBoundaryJourney({
         setupIntent.current = null;
         setSetupId(null);
         setSetupCleanupState(body.connection_setup.cleanup_state);
+        setupStateRef.current = body.connection_setup.state;
         setSetupState(body.connection_setup.state);
         return;
       }
+      setupStateRef.current = "unavailable";
       setSetupState("unavailable");
     } catch {
+      setupStateRef.current = "unavailable";
       setSetupState("unavailable");
     }
   };

@@ -28,9 +28,14 @@ export const safeTelemetryFieldsByEvent = {
     "candidateCount",
     "expiredCount",
   ],
-  "connection_setup.provision.completed": [...common, "failureCode", "outcome"],
+  "connection_setup.provision.completed": [
+    ...common,
+    "failureCode",
+    "outcome",
+    "queueDelayMs",
+  ],
   "connection_setup.provision.recovery_enqueued": [...common, "candidateCount"],
-  "connection_setup.qr.completed": [...common, "outcome"],
+  "connection_setup.qr.completed": [...common, "durationMs", "outcome"],
   "connection_setup.start.completed": [...common, "outcome"],
   "directory.contacts.reconciliation.completed": [
     ...common,

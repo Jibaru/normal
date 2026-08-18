@@ -118,6 +118,7 @@ const makeHarness = (options: {
           setup: {
             accountKey,
             connectionKey,
+            createdAt: "2026-07-31T11:59:00.000Z",
             numberCiphertext,
             personalAccountId,
             setupId,
@@ -256,6 +257,12 @@ describe("Connection Setup provisioning saga", () => {
       "create",
       "finish",
     ]);
+    expect(harness.events).toContainEqual({
+      event: "connection_setup.provision.completed",
+      outcome: "provisioned",
+      queueDelayMs: 60_000,
+      service: "api",
+    });
     expect(harness.reconcileInputs).toEqual([
       {
         setupMarker: setupId,
