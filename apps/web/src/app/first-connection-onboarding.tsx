@@ -520,9 +520,9 @@ export function buildVerificationPromptCopy(
     client === "claude" ? "Usa Normal" : "Usa el conector Normal";
   const authorizationHelpClient = client === "claude" ? "Claude" : "ChatGPT";
 
-  const spanishPrompt = `${invocation} para verificar, solo en modo de lectura, que puedes ver mi conexión de WhatsApp llamada "${connection.displayName}" terminada en ${connection.numberSuffix}. Responde solo con el nombre visible y el sufijo del número; nunca muestres el número completo. Si Normal no aparece o si no ves esta conexión, dímelo y recuérdame revisar la autorización de ${authorizationHelpClient} o reconectar la conexión en Normal. No envíes mensajes ni pidas permisos adicionales.`;
+  const spanishPrompt = `${invocation} para verificar, solo en modo de lectura, que puedes ver mi conexión de WhatsApp llamada "${connection.displayName}" terminada en ${connection.numberSuffix}. Responde solo con el nombre visible y el sufijo del número; nunca muestres el número completo. Si Normal no aparece, dímelo y recuérdame revisar la autorización de ${authorizationHelpClient}. Si Normal aparece pero esta conexión activa no está en los resultados, recuérdame modificar o crear una autorización MCP que la seleccione explícitamente. Recomienda reconectarla en Normal solo si aparece como no disponible. No envíes mensajes ni pidas permisos adicionales.`;
 
-  const englishPrompt = `Use Normal for a read-only check that you can see my WhatsApp Connection named "${connection.displayName}" ending in ${connection.numberSuffix}. Reply with the display name and the number suffix only, never the full number. If Normal is unavailable or you cannot see this connection, tell me and remind me to review the ${authorizationHelpClient} authorization or reconnect the connection in Normal. Do not send messages or request any additional permissions.`;
+  const englishPrompt = `Use Normal for a read-only check that you can see my WhatsApp Connection named "${connection.displayName}" ending in ${connection.numberSuffix}. Reply with the display name and the number suffix only, never the full number. If Normal is unavailable, tell me and remind me to review the ${authorizationHelpClient} authorization. If Normal is available but this active connection is missing from the results, remind me to revise or create an MCP Authorization that explicitly selects it. Recommend reconnecting it in Normal only if it is listed as unavailable. Do not send messages or request any additional permissions.`;
 
   return {
     clientName,
@@ -530,9 +530,11 @@ export function buildVerificationPromptCopy(
     expectedEnglishResponse: `${connection.displayName}, number ending in ${connection.numberSuffix}.`,
     expectedSpanishResponse: `${connection.displayName}, número terminado en ${connection.numberSuffix}.`,
     missingConnectionHelp:
-      "If Normal is enabled but this WhatsApp Connection is missing, reconnect it in Normal, then authorize it again with this connection selected.",
+      "If Normal is enabled but this active WhatsApp Connection is missing from the results, revise the existing MCP Authorization or create a new one that explicitly selects this connection.",
     missingToolHelp: `If ${clientName} says Normal is unavailable, reopen MCP Authorization and confirm that this WhatsApp Connection is selected for ${clientName}.`,
     spanishPrompt,
+    unavailableConnectionHelp:
+      "Reconnect in Normal only when the WhatsApp Connection is listed but its lifecycle state is unavailable.",
   };
 }
 
@@ -593,6 +595,9 @@ function VerificationPromptCard({
           <p className="mt-2 text-muted-foreground">{copy.missingToolHelp}</p>
           <p className="mt-2 text-muted-foreground">
             {copy.missingConnectionHelp}
+          </p>
+          <p className="mt-2 text-muted-foreground">
+            {copy.unavailableConnectionHelp}
           </p>
           <p className="mt-2 text-muted-foreground">
             Use{" "}
