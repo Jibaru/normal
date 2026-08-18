@@ -379,10 +379,32 @@ describe("WhatsApp Connection repository", () => {
       }),
     ).resolves.toEqual({ outcome: "claimed" });
     await expect(
-      setups.finishCleanup({
+      setups.renewCleanupLease({
+        observedAt: "2026-07-31T12:04:30.500Z",
+        setupId,
+        workerId: "cscw_0000000000000000000000000000000000000000031",
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      setups.releaseCleanupLease({
+        failureCode: "timed_out",
         observedAt: "2026-07-31T12:04:31.000Z",
         setupId,
         workerId: "cscw_0000000000000000000000000000000000000000031",
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      setups.claimCleanup({
+        claimedAt: "2026-07-31T12:04:31.500Z",
+        setupId,
+        workerId: "cscw_0000000000000000000000000000000000000000032",
+      }),
+    ).resolves.toEqual({ outcome: "claimed" });
+    await expect(
+      setups.finishCleanup({
+        observedAt: "2026-07-31T12:04:32.000Z",
+        setupId,
+        workerId: "cscw_0000000000000000000000000000000000000000032",
       }),
     ).resolves.toBe(true);
 

@@ -39,6 +39,7 @@ export type ConnectionSetupState =
   | "connecting"
   | "qr_available"
   | "connected"
+  | "number_confirmation_failed"
   | "provisioned"
   | "provider_capacity_unavailable"
   | "provisioning_failed"
@@ -224,6 +225,7 @@ const setupCompletionFailures = new Map<
 >([
   ["cancelled", "cancelled"],
   ["expired", "cancelled"],
+  ["number_confirmation_failed", "failed"],
   ["provider_capacity_unavailable", "capacity_unavailable"],
   ["provisioning_failed", "failed"],
   ["provisioning_quarantined", "failed"],
@@ -342,6 +344,9 @@ function connectionSetupStatusText(
     return "Waiting for WhatsApp to finish connecting.";
   }
   if (setupState === "connected") return "WhatsApp Connection active.";
+  if (setupState === "number_confirmation_failed") {
+    return "We couldn't confirm that this QR code was scanned by the WhatsApp account you entered. Start again and scan with that same account.";
+  }
   if (setupState === "provisioned") return "Connection Setup is ready.";
   if (setupState === "provider_capacity_unavailable") {
     return "WhatsApp Connection capacity is temporarily unavailable. Please try again later.";
@@ -567,7 +572,9 @@ export function ConnectionSetupForm({
         </Button>
       ) : null}
       {setupId !== null &&
-      (setupState === "expired" || setupState === "unavailable") ? (
+      (setupState === "expired" ||
+        setupState === "number_confirmation_failed" ||
+        setupState === "unavailable") ? (
         <Button onClick={onResetSetup} type="button" variant="outline">
           Start again
         </Button>

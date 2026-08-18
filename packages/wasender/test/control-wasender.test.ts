@@ -64,6 +64,39 @@ const runFailure = async <A>(
   effect: Effect.Effect<A, ProviderNeutralFailure>,
 ) => Effect.runPromise(Effect.flip(effect));
 
+const verifySessionNumber = async (userId: string) => {
+  const lifecycle = makeWasenderSessionLifecycle(
+    { credential, referenceSecret },
+    {
+      fetch: async (request) => {
+        if (request.url.endsWith("/api/whatsapp-sessions")) {
+          return json({
+            success: true,
+            data: [providerSession({ api_key: undefined })],
+          });
+        }
+        if (request.url.endsWith("/api/whatsapp-sessions/41")) {
+          return json({ success: true, data: providerSession() });
+        }
+        if (request.url.endsWith("/api/user")) {
+          return json({ success: true, data: { id: userId } });
+        }
+        return json({}, { status: 500 });
+      },
+    },
+  );
+  const [listed] = await Effect.runPromise(
+    lifecycle.listSessions({ setupMarker }),
+  );
+  if (listed === undefined) throw new Error("expected provider session");
+  return Effect.runPromise(
+    lifecycle.verifySessionNumber({
+      phoneNumber,
+      session: listed.session,
+    }),
+  );
+};
+
 describe("real Wasender lifecycle adapter", () => {
   test("creates one safely configured provider session with protected outputs", async () => {
     const requests: Request[] = [];
@@ -331,82 +364,20 @@ describe("real Wasender lifecycle adapter", () => {
     expect(methods).toEqual(["GET", "GET", "GET"]);
   });
 
-  test("verifies the exact normalized scanned account number from provider-backed session user info", async () => {
-    const lifecycle = makeWasenderSessionLifecycle(
-      { credential, referenceSecret },
-      {
-        fetch: async (request) => {
-          if (request.url.endsWith("/api/whatsapp-sessions")) {
-            return json({ success: true, data: [providerSession()] });
-          }
-          if (request.url.endsWith("/api/whatsapp-sessions/41")) {
-            return json({ success: true, data: providerSession() });
-          }
-          if (request.url.endsWith("/api/user")) {
-            return json({
-              success: true,
-              data: {
-                id: "15550123456@s.whatsapp.net",
-                lid: "linked-device-id",
-                name: "Owner",
-              },
-            });
-          }
-          return json({}, { status: 500 });
-        },
-      },
-    );
-
-    const sessions = await Effect.runPromise(
-      lifecycle.listSessions({ setupMarker }),
-    );
-    const verified = await Effect.runPromise(
-      lifecycle.verifySessionNumber({
-        phoneNumber,
-        session: sessions[0]!.session,
-      }),
-    );
-
-    expect(verified).toEqual({ outcome: "match" });
+  test.each([
+    ["personal account", "15550123456@s.whatsapp.net"],
+    ["business account linked device", "15550123456:12@s.whatsapp.net"],
+  ])("verifies a matching %s number from provider user info", async (_, id) => {
+    await expect(verifySessionNumber(id)).resolves.toEqual({
+      outcome: "match",
+    });
   });
 
-  test("fails closed when provider session user info does not expose an exact phone-number identity", async () => {
-    const lifecycle = makeWasenderSessionLifecycle(
-      { credential, referenceSecret },
-      {
-        fetch: async (request) => {
-          if (request.url.endsWith("/api/whatsapp-sessions")) {
-            return json({ success: true, data: [providerSession()] });
-          }
-          if (request.url.endsWith("/api/whatsapp-sessions/41")) {
-            return json({ success: true, data: providerSession() });
-          }
-          if (request.url.endsWith("/api/user")) {
-            return json({
-              success: true,
-              data: {
-                id: "123456789@lid",
-                lid: "linked-device-id",
-                name: "Owner",
-              },
-            });
-          }
-          return json({}, { status: 500 });
-        },
-      },
-    );
-
-    const sessions = await Effect.runPromise(
-      lifecycle.listSessions({ setupMarker }),
-    );
-    const verified = await Effect.runPromise(
-      lifecycle.verifySessionNumber({
-        phoneNumber,
-        session: sessions[0]!.session,
-      }),
-    );
-
-    expect(verified).toEqual({ outcome: "unverified" });
+  test.each([
+    ["different business account", "15550123457:12@s.whatsapp.net", "mismatch"],
+    ["ambiguous linked-device identity", "123456789@lid", "unverified"],
+  ] as const)("fails closed for %s", async (_, id, outcome) => {
+    await expect(verifySessionNumber(id)).resolves.toEqual({ outcome });
   });
 
   test("honors bounded throttling delay within the safe-read retry budget", async () => {

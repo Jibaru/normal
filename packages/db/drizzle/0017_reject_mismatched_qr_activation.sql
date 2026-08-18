@@ -195,6 +195,11 @@ END
 $function$;
 --> statement-breakpoint
 
+REVOKE ALL
+  ON FUNCTION public.fail_connection_setup_activation(uuid, text, text, timestamptz)
+  FROM PUBLIC;
+--> statement-breakpoint
+
 GRANT EXECUTE
   ON FUNCTION public.fail_connection_setup_activation(uuid, text, text, timestamptz)
   TO whatsapp_api_runtime;
@@ -254,5 +259,71 @@ BEGIN
   WHERE id = setup.id;
 
   RETURN true;
+END
+$function$;
+--> statement-breakpoint
+
+CREATE OR REPLACE FUNCTION public.renew_connection_setup_cleanup_lease(
+  requested_setup_id text,
+  requested_worker_id text,
+  requested_observed_at timestamptz
+)
+RETURNS boolean
+LANGUAGE sql
+STRICT
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $function$
+  WITH renewed AS (
+    UPDATE public.connection_setups
+    SET
+      cleanup_lease_expires_at = requested_observed_at + interval '2 minutes',
+      updated_at = greatest(updated_at, requested_observed_at)
+    WHERE id = requested_setup_id
+      AND state IN ('cancelled', 'expired', 'provisioning_failed')
+      AND cleanup_state = 'pending'
+      AND cleanup_lease_owner = requested_worker_id
+      AND cleanup_lease_expires_at > requested_observed_at
+    RETURNING 1
+  )
+  SELECT EXISTS (SELECT 1 FROM renewed)
+$function$;
+--> statement-breakpoint
+
+CREATE OR REPLACE FUNCTION public.release_connection_setup_cleanup_lease(
+  requested_setup_id text,
+  requested_worker_id text,
+  requested_observed_at timestamptz,
+  requested_failure_code text
+)
+RETURNS boolean
+LANGUAGE plpgsql
+STRICT
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $function$
+DECLARE
+  released boolean;
+BEGIN
+  IF requested_failure_code !~ '^[a-z][a-z0-9_]{0,63}$' THEN
+    RAISE invalid_parameter_value
+      USING MESSAGE = 'invalid Connection Setup cleanup failure';
+  END IF;
+
+  WITH changed AS (
+    UPDATE public.connection_setups
+    SET
+      cleanup_last_failure_code = requested_failure_code,
+      cleanup_lease_owner = NULL,
+      cleanup_lease_expires_at = NULL,
+      updated_at = greatest(updated_at, requested_observed_at)
+    WHERE id = requested_setup_id
+      AND state IN ('cancelled', 'expired', 'provisioning_failed')
+      AND cleanup_state = 'pending'
+      AND cleanup_lease_owner = requested_worker_id
+    RETURNING 1
+  )
+  SELECT EXISTS (SELECT 1 FROM changed) INTO released;
+  RETURN released;
 END
 $function$;

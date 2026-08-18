@@ -25,6 +25,11 @@ import {
 } from "./auth/human-identity";
 import { decodeBase64 } from "./base64-url";
 import {
+  ConnectionSetupProvisioningQueue,
+  type ConnectionSetupProvisioningQueueError,
+  type ConnectionSetupProvisioningQueueService,
+} from "./connection-setup-provisioning";
+import {
   type EncryptionError,
   type EnvelopeEncryption,
   EnvelopeEncryptionService,
@@ -203,6 +208,7 @@ export const WhatsAppConnectionIdentifiers =
   );
 
 export type WhatsAppConnectionRequirements =
+  | ConnectionSetupProvisioningQueueService
   | EnvelopeEncryption
   | HumanIdentityService
   | SafeTelemetryService
@@ -562,6 +568,8 @@ const rejectSetupActivation = (
     if (!failed) {
       return yield* Effect.fail(new WhatsAppConnectionActivationError());
     }
+    const queue = yield* ConnectionSetupProvisioningQueue;
+    yield* queue.enqueueCleanup(setup.setupId);
     return { outcome: "number_confirmation_failed" as const };
   });
 
@@ -578,11 +586,13 @@ export const observeConnectionSetup = (
 ): Effect.Effect<
   SetupObservation,
   | EncryptionError
+  | ConnectionSetupProvisioningQueueError
   | WhatsAppConnectionActivationError
   | WhatsAppConnectionNotAccessible
   | WhatsAppConnectionPersistenceError
   | WhatsAppConnectionProviderError,
   | EnvelopeEncryption
+  | ConnectionSetupProvisioningQueueService
   | WhatsAppConnectionClockService
   | WhatsAppConnectionIdentifiersService
   | WhatsAppConnectionPersistenceService
@@ -612,6 +622,13 @@ export const observeConnectionSetup = (
         loaded.failureCode === "source_rejected"
       ) {
         return { outcome: "provider_capacity_unavailable" };
+      }
+      if (
+        loaded.outcome === "provisioning_failed" &&
+        (loaded.failureCode === "scanned_number_mismatch" ||
+          loaded.failureCode === "scanned_number_unverified")
+      ) {
+        return { outcome: "number_confirmation_failed" };
       }
       return { outcome: loaded.outcome };
     }
