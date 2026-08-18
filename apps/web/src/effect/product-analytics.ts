@@ -34,6 +34,7 @@ export type ProductAnalyticsEvent =
       event: "feature_used";
       feature:
         | "additional_connection_setup"
+        | "onboarding_chatgpt_opened"
         | "mcp_guide_opened"
         | "activity_logs_viewed";
     };
@@ -78,6 +79,7 @@ const connectionSetupTimingPhases = new Set([
 ]);
 const features = new Set([
   "additional_connection_setup",
+  "onboarding_chatgpt_opened",
   "mcp_guide_opened",
   "activity_logs_viewed",
 ]);
