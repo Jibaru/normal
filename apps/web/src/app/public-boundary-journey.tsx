@@ -1577,6 +1577,7 @@ export function PublicBoundaryJourney({
             clearSetupDraft();
             setShowFirstConnectionOnboarding(false);
           }}
+          onProfileSaved={setOnboardingProfile}
           setupForm={{
             connectionName,
             onCancelSetup: cancelSetup,

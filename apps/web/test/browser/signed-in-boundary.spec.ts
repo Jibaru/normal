@@ -306,10 +306,21 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     page.getByRole("img", { name: "Scan this WhatsApp QR code" }),
   ).toHaveCount(0);
   await expect(page.getByTestId("connection-setup-status")).toHaveCount(0);
+  await expect(onboarding).toContainText("Your WhatsApp Connection is active.");
+  await expect(onboarding).toContainText(
+    "Claude still needs its own MCP Authorization for this WhatsApp Connection.",
+  );
+  await expect(onboarding).toContainText("Active WhatsApp Number");
   await expect(onboarding).toContainText("ending 3456");
   await expect(onboarding).toContainText(
     "observes supported WhatsApp Conversations from activation",
   );
+  await expect(onboarding).toContainText(
+    "Earlier WhatsApp history is not imported.",
+  );
+  await expect(
+    onboarding.getByRole("link", { name: "Open Claude" }).first(),
+  ).toHaveAttribute("href", "https://claude.ai/settings/connectors");
   await onboarding.getByRole("button", { name: "Go to dashboard" }).click();
   await expect(page.getByTestId("first-connection-onboarding")).toHaveCount(0);
   await expect(page.getByTestId("whatsapp-connection")).toContainText(
@@ -478,6 +489,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     "connectSession",
     "getQrCode",
     "reconcileSession",
+    "verifySessionNumber",
     "reconcileSession",
     "disconnectSession",
     "reconcileSession",
