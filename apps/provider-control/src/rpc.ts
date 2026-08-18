@@ -291,9 +291,11 @@ export const makeProviderControlRpc = (
   const emit = async (
     method: ProviderControlRpcMethod,
     outcome: "success" | ProviderControlFailureCode,
+    durationMs: number,
   ) => {
     try {
       await options.telemetry?.({
+        durationMs,
         event: "provider_control.rpc.completed",
         method,
         outcome,
@@ -315,12 +317,15 @@ export const makeProviderControlRpc = (
     ) => Effect.Effect<Value, unknown>,
     map: (value: Value) => Output,
   ): Promise<ProviderControlResult<Output>> => {
+    const startedAt = performance.now();
+    const durationMs = () =>
+      Math.max(0, Math.round(performance.now() - startedAt));
     let request: Request;
     try {
       request = decode(input);
     } catch {
       const error = boundaryFailure("invalid_request");
-      await emit(method, error.code);
+      await emit(method, error.code, durationMs());
       return failure(error);
     }
 
@@ -329,7 +334,7 @@ export const makeProviderControlRpc = (
       lifecycle = await options.loadLifecycle();
     } catch {
       const error = boundaryFailure("configuration_invalid");
-      await emit(method, error.code);
+      await emit(method, error.code, durationMs());
       return failure(error);
     }
 
@@ -338,22 +343,22 @@ export const makeProviderControlRpc = (
       result = await Effect.runPromise(Effect.either(run(lifecycle, request)));
     } catch {
       const error = invalidResponseFailure(operation);
-      await emit(method, error.code);
+      await emit(method, error.code, durationMs());
       return failure(error);
     }
     if (Either.isLeft(result)) {
       const error = providerFailure(result.left, operation);
-      await emit(method, error.code);
+      await emit(method, error.code, durationMs());
       return failure(error);
     }
 
     try {
       const output = map(result.right);
-      await emit(method, "success");
+      await emit(method, "success", durationMs());
       return success(output);
     } catch {
       const error = invalidResponseFailure(operation);
-      await emit(method, error.code);
+      await emit(method, error.code, durationMs());
       return failure(error);
     }
   };
