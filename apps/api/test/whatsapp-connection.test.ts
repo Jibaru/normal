@@ -4,6 +4,7 @@ import {
   HumanIdentity,
   InvalidHumanIdentity,
 } from "../src/auth/human-identity";
+import { ConnectionSetupProvisioningQueue } from "../src/connection-setup-provisioning";
 import { EnvelopeEncryptionService } from "../src/encryption/envelope";
 import {
   RestoreSafeDeletion,
@@ -76,6 +77,7 @@ const makeHarness = (
 ) => {
   const events: SafeTelemetryEvent[] = [];
   const providerCalls: string[] = [];
+  const cleanupEnqueues: string[] = [];
   const encryptedPurposes: string[] = [];
   const connections: Array<{
     displayName: string;
@@ -369,6 +371,13 @@ const makeHarness = (
     }),
     Layer.succeed(WhatsAppConnectionPersistence, persistence),
     Layer.succeed(WhatsAppConnectionProvider, provider),
+    Layer.succeed(ConnectionSetupProvisioningQueue, {
+      enqueue: () => Effect.die("not used"),
+      enqueueCleanup: (requestedSetupId) =>
+        Effect.sync(() => {
+          cleanupEnqueues.push(requestedSetupId);
+        }),
+    }),
     Layer.succeed(WhatsAppConnectionClock, {
       now: Effect.succeed("2026-07-31T12:04:00.000Z"),
     }),
@@ -456,6 +465,7 @@ const makeHarness = (
   );
 
   return {
+    cleanupEnqueues,
     connections,
     encryptedPurposes,
     events,
@@ -505,6 +515,7 @@ describe("WhatsApp Connection HTTP boundary", () => {
     expect(JSON.stringify(harness.events)).not.toContain("<svg");
     expect(JSON.stringify(harness.events)).not.toContain("cst_");
     expect(harness.connections).toEqual([]);
+    expect(harness.cleanupEnqueues).toEqual([]);
   });
 
   test("activates once from trusted connected state and lists only safe fields", async () => {
@@ -590,6 +601,25 @@ describe("WhatsApp Connection HTTP boundary", () => {
     expect(harness.providerCalls).toEqual([]);
   });
 
+  test.each(["scanned_number_mismatch", "scanned_number_unverified"])(
+    "preserves actionable number confirmation failure for persisted %s polls",
+    async (initialFailureCode) => {
+      const harness = makeHarness({
+        initialFailureCode,
+        initialSetupState: "provisioning_failed",
+      });
+
+      const response = await harness.handler(request(qrEndpoint));
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({
+        error: "number_confirmation_failed",
+        message: "Retry by scanning the same WhatsApp account you entered.",
+      });
+      expect(harness.providerCalls).toEqual([]);
+    },
+  );
+
   test("fails closed when the scanned WhatsApp account does not match the reserved number", async () => {
     const harness = makeHarness({ numberVerification: "mismatch" });
     harness.scanQr();
@@ -602,6 +632,7 @@ describe("WhatsApp Connection HTTP boundary", () => {
       message: "Retry by scanning the same WhatsApp account you entered.",
     });
     expect(harness.connections).toEqual([]);
+    expect(harness.cleanupEnqueues).toEqual([setupId]);
     expect(harness.providerCalls).toEqual([
       "reconcileSession",
       "verifySessionNumber",
@@ -622,6 +653,7 @@ describe("WhatsApp Connection HTTP boundary", () => {
       message: "Retry by scanning the same WhatsApp account you entered.",
     });
     expect(harness.connections).toEqual([]);
+    expect(harness.cleanupEnqueues).toEqual([setupId]);
     expect(harness.providerCalls).toEqual([
       "reconcileSession",
       "verifySessionNumber",
@@ -634,6 +666,9 @@ describe("WhatsApp Connection HTTP boundary", () => {
     await harness.handler(request(qrEndpoint));
     const deleted = await harness.handler(request(deleteEndpoint, "POST"));
     const replay = await harness.handler(request(deleteEndpoint, "POST"));
+    const reconnectAfterDeletion = await harness.handler(
+      request(reconnectEndpoint, "POST"),
+    );
     const listed = await harness.handler(request(listEndpoint));
     expect(deleted.status).toBe(200);
     expect(await deleted.json()).toMatchObject({
@@ -641,6 +676,7 @@ describe("WhatsApp Connection HTTP boundary", () => {
       whatsapp_connection_id: connectionId,
     });
     expect(replay.status).toBe(200);
+    expect(reconnectAfterDeletion.status).toBe(404);
     expect(await listed.json()).toEqual({ whatsapp_connections: [] });
   });
 

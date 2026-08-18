@@ -505,6 +505,10 @@ export function PublicBoundaryJourney({
   const [deletionState, setDeletionState] = useState<
     "idle" | "deleting" | "unavailable"
   >("idle");
+  const [deletingConnectionId, setDeletingConnectionId] = useState<
+    string | null
+  >(null);
+  const [connectionDeletionStatus, setConnectionDeletionStatus] = useState("");
   const setupIntent = useRef<{
     readonly idempotencyKey: string;
     readonly name: string;
@@ -683,6 +687,91 @@ export function PublicBoundaryJourney({
       setState("signed_out");
     } catch {
       setDeletionState("unavailable");
+    }
+  };
+
+  const deleteConnection = async (connection: SafeWhatsAppConnection) => {
+    if (deletingConnectionId !== null) return;
+    if (
+      !window.confirm(
+        `Start irreversible Connection Deletion for the WhatsApp Connection ending ${connection.numberSuffix}? Access stops immediately while provider cleanup continues.`,
+      )
+    ) {
+      return;
+    }
+
+    setDeletingConnectionId(connection.id);
+    setConnectionDeletionStatus("");
+    try {
+      const token = await getToken();
+      if (token === null) throw new Error("signed out");
+      const response = await fetch(
+        `${connectionsEndpoint}/${encodeURIComponent(connection.id)}/delete`,
+        {
+          headers: { authorization: `Bearer ${token}` },
+          method: "POST",
+        },
+      );
+      const body = (await response.json()) as {
+        readonly deletion?: { readonly outcome?: unknown };
+        readonly whatsapp_connection_id?: unknown;
+      };
+      if (
+        !response.ok ||
+        body.deletion?.outcome !== "complete" ||
+        body.whatsapp_connection_id !== connection.id
+      ) {
+        throw new Error("invalid deletion response");
+      }
+
+      setConnections((current) =>
+        current.filter((candidate) => candidate.id !== connection.id),
+      );
+      setConfigurationConnectionId((current) =>
+        current === connection.id ? null : current,
+      );
+      setReconnectConnectionId((current) =>
+        current === connection.id ? null : current,
+      );
+      setConnectionLifecycleStatus((current) => {
+        const next = { ...current };
+        delete next[connection.id];
+        return next;
+      });
+      setNameDrafts((current) => {
+        const next = { ...current };
+        delete next[connection.id];
+        return next;
+      });
+      setNameStatus((current) => {
+        const next = { ...current };
+        delete next[connection.id];
+        return next;
+      });
+      setRetentionAcknowledgements((current) => {
+        const next = { ...current };
+        delete next[connection.id];
+        return next;
+      });
+      setRetentionDrafts((current) => {
+        const next = { ...current };
+        delete next[connection.id];
+        return next;
+      });
+      setRetentionStatus((current) => {
+        const next = { ...current };
+        delete next[connection.id];
+        return next;
+      });
+      setConnectionDeletionStatus(
+        `Connection Deletion started for the WhatsApp Connection ending ${connection.numberSuffix}. Access stops immediately while provider cleanup continues.`,
+      );
+    } catch {
+      setConnectionDeletionStatus(
+        `Connection Deletion is temporarily unavailable for the WhatsApp Connection ending ${connection.numberSuffix}.`,
+      );
+    } finally {
+      setDeletingConnectionId(null);
     }
   };
 
@@ -1162,6 +1251,7 @@ export function PublicBoundaryJourney({
       if (!isCurrent()) return;
       replaceQrImage(null);
       if (
+        body.error === "number_confirmation_failed" ||
         body.error === "provider_capacity_unavailable" ||
         body.error === "provisioning_failed" ||
         body.error === "provisioning_quarantined"
@@ -2124,6 +2214,11 @@ export function PublicBoundaryJourney({
               </DialogContent>
             </Dialog>
           </div>
+          {connectionDeletionStatus.length > 0 ? (
+            <p aria-live="polite" className="text-sm text-muted-foreground">
+              {connectionDeletionStatus}
+            </p>
+          ) : null}
           {connections.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               No WhatsApp Connections yet.
@@ -2191,15 +2286,29 @@ export function PublicBoundaryJourney({
                       <DropdownMenuContent align="end">
                         <DropdownMenuGroup>
                           <DropdownMenuItem
+                            disabled={deletingConnectionId === connection.id}
                             onClick={() =>
                               setConfigurationConnectionId(connection.id)
                             }
                           >
                             Configure
                           </DropdownMenuItem>
+                          <DropdownMenuItem
+                            disabled={
+                              deletingConnectionId === connection.id ||
+                              connectionLifecycleAction !== null
+                            }
+                            onClick={() => void deleteConnection(connection)}
+                            variant="destructive"
+                          >
+                            Delete Connection
+                          </DropdownMenuItem>
                           {connection.state === "connected" ? (
                             <DropdownMenuItem
-                              disabled={connectionLifecycleAction !== null}
+                              disabled={
+                                connectionLifecycleAction !== null ||
+                                deletingConnectionId === connection.id
+                              }
                               onClick={() =>
                                 startConnectionLifecycle(
                                   connection,
@@ -2215,6 +2324,7 @@ export function PublicBoundaryJourney({
                             connection.state === "degraded" ||
                             connection.state === "reconnect_required" ? (
                             <DropdownMenuItem
+                              disabled={deletingConnectionId === connection.id}
                               onClick={() =>
                                 setReconnectConnectionId(connection.id)
                               }
