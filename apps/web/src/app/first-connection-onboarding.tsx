@@ -102,6 +102,8 @@ interface FirstConnectionConnection {
   readonly retentionDays: number | null;
 }
 
+type VerificationClient = Extract<IntendedMcpClient, "claude" | "chatgpt">;
+
 interface ProfileDraft {
   readonly primaryUseCase: PrimaryUseCase | "";
   readonly whatsappUsageContext: WhatsAppUsageContext | "";
@@ -470,6 +472,148 @@ function CopyServerUrl({ serverUrl }: { readonly serverUrl: string }) {
         {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
       </Button>
     </div>
+  );
+}
+
+function CopyPrompt({
+  ariaLabel,
+  label,
+  value,
+}: {
+  readonly ariaLabel: string;
+  readonly label: string;
+  readonly value: string;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    await navigator.clipboard.writeText(value);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  };
+
+  return (
+    <div className="rounded-xl border bg-muted/25 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-xs text-muted-foreground">{label}</p>
+        <Button
+          aria-label={ariaLabel}
+          onClick={copy}
+          size="icon-sm"
+          type="button"
+          variant="ghost"
+        >
+          {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+        </Button>
+      </div>
+      <pre className="mt-3 whitespace-pre-wrap text-sm leading-6">{value}</pre>
+    </div>
+  );
+}
+
+export function buildVerificationPromptCopy(
+  client: VerificationClient,
+  connection: FirstConnectionConnection,
+) {
+  const clientName = client === "claude" ? "Claude" : "ChatGPT";
+  const invocation =
+    client === "claude" ? "Usa Normal" : "Usa el conector Normal";
+  const authorizationHelpClient = client === "claude" ? "Claude" : "ChatGPT";
+
+  const spanishPrompt = `${invocation} para verificar, solo en modo de lectura, que puedes ver mi conexión de WhatsApp llamada "${connection.displayName}" terminada en ${connection.numberSuffix}. Responde solo con el nombre visible y el sufijo del número; nunca muestres el número completo. Si Normal no aparece o si no ves esta conexión, dímelo y recuérdame revisar la autorización de ${authorizationHelpClient} o reconectar la conexión en Normal. No envíes mensajes ni pidas permisos adicionales.`;
+
+  const englishPrompt = `Use Normal for a read-only check that you can see my WhatsApp Connection named "${connection.displayName}" ending in ${connection.numberSuffix}. Reply with the display name and the number suffix only, never the full number. If Normal is unavailable or you cannot see this connection, tell me and remind me to review the ${authorizationHelpClient} authorization or reconnect the connection in Normal. Do not send messages or request any additional permissions.`;
+
+  return {
+    clientName,
+    englishPrompt,
+    expectedEnglishResponse: `${connection.displayName}, number ending in ${connection.numberSuffix}.`,
+    expectedSpanishResponse: `${connection.displayName}, número terminado en ${connection.numberSuffix}.`,
+    missingConnectionHelp:
+      "If Normal is enabled but this WhatsApp Connection is missing, reconnect it in Normal, then authorize it again with this connection selected.",
+    missingToolHelp: `If ${clientName} says Normal is unavailable, reopen MCP Authorization and confirm that this WhatsApp Connection is selected for ${clientName}.`,
+    spanishPrompt,
+  };
+}
+
+function VerificationPromptCard({
+  client,
+  connection,
+}: {
+  readonly client: VerificationClient;
+  readonly connection: FirstConnectionConnection;
+}) {
+  const copy = buildVerificationPromptCopy(client, connection);
+
+  return (
+    <section
+      className="rounded-2xl bg-background p-5 ring-1 ring-border"
+      data-testid="mcp-verification-prompt"
+    >
+      <p className="text-sm font-medium text-muted-foreground">
+        First-run verification
+      </p>
+      <h3 className="mt-1 text-lg font-semibold tracking-tight">
+        Verify {copy.clientName} can see this WhatsApp Connection
+      </h3>
+      <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
+        Paste this before any broader read request or send. It performs a
+        read-only connection check and asks for display name plus number suffix
+        only.
+      </p>
+      <div className="mt-4 grid gap-4 xl:grid-cols-2">
+        <CopyPrompt
+          ariaLabel={`Copy ${copy.clientName} verification prompt in Spanish`}
+          label="Spanish prompt"
+          value={copy.spanishPrompt}
+        />
+        <CopyPrompt
+          ariaLabel={`Copy ${copy.clientName} verification prompt in English`}
+          label="English equivalent"
+          value={copy.englishPrompt}
+        />
+      </div>
+      <div className="mt-4 grid gap-3 lg:grid-cols-2">
+        <div className="rounded-xl bg-muted/40 p-4 text-sm leading-6">
+          <p className="font-medium">Expected response</p>
+          <p className="mt-2 text-muted-foreground">
+            The reply should mention <strong>{connection.displayName}</strong>{" "}
+            and suffix <strong>{connection.numberSuffix}</strong> only, never
+            the full WhatsApp Number.
+          </p>
+          <p className="mt-2 text-muted-foreground">
+            Example: {copy.expectedSpanishResponse}
+          </p>
+          <p className="text-muted-foreground">
+            English: {copy.expectedEnglishResponse}
+          </p>
+        </div>
+        <div className="rounded-xl bg-muted/40 p-4 text-sm leading-6">
+          <p className="font-medium">If the tool or connection is missing</p>
+          <p className="mt-2 text-muted-foreground">{copy.missingToolHelp}</p>
+          <p className="mt-2 text-muted-foreground">
+            {copy.missingConnectionHelp}
+          </p>
+          <p className="mt-2 text-muted-foreground">
+            Use{" "}
+            <a
+              className="underline underline-offset-4"
+              href="/dashboard/authorizations"
+            >
+              MCP Authorizations
+            </a>{" "}
+            for access review and{" "}
+            <a
+              className="underline underline-offset-4"
+              href="/dashboard/connections"
+            >
+              WhatsApp Connections
+            </a>{" "}
+            for reconnection help.
+          </p>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -993,6 +1137,12 @@ export function FirstConnectionOnboarding({
               forward. Earlier WhatsApp history is not imported.
             </p>
           </div>
+          {intendedMcpClient === "claude" || intendedMcpClient === "chatgpt" ? (
+            <VerificationPromptCard
+              client={intendedMcpClient}
+              connection={connectedConnection}
+            />
+          ) : null}
           {intendedMcpClient === "claude" || intendedMcpClient === "chatgpt" ? (
             <McpConnectionGuides
               client={intendedMcpClient}

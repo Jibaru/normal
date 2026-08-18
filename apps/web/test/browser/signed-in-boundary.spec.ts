@@ -305,6 +305,15 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(
     page.getByRole("heading", { name: "WhatsApp Connection active" }),
   ).toBeVisible({ timeout: 15_000 });
+  const verificationPrompt = onboarding.getByTestId("mcp-verification-prompt");
+  await expect(verificationPrompt).toContainText(
+    "Verify ChatGPT can see this WhatsApp Connection",
+  );
+  await expect(verificationPrompt).toContainText("Usa el conector Normal");
+  await expect(verificationPrompt).toContainText(
+    "Personal WhatsApp, número terminado en 3456.",
+  );
+  await expect(verificationPrompt).not.toContainText("@normal");
   const onboardingChatgptAction = onboarding.getByRole("link", {
     name: "Open ChatGPT in a new tab",
   });
