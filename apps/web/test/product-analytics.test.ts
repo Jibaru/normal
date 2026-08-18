@@ -122,6 +122,46 @@ describe("product analytics boundary", () => {
     ).not.toThrow();
   });
 
+  test("allowlists the prominent ChatGPT onboarding action without identifying properties", async () => {
+    const requests: Array<unknown> = [];
+    globalThis.fetch = ((_input, init) => {
+      requests.push(JSON.parse(String(init?.body)) as unknown);
+      return Promise.resolve(new Response(null, { status: 204 }));
+    }) as typeof fetch;
+    configureProductAnalytics({
+      host: "https://us.i.posthog.com",
+      projectKey: "phc_example",
+    });
+    const action: ProductAnalyticsEvent = {
+      event: "feature_used",
+      feature: "onboarding_chatgpt_opened",
+    };
+
+    expect(isAllowlistedProductAnalyticsEvent(action)).toBe(true);
+    expect(
+      isAllowlistedProductAnalyticsEvent({
+        ...action,
+        connection_id: "con_secret",
+        server_url: "https://api.example.test/mcp",
+        user_id: "user_secret",
+      }),
+    ).toBe(false);
+
+    captureProductAnalyticsEvent(action);
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      event: "feature_used",
+      properties: {
+        feature: "onboarding_chatgpt_opened",
+        $process_person_profile: false,
+      },
+    });
+    expect(JSON.stringify(requests)).not.toMatch(
+      /connection_id|server_url|user_id/iu,
+    );
+  });
+
   test("does not capture when analytics is unconfigured", () => {
     let requests = 0;
     globalThis.fetch = (() => {
