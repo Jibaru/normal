@@ -12,6 +12,7 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
 }) => {
   let createRequests = 0;
   let failKeysListAfterCreate = true;
+  const tokenRequests: Array<unknown> = [];
   await page.route("https://api.example.test/**", async (route) => {
     const original = route.request();
     const requestPath = new URL(original.url()).pathname;
@@ -95,7 +96,10 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
       status: response.status(),
     });
   });
-  await installClerkBrowser(page, { signedIn: true });
+  await installClerkBrowser(page, {
+    onTokenRequest: (options) => tokenRequests.push(options),
+    signedIn: true,
+  });
   await page.goto("/dashboard/api-keys");
 
   const panel = page.getByRole("region", { name: "API Keys" });
@@ -127,6 +131,7 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
     /^normal_apk_[A-Za-z0-9_-]{21}\.[A-Za-z0-9_-]{43}$/u,
   );
   expect(createRequests).toBe(1);
+  expect(tokenRequests).toContainEqual({ skipCache: true });
   await expect(panel).not.toContainText("temporarily unavailable");
 
   const listed = await request.get(

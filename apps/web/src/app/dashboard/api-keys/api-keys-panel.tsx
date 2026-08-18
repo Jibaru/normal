@@ -211,10 +211,7 @@ export function ApiKeysPanel({
   }, [load]);
 
   const submitCreate = useReverification(async () => {
-    const token = await getToken({
-      skipCache: true,
-      template: clerkJwtTemplate,
-    });
+    const token = await getToken({ skipCache: true });
     if (!token) throw new Error("token unavailable");
     const response = await fetch(apiKeysEndpoint, {
       body: JSON.stringify({
