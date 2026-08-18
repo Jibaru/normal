@@ -217,6 +217,11 @@ let providerConnectionState:
   | "reconnect_required"
   | "degraded" = "disconnected";
 let lifecycleClaimId: string | null = null;
+let connectionDeletionReceipt: {
+  readonly deletionMarkerId: string;
+  readonly publicId: string;
+  readonly requestedAt: string;
+} | null = null;
 const retentionPolicies = new Map<string, number | null>();
 const recipientExclusions = new Map<string, boolean>();
 const testRecipients = [
@@ -1416,8 +1421,67 @@ const makeTestLayer = (
             connection.displayName;
           return protectedTestConnection(connection);
         }),
-      prepareDeletion: () => Effect.die("not used"),
-      finishDeletion: () => Effect.die("not used"),
+      prepareDeletion: ({ clerkUserId, publicId }) =>
+        Effect.sync(() => {
+          if (
+            connectionDeletionReceipt !== null &&
+            connectionDeletionReceipt.publicId === publicId
+          ) {
+            return {
+              outcome: "complete" as const,
+              ...connectionDeletionReceipt,
+            };
+          }
+          const connection = whatsAppConnections.find(
+            (candidate) =>
+              clerkUserId === "user_test_public_boundary" &&
+              candidate.publicId === publicId,
+          );
+          if (connection === undefined) return null;
+          return {
+            outcome: "prepared" as const,
+            publicId,
+            personalAccountId: testAccountKey.personalAccountId,
+            connectionId: "20000000-0000-4000-8000-000000000018",
+            accountKey: testAccountKey,
+            connectionKey: testConnectionKey(
+              "20000000-0000-4000-8000-000000000018",
+            ),
+            providerLocator: {
+              ciphertext: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcY",
+              keyVersion: 1,
+              nonce: "AQIDBAUGBwgJCgsM",
+              version: 1 as const,
+            },
+          };
+        }),
+      finishDeletion: ({
+        clerkUserId,
+        deletionMarkerId,
+        publicId,
+        requestedAt,
+      }) =>
+        Effect.sync(() => {
+          if (
+            connectionDeletionReceipt !== null &&
+            connectionDeletionReceipt.publicId === publicId
+          ) {
+            return connectionDeletionReceipt;
+          }
+          if (clerkUserId !== "user_test_public_boundary") return null;
+          const index = whatsAppConnections.findIndex(
+            (candidate) => candidate.publicId === publicId,
+          );
+          if (index < 0) return null;
+          whatsAppConnections.splice(index, 1);
+          lifecycleClaimId = null;
+          connectionDeletionReceipt = {
+            deletionMarkerId,
+            publicId,
+            requestedAt,
+          };
+          return connectionDeletionReceipt;
+        }),
       loadSetup: ({ clerkUserId, setupId }) =>
         Effect.sync(() => {
           if (clerkUserId !== "user_test_public_boundary") return null;
@@ -1541,10 +1605,29 @@ const makeTestLayer = (
     }),
     Layer.succeed(RestoreSafeDeletion, {
       markers: {
-        create: () => Effect.die("not used"),
+        create: ({ deletionKind, keyUnavailableAt, requestedAt }) =>
+          Effect.succeed({
+            markerId: "a".repeat(64),
+            objectKey: `markers/v1/${"a".repeat(64)}.json`,
+            marker: {
+              version: 1,
+              deletionKind,
+              requestedAt,
+              keyUnavailableAt,
+            },
+          }),
         enumerate: () => Effect.succeed([]),
       },
-      capsules: { create: () => Effect.die("not used") },
+      capsules: {
+        create: ({ deletionMarkerId, keyVersion }) =>
+          Effect.succeed({
+            ciphertext: new Uint8Array([1]),
+            deletionMarkerId,
+            encryptionContext: {},
+            keyId: "deletion-key",
+            keyVersion,
+          }),
+      },
     }),
     Layer.succeed(StoredMediaContainerService, {
       read: () => Effect.die("not used"),
@@ -1583,30 +1666,36 @@ const makeTestLayer = (
                     "Test WhatsApp",
                 ),
               )
-            : context.fieldOrObjectPurpose === "provider-session-authority"
+            : context.fieldOrObjectPurpose === "provider-session-locator"
               ? Effect.succeed(
                   new TextEncoder().encode(
-                    JSON.stringify({
-                      sessionCredential: "test-session-credential",
-                      webhookVerificationSecret: "test-webhook-secret",
-                    }),
+                    "wsl_0000000000000000000000000000000000000000000",
                   ),
                 )
-              : context.fieldOrObjectPurpose === "webhook-identity-key"
-                ? Effect.succeed(new Uint8Array(32).fill(18))
-                : context.fieldOrObjectPurpose === "message-search-key"
-                  ? Effect.succeed(new Uint8Array(32).fill(19))
-                  : context.fieldOrObjectPurpose === "original-request"
-                    ? Effect.sync(() => {
-                        const payload = encryptedWebhookPayloads.get(
-                          context.recordId,
-                        );
-                        if (payload === undefined) {
-                          throw new Error("missing encrypted test payload");
-                        }
-                        return payload.slice();
-                      })
-                    : Effect.die("not used"),
+              : context.fieldOrObjectPurpose === "provider-session-authority"
+                ? Effect.succeed(
+                    new TextEncoder().encode(
+                      JSON.stringify({
+                        sessionCredential: "test-session-credential",
+                        webhookVerificationSecret: "test-webhook-secret",
+                      }),
+                    ),
+                  )
+                : context.fieldOrObjectPurpose === "webhook-identity-key"
+                  ? Effect.succeed(new Uint8Array(32).fill(18))
+                  : context.fieldOrObjectPurpose === "message-search-key"
+                    ? Effect.succeed(new Uint8Array(32).fill(19))
+                    : context.fieldOrObjectPurpose === "original-request"
+                      ? Effect.sync(() => {
+                          const payload = encryptedWebhookPayloads.get(
+                            context.recordId,
+                          );
+                          if (payload === undefined) {
+                            throw new Error("missing encrypted test payload");
+                          }
+                          return payload.slice();
+                        })
+                      : Effect.die("not used"),
       decryptMany: () => Effect.die("not used"),
       encrypt: ({ context, plaintext }) =>
         Effect.sync(() => {

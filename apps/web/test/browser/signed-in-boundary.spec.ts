@@ -601,6 +601,89 @@ test("bootstraps another Clerk User and shows provider capacity failure during C
   );
 });
 
+test("starts irreversible Connection Deletion and keeps the deleted connection gone after refresh", async ({
+  page,
+  request,
+}) => {
+  await page.route("https://api.example.test/**", async (route) => {
+    const original = route.request();
+    const localUrl = new URL(original.url());
+    localUrl.protocol = "http:";
+    localUrl.hostname = "127.0.0.1";
+    localUrl.port = apiPort;
+
+    const response = await request.fetch(localUrl.toString(), {
+      data: original.postDataBuffer(),
+      headers: {
+        ...original.headers(),
+        origin: "http://127.0.0.1:3000",
+      },
+      method: original.method(),
+    });
+    await route.fulfill({
+      body: await response.body(),
+      headers: {
+        ...response.headers(),
+        "access-control-allow-origin": webOrigin,
+      },
+      status: response.status(),
+    });
+  });
+  await installClerkBrowser(page, { signedIn: true });
+  await page.goto("/dashboard/connections");
+
+  await completeFirstConnectionProfile(page);
+  const onboarding = page.getByTestId("first-connection-onboarding");
+  await onboarding
+    .getByLabel("Name", { exact: true })
+    .fill("Personal WhatsApp");
+  await onboarding.getByLabel("WhatsApp number").fill("+1 (555) 012-3456");
+  await onboarding
+    .getByRole("button", { name: "Continue", exact: true })
+    .click();
+  await expect(
+    page.getByRole("img", { name: "Scan this WhatsApp QR code" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "WhatsApp Connection active" }),
+  ).toBeVisible({ timeout: 15_000 });
+  await onboarding.getByRole("button", { name: "Go to dashboard" }).click();
+
+  const connection = page.getByTestId("whatsapp-connection");
+  let confirmationMessage = "";
+  const confirmation = page.waitForEvent("dialog").then(async (dialog) => {
+    confirmationMessage = dialog.message();
+    expect(dialog.type()).toBe("confirm");
+    await dialog.accept();
+  });
+  await connection
+    .getByRole("button", {
+      name: "Options for WhatsApp Connection ending 3456",
+    })
+    .click();
+  await page.getByRole("menuitem", { name: "Delete Connection" }).click();
+  await confirmation;
+
+  expect(confirmationMessage).toContain("irreversible Connection Deletion");
+  await expect(
+    page.getByText(
+      "Connection Deletion started for the WhatsApp Connection ending 3456. Access stops immediately while provider cleanup continues.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByTestId("whatsapp-connection")).toHaveCount(0);
+  await expect(page.getByText("No WhatsApp Connections yet.")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Register WhatsApp Number" }),
+  ).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByTestId("whatsapp-connection")).toHaveCount(0);
+  await expect(page.getByTestId("first-connection-onboarding")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Security and control" }),
+  ).toBeVisible();
+});
+
 test("keeps the Personal Account usable when MCP Authorization listing is unavailable", async ({
   page,
   request,
