@@ -632,12 +632,19 @@ test.describe("Connection Setup loading UI", () => {
       .click();
 
     const panel = onboarding.getByTestId("connection-setup-panel");
-    const placeholder = panel.locator("div[aria-hidden='true'].size-64");
+    const placeholder = panel.getByTestId(
+      "connection-setup-loading-placeholder",
+    );
+    const loadingProgress = panel.getByTestId(
+      "connection-setup-loading-progress",
+    );
     await expect(panel).toBeVisible();
     await expect(page.getByTestId("connection-setup-status")).toHaveText(
       "Starting Connection Setup.",
     );
     await expect(onboarding).toContainText("Starting Connection Setup");
+    await expect(placeholder).toBeVisible();
+    await expect(loadingProgress).toContainText("Provisioning setup");
     await expect(
       page.getByRole("img", { name: "Scan this WhatsApp QR code" }),
     ).toHaveCount(0);
@@ -650,6 +657,7 @@ test.describe("Connection Setup loading UI", () => {
     await expect(onboarding).toContainText("Preparing your QR code");
     await expect(panel).toBeVisible();
     await expect(placeholder).toBeVisible();
+    await expect(loadingProgress).toContainText("Waiting for QR code");
     await expect(
       page.getByRole("img", { name: "Scan this WhatsApp QR code" }),
     ).toHaveCount(0);
@@ -676,6 +684,8 @@ test.describe("Connection Setup loading UI", () => {
     await expect(page.getByTestId("connection-setup-status")).toHaveText(
       /Connection Setup cancelled\./u,
     );
+    await expect(placeholder).toHaveCount(0);
+    await expect(loadingProgress).toHaveCount(0);
     releaseQrPoll?.();
     await expect(
       onboarding.getByRole("button", { name: "Start again" }),
@@ -754,6 +764,12 @@ test("shows a terminal provisioning failure during Connection Setup", async ({
   );
   await expect(
     page.getByRole("img", { name: "Scan this WhatsApp QR code" }),
+  ).toHaveCount(0);
+  await expect(
+    onboarding.getByTestId("connection-setup-loading-placeholder"),
+  ).toHaveCount(0);
+  await expect(
+    onboarding.getByTestId("connection-setup-loading-progress"),
   ).toHaveCount(0);
 });
 

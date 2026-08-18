@@ -625,6 +625,7 @@ export function ConnectionSetupForm({
   const panelCopy = connectionSetupPanelCopy(setupState, setupCleanupState);
   const showSetupPanel = setupState !== "idle";
   const showLoadingPanel = isConnectionSetupLoadingState(setupState);
+  const showSetupVisual = qrImageUrl !== null || showLoadingPanel;
   const fields = (
     <>
       <FieldGroup>
@@ -669,34 +670,37 @@ export function ConnectionSetupForm({
             {statusText}
           </p>
           <div
-            className="grid gap-5 rounded-2xl border bg-muted/20 p-4 sm:grid-cols-[auto_1fr] sm:items-center"
+            className={`grid gap-5 rounded-2xl border bg-muted/20 p-4 ${showSetupVisual ? "sm:grid-cols-[auto_1fr] sm:items-center" : ""}`}
             data-testid="connection-setup-panel"
           >
-            <div className="flex justify-center sm:justify-start">
-              {qrImageUrl === null ? (
-                <div
-                  aria-hidden="true"
-                  className="flex size-64 items-center justify-center rounded-xl bg-background p-4 ring-1 ring-border"
-                >
-                  <div className="flex w-full flex-col gap-3">
-                    <Skeleton className="aspect-square w-full rounded-lg motion-reduce:animate-none" />
-                    <Skeleton className="h-4 w-2/3 motion-reduce:animate-none" />
-                    <Skeleton className="h-4 w-5/6 motion-reduce:animate-none" />
+            {showSetupVisual ? (
+              <div className="flex justify-center sm:justify-start">
+                {qrImageUrl === null ? (
+                  <div
+                    aria-hidden="true"
+                    className="flex size-64 items-center justify-center rounded-xl bg-background p-4 ring-1 ring-border"
+                    data-testid="connection-setup-loading-placeholder"
+                  >
+                    <div className="flex w-full flex-col gap-3">
+                      <Skeleton className="aspect-square w-full rounded-lg motion-reduce:animate-none" />
+                      <Skeleton className="h-4 w-2/3 motion-reduce:animate-none" />
+                      <Skeleton className="h-4 w-5/6 motion-reduce:animate-none" />
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <>
-                  {/* The object URL is created from the authenticated, non-persisted
+                ) : (
+                  <>
+                    {/* The object URL is created from the authenticated, non-persisted
                   SVG response and is revoked as soon as setup completes. */}
-                  {/* biome-ignore lint/performance/noImgElement: QR bytes are already a complete generated SVG. */}
-                  <img
-                    alt="Scan this WhatsApp QR code"
-                    className="size-64 self-center rounded-lg bg-background p-3 ring-1 ring-border"
-                    src={qrImageUrl}
-                  />
-                </>
-              )}
-            </div>
+                    {/* biome-ignore lint/performance/noImgElement: QR bytes are already a complete generated SVG. */}
+                    <img
+                      alt="Scan this WhatsApp QR code"
+                      className="size-64 self-center rounded-lg bg-background p-3 ring-1 ring-border"
+                      src={qrImageUrl}
+                    />
+                  </>
+                )}
+              </div>
+            ) : null}
             <div className="space-y-3">
               <p
                 className="text-sm font-medium text-foreground"
@@ -715,7 +719,10 @@ export function ConnectionSetupForm({
                       {panelCopy.hint}
                     </p>
                     {showLoadingPanel ? (
-                      <div className="inline-flex items-center gap-2 rounded-full bg-background px-3 py-1.5 text-sm text-muted-foreground ring-1 ring-border">
+                      <div
+                        className="inline-flex items-center gap-2 rounded-full bg-background px-3 py-1.5 text-sm text-muted-foreground ring-1 ring-border"
+                        data-testid="connection-setup-loading-progress"
+                      >
                         <Spinner className="motion-reduce:animate-none" />
                         <span>
                           {setupState === "loading"
