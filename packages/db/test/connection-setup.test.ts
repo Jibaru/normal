@@ -319,6 +319,8 @@ describe("Connection Setup repository", () => {
           personalAccountId: accountA,
           version: 1,
         },
+        createdAt,
+        firstClaim: true,
         connectionKey: {
           connectionId: "cst_000000000000000000001",
           keyVersion: 1,
@@ -326,6 +328,7 @@ describe("Connection Setup repository", () => {
           version: 1,
         },
         personalAccountId: accountA,
+        provisioningStartedAt: "2026-07-31T12:01:00.000Z",
         setupId: "cst_000000000000000000001",
         webhookIngressId: expect.stringMatching(
           /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
@@ -459,7 +462,13 @@ describe("Connection Setup repository", () => {
       setupId: "cst_000000000000000000001",
       workerId: "cspw_1111111111111111111111111111111111111111111",
     });
-    expect(retry).toMatchObject({ outcome: "claimed" });
+    expect(retry).toMatchObject({
+      outcome: "claimed",
+      setup: {
+        firstClaim: false,
+        provisioningStartedAt: "2026-07-31T12:01:00.000Z",
+      },
+    });
   });
 
   test("makes a definitive lifecycle rejection terminal and ineligible for recovery", async () => {

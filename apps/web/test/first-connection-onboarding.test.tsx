@@ -119,12 +119,19 @@ describe("first-connection onboarding verification prompt", () => {
     expect(copy.missingConnectionHelp).toContain(
       "revise the existing MCP Authorization or create a new one",
     );
+    expect(copy.missingConnectionHelp).toContain("explicitly selects");
     expect(copy.missingConnectionHelp).not.toContain("Reconnect");
     expect(copy.unavailableConnectionHelp).toContain(
       "Reconnect in Normal only",
     );
+    expect(copy.unavailableConnectionHelp).toContain(
+      "lifecycle state is unavailable",
+    );
     expect(copy.englishPrompt).toContain(
       "active connection is missing from the results",
+    );
+    expect(copy.englishPrompt).toContain(
+      "Recommend reconnecting it in Normal only if it is listed as unavailable",
     );
   });
 
@@ -172,6 +179,10 @@ describe("first-connection onboarding verification prompt", () => {
       expect(html).toContain("Personal WhatsApp, número terminado en 3456.");
       expect(html).toContain("Personal WhatsApp, number ending in 3456.");
       expect(html).toContain("never the full WhatsApp Number");
+      expect(html).toContain(
+        "revise the existing MCP Authorization or create a new one",
+      );
+      expect(html).toContain("Reconnect in Normal only when");
       expect(html).toContain("/dashboard/authorizations");
       expect(html).toContain("/dashboard/connections");
       expect(html).not.toContain("+1 (555) 012-3456");

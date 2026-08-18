@@ -364,7 +364,7 @@ describe("public-boundary Worker harness", () => {
       readonly connection_setup: { readonly id: string };
     };
 
-    const rejected = await exports.default.fetch(
+    const qrRequest = () =>
       new Request(
         `https://api.example.test/v1/connection-setups/${body.connection_setup.id}/qr`,
         {
@@ -373,8 +373,9 @@ describe("public-boundary Worker harness", () => {
             origin: "http://127.0.0.1:3000",
           },
         },
-      ),
-    );
+      );
+    const qr = await exports.default.fetch(qrRequest());
+    const rejected = await exports.default.fetch(qrRequest());
     const listed = await exports.default.fetch(
       new Request("https://api.example.test/v1/whatsapp-connections", {
         headers: {
@@ -384,6 +385,8 @@ describe("public-boundary Worker harness", () => {
       }),
     );
 
+    expect(qr.status).toBe(200);
+    expect(qr.headers.get("content-type")).toBe("image/svg+xml");
     expect(rejected.status).toBe(409);
     expect(await rejected.json()).toEqual({
       error: "number_confirmation_failed",

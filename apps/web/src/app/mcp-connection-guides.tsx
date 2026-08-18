@@ -9,6 +9,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 interface McpConnectionGuidesProps {
   readonly client?: "all" | "claude" | "chatgpt";
   readonly onGuideOpened?: (() => void) | undefined;
+  readonly onProminentChatGptOpened?: (() => void) | undefined;
   readonly serverUrl: string;
   readonly showGuideLaunchAction?: boolean;
 }
@@ -110,6 +111,7 @@ function GuideCard({
   connectUrl,
   name,
   onGuideOpened,
+  onProminentChatGptOpened,
   serverUrl,
   showGuideLaunchAction,
   steps,
@@ -118,6 +120,7 @@ function GuideCard({
   readonly connectUrl: string;
   readonly name: string;
   readonly onGuideOpened?: (() => void) | undefined;
+  readonly onProminentChatGptOpened?: (() => void) | undefined;
   readonly serverUrl: string;
   readonly showGuideLaunchAction: boolean;
   readonly steps: ReadonlyArray<GuideStep>;
@@ -172,7 +175,7 @@ function GuideCard({
               aria-label="Open ChatGPT in a new tab"
               className={buttonVariants({ size: "lg" })}
               href={connectUrl}
-              onClick={onGuideOpened}
+              onClick={onProminentChatGptOpened}
               rel="noopener noreferrer"
               target="_blank"
             >
@@ -224,6 +227,7 @@ const prompts = [
 export function McpConnectionGuides({
   client = "all",
   onGuideOpened,
+  onProminentChatGptOpened,
   serverUrl,
   showGuideLaunchAction = true,
 }: McpConnectionGuidesProps) {
@@ -270,6 +274,7 @@ export function McpConnectionGuides({
             connectUrl="https://chatgpt.com/plugins"
             name="ChatGPT"
             onGuideOpened={onGuideOpened}
+            onProminentChatGptOpened={onProminentChatGptOpened}
             serverUrl={serverUrl}
             showGuideLaunchAction={showGuideLaunchAction}
             steps={chatGptSteps}

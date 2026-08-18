@@ -125,14 +125,21 @@
       "idx": 17,
       "version": "7",
       "when": 1787115600000,
-      "tag": "0017_reject_mismatched_qr_activation",
+      "tag": "0017_record_connection_setup_provisioning_start",
       "breakpoints": true
     },
     {
       "idx": 18,
       "version": "7",
       "when": 1787119200000,
-      "tag": "0018_persist_onboarding_security_completion",
+      "tag": "0018_reject_mismatched_qr_activation",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1787122800000,
+      "tag": "0019_persist_onboarding_security_completion",
       "breakpoints": true
     }
   ]

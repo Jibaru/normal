@@ -72,6 +72,7 @@ describe("provider-control RPC authority", () => {
     } satisfies LifecycleSession);
     expect(events).toEqual([
       {
+        durationMs: expect.any(Number),
         event: "provider_control.rpc.completed",
         method: "createSession",
         outcome: "success",
