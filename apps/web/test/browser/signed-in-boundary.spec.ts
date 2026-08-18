@@ -58,6 +58,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   let requestedTokenOptions: unknown;
   let bootstrapMethod: string | undefined;
   let bootstrapRequests = 0;
+  const analyticsEvents: Array<Record<string, unknown>> = [];
   const setupBodies: Array<{
     readonly idempotency_key: string;
     readonly name: string;
@@ -78,6 +79,20 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   let releaseReconnectPoll: (() => void) | undefined;
   const reconnectPollCanContinue = new Promise<void>((resolve) => {
     releaseReconnectPoll = resolve;
+  });
+  await page.route("https://analytics.example.test/**", async (route) => {
+    const request = route.request();
+    if (request.method() === "POST") {
+      analyticsEvents.push(request.postDataJSON() as Record<string, unknown>);
+    }
+    await route.fulfill({
+      body: "{}",
+      headers: {
+        "access-control-allow-headers": "content-type",
+        "access-control-allow-origin": webOrigin,
+      },
+      status: 200,
+    });
   });
   await page.route("https://api.example.test/**", async (route) => {
     const original = route.request();
@@ -326,6 +341,33 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   const popupPromise = page.waitForEvent("popup");
   await onboardingChatgptAction.click();
   const popup = await popupPromise;
+  await expect
+    .poll(() =>
+      analyticsEvents.filter((capture) => {
+        const properties = capture.properties as
+          | Record<string, unknown>
+          | undefined;
+        return (
+          capture.event === "feature_used" &&
+          properties?.feature === "onboarding_chatgpt_opened"
+        );
+      }),
+    )
+    .toHaveLength(1);
+  const chatGptCapture = analyticsEvents.find((capture) => {
+    const properties = capture.properties as
+      | Record<string, unknown>
+      | undefined;
+    return properties?.feature === "onboarding_chatgpt_opened";
+  });
+  expect(
+    Object.keys(chatGptCapture?.properties as Record<string, unknown>).sort(),
+  ).toEqual([
+    "$process_person_profile",
+    "$session_id",
+    "distinct_id",
+    "feature",
+  ]);
   await expect
     .poll(() => popup.url())
     .toMatch(/^https:\/\/chatgpt\.com\/plugins\/?$/u);

@@ -1157,6 +1157,12 @@ export function FirstConnectionOnboarding({
                   feature: "mcp_guide_opened",
                 })
               }
+              onProminentChatGptOpened={() =>
+                captureProductAnalyticsEvent({
+                  event: "feature_used",
+                  feature: "onboarding_chatgpt_opened",
+                })
+              }
               serverUrl={mcpServerUrl}
             />
           ) : (
