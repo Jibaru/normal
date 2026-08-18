@@ -497,6 +497,7 @@ const makeTestLayer = (
                 version: 1 as const,
               },
               createdAt: "2026-08-01T12:00:00.000Z",
+              firstClaim: true,
               numberCiphertext: {
                 ciphertext: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcY",
                 keyVersion: 1,
@@ -504,6 +505,7 @@ const makeTestLayer = (
                 version: 1 as const,
               },
               personalAccountId: "10000000-0000-4000-8000-000000000018",
+              provisioningStartedAt: "2026-08-01T12:00:00.000Z",
               setupId,
               webhookIngressId: "30000000-0000-4000-8000-000000000018",
             },
@@ -1430,12 +1432,10 @@ const makeTestLayer = (
           if (connection !== undefined) {
             return {
               connection: protectedTestConnection(connection),
-              createdAt: "2026-08-01T12:00:00.000Z",
               outcome: "activated" as const,
             };
           }
           return {
-            createdAt: "2026-08-01T12:00:00.000Z",
             outcome: "provisioned" as const,
             setup: {
               accountKey: {

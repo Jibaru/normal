@@ -93,6 +93,7 @@ export interface ConnectionSetupCleanupRecoveryEnqueuedEvent {
 }
 
 export interface ConnectionSetupProvisionCompletedEvent {
+  readonly durationMs?: number | undefined;
   readonly event: "connection_setup.provision.completed";
   readonly failureCode?: string | undefined;
   readonly outcome:
@@ -101,7 +102,12 @@ export interface ConnectionSetupProvisionCompletedEvent {
     | "provisioned"
     | "quarantined"
     | "retry";
-  readonly queueDelayMs?: number | undefined;
+  readonly service: "api";
+}
+
+export interface ConnectionSetupProvisionClaimedEvent {
+  readonly event: "connection_setup.provision.claimed";
+  readonly queueDelayMs: number;
   readonly service: "api";
 }
 
@@ -112,7 +118,6 @@ export interface ConnectionSetupProvisionRecoveryEnqueuedEvent {
 }
 
 export interface ConnectionSetupQrCompletedEvent {
-  readonly durationMs?: number | undefined;
   readonly event: "connection_setup.qr.completed";
   readonly outcome:
     | "connected"
@@ -479,6 +484,7 @@ export type SafeTelemetryEvent =
   | ConnectionSetupCleanupCompletedEvent
   | ConnectionSetupCleanupRecoveryEnqueuedEvent
   | ConnectionSetupProvisionCompletedEvent
+  | ConnectionSetupProvisionClaimedEvent
   | ConnectionSetupProvisionRecoveryEnqueuedEvent
   | ConnectionSetupQrCompletedEvent
   | ConnectionSetupStartCompletedEvent

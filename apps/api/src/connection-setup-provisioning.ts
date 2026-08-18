@@ -246,7 +246,7 @@ const encryptProviderSession = (
 const emit = (
   outcome: "failed" | "ignored" | "provisioned" | "quarantined" | "retry",
   failureCode?: string,
-  queueDelayMs?: number,
+  durationMs?: number,
 ) =>
   Effect.gen(function* () {
     const telemetry = yield* SafeTelemetry;
@@ -254,7 +254,7 @@ const emit = (
       event: "connection_setup.provision.completed",
       ...(failureCode === undefined ? {} : { failureCode }),
       outcome,
-      ...(queueDelayMs === undefined ? {} : { queueDelayMs }),
+      ...(durationMs === undefined ? {} : { durationMs }),
       service: "api",
     });
   });
@@ -268,6 +268,16 @@ const elapsedMs = (startedAt: string, finishedAt: string): number | null => {
     ? Math.max(0, finished - started)
     : null;
 };
+
+const emitClaimed = (queueDelayMs: number) =>
+  Effect.gen(function* () {
+    const telemetry = yield* SafeTelemetry;
+    yield* telemetry.emit({
+      event: "connection_setup.provision.claimed",
+      queueDelayMs,
+      service: "api",
+    });
+  });
 
 const releaseForRetry = (
   setupId: string,
@@ -291,13 +301,15 @@ const failDefinitively = (
   setupId: string,
   workerId: string,
   failureCode: string,
+  provisioningStartedAt: string | null,
 ) =>
   Effect.gen(function* () {
     const clock = yield* ConnectionSetupProvisioningClock;
     const persistence = yield* ConnectionSetupProvisioningPersistence;
+    const observedAt = yield* clock.now;
     const failed = yield* persistence.fail({
       failureCode,
-      observedAt: yield* clock.now,
+      observedAt,
       setupId,
       workerId,
     });
@@ -305,7 +317,13 @@ const failDefinitively = (
       yield* emit("retry", "lease_lost");
       return retry();
     }
-    yield* emit("failed", failureCode);
+    yield* emit(
+      "failed",
+      failureCode,
+      provisioningStartedAt === null
+        ? undefined
+        : (elapsedMs(provisioningStartedAt, observedAt) ?? undefined),
+    );
     return { outcome: "failed" } as const;
   });
 
@@ -317,6 +335,7 @@ const finish = (
   workerId: string,
   outcome: "provisioned" | "quarantined",
   providerSessions: ReadonlyArray<LifecycleSession>,
+  provisioningStartedAt: string | null,
 ) =>
   Effect.gen(function* () {
     const encryptedSessions = yield* Effect.forEach(
@@ -342,7 +361,9 @@ const finish = (
     yield* emit(
       outcome,
       undefined,
-      elapsedMs(setup.createdAt, observedAt) ?? undefined,
+      provisioningStartedAt === null
+        ? undefined
+        : (elapsedMs(provisioningStartedAt, observedAt) ?? undefined),
     );
     return { outcome } as const;
   });
@@ -401,6 +422,7 @@ const reconcileClaimedSetup = (
           setup.setupId,
           workerId,
           reconciliation.error.code,
+          setup.provisioningStartedAt,
         );
       }
       return yield* releaseForRetry(
@@ -411,15 +433,20 @@ const reconcileClaimedSetup = (
     }
     switch (reconciliation.value.outcome) {
       case "present":
-        return yield* finish(setup, workerId, "provisioned", [
-          reconciliation.value.session,
-        ]);
+        return yield* finish(
+          setup,
+          workerId,
+          "provisioned",
+          [reconciliation.value.session],
+          setup.provisioningStartedAt,
+        );
       case "duplicates":
         return yield* finish(
           setup,
           workerId,
           "quarantined",
           reconciliation.value.sessions,
+          setup.provisioningStartedAt,
         );
       case "absent": {
         const clock = yield* ConnectionSetupProvisioningClock;
@@ -446,6 +473,7 @@ const reconcileClaimedSetup = (
               setup.setupId,
               workerId,
               created.error.code,
+              setup.provisioningStartedAt,
             );
           }
           return yield* releaseForRetry(
@@ -454,7 +482,13 @@ const reconcileClaimedSetup = (
             created.error.code,
           );
         }
-        return yield* finish(setup, workerId, "provisioned", [created.value]);
+        return yield* finish(
+          setup,
+          workerId,
+          "provisioned",
+          [created.value],
+          setup.provisioningStartedAt,
+        );
       }
     }
   });
@@ -471,8 +505,9 @@ export const provisionConnectionSetup = (
     const identifiers = yield* ConnectionSetupProvisioningIdentifiers;
     const persistence = yield* ConnectionSetupProvisioningPersistence;
     const workerId = yield* identifiers.nextWorkerId;
+    const claimedAt = yield* clock.now;
     const claim = yield* persistence.claim({
-      claimedAt: yield* clock.now,
+      claimedAt,
       setupId,
       workerId,
     });
@@ -483,6 +518,10 @@ export const provisionConnectionSetup = (
     if (claim.outcome !== "claimed") {
       yield* emit("ignored");
       return { outcome: "ignored" };
+    }
+    if (claim.setup.firstClaim) {
+      const queueDelayMs = elapsedMs(claim.setup.createdAt, claimedAt);
+      if (queueDelayMs !== null) yield* emitClaimed(queueDelayMs);
     }
     return yield* reconcileClaimedSetup(claim.setup, workerId);
   });

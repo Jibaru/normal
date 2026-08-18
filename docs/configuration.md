@@ -659,11 +659,12 @@ and is not selected by recovery; it cannot become a repeated create loop.
 Queue delivery
 uses batches of one, a three-minute visibility timeout, ten 30-second delivery
 retries, and seven-day retention. The durable setup and minute recovery scan
-remain authoritative if Cloudflare exhausts a delivery. Telemetry contains
-only `connection_setup.provision.completed`, service, allowlisted outcome and
-optional normalized failure code, plus recovery candidate counts; it never
-contains setup/account identifiers, number material, provider values, or
-ciphertext.
+remain authoritative if Cloudflare exhausts a delivery. Telemetry contains only
+`connection_setup.provision.claimed` with first-claim delay,
+`connection_setup.provision.completed` with service, allowlisted outcome,
+optional normalized failure code, and terminal duration, plus recovery candidate
+counts. It never contains setup/account identifiers, number material, provider
+values, or ciphertext.
 
 ## Connection Setup cancellation, expiry, and cleanup
 
@@ -757,22 +758,35 @@ and receives no Provider API Credential, database binding, KMS authority, or
 provider-control binding. Production cannot select the protocol-observable
 provider used by the acceptance tests.
 
-Safe QR telemetry is limited to `connection_setup.qr.completed`, service, one
-normalized outcome, and total elapsed setup duration in milliseconds. Safe
-provision telemetry adds only normalized outcome, optional normalized failure
-code, and queue delay in milliseconds. Safe listing telemetry adds only the connection count
+Safe QR telemetry is limited to `connection_setup.qr.completed`, service, and
+one normalized outcome. A setup's first successful provisioning claim emits
+`connection_setup.provision.claimed` with only `queueDelayMs`, measured from
+durable setup creation to the persisted first claim. Provision completion emits
+normalized outcome, optional normalized failure code, and
+first-claim-to-terminal-transition `durationMs`; retries carry no duration and
+legacy in-flight setups without a first-claim timestamp do not invent one. Safe listing
+telemetry adds only the connection count
 to `whatsapp_connection.list.completed`. Neither event contains a User,
 Personal Account, Connection Setup, WhatsApp Connection, number, QR byte,
 provider value, credential, ingress identity, secret, ciphertext, or key
 reference.
 
-In the signed-in browser/API harness, the old fixed 750 ms observation loop was
-the dominant first-party delay once provisioning or linking had already moved
-forward. The approved setup poll schedule now starts at 250 ms, steps up by
-250 ms, and caps at 1 s before code display or 2 s while waiting for linking to
-finish. This preserves prompt first observations, cuts earliest code and active
-confirmation lag to 250 ms, and reduces repeated reads during longer external
-waits.
+The approved first-party target is p95 observation lag at or below 750 ms in
+the deterministic browser scheduler fixture, independent of provider time. The
+fixture replays 18 fixed transition offsets from 0 through 5 seconds. The old
+fixed 750 ms policy measured p50/p95/p99 of 250/700/700 ms. The bounded policy
+measured 200/600/600 ms before code observation and 200/750/750 ms from code
+observation to active observation. These are measured fixture results, not
+production provider percentiles. The schedule starts at 250 ms, steps up by 250
+ms, and caps at 1 second before code display or 2 seconds while waiting for
+activation, reducing early waits and repeated reads without weakening the
+reconciled lifecycle boundaries.
+
+Anonymous browser metrics use the literal observable phases
+`start_to_code_observed` and `code_observed_to_active_observed`; they do not
+claim to know when WhatsApp accepted a scan. Each phase is emitted once per
+browser flow. Repeated API status reads emit outcomes without setup-age timing,
+so polling frequency cannot weight latency percentiles.
 
 ## WhatsApp Connection disconnect and reconnect
 

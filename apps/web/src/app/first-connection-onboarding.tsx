@@ -339,7 +339,7 @@ function connectionSetupStatusText(
   }
   if (setupState === "qr_available") return "Scan this QR code with WhatsApp.";
   if (setupState === "connecting") {
-    return "WhatsApp accepted the scan. Waiting for it to finish connecting.";
+    return "Waiting for WhatsApp to finish connecting.";
   }
   if (setupState === "connected") return "WhatsApp Connection active.";
   if (setupState === "provisioned") return "Connection Setup is ready.";

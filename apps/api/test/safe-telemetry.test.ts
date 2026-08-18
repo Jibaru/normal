@@ -86,15 +86,13 @@ describe("safe telemetry serialization", () => {
     expect(
       JSON.parse(
         serializeSafeTelemetry({
-          event: "connection_setup.provision.completed",
-          outcome: "provisioned",
+          event: "connection_setup.provision.claimed",
           queueDelayMs: 42,
           service: "api",
         }),
       ),
     ).toEqual({
-      event: "connection_setup.provision.completed",
-      outcome: "provisioned",
+      event: "connection_setup.provision.claimed",
       queueDelayMs: 42,
       service: "api",
     });
@@ -102,15 +100,15 @@ describe("safe telemetry serialization", () => {
       JSON.parse(
         serializeSafeTelemetry({
           durationMs: 84,
-          event: "connection_setup.qr.completed",
-          outcome: "connecting",
+          event: "connection_setup.provision.completed",
+          outcome: "provisioned",
           service: "api",
         }),
       ),
     ).toEqual({
       durationMs: 84,
-      event: "connection_setup.qr.completed",
-      outcome: "connecting",
+      event: "connection_setup.provision.completed",
+      outcome: "provisioned",
       service: "api",
     });
   });

@@ -250,12 +250,10 @@ const makeHarness = (
                     stateChangedAt: "2026-07-31T12:04:00.000Z",
                   },
                 ),
-                createdAt: "2026-07-31T12:00:00.000Z",
                 outcome: "activated" as const,
               }
             : setupState === "provisioned"
               ? {
-                  createdAt: "2026-07-31T12:00:00.000Z",
                   outcome: "provisioned" as const,
                   setup: {
                     accountKey,
@@ -272,12 +270,10 @@ const makeHarness = (
                 }
               : setupState === "provisioning_failed"
                 ? {
-                    createdAt: "2026-07-31T12:00:00.000Z",
                     failureCode: options.initialFailureCode ?? "unavailable",
                     outcome: "provisioning_failed" as const,
                   }
                 : {
-                    createdAt: "2026-07-31T12:00:00.000Z",
                     outcome: setupState,
                   },
       ),
@@ -488,7 +484,6 @@ describe("WhatsApp Connection HTTP boundary", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(qrBytes);
     expect(harness.events).toContainEqual({
-      durationMs: 0,
       event: "connection_setup.qr.completed",
       outcome: "qr_available",
       service: "api",

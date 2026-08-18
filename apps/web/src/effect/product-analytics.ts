@@ -27,7 +27,7 @@ export type ProductAnalyticsEvent =
   | {
       durationMs: number;
       event: "connection_setup_timing_recorded";
-      phase: "linking_to_active" | "setup_to_code";
+      phase: "code_observed_to_active_observed" | "start_to_code_observed";
     }
   | { event: "onboarding_completed" }
   | {
@@ -73,8 +73,8 @@ const connectionSetupOutcomes = new Set([
   "capacity_unavailable",
 ]);
 const connectionSetupTimingPhases = new Set([
-  "linking_to_active",
-  "setup_to_code",
+  "code_observed_to_active_observed",
+  "start_to_code_observed",
 ]);
 const features = new Set([
   "additional_connection_setup",

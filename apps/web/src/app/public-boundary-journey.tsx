@@ -13,7 +13,13 @@ import {
   ChevronRightIcon,
   MoreHorizontalIcon,
 } from "lucide-react";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import {
+  type FormEvent,
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+} from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -522,13 +528,15 @@ export function PublicBoundaryJourney({
   const observationGeneration = useRef(0);
   const observationAttempt = useRef(0);
   const setupObservationMetrics = useRef<{
-    readonly connectingStartedAtMs: number | null;
+    readonly qrObservedAtMs: number | null;
     readonly setupStartedAtMs: number | null;
-    readonly setupToCodeCaptured: boolean;
+    readonly startToQrCaptured: boolean;
+    readonly qrToActiveCaptured: boolean;
   }>({
-    connectingStartedAtMs: null,
+    qrObservedAtMs: null,
     setupStartedAtMs: null,
-    setupToCodeCaptured: false,
+    startToQrCaptured: false,
+    qrToActiveCaptured: false,
   });
   const observationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const automaticallyInitialized = useRef(false);
@@ -728,19 +736,21 @@ export function PublicBoundaryJourney({
     }
     replaceQrImage(null);
   };
+  const stopObservingOnIdentityChange = useEffectEvent(stopObserving);
 
   useEffect(() => {
     if (identityState === "signed_in") return;
-    stopObserving();
-  }, [identityState]);
+    stopObservingOnIdentityChange();
+  }, [identityState, stopObservingOnIdentityChange]);
 
   const resetSetupForDraftChange = () => {
     stopObserving();
     setupIntent.current = null;
     setupObservationMetrics.current = {
-      connectingStartedAtMs: null,
+      qrObservedAtMs: null,
       setupStartedAtMs: null,
-      setupToCodeCaptured: false,
+      startToQrCaptured: false,
+      qrToActiveCaptured: false,
     };
     setSetupCleanupState(null);
     setSetupId(null);
@@ -762,9 +772,10 @@ export function PublicBoundaryJourney({
     stopObserving();
     setupIntent.current = null;
     setupObservationMetrics.current = {
-      connectingStartedAtMs: null,
+      qrObservedAtMs: null,
       setupStartedAtMs: null,
-      setupToCodeCaptured: false,
+      startToQrCaptured: false,
+      qrToActiveCaptured: false,
     };
     setConnectionName("");
     setSetupCleanupState(null);
@@ -1166,45 +1177,44 @@ export function PublicBoundaryJourney({
       setSetupState(nextState);
       if (
         nextState === "qr_available" &&
-        !setupObservationMetrics.current.setupToCodeCaptured
+        !setupObservationMetrics.current.startToQrCaptured
       ) {
+        const observedAtMs = performance.now();
         const durationMs = observationMetricDurationMs(
           setupObservationMetrics.current.setupStartedAtMs,
-          performance.now(),
+          observedAtMs,
         );
         if (durationMs !== null) {
           captureProductAnalyticsEvent({
             durationMs,
             event: "connection_setup_timing_recorded",
-            phase: "setup_to_code",
+            phase: "start_to_code_observed",
           });
           setupObservationMetrics.current = {
             ...setupObservationMetrics.current,
-            setupToCodeCaptured: true,
+            qrObservedAtMs: observedAtMs,
+            startToQrCaptured: true,
           };
         }
       }
       if (
-        nextState === "connecting" &&
-        previousState === "qr_available" &&
-        setupObservationMetrics.current.connectingStartedAtMs === null
+        nextState === "connected" &&
+        !setupObservationMetrics.current.qrToActiveCaptured
       ) {
-        setupObservationMetrics.current = {
-          ...setupObservationMetrics.current,
-          connectingStartedAtMs: performance.now(),
-        };
-      }
-      if (nextState === "connected") {
         const durationMs = observationMetricDurationMs(
-          setupObservationMetrics.current.connectingStartedAtMs,
+          setupObservationMetrics.current.qrObservedAtMs,
           performance.now(),
         );
         if (durationMs !== null) {
           captureProductAnalyticsEvent({
             durationMs,
             event: "connection_setup_timing_recorded",
-            phase: "linking_to_active",
+            phase: "code_observed_to_active_observed",
           });
+          setupObservationMetrics.current = {
+            ...setupObservationMetrics.current,
+            qrToActiveCaptured: true,
+          };
         }
       }
     };
@@ -1450,9 +1460,10 @@ export function PublicBoundaryJourney({
     stopObserving();
     const requestGeneration = observationGeneration.current;
     setupObservationMetrics.current = {
-      connectingStartedAtMs: null,
+      qrObservedAtMs: null,
       setupStartedAtMs: performance.now(),
-      setupToCodeCaptured: false,
+      startToQrCaptured: false,
+      qrToActiveCaptured: false,
     };
     setupStateRef.current = "loading";
     setSetupState("loading");
@@ -1575,9 +1586,10 @@ export function PublicBoundaryJourney({
     if (setupId === null) return;
     stopObserving();
     setupObservationMetrics.current = {
-      connectingStartedAtMs: null,
+      qrObservedAtMs: null,
       setupStartedAtMs: null,
-      setupToCodeCaptured: false,
+      startToQrCaptured: false,
+      qrToActiveCaptured: false,
     };
     setupStateRef.current = "cancelling";
     setSetupState("cancelling");

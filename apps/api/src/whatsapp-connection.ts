@@ -203,22 +203,18 @@ export type WhatsAppConnectionRequirements =
 
 type SetupObservation =
   | {
-      readonly durationMs?: number | undefined;
       readonly outcome: "connected";
       readonly connection: VisibleWhatsAppConnectionRecord;
     }
   | {
-      readonly durationMs?: number | undefined;
       readonly outcome: "qr_available";
       readonly expiresAt: string | null;
       readonly image: Uint8Array;
     }
   | {
-      readonly durationMs?: number | undefined;
       readonly outcome: "connecting" | "pending" | "provisioning_quarantined";
     }
   | {
-      readonly durationMs?: number | undefined;
       readonly outcome: "provider_capacity_unavailable" | "provisioning_failed";
     };
 
@@ -509,19 +505,6 @@ const providerValue = <Value>(
     ? Effect.succeed(result.value)
     : Effect.fail(new WhatsAppConnectionProviderError());
 
-const setupDurationMs = (
-  createdAt: string,
-  observedAt: string,
-): number | undefined => {
-  const started = Date.parse(createdAt);
-  const finished = Date.parse(observedAt);
-  return Number.isFinite(started) &&
-    Number.isFinite(finished) &&
-    finished >= started
-    ? Math.max(0, finished - started)
-    : undefined;
-};
-
 export const observeConnectionSetup = (
   clerkUserId: string,
   setupId: string,
@@ -550,11 +533,9 @@ export const observeConnectionSetup = (
     if (loaded === null) {
       return yield* Effect.fail(new WhatsAppConnectionNotAccessible());
     }
-    const durationMs = setupDurationMs(loaded.createdAt, observedAt);
     if (loaded.outcome === "activated") {
       return {
         connection: yield* revealConnection(loaded.connection),
-        durationMs,
         outcome: "connected",
       };
     }
@@ -563,9 +544,9 @@ export const observeConnectionSetup = (
         loaded.outcome === "provisioning_failed" &&
         loaded.failureCode === "source_rejected"
       ) {
-        return { durationMs, outcome: "provider_capacity_unavailable" };
+        return { outcome: "provider_capacity_unavailable" };
       }
-      return { durationMs, outcome: loaded.outcome };
+      return { outcome: loaded.outcome };
     }
 
     const provider = yield* WhatsAppConnectionProvider;
@@ -588,7 +569,6 @@ export const observeConnectionSetup = (
     if (session.connectionState === "connected") {
       return {
         connection: yield* activate(loaded.setup, session),
-        durationMs,
         outcome: "connected",
       };
     }
@@ -598,12 +578,11 @@ export const observeConnectionSetup = (
     );
     return qr.state === "available"
       ? {
-          durationMs,
           expiresAt: qr.expiresAt,
           image: qr.image,
           outcome: "qr_available",
         }
-      : { durationMs, outcome: "connecting" };
+      : { outcome: "connecting" };
   });
 
 const lifecycleState = (
@@ -1065,9 +1044,6 @@ export const createWhatsAppConnectionHandler =
           );
           const telemetry = yield* SafeTelemetry;
           yield* telemetry.emit({
-            ...(observation.durationMs === undefined
-              ? {}
-              : { durationMs: observation.durationMs }),
             event: "connection_setup.qr.completed",
             outcome: observation.outcome,
             service: "api",

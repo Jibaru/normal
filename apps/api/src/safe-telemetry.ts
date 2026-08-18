@@ -32,10 +32,11 @@ export const safeTelemetryFieldsByEvent = {
     ...common,
     "failureCode",
     "outcome",
-    "queueDelayMs",
+    "durationMs",
   ],
+  "connection_setup.provision.claimed": [...common, "queueDelayMs"],
   "connection_setup.provision.recovery_enqueued": [...common, "candidateCount"],
-  "connection_setup.qr.completed": [...common, "durationMs", "outcome"],
+  "connection_setup.qr.completed": [...common, "outcome"],
   "connection_setup.start.completed": [...common, "outcome"],
   "directory.contacts.reconciliation.completed": [
     ...common,

@@ -28,7 +28,6 @@
         "queueDelayMs",
         "attemptCount",
         "responseBytes",
-        "method",
         "failureCode",
         "state",
         "gapEvidence",

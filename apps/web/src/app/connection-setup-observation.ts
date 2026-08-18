@@ -1,8 +1,8 @@
 import type { ConnectionSetupState } from "./first-connection-onboarding";
 
 export type ConnectionSetupObservationPhase =
-  | "setup_to_code"
-  | "linking_to_active";
+  | "start_to_code_observed"
+  | "code_observed_to_active_observed";
 
 const minimumPollDelayMsByState: Readonly<
   Partial<Record<ConnectionSetupState, number>>
