@@ -109,6 +109,14 @@ interface FirstConnectionConnection {
     | "reconnect_required";
 }
 
+export interface FirstConnectionSuccessModel {
+  readonly authorizationCopy: string;
+  readonly clientName: string;
+  readonly connection: FirstConnectionConnection;
+  readonly nextActionHref: string | null;
+  readonly nextStepCopy: string;
+}
+
 interface ProfileDraft {
   readonly primaryUseCase: PrimaryUseCase | "";
   readonly whatsappUsageContext: WhatsAppUsageContext | "";
@@ -319,6 +327,33 @@ function isActiveConnection(
   connection: FirstConnectionConnection | null,
 ): connection is FirstConnectionConnection {
   return connection !== null && connection.state === "connected";
+}
+
+export function getFirstConnectionSuccessModel(
+  connection: FirstConnectionConnection | null,
+  intendedMcpClient: IntendedMcpClient,
+): FirstConnectionSuccessModel | null {
+  if (!isActiveConnection(connection)) return null;
+
+  const clientName =
+    intendedMcpClient === "claude"
+      ? "Claude"
+      : intendedMcpClient === "chatgpt"
+        ? "ChatGPT"
+        : "your MCP Client";
+
+  return {
+    authorizationCopy: `${clientName} still needs its own MCP Authorization for this WhatsApp Connection.`,
+    clientName,
+    connection,
+    nextActionHref:
+      intendedMcpClient === "claude"
+        ? "https://claude.ai/settings/connectors"
+        : intendedMcpClient === "chatgpt"
+          ? "https://chatgpt.com/plugins"
+          : null,
+    nextStepCopy: `Create the MCP Authorization in ${clientName} next so it can access only the WhatsApp Connections and permissions you choose.`,
+  };
 }
 
 function isCompleteDraft(draft: ProfileDraft): draft is {
@@ -760,18 +795,10 @@ export function FirstConnectionOnboarding({
   const intendedMcpClient =
     profile?.intendedMcpClient ??
     (draft.intendedMcpClient === "" ? "not_sure" : draft.intendedMcpClient);
-  const selectedClientName =
-    intendedMcpClient === "claude"
-      ? "Claude"
-      : intendedMcpClient === "chatgpt"
-        ? "ChatGPT"
-        : "your MCP Client";
-  const nextActionHref =
-    intendedMcpClient === "claude"
-      ? "https://claude.ai/settings/connectors"
-      : intendedMcpClient === "chatgpt"
-        ? "https://chatgpt.com/plugins"
-        : null;
+  const successModel = getFirstConnectionSuccessModel(
+    activeConnection,
+    intendedMcpClient,
+  );
 
   return (
     <section
@@ -988,7 +1015,7 @@ export function FirstConnectionOnboarding({
         </div>
       ) : null}
 
-      {stage === "success" && activeConnection !== null ? (
+      {stage === "success" && successModel !== null ? (
         <div className="flex flex-col gap-6">
           <div className="rounded-2xl bg-background p-5 ring-1 ring-border">
             <div className="grid gap-3 md:grid-cols-2">
@@ -1001,8 +1028,7 @@ export function FirstConnectionOnboarding({
               <div className="rounded-xl bg-muted/40 p-4">
                 <p className="text-sm font-medium">Next required step</p>
                 <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                  {selectedClientName} still needs its own MCP Authorization for
-                  this WhatsApp Connection.
+                  {successModel.authorizationCopy}
                 </p>
               </div>
             </div>
@@ -1010,7 +1036,7 @@ export function FirstConnectionOnboarding({
               <div className="rounded-xl bg-muted/40 p-4">
                 <dt className="text-muted-foreground">Name</dt>
                 <dd className="mt-1 font-medium">
-                  {activeConnection.displayName}
+                  {successModel.connection.displayName}
                 </dd>
               </div>
               <div className="rounded-xl bg-muted/40 p-4">
@@ -1018,7 +1044,7 @@ export function FirstConnectionOnboarding({
                   Active WhatsApp Number
                 </dt>
                 <dd className="mt-1 font-medium">
-                  ending {activeConnection.numberSuffix}
+                  ending {successModel.connection.numberSuffix}
                 </dd>
               </div>
               <div className="rounded-xl bg-muted/40 p-4">
@@ -1026,9 +1052,9 @@ export function FirstConnectionOnboarding({
                   Message Retention Policy
                 </dt>
                 <dd className="mt-1 font-medium">
-                  {activeConnection.retentionDays === null
+                  {successModel.connection.retentionDays === null
                     ? "Retain until Connection Deletion"
-                    : `${activeConnection.retentionDays} days`}
+                    : `${successModel.connection.retentionDays} days`}
                 </dd>
               </div>
             </dl>
@@ -1039,18 +1065,16 @@ export function FirstConnectionOnboarding({
             </p>
             <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm leading-6 text-muted-foreground">
-                Create the MCP Authorization in {selectedClientName} next so it
-                can access only the WhatsApp Connections and permissions you
-                choose.
+                {successModel.nextStepCopy}
               </p>
-              {nextActionHref !== null ? (
+              {successModel.nextActionHref !== null ? (
                 <a
                   className={buttonVariants()}
-                  href={nextActionHref}
+                  href={successModel.nextActionHref}
                   rel="noreferrer"
                   target="_blank"
                 >
-                  Open {selectedClientName}
+                  Open {successModel.clientName}
                 </a>
               ) : (
                 <div className="min-w-0 sm:max-w-sm">
