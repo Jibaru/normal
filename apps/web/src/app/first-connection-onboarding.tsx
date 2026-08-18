@@ -140,6 +140,7 @@ interface FirstConnectionOnboardingProps {
   readonly mcpServerUrl: string;
   readonly onboardingProfileEndpoint: string;
   readonly onComplete: () => void;
+  readonly onProfileSaved: (profile: OnboardingProfile) => void;
   readonly setupForm: Omit<ConnectionSetupFormProps, "idPrefix" | "layout">;
 }
 
@@ -605,6 +606,7 @@ export function FirstConnectionOnboarding({
   mcpServerUrl,
   onboardingProfileEndpoint,
   onComplete,
+  onProfileSaved,
   setupForm,
 }: FirstConnectionOnboardingProps) {
   const [profile, setProfile] = useState(initialProfile);
@@ -711,6 +713,7 @@ export function FirstConnectionOnboarding({
       }
       setProfile(savedProfile);
       setDraft(makeDraft(savedProfile));
+      onProfileSaved(savedProfile);
       setProfileState("idle");
       captureProductAnalyticsEvent({
         event: "onboarding_stage_completed",
