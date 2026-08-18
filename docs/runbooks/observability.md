@@ -39,5 +39,6 @@ Confirm the `alert-delivery-canary` arrives in the ticket destination with only 
   bounded expired and purged counts, and the API service name. Do not add
   handles, names, hints, digests, credentials, or tenant identifiers.
 - A five-minute Wasender or WhatsApp outage pages as a dependency incident and remains distinct from first-party SLO reporting.
+- A `health_check_failure` Ingestion Gap creates a first-party scheduled-execution incident. Confirm two on-time observations after recovery and keep this distinct from message inactivity.
 
 Retain monthly first-party SLO reports and dependency reports as separate aggregate artifacts. Record objective, achieved availability, error-budget consumption, incident counts, and reporting window only; do not attach raw logs or tenant-level samples.

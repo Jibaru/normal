@@ -174,7 +174,13 @@ describe("makePublicObjectContract", () => {
       older_cursor: null,
       history_starts_at: "2026-07-01T00:00:00.000Z",
       history_start_reason: "retention_policy",
-      gaps: [],
+      gaps: [
+        {
+          cause: "health_check_failure",
+          ends_at: "2026-07-01T00:25:00.000Z",
+          starts_at: "2026-07-01T00:05:00.000Z",
+        },
+      ],
     } as const;
 
     expect(ReadMessagesOutputContract.decodeUnknown(output) as unknown).toEqual(

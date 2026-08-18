@@ -243,6 +243,55 @@ describe("connection health and Ingestion Gap repository", () => {
     ]);
   });
 
+  test("records a health check failure when scheduled observations stop", async () => {
+    const repository = makeConnectionHealthRepository(provider);
+    const initial = await repository.claim({
+      claimedAt: "2026-07-31T12:05:00.000Z",
+      limit: 1,
+    });
+    await repository.finish({
+      checkedAt: "2026-07-31T12:05:30.000Z",
+      claimId: initial[0]?.claimId ?? "missing",
+      connectionId,
+      gapEvidence: "healthy",
+      startedAt: "2026-07-31T12:05:00.000Z",
+      state: "connected",
+      webhookConfigurationHealthy: true,
+    });
+
+    const delayed = await repository.claim({
+      claimedAt: "2026-07-31T12:25:00.000Z",
+      limit: 1,
+    });
+    await repository.finish({
+      checkedAt: "2026-07-31T12:25:30.000Z",
+      claimId: delayed[0]?.claimId ?? "missing",
+      connectionId,
+      gapEvidence: "healthy",
+      startedAt: "2026-07-31T12:25:00.000Z",
+      state: "connected",
+      webhookConfigurationHealthy: true,
+    });
+
+    const gaps = await database.query<{
+      cause: string;
+      ends_at: Date | null;
+      starts_at: Date;
+    }>(
+      `SELECT cause, starts_at, ends_at
+       FROM public.ingestion_gaps
+       WHERE whatsapp_connection_id = $1`,
+      [connectionId],
+    );
+    expect(gaps.rows).toEqual([
+      {
+        cause: "health_check_failure",
+        ends_at: new Date("2026-07-31T12:25:30.000Z"),
+        starts_at: new Date("2026-07-31T12:05:30.000Z"),
+      },
+    ]);
+  });
+
   test("opens measured ingress and restore-loss evidence without treating a failed check as a gap", async () => {
     const repository = makeConnectionHealthRepository(provider);
     const initial = await repository.claim({
@@ -319,6 +368,11 @@ describe("connection health and Ingestion Gap repository", () => {
       [connectionId],
     );
     expect(gaps.rows).toEqual([
+      {
+        cause: "health_check_failure",
+        ends_at: new Date("2026-07-31T12:26:00.000Z"),
+        starts_at: new Date("2026-07-31T12:05:30.000Z"),
+      },
       {
         cause: "ingress_failure",
         ends_at: new Date("2026-07-31T12:21:00.000Z"),

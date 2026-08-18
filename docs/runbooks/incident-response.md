@@ -28,6 +28,11 @@ passes.
   Ingestion Gaps after confirmed recovery. Exit after two healthy observations
   and one normal provider-control operation on the designated canary.
 
+## Health observer lapse
+
+- Contain: confirm the API Worker deployment still has the five-minute Cron Trigger and scheduled handler. Do not infer a gap from message inactivity or manually change a Connection state.
+- Recover: restore scheduled execution and let the next completed observation record a closed `health_check_failure` Ingestion Gap from the previous completed observation through recovery. Investigate any overlapping provider or webhook gap independently. Exit after two on-time healthy observations and confirmation that the gap is visible through an authorized message read.
+
 ## Webhook ingress failure
 
 - Contain: keep failed HTTP delivery responses honest; do not acknowledge until

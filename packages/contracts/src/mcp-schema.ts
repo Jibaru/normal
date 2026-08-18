@@ -251,6 +251,7 @@ export const ReadMessagesOutputContract = makePublicObjectContract({
       cause: Schema.Literal(
         "connection_unavailable",
         "webhook_configuration",
+        "health_check_failure",
         "ingress_failure",
         "processing_failure",
         "restore_loss",
@@ -266,6 +267,7 @@ const IngestionGap = Schema.Struct({
   cause: Schema.Literal(
     "connection_unavailable",
     "webhook_configuration",
+    "health_check_failure",
     "ingress_failure",
     "processing_failure",
     "restore_loss",

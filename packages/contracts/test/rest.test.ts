@@ -292,7 +292,7 @@ describe("REST contracts", () => {
         conversation_id: "cvs_xxxxxxxxxxxxxxxxxxxxx",
         gaps: [
           {
-            cause: "connection_unavailable",
+            cause: "health_check_failure",
             ends_at: "2026-08-14T11:08:00.000Z",
             starts_at: "2026-08-14T11:00:00.000Z",
           },

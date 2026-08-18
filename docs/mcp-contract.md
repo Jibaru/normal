@@ -247,7 +247,7 @@ Field rules:
 - `resource_unavailable_reason` is null when `resource_uri` is non-null; otherwise it is `media_pending`, `media_rejected`, `media_failed`, or `too_large_for_mcp`, consistent with `state` and size.
 - Each media item with a non-null `resource_uri` also adds one MCP `resource_link` content block. Binary bytes are never embedded in the tool's JSON or text result.
 - `history_start_reason` is `connection_started` or `retention_policy`.
-- Gap causes are `connection_unavailable`, `webhook_configuration`, `ingress_failure`, `processing_failure`, or `restore_loss`. `ends_at` is null for an active interval.
+- Gap causes are `connection_unavailable`, `webhook_configuration`, `health_check_failure`, `ingress_failure`, `processing_failure`, or `restore_loss`. `health_check_failure` records a measured lapse in the five-minute health observer, not ordinary message inactivity. `ends_at` is null for an active interval.
 - Returned gaps intersect the time span represented by the page or its path to the retained history boundary. Their absence does not certify complete provider delivery.
 
 ### Result Size

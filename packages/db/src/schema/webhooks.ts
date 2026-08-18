@@ -439,7 +439,7 @@ export const ingestionGapsInApp = publicSchema.table(
     }),
     check(
       "ingestion_gaps_cause_check",
-      sql`cause = ANY (ARRAY['connection_unavailable'::text, 'webhook_configuration'::text, 'ingress_failure'::text, 'processing_failure'::text, 'restore_loss'::text])`,
+      sql`cause = ANY (ARRAY['connection_unavailable'::text, 'webhook_configuration'::text, 'health_check_failure'::text, 'ingress_failure'::text, 'processing_failure'::text, 'restore_loss'::text])`,
     ),
     check("ingestion_gaps_check", sql`starts_at >= history_window_started_at`),
     check(

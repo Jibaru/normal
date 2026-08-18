@@ -154,6 +154,7 @@ export interface McpToolMessagePage {
     readonly cause:
       | "connection_unavailable"
       | "webhook_configuration"
+      | "health_check_failure"
       | "ingress_failure"
       | "processing_failure"
       | "restore_loss";
