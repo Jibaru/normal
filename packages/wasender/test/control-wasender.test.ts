@@ -361,7 +361,10 @@ describe("real Wasender lifecycle adapter", () => {
       lifecycle.listSessions({ setupMarker }),
     );
     const verified = await Effect.runPromise(
-      lifecycle.verifySessionNumber({ phoneNumber, session: sessions[0]!.session }),
+      lifecycle.verifySessionNumber({
+        phoneNumber,
+        session: sessions[0]!.session,
+      }),
     );
 
     expect(verified).toEqual({ outcome: "match" });
@@ -397,7 +400,10 @@ describe("real Wasender lifecycle adapter", () => {
       lifecycle.listSessions({ setupMarker }),
     );
     const verified = await Effect.runPromise(
-      lifecycle.verifySessionNumber({ phoneNumber, session: sessions[0]!.session }),
+      lifecycle.verifySessionNumber({
+        phoneNumber,
+        session: sessions[0]!.session,
+      }),
     );
 
     expect(verified).toEqual({ outcome: "unverified" });

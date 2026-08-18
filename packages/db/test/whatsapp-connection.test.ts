@@ -352,13 +352,16 @@ describe("WhatsApp Connection repository", () => {
       connection_count: number;
       reservation_count: number;
       setup_state: string;
-    }>(`
+    }>(
+      `
       SELECT
         (SELECT cleanup_state FROM public.connection_setups WHERE id = $1) AS cleanup_state,
         (SELECT count(*)::integer FROM public.whatsapp_connections) AS connection_count,
         (SELECT count(*)::integer FROM public.whatsapp_number_reservations WHERE released_at IS NULL) AS reservation_count,
         (SELECT state FROM public.connection_setups WHERE id = $1) AS setup_state
-    `, [setupId]);
+    `,
+      [setupId],
+    );
     expect(retained.rows).toEqual([
       {
         cleanup_state: "pending",

@@ -1603,7 +1603,8 @@ const makeTestLayer = (
         context.fieldOrObjectPurpose === "whatsapp-number"
           ? Effect.succeed(
               new TextEncoder().encode(
-                encryptedWhatsAppNumbers.get(context.recordId) ?? "+15550123456",
+                encryptedWhatsAppNumbers.get(context.recordId) ??
+                  "+15550123456",
               ),
             )
           : context.fieldOrObjectPurpose === "display-name"

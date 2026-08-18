@@ -341,20 +341,19 @@ describe("provider-control RPC authority", () => {
       repaired,
       verified,
       deleted,
-    ] =
-      await Promise.all([
-        rpc.connectSession({ session: lifecycleSession.session }),
-        rpc.disconnectSession({ session: lifecycleSession.session }),
-        rpc.listSessions({ setupMarker }),
-        rpc.getQrCode({ session: lifecycleSession.session }),
-        rpc.reconcileSession({ setupMarker }),
-        rpc.repairSessionConfiguration({ setupMarker, webhookUrl }),
-        rpc.verifySessionNumber({
-          phoneNumber: "+15550123456",
-          session: lifecycleSession.session,
-        }),
-        rpc.deleteSession({ session: lifecycleSession.session }),
-      ]);
+    ] = await Promise.all([
+      rpc.connectSession({ session: lifecycleSession.session }),
+      rpc.disconnectSession({ session: lifecycleSession.session }),
+      rpc.listSessions({ setupMarker }),
+      rpc.getQrCode({ session: lifecycleSession.session }),
+      rpc.reconcileSession({ setupMarker }),
+      rpc.repairSessionConfiguration({ setupMarker, webhookUrl }),
+      rpc.verifySessionNumber({
+        phoneNumber: "+15550123456",
+        session: lifecycleSession.session,
+      }),
+      rpc.deleteSession({ session: lifecycleSession.session }),
+    ]);
 
     expect(connected.ok).toBe(true);
     expect(repaired.ok).toBe(true);

@@ -347,8 +347,8 @@ const makeHarness = (
                 : ("disconnected" as const),
             },
           },
-          };
-        }),
+        };
+      }),
     verifyNumber: () =>
       Effect.sync(() => {
         providerCalls.push("verifySessionNumber");
