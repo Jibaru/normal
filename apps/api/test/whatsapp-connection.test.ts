@@ -666,6 +666,9 @@ describe("WhatsApp Connection HTTP boundary", () => {
     await harness.handler(request(qrEndpoint));
     const deleted = await harness.handler(request(deleteEndpoint, "POST"));
     const replay = await harness.handler(request(deleteEndpoint, "POST"));
+    const reconnectAfterDeletion = await harness.handler(
+      request(reconnectEndpoint, "POST"),
+    );
     const listed = await harness.handler(request(listEndpoint));
     expect(deleted.status).toBe(200);
     expect(await deleted.json()).toMatchObject({
@@ -673,6 +676,7 @@ describe("WhatsApp Connection HTTP boundary", () => {
       whatsapp_connection_id: connectionId,
     });
     expect(replay.status).toBe(200);
+    expect(reconnectAfterDeletion.status).toBe(404);
     expect(await listed.json()).toEqual({ whatsapp_connections: [] });
   });
 
