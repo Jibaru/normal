@@ -8,13 +8,14 @@ The platform is currently built for a private beta. Privacy, deletion, auditabil
 
 ## What is in this repo
 
-This is a Bun and Turbo monorepo with five deployable apps:
+This is a Bun and Turbo monorepo with six deployable apps:
 
 | Path | Purpose | Runtime |
 | --- | --- | --- |
 | `apps/web` | Product UI, connection management, and OAuth consent | Next.js on Vercel |
+| `apps/docs` | Static API reference generated from the shared OpenAPI contracts | Astro and Scalar on Vercel |
 | `apps/api` | Public HTTP API, OAuth server, MCP endpoint, webhook ingestion, and scheduled reconciliation | Cloudflare Workers |
-| `apps/provider-control` | Private boundary for provider session provisioning and control | Cloudflare Workers |
+| `apps/provider-control` | Private boundary for provider provisioning and control | Cloudflare Workers |
 | `apps/deletion-coordinator` | Continues deletion after access and key use have stopped | Cloudflare Workers |
 | `apps/restore-coordinator` | Reconciles restored data with deletion markers and recovery rules | Cloudflare Workers |
 
@@ -24,8 +25,8 @@ Shared code is split by responsibility:
 | --- | --- |
 | `packages/domain` | Pure domain rules and state transitions |
 | `packages/contracts` | MCP, API, health, handle, and service binding schemas |
-| `packages/db` | Drizzle schema, migrations, RLS aware repositories, and database tools |
-| `packages/wasender` | Thin provider adapter for sessions, control, media, and webhook normalization |
+| `packages/db` | Drizzle schema, migrations, RLS-aware repositories, and database tools |
+| `packages/wasender` | Thin provider adapter for connection lifecycle, media, and webhook normalization |
 | `infra` | OpenTofu configuration for Cloudflare, Vercel, Neon, and AWS KMS |
 | `scripts` | Deployment, validation, recovery, observability, and launch gate tooling |
 
@@ -38,7 +39,7 @@ You need:
 * [Bun](https://bun.sh/) 1.3.14
 * Node.js 20 or newer for supporting tools
 * [Wrangler](https://developers.cloudflare.com/workers/wrangler/) through the pinned workspace dependency
-* [OpenTofu](https://opentofu.org/) for infrastructure validation
+* [OpenTofu](https://opentofu.org/) 1.12.5 for infrastructure validation
 * Chromium and its host dependencies for browser tests
 
 For local provider or deployment work, you will also need access to the relevant Clerk, Cloudflare, Neon, AWS, Vercel, and Wasender environments.
@@ -56,6 +57,8 @@ Create local secret files only for the apps you plan to run:
 ```sh
 cp apps/api/.dev.vars.example apps/api/.dev.vars
 cp apps/provider-control/.dev.vars.example apps/provider-control/.dev.vars
+cp apps/deletion-coordinator/.dev.vars.example apps/deletion-coordinator/.dev.vars
+cp apps/restore-coordinator/.dev.vars.example apps/restore-coordinator/.dev.vars
 cp apps/web/.env.example apps/web/.env.local
 ```
 
@@ -83,25 +86,26 @@ bun run dev:tunnel
 
 ## Verification
 
-Run the normal checks before opening a pull request:
+CI runs these checks in order:
 
 ```sh
 bun run format:check
 bun run lint
 bun run typecheck
+bun run validate:infra
 bun run test
 bun run build
+bun run manifests:validate
+bun run observability:validate
+bun run infra:validate
 ```
 
-The complete infrastructure and deployment validation set is:
+The release and deployed-environment gates are separate from ordinary pull request verification:
 
 ```sh
-bun run validate:infra
-bun run manifests:validate
-bun run infra:validate
-bun run observability:validate
 bun run launch:gate
 bun run release:public-api
+bun run deploy:smoke
 ```
 
 Install the pinned browser once before the first full test run:
@@ -110,26 +114,38 @@ Install the pinned browser once before the first full test run:
 bun x playwright install --with-deps chromium
 ```
 
-Tests intentionally exercise production shaped boundaries. Worker tests run in the Cloudflare runtime, browser tests use a production Next.js build, and database tests apply real migrations with production RLS policies. Test composition roots must never become selectable from a production build.
+Tests intentionally exercise production-shaped boundaries. API and provider-control tests use the pinned Cloudflare Vitest runtime; the coordinator suites currently use ordinary Vitest. Browser tests use a production Next.js build and a test-only Wrangler API, while database tests apply production migrations in PGlite and switch to restricted runtime roles with RLS. Test composition roots must never become selectable from a production build.
+
+`bun run build` also dry-runs production Worker bundles and scans Worker, source-map, Next.js, and docs output for test fixtures, controlled credentials, and fault-injection markers.
 
 For focused work, use Turbo filters or workspace commands:
 
 ```sh
-bun run test --filter=@whatsapp-mcp/api
-bun run typecheck --filter=@whatsapp-mcp/web
+bun x turbo run test --filter=@whatsapp-mcp/api
+bun x turbo run typecheck --filter=@whatsapp-mcp/web
 bun run --cwd packages/db test
+```
+
+The root `test` script always runs `scripts/*.test.ts` before Turbo. Run the API public-boundary composition or one browser journey directly with:
+
+```sh
+(cd apps/api && bun x vitest run --config vitest.public-boundary.config.ts)
+(cd apps/web && bun x playwright test test/browser/api-keys.spec.ts)
 ```
 
 ## Database changes
 
-Database code and migrations live in `packages/db`. Set the environment described in `docs/configuration.md`, then use:
+Database code and versioned production migrations live in `packages/db`. These commands require the direct TLS Neon owner URL in `MIGRATION_DATABASE_URL`; never configure it on a deployable app.
 
 ```sh
-bun run db:check
+bun run --cwd packages/db db:generate
 bun run db:migrate
+bun run db:check
 ```
 
-Treat migration changes as security sensitive. Preserve tenant foreign keys, runtime role grants, fixed search paths, RLS policies, deletion behavior, and restore behavior. Tests must exercise the actual production migration path.
+Do not edit a migration that has shipped. Preserve tenant foreign keys, runtime role grants, fixed search paths, RLS policies, deletion behavior, and restore behavior. Tests must exercise the production migration path.
+
+Generate the public OpenAPI artifact with `bun run --cwd packages/contracts generate:openapi`. Building `apps/docs` also regenerates `apps/docs/public/openapi.json` and copies the pinned Scalar browser asset; do not hand-edit either generated file.
 
 ## Architecture and operations
 
@@ -158,7 +174,7 @@ The most important rules are simple:
 
 Development, preview, and production have separate configuration and infrastructure authority. Do not deploy by improvising commands from local manifests.
 
-Follow [`docs/runbooks/deployment.md`](docs/runbooks/deployment.md), validate the rendered manifests, and run the deployment smoke checks after a release. Production recovery, key rotation, replay, break glass access, and environment teardown each have dedicated runbooks under `docs/runbooks`.
+Follow [`docs/runbooks/deployment.md`](docs/runbooks/deployment.md), but use [the production workflow](.github/workflows/deploy-production.yml) as the executable deployment order: migrate and check the database, then deploy provider-control, deletion coordinator, restore coordinator, the rendered API, web, docs, and finally smoke the release. Production recovery, key rotation, replay, break-glass access, and environment teardown each have dedicated runbooks under `docs/runbooks`.
 
 ## Sandcastle
 
