@@ -897,6 +897,18 @@ const onboardingProfileLayer = (environment: ApiEnvironment) =>
           },
           catch: () => new OnboardingProfilePersistenceError(),
         }),
+      markSecurityCompleted: (input) =>
+        Effect.tryPromise({
+          try: () => {
+            const connectionString = environment.HYPERDRIVE?.connectionString;
+            if (typeof connectionString !== "string")
+              throw new Error("database unavailable");
+            return makePgOnboardingProfileRepository(
+              connectionString,
+            ).markSecurityCompletedForUser(input);
+          },
+          catch: () => new OnboardingProfilePersistenceError(),
+        }),
       upsert: (input) =>
         Effect.tryPromise({
           try: () => {

@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   buildVerificationPromptCopy,
   FirstConnectionOnboarding,
+  initialOnboardingStage,
   type OnboardingProfile,
 } from "../src/app/first-connection-onboarding";
 
@@ -13,11 +14,76 @@ const completedProfile: OnboardingProfile = {
   primaryUseCase: "conversation_search",
   researchCallInterest: "yes",
   role: "engineer",
+  securityCompletedAt: null,
   updatedAt: "2026-08-18T12:00:00.000Z",
   whatsappUsageContext: "personal",
 };
 
 describe("first-connection onboarding verification prompt", () => {
+  test("starts a missing profile at welcome", () => {
+    expect(
+      initialOnboardingStage({
+        activeConnection: null,
+        profile: null,
+        setupId: null,
+        setupState: "idle",
+      }),
+    ).toBe("welcome");
+  });
+
+  test("restores durable post-security progress before setup creation", () => {
+    const postSecurityProfile = {
+      ...completedProfile,
+      securityCompletedAt: "2026-08-18T12:05:00.000Z",
+    };
+    expect(
+      initialOnboardingStage({
+        activeConnection: null,
+        profile: postSecurityProfile,
+        setupId: null,
+        setupState: "idle",
+      }),
+    ).toBe("connection_setup");
+
+    const html = renderToStaticMarkup(
+      <FirstConnectionOnboarding
+        connectedConnection={null}
+        getToken={async () => null}
+        initialProfile={postSecurityProfile}
+        mcpServerUrl="https://api.example.test/mcp"
+        onboardingProfileEndpoint="https://api.example.test/v1/personal-account/onboarding-profile"
+        onComplete={() => undefined}
+        onProfileSaved={() => undefined}
+        setupForm={{
+          connectionName: "",
+          onCancelSetup: () => undefined,
+          onConnectionNameChange: () => undefined,
+          onResetSetup: () => undefined,
+          onStartSetup: () => undefined,
+          onWhatsappNumberChange: () => undefined,
+          qrImageUrl: null,
+          setupCleanupState: null,
+          setupId: null,
+          setupState: "idle",
+          whatsappNumber: "",
+        }}
+      />,
+    );
+    expect(html).toContain("Start Connection Setup");
+    expect(html).not.toContain("Review security before you scan");
+  });
+
+  test("does not trust a setup identifier without durable security completion", () => {
+    expect(
+      initialOnboardingStage({
+        activeConnection: null,
+        profile: completedProfile,
+        setupId: "cst_000000000000000000001",
+        setupState: "awaiting_scan",
+      }),
+    ).toBe("security");
+  });
+
   test("builds client-specific read-only prompt copy without a full number", () => {
     const connection = {
       displayName: "Personal WhatsApp",
@@ -40,6 +106,26 @@ describe("first-connection onboarding verification prompt", () => {
     expect(chatgpt.englishPrompt).toContain("read-only check");
     expect(chatgpt.englishPrompt).toContain("number suffix only");
     expect(chatgpt.englishPrompt).not.toContain("+1 (555) 012-3456");
+  });
+
+  test("distinguishes authorization selection from lifecycle reconnection", () => {
+    const copy = buildVerificationPromptCopy("chatgpt", {
+      displayName: "Personal WhatsApp",
+      numberSuffix: "3456",
+      retentionDays: 30,
+      state: "connected",
+    });
+
+    expect(copy.missingConnectionHelp).toContain(
+      "revise the existing MCP Authorization or create a new one",
+    );
+    expect(copy.missingConnectionHelp).not.toContain("Reconnect");
+    expect(copy.unavailableConnectionHelp).toContain(
+      "Reconnect in Normal only",
+    );
+    expect(copy.englishPrompt).toContain(
+      "active connection is missing from the results",
+    );
   });
 
   test("renders the selected client prompt for Claude and ChatGPT with suffix-only expectations", () => {

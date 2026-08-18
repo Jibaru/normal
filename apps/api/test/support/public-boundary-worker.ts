@@ -149,6 +149,7 @@ const onboardingProfiles = new Map<
       | "student_or_researcher"
       | "other"
       | "not_sure";
+    readonly securityCompletedAt: string | null;
     readonly updatedAt: string;
     readonly whatsappUsageContext: "personal" | "work" | "both";
   }
@@ -672,6 +673,18 @@ const makeTestLayer = (
             profile: onboardingProfiles.get(clerkUserId) ?? null,
           };
         }),
+      markSecurityCompleted: (input) =>
+        Effect.sync(() => {
+          const existing = onboardingProfiles.get(input.clerkUserId);
+          if (existing === undefined) return null;
+          const profile = {
+            ...existing,
+            securityCompletedAt:
+              existing.securityCompletedAt ?? input.completedAt,
+          };
+          onboardingProfiles.set(input.clerkUserId, profile);
+          return profile;
+        }),
       upsert: (input) =>
         Effect.sync(() => {
           if (!personalAccounts.has(input.clerkUserId)) {
@@ -685,6 +698,7 @@ const makeTestLayer = (
             primaryUseCase: input.primaryUseCase,
             researchCallInterest: input.researchCallInterest,
             role: input.role,
+            securityCompletedAt: existing?.securityCompletedAt ?? null,
             updatedAt: input.updatedAt,
             whatsappUsageContext: input.whatsappUsageContext,
           };
@@ -1242,7 +1256,11 @@ const makeTestLayer = (
           const hasRetainedConnection =
             clerkUserId === "user_test_public_boundary" &&
             whatsAppConnections.length > 0;
-          if (!onboardingProfiles.has(clerkUserId) && !hasRetainedConnection) {
+          const profile = onboardingProfiles.get(clerkUserId);
+          if (
+            (profile === undefined || profile.securityCompletedAt === null) &&
+            !hasRetainedConnection
+          ) {
             return { outcome: "onboarding_profile_required" as const };
           }
           return {

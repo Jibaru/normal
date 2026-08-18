@@ -85,6 +85,28 @@ describe("Onboarding profile repository", () => {
       whatsappUsageContext: "personal",
     });
     expect(created?.completedAt).toBe("2026-08-13T12:00:00.000Z");
+    expect(created?.securityCompletedAt).toBeNull();
+    await expect(
+      repository.isFirstConnectionSetupEligible(clerkUserId),
+    ).resolves.toBe(false);
+
+    const securityCompleted = await repository.markSecurityCompletedForUser({
+      clerkUserId,
+      completedAt: "2026-08-13T12:30:00.000Z",
+    });
+    expect(securityCompleted?.securityCompletedAt).toBe(
+      "2026-08-13T12:30:00.000Z",
+    );
+    await expect(
+      repository.isFirstConnectionSetupEligible(clerkUserId),
+    ).resolves.toBe(true);
+    const replayedSecurity = await repository.markSecurityCompletedForUser({
+      clerkUserId,
+      completedAt: "2026-08-13T12:45:00.000Z",
+    });
+    expect(replayedSecurity?.securityCompletedAt).toBe(
+      "2026-08-13T12:30:00.000Z",
+    );
 
     const updated = await repository.upsertForUser({
       clerkUserId,
@@ -104,6 +126,7 @@ describe("Onboarding profile repository", () => {
     });
     expect(updated?.completedAt).toBe("2026-08-13T12:00:00.000Z");
     expect(updated?.updatedAt).toBe("2026-08-13T13:00:00.000Z");
+    expect(updated?.securityCompletedAt).toBe("2026-08-13T12:30:00.000Z");
 
     await expect(repository.getForUser(clerkUserId)).resolves.toEqual({
       accessible: true,

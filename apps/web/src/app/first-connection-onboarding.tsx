@@ -107,6 +107,7 @@ export interface OnboardingProfile {
   readonly primaryUseCase: PrimaryUseCase;
   readonly whatsappUsageContext: WhatsAppUsageContext;
   readonly role: OnboardingRole;
+  readonly securityCompletedAt: string | null;
   readonly intendedMcpClient: IntendedMcpClient;
   readonly researchCallInterest: ResearchCallInterest;
   readonly createdAt: string;
@@ -321,7 +322,9 @@ export function decodeOnboardingProfileResponse(
     !isResearchCallInterest(record.research_call_interest) ||
     !isIsoDate(record.created_at) ||
     !isIsoDate(record.updated_at) ||
-    (record.completed_at !== null && !isIsoDate(record.completed_at))
+    (record.completed_at !== null && !isIsoDate(record.completed_at)) ||
+    (record.security_completed_at !== null &&
+      !isIsoDate(record.security_completed_at))
   ) {
     return undefined;
   }
@@ -329,6 +332,7 @@ export function decodeOnboardingProfileResponse(
     primaryUseCase: record.primary_use_case,
     whatsappUsageContext: record.whatsapp_usage_context,
     role: record.role,
+    securityCompletedAt: record.security_completed_at,
     intendedMcpClient: record.intended_mcp_client,
     researchCallInterest: record.research_call_interest,
     createdAt: record.created_at,
@@ -351,6 +355,23 @@ function isActiveConnection(
   connection: FirstConnectionConnection | null,
 ): connection is FirstConnectionConnection {
   return connection !== null && connection.state === "connected";
+}
+
+export function initialOnboardingStage(input: {
+  readonly activeConnection: FirstConnectionConnection | null;
+  readonly profile: OnboardingProfile | null;
+  readonly setupId: string | null;
+  readonly setupState: ConnectionSetupState;
+}): OnboardingStage {
+  if (input.setupState === "connected" && input.activeConnection !== null) {
+    return "success";
+  }
+  if (input.profile !== null && input.profile.securityCompletedAt !== null) {
+    return "connection_setup";
+  }
+  return input.profile === null || input.profile.completedAt === null
+    ? "welcome"
+    : "security";
 }
 
 function isCompleteDraft(draft: ProfileDraft): draft is {
@@ -599,9 +620,9 @@ export function buildVerificationPromptCopy(
     client === "claude" ? "Usa Normal" : "Usa el conector Normal";
   const authorizationHelpClient = client === "claude" ? "Claude" : "ChatGPT";
 
-  const spanishPrompt = `${invocation} para verificar, solo en modo de lectura, que puedes ver mi conexión de WhatsApp llamada "${connection.displayName}" terminada en ${connection.numberSuffix}. Responde solo con el nombre visible y el sufijo del número; nunca muestres el número completo. Si Normal no aparece o si no ves esta conexión, dímelo y recuérdame revisar la autorización de ${authorizationHelpClient} o reconectar la conexión en Normal. No envíes mensajes ni pidas permisos adicionales.`;
+  const spanishPrompt = `${invocation} para verificar, solo en modo de lectura, que puedes ver mi conexión de WhatsApp llamada "${connection.displayName}" terminada en ${connection.numberSuffix}. Responde solo con el nombre visible y el sufijo del número; nunca muestres el número completo. Si Normal no aparece, dímelo y recuérdame revisar la autorización de ${authorizationHelpClient}. Si Normal aparece pero esta conexión activa no está en los resultados, recuérdame modificar o crear una autorización MCP que la seleccione explícitamente. Recomienda reconectarla en Normal solo si aparece como no disponible. No envíes mensajes ni pidas permisos adicionales.`;
 
-  const englishPrompt = `Use Normal for a read-only check that you can see my WhatsApp Connection named "${connection.displayName}" ending in ${connection.numberSuffix}. Reply with the display name and the number suffix only, never the full number. If Normal is unavailable or you cannot see this connection, tell me and remind me to review the ${authorizationHelpClient} authorization or reconnect the connection in Normal. Do not send messages or request any additional permissions.`;
+  const englishPrompt = `Use Normal for a read-only check that you can see my WhatsApp Connection named "${connection.displayName}" ending in ${connection.numberSuffix}. Reply with the display name and the number suffix only, never the full number. If Normal is unavailable, tell me and remind me to review the ${authorizationHelpClient} authorization. If Normal is available but this active connection is missing from the results, remind me to revise or create an MCP Authorization that explicitly selects it. Recommend reconnecting it in Normal only if it is listed as unavailable. Do not send messages or request any additional permissions.`;
 
   return {
     clientName,
@@ -609,9 +630,11 @@ export function buildVerificationPromptCopy(
     expectedEnglishResponse: `${connection.displayName}, number ending in ${connection.numberSuffix}.`,
     expectedSpanishResponse: `${connection.displayName}, número terminado en ${connection.numberSuffix}.`,
     missingConnectionHelp:
-      "If Normal is enabled but this WhatsApp Connection is missing, reconnect it in Normal, then authorize it again with this connection selected.",
+      "If Normal is enabled but this active WhatsApp Connection is missing from the results, revise the existing MCP Authorization or create a new one that explicitly selects this connection.",
     missingToolHelp: `If ${clientName} says Normal is unavailable, reopen MCP Authorization and confirm that this WhatsApp Connection is selected for ${clientName}.`,
     spanishPrompt,
+    unavailableConnectionHelp:
+      "Reconnect in Normal only when the WhatsApp Connection is listed but its lifecycle state is unavailable.",
   };
 }
 
@@ -672,6 +695,9 @@ function VerificationPromptCard({
           <p className="mt-2 text-muted-foreground">{copy.missingToolHelp}</p>
           <p className="mt-2 text-muted-foreground">
             {copy.missingConnectionHelp}
+          </p>
+          <p className="mt-2 text-muted-foreground">
+            {copy.unavailableConnectionHelp}
           </p>
           <p className="mt-2 text-muted-foreground">
             Use{" "}
@@ -844,14 +870,16 @@ export function FirstConnectionOnboarding({
   const [profileState, setProfileState] = useState<
     "idle" | "saving" | "unavailable"
   >("idle");
-  const [stage, setStage] = useState<OnboardingStage>(
-    setupForm.setupState === "connected" && activeConnection !== null
-      ? "success"
-      : setupForm.setupId !== null
-        ? "connection_setup"
-        : initialProfile?.completedAt === null || initialProfile === null
-          ? "welcome"
-          : "security",
+  const [securityState, setSecurityState] = useState<
+    "idle" | "saving" | "unavailable"
+  >("idle");
+  const [stage, setStage] = useState<OnboardingStage>(() =>
+    initialOnboardingStage({
+      activeConnection,
+      profile: initialProfile,
+      setupId: setupForm.setupId,
+      setupState: setupForm.setupState,
+    }),
   );
   const viewedStages = useRef<Set<OnboardingStage>>(new Set());
   const completedStages = useRef<Set<OnboardingStage>>(new Set());
@@ -859,6 +887,7 @@ export function FirstConnectionOnboarding({
   const reportedSetupOutcome = useRef(false);
   const completedConnectionSetupStage = useRef(false);
   const latestStage = useRef(stage);
+  const previousStage = useRef(stage);
 
   latestStage.current = stage;
 
@@ -895,8 +924,10 @@ export function FirstConnectionOnboarding({
   }, [stage]);
 
   useEffect(() => {
+    if (previousStage.current === stage) return;
+    previousStage.current = stage;
     headingRef.current?.focus();
-  }, []);
+  }, [stage]);
 
   useEffect(() => {
     const handlePageHide = () => reportStageAbandonment();
@@ -994,6 +1025,39 @@ export function FirstConnectionOnboarding({
     setupForm.onStartSetup(event);
   };
 
+  const completeSecurity = async () => {
+    setSecurityState("saving");
+    try {
+      const token = await getToken();
+      if (token === null) throw new Error("signed out");
+      const response = await fetch(onboardingProfileEndpoint, {
+        body: JSON.stringify({ security_completed: true }),
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        method: "PATCH",
+      });
+      const savedProfile = decodeOnboardingProfileResponse(
+        await response.json(),
+      );
+      if (
+        !response.ok ||
+        savedProfile === undefined ||
+        savedProfile === null ||
+        savedProfile.securityCompletedAt === null
+      ) {
+        throw new Error("security completion unavailable");
+      }
+      setProfile(savedProfile);
+      onProfileSaved(savedProfile);
+      setSecurityState("idle");
+      completeStage("security", "connection_setup");
+    } catch {
+      setSecurityState("unavailable");
+    }
+  };
+
   const finishOnboarding = () => {
     markStageCompleted("success");
     captureProductAnalyticsEvent({ event: "onboarding_completed" });
@@ -1022,6 +1086,9 @@ export function FirstConnectionOnboarding({
       className="flex flex-col gap-6"
       data-testid="first-connection-onboarding"
     >
+      <p aria-live="polite" className="sr-only">
+        Current onboarding step: {onboardingStageLabels[stage]}
+      </p>
       <ProgressSteps stage={stage} />
       <div className="rounded-2xl bg-card p-5 text-card-foreground ring-1 ring-foreground/10">
         <p className="text-sm font-medium text-muted-foreground">
@@ -1232,12 +1299,24 @@ export function FirstConnectionOnboarding({
           </ul>
           <div className="mt-5 flex justify-end">
             <Button
-              onClick={() => completeStage("security", "connection_setup")}
+              disabled={securityState === "saving"}
+              onClick={completeSecurity}
               type="button"
             >
+              {securityState === "saving" ? (
+                <Spinner data-icon="inline-start" />
+              ) : null}
               Review complete. Start Connection Setup
             </Button>
           </div>
+          {securityState === "unavailable" ? (
+            <p
+              aria-live="polite"
+              className="mt-4 rounded-lg bg-muted px-3 py-2.5 text-sm text-muted-foreground"
+            >
+              Security completion could not be saved. Please try again.
+            </p>
+          ) : null}
         </div>
       ) : null}
 

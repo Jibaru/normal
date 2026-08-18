@@ -1,5 +1,6 @@
 import {
   decodeOnboardingProfileWrite,
+  decodeOnboardingSecurityCompletionWrite,
   type OnboardingProfileWrite,
 } from "@whatsapp-mcp/contracts/onboarding-profile";
 import type {
@@ -30,6 +31,13 @@ export interface OnboardingProfilePersistenceService {
     readonly clerkUserId: string;
   }) => Effect.Effect<
     OnboardingProfileLookup,
+    OnboardingProfilePersistenceError
+  >;
+  readonly markSecurityCompleted: (input: {
+    readonly clerkUserId: string;
+    readonly completedAt: string;
+  }) => Effect.Effect<
+    OnboardingProfile | null,
     OnboardingProfilePersistenceError
   >;
   readonly upsert: (input: {
@@ -68,7 +76,7 @@ type Requirements =
 
 const headers = (origin: string) => ({
   "access-control-allow-headers": "authorization,content-type",
-  "access-control-allow-methods": "GET,OPTIONS,PUT",
+  "access-control-allow-methods": "GET,OPTIONS,PATCH,PUT",
   "access-control-allow-origin": origin,
   vary: "Origin",
 });
@@ -87,6 +95,7 @@ const profileJson = (profile: OnboardingProfile) => ({
   primary_use_case: profile.primaryUseCase,
   research_call_interest: profile.researchCallInterest,
   role: profile.role,
+  security_completed_at: profile.securityCompletedAt,
   updated_at: profile.updatedAt,
   whatsapp_usage_context: profile.whatsappUsageContext,
 });
@@ -121,6 +130,17 @@ const decodeWriteBody = async (
   }
 };
 
+const decodeSecurityCompletionBody = async (
+  request: Request,
+): Promise<boolean> => {
+  try {
+    decodeOnboardingSecurityCompletionWrite(await request.json());
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export const createOnboardingProfileHandler =
   (layer: Layer.Layer<Requirements, unknown>, browserOrigin: string) =>
   async (request: Request): Promise<Response> => {
@@ -137,7 +157,11 @@ export const createOnboardingProfileHandler =
         status: 204,
       });
     }
-    if (request.method !== "GET" && request.method !== "PUT") {
+    if (
+      request.method !== "GET" &&
+      request.method !== "PATCH" &&
+      request.method !== "PUT"
+    ) {
       return json({ error: "not_found" }, 404, browserOrigin);
     }
 
@@ -148,17 +172,39 @@ export const createOnboardingProfileHandler =
         return json({ error: "invalid_request" }, 400, browserOrigin);
       }
     }
+    if (
+      request.method === "PATCH" &&
+      !(await decodeSecurityCompletionBody(request))
+    ) {
+      return json({ error: "invalid_request" }, 400, browserOrigin);
+    }
 
     return Effect.runPromise(
       Effect.gen(function* () {
         const identity = yield* HumanIdentity;
         const clerkUserId = yield* identity.verify(request);
         const persistence = yield* OnboardingProfilePersistence;
-        if (writeBody === null) {
+        if (request.method === "GET") {
           const lookup = yield* persistence.get({ clerkUserId });
           return { operation: "get" as const, lookup };
         }
         const clock = yield* OnboardingProfileClock;
+        if (request.method === "PATCH") {
+          const profile = yield* persistence.markSecurityCompleted({
+            clerkUserId,
+            completedAt: yield* clock.now,
+          });
+          return {
+            operation: "security" as const,
+            lookup:
+              profile === null
+                ? ({ accessible: false } as const)
+                : ({ accessible: true, profile } as const),
+          };
+        }
+        if (writeBody === null) {
+          return yield* Effect.die("missing onboarding profile write");
+        }
         const profile = yield* persistence.upsert({
           clerkUserId,
           intendedMcpClient: writeBody.intended_mcp_client,

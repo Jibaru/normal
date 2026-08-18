@@ -23,6 +23,9 @@ const completeFirstConnectionProfile = async (
         name: "Save your onboarding profile",
       }),
     ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Save your onboarding profile" }),
+    ).toBeFocused();
 
     const choose = async (label: string, option: string) => {
       await onboarding.getByLabel(label, { exact: true }).click();
@@ -36,20 +39,29 @@ const completeFirstConnectionProfile = async (
     await choose("Interested in a short research call?", "Yes");
     await onboarding.getByRole("button", { name: "Save and continue" }).click();
   }
-  await expect(
-    page.getByRole("heading", { name: "Review security before you scan" }),
-  ).toBeVisible();
-  await expect(onboarding).toContainText(
-    "send permission does not imply message read permission",
-  );
-  await expect(onboarding).toContainText("Client Confirmation");
-  await expect(onboarding).toContainText("ephemeral");
-  await onboarding
-    .getByRole("button", { name: "Review complete. Start Connection Setup" })
-    .click();
+  const securityHeading = page.getByRole("heading", {
+    name: "Review security before you scan",
+  });
+  const needsSecurityReview = await securityHeading.isVisible();
+  if (needsSecurityReview) {
+    await expect(securityHeading).toBeFocused();
+    await expect(onboarding).toContainText(
+      "send permission does not imply message read permission",
+    );
+    await expect(onboarding).toContainText("Client Confirmation");
+    await expect(onboarding).toContainText("ephemeral");
+    await onboarding
+      .getByRole("button", { name: "Review complete. Start Connection Setup" })
+      .click();
+  }
   await expect(
     page.getByRole("heading", { name: "Start Connection Setup" }),
   ).toBeVisible();
+  if (needsSecurityReview) {
+    await expect(
+      page.getByRole("heading", { name: "Start Connection Setup" }),
+    ).toBeFocused();
+  }
 };
 
 test("drives the signed-in browser-to-API boundary over real HTTP", async ({
@@ -531,7 +543,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   ]);
 });
 
-test("resumes first-connection onboarding after a completed profile without repeating questions", async ({
+test("resumes first-connection onboarding after security without replaying completed stages", async ({
   page,
   request,
 }) => {
@@ -567,19 +579,19 @@ test("resumes first-connection onboarding after a completed profile without repe
   await page.reload();
   await expect(page.getByTestId("first-connection-onboarding")).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Review security before you scan" }),
+    page.getByRole("heading", { name: "Start Connection Setup" }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Start Connection Setup" }),
+  ).not.toBeFocused();
   await expect(
     page.getByRole("heading", {
       name: "Save your onboarding profile",
     }),
   ).toHaveCount(0);
-  await page
-    .getByRole("button", { name: "Review complete. Start Connection Setup" })
-    .click();
   await expect(
-    page.getByRole("heading", { name: "Start Connection Setup" }),
-  ).toBeVisible();
+    page.getByRole("heading", { name: "Review security before you scan" }),
+  ).toHaveCount(0);
 });
 
 test("bootstraps another Clerk User and shows provider capacity failure during Connection Setup", async ({
