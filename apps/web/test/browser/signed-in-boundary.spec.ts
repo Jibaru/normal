@@ -7,7 +7,10 @@ const webOrigin = `http://127.0.0.1:${process.env.PLAYWRIGHT_WEB_PORT ?? "3000"}
 // A failed journey must not retain the ephemeral QR response in a trace.
 test.use({ trace: "off" });
 
-const completeFirstConnectionProfile = async (page: Page) => {
+const completeFirstConnectionProfile = async (
+  page: Page,
+  intendedClient: "Claude" | "ChatGPT" = "Claude",
+) => {
   const onboarding = page.getByTestId("first-connection-onboarding");
   await expect(onboarding).toBeVisible();
   const welcome = page.getByRole("heading", {
@@ -30,7 +33,7 @@ const completeFirstConnectionProfile = async (page: Page) => {
     await choose("Primary use case", "Search WhatsApp Conversations");
     await choose("WhatsApp usage context", "Personal");
     await choose("Role", "Engineer");
-    await choose("Intended MCP Client", "Claude");
+    await choose("Intended MCP Client", intendedClient);
     await choose("Interested in a short research call?", "Yes");
     await onboarding.getByRole("button", { name: "Save and continue" }).click();
   }
@@ -266,7 +269,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     page.getByRole("region", { name: "Personal Account Deletion" }),
   ).toBeVisible();
   await page.getByRole("link", { name: "WhatsApp Connections" }).click();
-  await completeFirstConnectionProfile(page);
+  await completeFirstConnectionProfile(page, "ChatGPT");
   const onboarding = page.getByTestId("first-connection-onboarding");
   await onboarding
     .getByLabel("Name", { exact: true })
@@ -302,6 +305,33 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(
     page.getByRole("heading", { name: "WhatsApp Connection active" }),
   ).toBeVisible({ timeout: 15_000 });
+  const verificationPrompt = onboarding.getByTestId("mcp-verification-prompt");
+  await expect(verificationPrompt).toContainText(
+    "Verify ChatGPT can see this WhatsApp Connection",
+  );
+  await expect(verificationPrompt).toContainText("Usa el conector Normal");
+  await expect(verificationPrompt).toContainText(
+    "Personal WhatsApp, número terminado en 3456.",
+  );
+  await expect(verificationPrompt).not.toContainText("@normal");
+  const onboardingChatgptAction = onboarding.getByRole("link", {
+    name: "Open ChatGPT in a new tab",
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(onboardingChatgptAction).toBeVisible();
+  await expect(onboardingChatgptAction).toHaveAttribute(
+    "href",
+    "https://chatgpt.com/plugins",
+  );
+  const popupPromise = page.waitForEvent("popup");
+  await onboardingChatgptAction.click();
+  const popup = await popupPromise;
+  await expect
+    .poll(() => popup.url())
+    .toMatch(/^https:\/\/chatgpt\.com\/plugins\/?$/u);
+  await popup.close();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(onboardingChatgptAction).toBeVisible();
   await expect(
     page.getByRole("img", { name: "Scan this WhatsApp QR code" }),
   ).toHaveCount(0);
@@ -531,7 +561,7 @@ test("resumes first-connection onboarding after a completed profile without repe
     token: "signed-second-test-user",
   });
   await page.goto("/dashboard/connections");
-  await completeFirstConnectionProfile(page);
+  await completeFirstConnectionProfile(page, "ChatGPT");
   await page.reload();
   await expect(page.getByTestId("first-connection-onboarding")).toBeVisible();
   await expect(
