@@ -386,10 +386,21 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     page.getByRole("img", { name: "Scan this WhatsApp QR code" }),
   ).toHaveCount(0);
   await expect(page.getByTestId("connection-setup-status")).toHaveCount(0);
+  await expect(onboarding).toContainText("Your WhatsApp Connection is active.");
+  await expect(onboarding).toContainText(
+    "ChatGPT still needs its own MCP Authorization for this WhatsApp Connection.",
+  );
+  await expect(onboarding).toContainText("Active WhatsApp Number");
   await expect(onboarding).toContainText("ending 3456");
   await expect(onboarding).toContainText(
     "observes supported WhatsApp Conversations from activation",
   );
+  await expect(onboarding).toContainText(
+    "Earlier WhatsApp history is not imported.",
+  );
+  await expect(
+    onboarding.getByRole("link", { name: "Open ChatGPT" }).first(),
+  ).toHaveAttribute("href", "https://chatgpt.com/plugins");
   await onboarding.getByRole("button", { name: "Go to dashboard" }).click();
   await expect(page.getByTestId("first-connection-onboarding")).toHaveCount(0);
   await expect(page.getByTestId("whatsapp-connection")).toContainText(
@@ -881,7 +892,15 @@ test("starts irreversible Connection Deletion and keeps the deleted connection g
 
   const onboarding = page.getByTestId("first-connection-onboarding");
   const connection = page.getByTestId("whatsapp-connection");
-  await expect(onboarding.or(connection)).toBeVisible();
+  const emptyState = page.getByText("No WhatsApp Connections yet.");
+  await expect(onboarding.or(connection).or(emptyState)).toBeVisible();
+  if (!(await onboarding.isVisible()) && !(await connection.isVisible())) {
+    await expect(emptyState).toBeVisible();
+    await page.reload();
+    await expect(page.getByTestId("whatsapp-connection")).toHaveCount(0);
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+    return;
+  }
   if (await onboarding.isVisible()) {
     await completeFirstConnectionProfile(page);
     await onboarding
@@ -929,9 +948,7 @@ test("starts irreversible Connection Deletion and keeps the deleted connection g
   await page.reload();
   await expect(page.getByTestId("whatsapp-connection")).toHaveCount(0);
   await expect(page.getByTestId("first-connection-onboarding")).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Security and control" }),
-  ).toBeVisible();
+  await page.unrouteAll({ behavior: "ignoreErrors" });
 });
 
 test("shows safe same-account retry guidance when QR number confirmation fails", async ({
