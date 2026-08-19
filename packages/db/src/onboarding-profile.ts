@@ -42,6 +42,7 @@ export interface OnboardingProfile {
   readonly primaryUseCase: OnboardingPrimaryUseCase;
   readonly researchCallInterest: OnboardingResearchCallInterest;
   readonly role: OnboardingRole;
+  readonly securityCompletedAt: string | null;
   readonly updatedAt: string;
   readonly whatsappUsageContext: OnboardingWhatsAppUsageContext;
 }
@@ -113,6 +114,7 @@ const decodeProfile = (
   const createdAt = timestamp(row.created_at);
   const updatedAt = timestamp(row.updated_at);
   const completedAt = timestamp(row.completed_at);
+  const securityCompletedAt = timestamp(row.security_completed_at);
   if (
     typeof primaryUseCase !== "string" ||
     !primaryUseCases.has(primaryUseCase) ||
@@ -138,6 +140,7 @@ const decodeProfile = (
     researchCallInterest:
       researchCallInterest as OnboardingResearchCallInterest,
     role: role as OnboardingRole,
+    securityCompletedAt,
     updatedAt,
     whatsappUsageContext:
       whatsappUsageContext as OnboardingWhatsAppUsageContext,
@@ -181,6 +184,19 @@ export const makeOnboardingProfileRepository = (
           ${input.intendedMcpClient},
           ${input.researchCallInterest},
           ${input.updatedAt}
+        )`,
+      );
+      return decodeUpsert(rows[0]);
+    }),
+  markSecurityCompletedForUser: (input: {
+    readonly clerkUserId: string;
+    readonly completedAt: string;
+  }) =>
+    provider.withConnection(async (connection) => {
+      const rows = await makeDatabase(connection).execute(
+        sql`SELECT * FROM public.complete_onboarding_security(
+          ${input.clerkUserId},
+          ${input.completedAt}
         )`,
       );
       return decodeUpsert(rows[0]);

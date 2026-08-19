@@ -56,6 +56,20 @@ const makeHarness = (
               profile: profiles.get(requested) ?? null,
             };
           }),
+    markSecurityCompleted: (input) =>
+      options.persistenceFailure
+        ? Effect.fail(new OnboardingProfilePersistenceError())
+        : Effect.sync(() => {
+            const existing = profiles.get(input.clerkUserId);
+            if (options.deleted || existing === undefined) return null;
+            const profile = {
+              ...existing,
+              securityCompletedAt:
+                existing.securityCompletedAt ?? input.completedAt,
+            };
+            profiles.set(input.clerkUserId, profile);
+            return profile;
+          }),
     upsert: (input) =>
       options.persistenceFailure
         ? Effect.fail(new OnboardingProfilePersistenceError())
@@ -69,6 +83,7 @@ const makeHarness = (
               primaryUseCase: input.primaryUseCase,
               researchCallInterest: input.researchCallInterest,
               role: input.role,
+              securityCompletedAt: existing?.securityCompletedAt ?? null,
               updatedAt: input.updatedAt,
               whatsappUsageContext: input.whatsappUsageContext,
             };
@@ -106,7 +121,7 @@ const makeHarness = (
 };
 
 const request = (
-  method: "GET" | "PUT" | "POST",
+  method: "GET" | "PATCH" | "PUT" | "POST",
   overrides: {
     readonly authorization?: string | undefined;
     readonly body?: unknown;
@@ -145,6 +160,7 @@ describe("Onboarding profile HTTP boundary", () => {
         primary_use_case: "conversation_search",
         research_call_interest: "yes",
         role: "engineer",
+        security_completed_at: null,
         updated_at: "2026-08-13T12:00:00.000Z",
         whatsapp_usage_context: "personal",
       },
@@ -156,6 +172,16 @@ describe("Onboarding profile HTTP boundary", () => {
         service: "api",
       },
     ]);
+
+    const securityCompleted = await harness.handler(
+      request("PATCH", { body: { security_completed: true } }),
+    );
+    expect(securityCompleted.status).toBe(200);
+    await expect(securityCompleted.json()).resolves.toMatchObject({
+      profile: {
+        security_completed_at: "2026-08-13T12:00:00.000Z",
+      },
+    });
 
     const updated = await harness.handler(
       request("PUT", {
@@ -219,6 +245,10 @@ describe("Onboarding profile HTTP boundary", () => {
       }),
     );
     expect(invalidEnum.status).toBe(400);
+    const invalidSecurity = await harness.handler(
+      request("PATCH", { body: { security_completed: false } }),
+    );
+    expect(invalidSecurity.status).toBe(400);
   });
 
   test("keeps constant-shape not_found for inaccessible accounts and invalid identity", async () => {

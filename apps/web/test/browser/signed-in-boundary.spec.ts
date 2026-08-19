@@ -16,14 +16,17 @@ const completeFirstConnectionProfile = async (
   const welcome = page.getByRole("heading", {
     name: "Connect WhatsApp to Normal",
   });
-  const security = page.getByRole("heading", { name: "Security and control" });
-  if (await welcome.isVisible()) {
-    await onboarding.getByRole("button", { name: "Continue" }).click();
+  const startedFromWelcome = await welcome.isVisible();
+  if (startedFromWelcome) {
+    await onboarding.getByRole("button", { name: "Start onboarding" }).click();
     await expect(
       page.getByRole("heading", {
-        name: "Tell us how you plan to use Normal",
+        name: "Save your onboarding profile",
       }),
     ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Save your onboarding profile" }),
+    ).toBeFocused();
 
     const choose = async (label: string, option: string) => {
       await onboarding.getByLabel(label, { exact: true }).click();
@@ -37,18 +40,32 @@ const completeFirstConnectionProfile = async (
     await choose("Interested in a short research call?", "Yes");
     await onboarding.getByRole("button", { name: "Save and continue" }).click();
   }
-  await expect(security).toBeVisible();
-  await expect(onboarding).toContainText(
-    "send permission does not imply message read permission",
-  );
-  await expect(onboarding).toContainText("Client Confirmation");
-  await expect(onboarding).toContainText("ephemeral");
-  await onboarding
-    .getByRole("button", { name: "Continue to Connection Setup" })
-    .click();
+  const securityHeading = page.getByRole("heading", {
+    name: "Review security before you scan",
+  });
+  if (startedFromWelcome) {
+    await expect(securityHeading).toBeVisible();
+    await expect(securityHeading).toBeFocused();
+  }
+  const needsSecurityReview = await securityHeading.isVisible();
+  if (needsSecurityReview) {
+    await expect(onboarding).toContainText(
+      "send permission does not imply message read permission",
+    );
+    await expect(onboarding).toContainText("Client Confirmation");
+    await expect(onboarding).toContainText("ephemeral");
+    await onboarding
+      .getByRole("button", { name: "Review complete. Start Connection Setup" })
+      .click();
+  }
   await expect(
     page.getByRole("heading", { name: "Start Connection Setup" }),
   ).toBeVisible();
+  if (needsSecurityReview) {
+    await expect(
+      page.getByRole("heading", { name: "Start Connection Setup" }),
+    ).toBeFocused();
+  }
 };
 
 test("drives the signed-in browser-to-API boundary over real HTTP", async ({
@@ -316,7 +333,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     page.getByRole("heading", { name: "Start Connection Setup" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Security and control" }),
+    page.getByRole("heading", { name: "Review security before you scan" }),
   ).toHaveCount(0);
   releaseFirstQr?.();
   await expect(
@@ -326,7 +343,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     "Scan this QR code with WhatsApp.",
   );
   await expect(
-    page.getByRole("heading", { name: "WhatsApp Connection active" }),
+    page.getByRole("heading", { name: "Connect your MCP Client" }),
   ).toBeVisible({ timeout: 15_000 });
   const verificationPrompt = onboarding.getByTestId("mcp-verification-prompt");
   await expect(verificationPrompt).toContainText(
@@ -338,7 +355,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   );
   await expect(verificationPrompt).not.toContainText("@normal");
   const onboardingChatgptAction = onboarding.getByRole("link", {
-    name: "Open ChatGPT in a new tab",
+    name: "Open ChatGPT",
   });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(onboardingChatgptAction).toBeVisible();
@@ -398,9 +415,10 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(onboarding).toContainText(
     "Earlier WhatsApp history is not imported.",
   );
-  await expect(
-    onboarding.getByRole("link", { name: "Open ChatGPT" }).first(),
-  ).toHaveAttribute("href", "https://chatgpt.com/plugins");
+  await expect(onboardingChatgptAction).toHaveAttribute(
+    "href",
+    "https://chatgpt.com/plugins",
+  );
   await onboarding.getByRole("button", { name: "Go to dashboard" }).click();
   await expect(page.getByTestId("first-connection-onboarding")).toHaveCount(0);
   await expect(page.getByTestId("whatsapp-connection")).toContainText(
@@ -579,7 +597,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   ]);
 });
 
-test("resumes first-connection onboarding after a completed profile without repeating questions", async ({
+test("resumes first-connection onboarding after security without replaying completed stages", async ({
   page,
   request,
 }) => {
@@ -615,19 +633,19 @@ test("resumes first-connection onboarding after a completed profile without repe
   await page.reload();
   await expect(page.getByTestId("first-connection-onboarding")).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Security and control" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("heading", {
-      name: "Tell us how you plan to use Normal",
-    }),
-  ).toHaveCount(0);
-  await page
-    .getByRole("button", { name: "Continue to Connection Setup" })
-    .click();
-  await expect(
     page.getByRole("heading", { name: "Start Connection Setup" }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Start Connection Setup" }),
+  ).not.toBeFocused();
+  await expect(
+    page.getByRole("heading", {
+      name: "Save your onboarding profile",
+    }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "Review security before you scan" }),
+  ).toHaveCount(0);
 });
 
 test.describe("Connection Setup loading UI", () => {

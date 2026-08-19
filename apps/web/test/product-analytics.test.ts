@@ -92,11 +92,15 @@ describe("product analytics boundary", () => {
       phase: "start_to_code_observed",
     });
     captureProductAnalyticsEvent({
+      event: "onboarding_stage_abandoned",
+      stage: "connection_setup",
+    });
+    captureProductAnalyticsEvent({
       event: "onboarding_completed",
       email: "user@example.test",
     } as ProductAnalyticsEvent);
 
-    expect(requests).toHaveLength(2);
+    expect(requests).toHaveLength(3);
     expect(requests[0]?.url).toBe("https://us.i.posthog.com/capture/");
     expect(requests[0]?.body).toMatchObject({
       api_key: "phc_example",
@@ -125,6 +129,10 @@ describe("product analytics boundary", () => {
     expect(body.distinct_id).toBeUndefined();
     expect(body.properties?.distinct_id).toBeString();
     expect(body.properties?.distinct_id).toBe(body.properties?.$session_id);
+    expect(requests[2]?.body).toMatchObject({
+      event: "onboarding_stage_abandoned",
+      properties: { stage: "connection_setup" },
+    });
     expect(JSON.stringify(requests)).not.toMatch(
       /clerk|email|personal_account|whatsapp|phone|message|qr|provider/iu,
     );

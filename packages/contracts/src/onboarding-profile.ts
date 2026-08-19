@@ -58,6 +58,12 @@ export const OnboardingProfileWrite = Schema.Struct({
 });
 export type OnboardingProfileWrite = typeof OnboardingProfileWrite.Type;
 
+export const OnboardingSecurityCompletionWrite = Schema.Struct({
+  security_completed: Schema.Literal(true),
+});
+export type OnboardingSecurityCompletionWrite =
+  typeof OnboardingSecurityCompletionWrite.Type;
+
 export const OnboardingProfile = Schema.Struct({
   completed_at: Schema.String,
   created_at: Schema.String,
@@ -65,6 +71,7 @@ export const OnboardingProfile = Schema.Struct({
   primary_use_case: OnboardingPrimaryUseCase,
   research_call_interest: OnboardingResearchCallInterest,
   role: OnboardingRole,
+  security_completed_at: Schema.NullOr(Schema.String),
   updated_at: Schema.String,
   whatsapp_usage_context: OnboardingWhatsAppUsageContext,
 });
@@ -78,6 +85,13 @@ export const decodeOnboardingProfileWrite = Schema.decodeUnknownSync(
 export const decodeOnboardingProfile = Schema.decodeUnknownSync(
   OnboardingProfile,
   { onExcessProperty: "error" },
+);
+
+export const decodeOnboardingSecurityCompletionWrite = Schema.decodeUnknownSync(
+  OnboardingSecurityCompletionWrite,
+  {
+    onExcessProperty: "error",
+  },
 );
 
 export const ONBOARDING_PRIMARY_USE_CASES = [

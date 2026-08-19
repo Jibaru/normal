@@ -93,6 +93,22 @@ describe("public-boundary Worker harness", () => {
     );
     expect(profile.status).toBe(200);
 
+    const security = await exports.default.fetch(
+      new Request(
+        "https://api.example.test/v1/personal-account/onboarding-profile",
+        {
+          body: JSON.stringify({ security_completed: true }),
+          headers: {
+            authorization: "Bearer signed-test-user",
+            "content-type": "application/json",
+            origin: "http://127.0.0.1:3000",
+          },
+          method: "PATCH",
+        },
+      ),
+    );
+    expect(security.status).toBe(200);
+
     const request = () =>
       new Request("https://api.example.test/v1/connection-setups", {
         body: JSON.stringify({

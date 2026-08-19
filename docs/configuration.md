@@ -495,6 +495,13 @@ cascades on Personal Account purge. Personal Account Deletion removes it with
 other User-addressable tenant data; a terminally deleted profile must not become
 readable after restore.
 
+The same profile row records security-stage completion. The browser marks that
+transition through an idempotent `PATCH` on the profile route before showing
+Connection Setup. A refresh therefore resumes Connection Setup without replaying
+the security disclosures, including when no Connection Setup has been created.
+Neon also requires this durable completion before the first Connection Setup,
+so browser state alone cannot bypass the security stage.
+
 The first Connection Setup is rejected at the API boundary until a completed
 profile exists, except when the Personal Account already retains a WhatsApp
 Connection (grandfathered). Profile values never enter Activity Logs, Security

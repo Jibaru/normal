@@ -11,6 +11,7 @@ interface McpConnectionGuidesProps {
   readonly onGuideOpened?: (() => void) | undefined;
   readonly onProminentChatGptOpened?: (() => void) | undefined;
   readonly serverUrl: string;
+  readonly showGuideLaunchAction?: boolean;
 }
 
 interface GuideStep {
@@ -112,6 +113,7 @@ function GuideCard({
   onGuideOpened,
   onProminentChatGptOpened,
   serverUrl,
+  showGuideLaunchAction,
   steps,
 }: {
   readonly accent: "claude" | "chatgpt";
@@ -120,6 +122,7 @@ function GuideCard({
   readonly onGuideOpened?: (() => void) | undefined;
   readonly onProminentChatGptOpened?: (() => void) | undefined;
   readonly serverUrl: string;
+  readonly showGuideLaunchAction: boolean;
   readonly steps: ReadonlyArray<GuideStep>;
 }) {
   const isChatGpt = accent === "chatgpt";
@@ -144,19 +147,21 @@ function GuideCard({
           </span>
           <h3 className="text-lg font-semibold tracking-tight">{name}</h3>
         </div>
-        <a
-          aria-label={`Open ${name} guide in a new tab`}
-          className={buttonVariants({ variant: "outline" })}
-          href={connectUrl}
-          onClick={onGuideOpened}
-          rel="noopener noreferrer"
-          target="_blank"
-        >
-          Open {name}
-          <ExternalLink aria-hidden="true" data-icon="inline-end" />
-        </a>
+        {showGuideLaunchAction ? (
+          <a
+            aria-label={`Open ${name} guide in a new tab`}
+            className={buttonVariants({ variant: "outline" })}
+            href={connectUrl}
+            onClick={onGuideOpened}
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            Open {name}
+            <ExternalLink aria-hidden="true" data-icon="inline-end" />
+          </a>
+        ) : null}
       </header>
-      {isChatGpt ? (
+      {isChatGpt && showGuideLaunchAction ? (
         <div className="border-b bg-muted/20 px-5 py-5">
           <div className="flex flex-col gap-4 rounded-2xl bg-background p-4 ring-1 ring-border sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
@@ -224,6 +229,7 @@ export function McpConnectionGuides({
   onGuideOpened,
   onProminentChatGptOpened,
   serverUrl,
+  showGuideLaunchAction = true,
 }: McpConnectionGuidesProps) {
   const showClaude = client === "all" || client === "claude";
   const showChatGpt = client === "all" || client === "chatgpt";
@@ -258,6 +264,7 @@ export function McpConnectionGuides({
             name="Claude"
             onGuideOpened={onGuideOpened}
             serverUrl={serverUrl}
+            showGuideLaunchAction={showGuideLaunchAction}
             steps={claudeSteps}
           />
         ) : null}
@@ -269,6 +276,7 @@ export function McpConnectionGuides({
             onGuideOpened={onGuideOpened}
             onProminentChatGptOpened={onProminentChatGptOpened}
             serverUrl={serverUrl}
+            showGuideLaunchAction={showGuideLaunchAction}
             steps={chatGptSteps}
           />
         ) : null}

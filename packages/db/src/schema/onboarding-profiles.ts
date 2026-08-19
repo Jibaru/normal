@@ -19,6 +19,10 @@ export const personalAccountOnboardingProfilesInApp = publicSchema.table(
     role: text().notNull(),
     intendedMcpClient: text("intended_mcp_client").notNull(),
     researchCallInterest: text("research_call_interest").notNull(),
+    securityCompletedAt: timestamp("security_completed_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
       .default(sql`transaction_timestamp()`)
       .notNull(),

@@ -67,6 +67,10 @@ describe("Connection Setup repository", () => {
         updatedAt: createdAt,
         whatsappUsageContext: "personal",
       });
+      await profiles.markSecurityCompletedForUser({
+        clerkUserId: user,
+        completedAt: createdAt,
+      });
     }
   });
 

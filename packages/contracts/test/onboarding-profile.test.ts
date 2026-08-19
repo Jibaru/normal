@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   decodeOnboardingProfile,
   decodeOnboardingProfileWrite,
+  decodeOnboardingSecurityCompletionWrite,
   ONBOARDING_INTENDED_MCP_CLIENTS,
   ONBOARDING_PRIMARY_USE_CASES,
   ONBOARDING_RESEARCH_CALL_INTERESTS,
@@ -51,6 +52,12 @@ describe("onboarding profile contract", () => {
     expect(() =>
       decodeOnboardingProfileWrite({ ...validWrite, role: "wizard" }),
     ).toThrow();
+    expect(
+      decodeOnboardingSecurityCompletionWrite({ security_completed: true }),
+    ).toEqual({ security_completed: true });
+    expect(() =>
+      decodeOnboardingSecurityCompletionWrite({ security_completed: false }),
+    ).toThrow();
     expect(() =>
       decodeOnboardingProfileWrite({ ...validWrite, notes: "free text" }),
     ).toThrow();
@@ -70,6 +77,7 @@ describe("onboarding profile contract", () => {
       primary_use_case: "summaries",
       research_call_interest: "not_sure",
       role: "founder_or_owner",
+      security_completed_at: null,
       updated_at: "2026-08-13T13:00:00.000Z",
       whatsapp_usage_context: "work",
     } as const;
