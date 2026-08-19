@@ -124,6 +124,29 @@ describe("Neon recovery control-plane client", () => {
     );
   });
 
+  test("accepts only backward Neon PITR normalization within the recovery objective", async () => {
+    const reconcile = (parentTimestamp: string) =>
+      createNeonRecoveryClient(config(), {
+        now: () => Date.parse(time),
+        fetch: async () =>
+          json({
+            branches: [branch({ parent_timestamp: parentTimestamp })],
+            annotations: { [branchId]: annotation() },
+            pagination: { sort_by: "updated_at", sort_order: "DESC" },
+          }),
+      }).reconcilePitrBranch({ name: branchName, parentTimestamp: timestamp });
+
+    await expect(reconcile("2026-08-17T11:59:55.975Z")).resolves.toEqual(
+      expected,
+    );
+    await expect(reconcile("2026-08-17T12:00:00.001Z")).rejects.toThrow(
+      "parent_timestamp:1ms",
+    );
+    await expect(reconcile("2026-08-17T11:54:59.999Z")).rejects.toThrow(
+      "parent_timestamp:-300001ms",
+    );
+  });
+
   test("finds an old exact child for cleanup without creating it", async () => {
     const methods: string[] = [];
     const client = createNeonRecoveryClient(config(), {

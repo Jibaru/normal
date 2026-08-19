@@ -10,6 +10,7 @@ const runtimeRoleSchema = z.enum([
 const RECOVERY_ANNOTATION_KEY = "production-recovery";
 const RECOVERY_ANNOTATION_VALUE = "true";
 const HISTORY_WINDOW_MS = 7 * 86_400_000;
+const MAX_PITR_SOURCE_SKEW_MS = 5 * 60_000;
 const branchIdSchema = z.string().regex(/^br-[a-z0-9-]{1,57}$/u);
 const projectIdSchema = z.string().regex(/^[a-z0-9-]{1,60}$/u);
 const canonicalTimestampSchema = z.string().refine((value) => {
@@ -314,6 +315,11 @@ const branchIdentityMismatches = (
   expected: Omit<RecoveryBranch, "id"> & { readonly id?: string },
   projectId: string,
 ) => {
+  const sourceDelta =
+    branch.parent_timestamp === undefined
+      ? undefined
+      : Date.parse(branch.parent_timestamp) -
+        Date.parse(expected.parentTimestamp);
   const checks = {
     project: branch.project_id === projectId,
     parent_identity: branch.id !== expected.parentId,
@@ -321,9 +327,8 @@ const branchIdentityMismatches = (
     name: branch.name === expected.name,
     parent: branch.parent_id === expected.parentId,
     parent_timestamp:
-      branch.parent_timestamp === undefined ||
-      new Date(branch.parent_timestamp).toISOString() ===
-        expected.parentTimestamp,
+      sourceDelta === undefined ||
+      (sourceDelta <= 0 && sourceDelta >= -MAX_PITR_SOURCE_SKEW_MS),
     default: branch.default === false,
     primary: branch.primary !== true,
     protected: branch.protected === false,
