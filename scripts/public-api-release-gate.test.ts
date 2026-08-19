@@ -73,7 +73,7 @@ const quarterly: DrillEvidence = {
     ...monthly.checks,
     endpoint_rotation: true,
     oauth_kv_reconstructed: true,
-    immutable_queue_replay: true,
+    queue_replay_fixture_verified: true,
     kms_access: true,
     r2_access: true,
     media_loss_failed_closed: true,

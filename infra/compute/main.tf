@@ -524,6 +524,14 @@ resource "cloudflare_queue_consumer" "recovery_game_day" {
   depends_on  = [cloudflare_workers_deployment.recovery_game_day]
 }
 
+resource "cloudflare_workers_cron_trigger" "recovery_game_day" {
+  account_id  = var.cloudflare_account_id
+  script_name = cloudflare_worker.recovery_game_day.name
+  schedules   = [{ cron = "11 2 * * *" }]
+
+  depends_on = [cloudflare_workers_deployment.recovery_game_day]
+}
+
 resource "cloudflare_worker" "recovery_verifier" {
   account_id = var.cloudflare_account_id
   name       = local.recovery_verifier_worker_name

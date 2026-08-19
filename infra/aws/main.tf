@@ -138,7 +138,7 @@ resource "aws_cloudformation_stack" "recovery_game_day" {
   parameters = {
     DeploymentEnvironment    = var.deployment_environment
     GitHubOidcProviderArn    = var.github_oidc_provider_arn
-    GitHubRepositoryIdentity = "cuevaio/normal"
+    GitHubRepositoryIdentity = "cuevaio@83598208/normal@1317490924"
   }
 
   lifecycle {

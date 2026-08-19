@@ -172,6 +172,8 @@ tofu -chdir=infra/compute plan \
   -target=cloudflare_worker.provider_control \
   -target=cloudflare_worker.deletion_coordinator \
   -target=cloudflare_worker.restore_coordinator \
+  -target=cloudflare_worker.recovery_game_day \
+  -target=cloudflare_worker.recovery_verifier \
   -target=cloudflare_worker.recovery_control \
   -target=cloudflare_worker.api \
   -var-file="$TFVARS_PATH" \
@@ -234,6 +236,17 @@ and its dedicated receipt key. Its only storage authorities are dedicated
 recovery KV and R2 fixtures plus the recovery replay Queue. It never binds the
 production OAuth namespace. Missing pager receipt,
 monitoring coverage, Queue completion, or KMS context authority fails the drill.
+For a new environment, upload every required recovery-verifier and game-day
+secret to their newly created Worker shells before the full compute plan. The
+first managed Worker versions use `inherit` deliberately and must fail if these
+bindings do not already exist; never substitute secret values into OpenTofu.
+The private game-day Worker refreshes its dedicated retained OAuth recovery
+fixture daily at 02:11 UTC. A quarterly execution accepts only a fixture that
+predates the execution by at least one hour and is no more than 14 days old; it
+must never create its reconstruction source during the drill it is attesting.
+The fixture uses the production dynamic-client registry key/value and 90-day
+expiry shape. Ephemeral authorization handoffs and tokens are intentionally not
+recovered; reconstructing them would reopen expired or consumed protocol state.
 Store the `recovery_game_day_role_arn` and `recovery_game_day_key_arn` AWS
 outputs as `AWS_RECOVERY_GAME_DAY_ROLE_ARN` and
 `KMS_RECOVERY_GAME_DAY_KEY_ARN` in both protected GitHub environments. Store
@@ -1299,7 +1312,7 @@ The monthly and quarterly schedules in
 boundary and retain its validated, metadata-only evidence. The monthly restore
 must use a random point from the preceding seven days and a non-serving branch.
 The quarterly game day covers endpoint rotation, OAuth KV reconstruction,
-immutable Queue replay, KMS/R2 access, permanent Stored Media loss, alert
+Queue replay fixture verification, KMS/R2 access, permanent Stored Media loss, alert
 delivery, and deletion-gate bypass denial. Configure
 `RECOVERY_AUTOMATION_URL` and `RECOVERY_AUTOMATION_TOKEN` only in the isolated
 `production-recovery` GitHub environment; they are external rollout inputs, not

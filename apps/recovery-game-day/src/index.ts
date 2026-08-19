@@ -14,6 +14,7 @@ import {
 import { required, safeHttpsUrl } from "./config";
 
 const prefix = "production-recovery/game-day/";
+const retainedOAuthKey = "production-recovery/retained/oauth-kv-v1.json";
 const encoder = new TextEncoder();
 
 export interface RecoveryGameDayEnvironment {
@@ -86,6 +87,22 @@ interface ReplayMessage {
   readonly receipt: string;
 }
 
+interface RetainedOAuthFixture {
+  readonly version: 1;
+  readonly purpose: "oauth-kv-reconstruction";
+  readonly capturedAt: string;
+  readonly expirationTtl: 7_776_000;
+  readonly key: string;
+  readonly record: {
+    readonly clientId: string;
+    readonly clientName: "ChatGPT";
+    readonly grantTypes: readonly ["authorization_code", "refresh_token"];
+    readonly redirectUris: readonly [string];
+    readonly responseTypes: readonly ["code"];
+    readonly tokenEndpointAuthMethod: "none";
+  };
+}
+
 const toHex = (value: ArrayBuffer) =>
   [...new Uint8Array(value)]
     .map((byte) => byte.toString(16).padStart(2, "0"))
@@ -109,6 +126,87 @@ const oauthKey = async (operation: string) =>
   `${prefix}oauth/${await digest(operation)}`;
 const objectKey = async (operation: string) =>
   `${prefix}object/${await digest(operation)}`;
+
+const readRetainedOAuthFixture = async (
+  env: Env,
+): Promise<{
+  readonly serialized: string;
+  readonly value: RetainedOAuthFixture;
+}> => {
+  const source = await env.RECOVERY_FIXTURES.get(retainedOAuthKey);
+  if (!source)
+    throw new Error("Retained OAuth reconstruction fixture is unavailable");
+  const serialized = await source.text();
+  let candidate: unknown;
+  try {
+    candidate = JSON.parse(serialized);
+  } catch {
+    throw new Error("Retained OAuth reconstruction fixture is invalid");
+  }
+  if (
+    typeof candidate !== "object" ||
+    candidate === null ||
+    Array.isArray(candidate) ||
+    Object.keys(candidate).length !== 6
+  )
+    throw new Error("Retained OAuth reconstruction fixture is invalid");
+  const fixture = candidate as Partial<RetainedOAuthFixture>;
+  const capturedAt = Date.parse(fixture.capturedAt ?? "");
+  const age = Date.now() - capturedAt;
+  if (
+    fixture.version !== 1 ||
+    fixture.purpose !== "oauth-kv-reconstruction" ||
+    fixture.expirationTtl !== 7_776_000 ||
+    typeof fixture.key !== "string" ||
+    !fixture.key.startsWith("client:https://chatgpt.com/oauth/") ||
+    typeof fixture.record !== "object" ||
+    fixture.record === null ||
+    Object.keys(fixture.record).length !== 6 ||
+    fixture.record.clientId !== fixture.key.slice("client:".length) ||
+    fixture.record.clientName !== "ChatGPT" ||
+    fixture.record.tokenEndpointAuthMethod !== "none" ||
+    JSON.stringify(fixture.record.grantTypes) !==
+      JSON.stringify(["authorization_code", "refresh_token"]) ||
+    JSON.stringify(fixture.record.responseTypes) !== JSON.stringify(["code"]) ||
+    !Array.isArray(fixture.record.redirectUris) ||
+    fixture.record.redirectUris.length !== 1 ||
+    typeof fixture.record.redirectUris[0] !== "string" ||
+    !fixture.record.redirectUris[0].startsWith(
+      "https://chatgpt.com/connector/oauth/",
+    ) ||
+    !Number.isFinite(capturedAt) ||
+    new Date(capturedAt).toISOString() !== fixture.capturedAt ||
+    age < 3_600_000 ||
+    age > 14 * 86_400_000
+  )
+    throw new Error("Retained OAuth reconstruction fixture is invalid");
+  return { serialized, value: fixture as RetainedOAuthFixture };
+};
+
+export const prepareRetainedRecoveryFixtures = async (
+  env: Env,
+  capturedAt = new Date().toISOString(),
+) => {
+  if (env.DEPLOYMENT_ENVIRONMENT !== "production") return;
+  await env.RECOVERY_FIXTURES.put(
+    retainedOAuthKey,
+    JSON.stringify({
+      version: 1,
+      purpose: "oauth-kv-reconstruction",
+      capturedAt,
+      expirationTtl: 7_776_000,
+      key: "client:https://chatgpt.com/oauth/recovery-game-day/client.json",
+      record: {
+        clientId: "https://chatgpt.com/oauth/recovery-game-day/client.json",
+        clientName: "ChatGPT",
+        grantTypes: ["authorization_code", "refresh_token"],
+        redirectUris: ["https://chatgpt.com/connector/oauth/recovery-game-day"],
+        responseTypes: ["code"],
+        tokenEndpointAuthMethod: "none",
+      },
+    } satisfies RetainedOAuthFixture),
+  );
+};
 
 const receiptFor = async (
   env: Env,
@@ -216,21 +314,15 @@ export const executeGameDay = async (env: Env, candidate: unknown) => {
     });
   }
 
-  const reconstructionSource = JSON.stringify({
-    purpose: "oauth-kv-reconstruction",
-    version: 1,
-  });
+  const reconstructionSource = await readRetainedOAuthFixture(env);
   const oauth = await oauthKey(input.operation);
   const object = await objectKey(input.operation);
-  await env.RECOVERY_FIXTURES.put(`${object}/oauth`, reconstructionSource);
   await env.RECOVERY_KV.delete(oauth);
-  const source = await env.RECOVERY_FIXTURES.get(`${object}/oauth`);
-  if (!source || (await source.text()) !== reconstructionSource)
-    throw new Error("OAuth reconstruction source is unavailable");
-  await env.RECOVERY_KV.put(oauth, reconstructionSource, {
-    expirationTtl: 3_600,
+  const reconstructedRecord = JSON.stringify(reconstructionSource.value.record);
+  await env.RECOVERY_KV.put(oauth, reconstructedRecord, {
+    expirationTtl: reconstructionSource.value.expirationTtl,
   });
-  if ((await env.RECOVERY_KV.get(oauth)) !== reconstructionSource)
+  if ((await env.RECOVERY_KV.get(oauth)) !== reconstructedRecord)
     throw new Error("OAuth KV reconstruction failed");
 
   const generated = await kms(env).send(
@@ -287,7 +379,7 @@ export const executeGameDay = async (env: Env, candidate: unknown) => {
   } satisfies ReplayMessage);
   await env.RECOVERY_FIXTURES.put(`${object}/queue`, replayFixture);
   if ((await env.RECOVERY_FIXTURES.get(`${object}/queue`)) === null)
-    throw new Error("Immutable recovery replay fixture is unavailable");
+    throw new Error("Recovery replay fixture is unavailable");
   await env.RECOVERY_FIXTURES.put(
     `${object}/media-metadata`,
     JSON.stringify({ state: "ready", failureCode: null }),
@@ -357,7 +449,7 @@ export const verifyGameDay = async (env: Env, candidate: unknown) => {
 
   return decodeQuarterlyRecoveryChecks({
     oauth_kv_reconstructed: state.oauthKvReconstructed,
-    immutable_queue_replay: state.queueComplete,
+    queue_replay_fixture_verified: state.queueComplete,
     kms_access: state.kmsAccess,
     r2_access: state.r2Access,
     media_loss_failed_closed: state.mediaLossFailedClosed,
@@ -402,12 +494,7 @@ export const handleGameDayReplay = async (
   if (!decrypted.Plaintext) throw new Error("Recovery KMS decrypt failed");
   decrypted.Plaintext.fill(0);
   await env.RECOVERY_FIXTURES.delete(`${object}/media-object`);
-  if ((await env.RECOVERY_FIXTURES.get(`${object}/media-object`)) !== null)
-    throw new Error("Recovery media fixture deletion failed");
-  await env.RECOVERY_FIXTURES.put(
-    `${object}/media-metadata`,
-    JSON.stringify({ state: "failed", failureCode: "object_missing" }),
-  );
+  await reconcileMissingMediaFixture(env, object);
   const media = await env.RECOVERY_FIXTURES.get(`${object}/media-metadata`);
   if (
     !media ||
@@ -427,8 +514,25 @@ export const handleGameDayReplay = async (
   await env.RECOVERY_FIXTURES.delete(`${object}/kms`);
   await env.RECOVERY_FIXTURES.delete(`${object}/queue`);
   await env.RECOVERY_FIXTURES.delete(`${object}/media-metadata`);
-  await env.RECOVERY_FIXTURES.delete(`${object}/oauth`);
   message.ack();
+};
+
+const reconcileMissingMediaFixture = async (env: Env, object: string) => {
+  const metadata = await env.RECOVERY_FIXTURES.get(`${object}/media-metadata`);
+  if (!metadata) throw new Error("Recovery media metadata is unavailable");
+  const current = JSON.parse(await metadata.text()) as Record<string, unknown>;
+  if (
+    Object.keys(current).length !== 2 ||
+    current.state !== "ready" ||
+    current.failureCode !== null
+  )
+    throw new Error("Recovery media metadata is invalid");
+  if ((await env.RECOVERY_FIXTURES.get(`${object}/media-object`)) !== null)
+    throw new Error("Recovery media fixture deletion failed");
+  await env.RECOVERY_FIXTURES.put(
+    `${object}/media-metadata`,
+    JSON.stringify({ state: "failed", failureCode: "object_missing" }),
+  );
 };
 
 const readServiceRequest = async (request: Request) => {
@@ -471,5 +575,9 @@ export default class RecoveryGameDay extends WorkerEntrypoint<Env> {
   async queue(batch: RecoveryMessageBatch) {
     for (const message of batch.messages)
       await handleGameDayReplay(this.env, message);
+  }
+
+  async scheduled() {
+    await prepareRetainedRecoveryFixtures(this.env);
   }
 }

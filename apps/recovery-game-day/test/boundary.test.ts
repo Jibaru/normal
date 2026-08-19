@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import {
   executeGameDay,
   handleGameDayReplay,
+  prepareRetainedRecoveryFixtures,
   type RecoveryGameDayEnvironment,
   type RecoveryKvNamespace,
   type RecoveryMessage,
@@ -52,6 +53,38 @@ const environment = (overrides: Partial<RecoveryGameDayEnvironment> = {}) =>
   }) as unknown as RecoveryGameDayEnvironment;
 
 describe("quarterly recovery executor boundary", () => {
+  test("prepares a retained OAuth reconstruction fixture independently", async () => {
+    const put = vi.fn(async () => undefined);
+    await prepareRetainedRecoveryFixtures(
+      environment({
+        RECOVERY_FIXTURES: {
+          put,
+        } as unknown as RecoveryGameDayEnvironment["RECOVERY_FIXTURES"],
+      }),
+      "2026-08-18T12:00:00.000Z",
+    );
+    expect(put).toHaveBeenCalledWith(
+      "production-recovery/retained/oauth-kv-v1.json",
+      JSON.stringify({
+        version: 1,
+        purpose: "oauth-kv-reconstruction",
+        capturedAt: "2026-08-18T12:00:00.000Z",
+        expirationTtl: 7_776_000,
+        key: "client:https://chatgpt.com/oauth/recovery-game-day/client.json",
+        record: {
+          clientId: "https://chatgpt.com/oauth/recovery-game-day/client.json",
+          clientName: "ChatGPT",
+          grantTypes: ["authorization_code", "refresh_token"],
+          redirectUris: [
+            "https://chatgpt.com/connector/oauth/recovery-game-day",
+          ],
+          responseTypes: ["code"],
+          tokenEndpointAuthMethod: "none",
+        },
+      }),
+    );
+  });
+
   test("rejects malformed requests before consulting state", async () => {
     const get = vi.fn();
     const env = environment({

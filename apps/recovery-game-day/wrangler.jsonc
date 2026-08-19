@@ -130,6 +130,7 @@
     },
     "production": {
       "name": "whatsapp-mcp-recovery-game-day",
+      "triggers": { "crons": ["11 2 * * *"] },
       "vars": {
         "DEPLOYMENT_ENVIRONMENT": "production",
         "AWS_KMS_REGION": "us-east-1"

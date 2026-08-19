@@ -71,13 +71,6 @@ export const verifyRecovery = async (
   });
   if (branch === "absent" || branch.id !== input.recovery_branch_id)
     throw new Error("Guarded recovery branch is unavailable");
-  const achievedRpoSeconds = Math.abs(
-    (Date.parse(input.source_point_at) - Date.parse(branch.parentTimestamp)) /
-      1_000,
-  );
-  if (!Number.isFinite(achievedRpoSeconds) || achievedRpoSeconds > 300)
-    throw new Error("Recovery point objective was missed");
-
   await client.resetRestoreRuntimePassword(branch);
   const firstUri = await client.getDirectRestoreUri(branch);
   await checkRestrictedDatabaseAccess(firstUri);
@@ -102,6 +95,13 @@ export const verifyRecovery = async (
   }
 
   const availability = await queryAvailability(env, input);
+  const achievedRpoSeconds = Math.abs(
+    (Date.parse(input.source_point_at) -
+      Date.parse(availability.recoveredSourcePointAt)) /
+      1_000,
+  );
+  if (!Number.isFinite(achievedRpoSeconds) || achievedRpoSeconds > 300)
+    throw new Error("Recovery point objective was missed");
   if (availability.firstPartyPercent < 99.5)
     throw new Error("First-party availability objective was missed");
 
@@ -118,9 +118,11 @@ export const verifyRecovery = async (
     audit_valid: database.auditOk,
     current_time_expiry_applied: database.expiryOk,
     deletion_markers_replayed: database.deletionOk && replayChecks,
-    recipient_transitions_replayed: database.recipientOk && replayChecks,
-    recipient_purge_cutoffs_applied: database.recipientOk,
-    prepared_recipient_transitions_drained: database.recipientOk,
+    recipient_transitions_replayed:
+      database.recipientTransitionOk && replayChecks,
+    recipient_purge_cutoffs_applied:
+      database.recipientCutoffOk && database.recipientContentOk,
+    prepared_recipient_transitions_drained: database.recipientTransitionOk,
     object_deletion_intents_drained: database.objectIntentOk,
     deleted_identifiers_absent:
       database.deletionOk && input.replay.deleted_identifiers_remaining === 0,
@@ -151,15 +153,7 @@ export const verifyRecovery = async (
       { ...execution, receipt: receipt.receipt },
       decodeQuarterlyRecoveryChecks,
     );
-    let bypassDenied = false;
-    try {
-      await repository.verify(
-        `br-${input.verification_nonce.slice(0, 32)}`,
-        new Date().toISOString(),
-      );
-    } catch {
-      bypassDenied = true;
-    }
+    const bypassDenied = !(await repository.servingReady(branch.id));
     if (!bypassDenied) throw new Error("Deletion gate bypass was not denied");
     checks = {
       ...monthlyChecks,

@@ -161,7 +161,9 @@ RETURNS TABLE (
   audit_ok boolean,
   expiry_ok boolean,
   deletion_ok boolean,
-  recipient_ok boolean,
+  recipient_transition_ok boolean,
+  recipient_cutoff_ok boolean,
+  recipient_content_ok boolean,
   object_intent_ok boolean,
   api_key_ok boolean
 )
@@ -254,8 +256,47 @@ BEGIN
       ),
     readiness.marker_count >= readiness.deleted_entity_count,
     NOT EXISTS (SELECT 1 FROM public.whatsapp_recipient_exclusions
-      WHERE transition_id IS NOT NULL)
-      AND NOT EXISTS (SELECT 1 FROM public.whatsapp_recipient_transition_prefixes),
+      WHERE transition_id IS NOT NULL),
+    NOT EXISTS (
+      SELECT 1 FROM public.whatsapp_recipient_exclusions AS rules
+      WHERE rules.excluded
+        AND (rules.effective_at IS NULL OR rules.purge_cutoff_at IS NULL)
+    ),
+    NOT EXISTS (
+      SELECT 1
+      FROM public.whatsapp_recipient_exclusions AS rules
+      JOIN public.whatsapp_conversations AS conversations
+        ON conversations.personal_account_id = rules.personal_account_id
+       AND conversations.whatsapp_connection_id = rules.whatsapp_connection_id
+       AND conversations.recipient_locator = rules.recipient_locator
+      LEFT JOIN public.stored_messages AS messages
+        ON messages.personal_account_id = conversations.personal_account_id
+       AND messages.whatsapp_connection_id = conversations.whatsapp_connection_id
+       AND messages.conversation_id = conversations.id
+       AND messages.created_at <= rules.purge_cutoff_at
+      LEFT JOIN public.stored_media AS media
+        ON media.personal_account_id = messages.personal_account_id
+       AND media.whatsapp_connection_id = messages.whatsapp_connection_id
+       AND media.stored_message_id = messages.id
+      WHERE rules.purge_cutoff_at IS NOT NULL
+        AND (
+          (rules.excluded AND conversations.id IS NOT NULL)
+          OR (messages.id IS NOT NULL AND messages.content_expired_at IS NULL)
+          OR media.id IS NOT NULL
+        )
+    ) AND NOT EXISTS (
+      SELECT 1
+      FROM public.whatsapp_recipient_exclusions AS rules
+      JOIN public.send_operations AS operations
+        ON operations.personal_account_id = rules.personal_account_id
+       AND operations.whatsapp_connection_id = rules.whatsapp_connection_id
+       AND operations.recipient_public_id = rules.recipient_public_id
+       AND operations.created_at <= rules.purge_cutoff_at
+      JOIN public.pending_send_contents AS contents
+        ON contents.personal_account_id = operations.personal_account_id
+       AND contents.send_operation_id = operations.id
+      WHERE rules.purge_cutoff_at IS NOT NULL
+    ),
     NOT EXISTS (SELECT 1 FROM public.restore_object_deletions)
       AND NOT EXISTS (SELECT 1 FROM public.stored_media_object_deletions),
     NOT EXISTS (SELECT 1 FROM public.api_keys
@@ -293,6 +334,7 @@ $function$;
 REVOKE ALL ON FUNCTION
   public.begin_restore_replay(text,timestamptz,boolean),
   public.verify_recovery_branch(text,timestamptz),
+  public.is_restore_ready(text),
   public.complete_recovery_drill_verification(text,timestamptz)
   FROM PUBLIC;
 --> statement-breakpoint
@@ -306,4 +348,8 @@ GRANT EXECUTE ON FUNCTION public.complete_recovery_drill_verification(text,times
 --> statement-breakpoint
 
 GRANT EXECUTE ON FUNCTION public.verify_recovery_branch(text,timestamptz)
+  TO whatsapp_recovery_verifier;
+--> statement-breakpoint
+
+GRANT EXECUTE ON FUNCTION public.is_restore_ready(text)
   TO whatsapp_recovery_verifier;

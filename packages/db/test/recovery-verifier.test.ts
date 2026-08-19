@@ -90,6 +90,11 @@ describe("recovery verifier database boundary", () => {
       "SELECT public.complete_restore_replay($1, $2, 0, 0, 0)",
       [branchId, "2026-08-18T11:30:00.000Z"],
     );
+    await database.query(
+      `INSERT INTO public.whatsapp_recipient_transition_prefixes
+         (journal_prefix, recorded_at) VALUES ($1, $2)`,
+      ["a".repeat(64), "2026-08-18T11:31:00.000Z"],
+    );
 
     expect(
       (
@@ -117,7 +122,9 @@ describe("recovery verifier database boundary", () => {
       invariants_ok: true,
       object_intent_ok: true,
       quota_ok: true,
-      recipient_ok: true,
+      recipient_content_ok: true,
+      recipient_cutoff_ok: true,
+      recipient_transition_ok: true,
       rls_ok: true,
       schema_ok: true,
     });
@@ -130,5 +137,57 @@ describe("recovery verifier database boundary", () => {
         )
       ).rows,
     ).toEqual([{ ready: false, state: "drill_verified" }]);
+  });
+
+  test("rejects incomplete recipient cutoff and prepared-transition evidence", async () => {
+    const accountId = "10000000-0000-4000-8000-000000000090";
+    const connectionId = "20000000-0000-4000-8000-000000000090";
+    await database.query(
+      `SELECT * FROM public.admit_personal_account_for_clerk(
+        'user_recovery90',$1,1,
+        'arn:aws:kms:us-east-1:111122223333:key/content',decode('0102','hex'),3
+      )`,
+      [accountId],
+    );
+    await database.query(
+      `INSERT INTO public.whatsapp_connections(
+        id,personal_account_id,webhook_ingress_id,public_id,number_suffix,
+        state,state_changed_at,created_at
+      ) VALUES(
+        $1,$2,'30000000-0000-4000-8000-000000000090',
+        'con_000000000000000000090','0090','connected',$3,$3
+      )`,
+      [connectionId, accountId, observedAt],
+    );
+    await database.query(
+      "SELECT * FROM public.begin_restore_replay($1, $2, true)",
+      [branchId, "2026-08-18T11:00:00.000Z"],
+    );
+    await database.query(
+      "SELECT public.complete_restore_replay($1, $2, 1, 0, 0)",
+      [branchId, "2026-08-18T11:30:00.000Z"],
+    );
+    await database.query(
+      `INSERT INTO public.whatsapp_recipient_exclusions(
+        personal_account_id,whatsapp_connection_id,recipient_kind,
+        recipient_locator,recipient_public_id,excluded,effective_at,
+        transition_id,transition_excluded,transition_effective_at,
+        transition_idempotency_key,transition_prepared_at
+      ) VALUES(
+        $1,$2,'contact',$3,'ctc_000000000000000000090',true,$4,
+        '40000000-0000-4000-8000-000000000090',true,$4,
+        'recovery-transition-0000000090',$4
+      )`,
+      [accountId, connectionId, `di1_${"A".repeat(43)}`, observedAt],
+    );
+
+    await database.exec("SET ROLE whatsapp_recovery_verifier");
+    const result = await database.query<Record<string, boolean>>(
+      "SELECT * FROM public.verify_recovery_branch($1, $2)",
+      [branchId, observedAt],
+    );
+    await database.exec("RESET ROLE");
+    expect(result.rows[0]?.recipient_transition_ok).toBe(false);
+    expect(result.rows[0]?.recipient_cutoff_ok).toBe(false);
   });
 });

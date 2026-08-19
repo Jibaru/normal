@@ -23,7 +23,7 @@ export const monthlyRecoveryChecks = [
 export const quarterlyRecoveryChecks = [
   "endpoint_rotation",
   "oauth_kv_reconstructed",
-  "immutable_queue_replay",
+  "queue_replay_fixture_verified",
   "kms_access",
   "r2_access",
   "media_loss_failed_closed",
@@ -32,7 +32,7 @@ export const quarterlyRecoveryChecks = [
 ] as const;
 export const quarterlyExecutorChecks = [
   "oauth_kv_reconstructed",
-  "immutable_queue_replay",
+  "queue_replay_fixture_verified",
   "kms_access",
   "r2_access",
   "media_loss_failed_closed",

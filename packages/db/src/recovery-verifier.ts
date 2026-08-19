@@ -11,7 +11,9 @@ export interface RecoveryVerification {
   readonly objectIntentOk: boolean;
   readonly quotaOk: boolean;
   readonly rlsOk: boolean;
-  readonly recipientOk: boolean;
+  readonly recipientContentOk: boolean;
+  readonly recipientCutoffOk: boolean;
+  readonly recipientTransitionOk: boolean;
   readonly schemaOk: boolean;
 }
 
@@ -21,6 +23,7 @@ export interface RecoveryVerifierRepository {
     branchId: string,
     observedAt: string,
   ) => Promise<RecoveryVerification>;
+  readonly servingReady: (branchId: string) => Promise<boolean>;
 }
 
 export const makePgRecoveryVerifierRepository = (
@@ -43,6 +46,20 @@ export const makePgRecoveryVerifierRepository = (
         30_000,
         10_000,
       ),
+    servingReady: (branchId) =>
+      withPgQueryConnection(
+        restrictedConnectionString,
+        async (connection) => {
+          const result = await makeDatabase(connection).execute<{
+            ready: boolean;
+          }>(sql`SELECT public.is_restore_ready(${branchId}) AS ready`);
+          if (result.length !== 1 || typeof result[0]?.ready !== "boolean")
+            throw new Error("recovery serving gate returned an invalid result");
+          return result[0].ready;
+        },
+        30_000,
+        10_000,
+      ),
     verify: (branchId, observedAt) =>
       withPgQueryConnection(
         restrictedConnectionString,
@@ -56,7 +73,9 @@ export const makePgRecoveryVerifierRepository = (
             object_intent_ok: boolean;
             quota_ok: boolean;
             rls_ok: boolean;
-            recipient_ok: boolean;
+            recipient_content_ok: boolean;
+            recipient_cutoff_ok: boolean;
+            recipient_transition_ok: boolean;
             schema_ok: boolean;
           }>(sql`
             SELECT * FROM public.verify_recovery_branch(
@@ -75,7 +94,10 @@ export const makePgRecoveryVerifierRepository = (
             objectIntentOk: verification.object_intent_ok === true,
             quotaOk: verification.quota_ok === true,
             rlsOk: verification.rls_ok === true,
-            recipientOk: verification.recipient_ok === true,
+            recipientContentOk: verification.recipient_content_ok === true,
+            recipientCutoffOk: verification.recipient_cutoff_ok === true,
+            recipientTransitionOk:
+              verification.recipient_transition_ok === true,
             schemaOk: verification.schema_ok === true,
           };
         },

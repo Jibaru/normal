@@ -216,6 +216,12 @@ console.info(
 const recoveryTemplate = (await Bun.file(
   "infra/aws/recovery-game-day.template.json",
 ).json()) as {
+  readonly Parameters?: Readonly<
+    Record<
+      string,
+      { readonly Default?: string; readonly AllowedPattern?: string }
+    >
+  >;
   readonly Resources?: Readonly<Record<string, Resource>>;
 };
 const recoveryResources = recoveryTemplate.Resources;
@@ -224,6 +230,11 @@ assert.equal(
   recoveryResources.RecoveryGameDayKey?.Type,
   "AWS::KMS::Key",
   "Recovery game day must use a purpose-specific KMS key",
+);
+assert.equal(
+  recoveryTemplate.Parameters?.GitHubRepositoryIdentity?.Default,
+  "cuevaio@83598208/normal@1317490924",
+  "Recovery game-day OIDC trust must bind immutable repository identities",
 );
 assert.equal(
   recoveryResources.RecoveryGameDayKey?.Properties?.EnableKeyRotation,
