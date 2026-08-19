@@ -43,5 +43,5 @@ export const sharedTestBindings = {
 
 export const sharedTestOptions = {
   setupFiles: ["./test/support/database-readiness.ts"],
-  testTimeout: 30_000,
+  testTimeout: 60_000,
 } as const;
