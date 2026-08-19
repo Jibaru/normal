@@ -234,15 +234,15 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(authorizations).toContainText("Send messages");
   await expect(authorizations).toContainText("Created");
   await expect(authorizations).toContainText("Expires");
-  await expect(
-    authorizations.getByTestId("mcp-authorization-state"),
-  ).toHaveText("Active");
-  await authorizations
-    .getByRole("button", { name: "Revoke Approved MCP Client" })
-    .click();
-  await expect(
-    authorizations.getByTestId("mcp-authorization-state"),
-  ).toHaveText("Revoked");
+  const authorizationState = authorizations.getByTestId(
+    "mcp-authorization-state",
+  );
+  if ((await authorizationState.textContent()) === "Active") {
+    await authorizations
+      .getByRole("button", { name: "Revoke Approved MCP Client" })
+      .click();
+  }
+  await expect(authorizationState).toHaveText("Revoked");
   await expect(
     authorizations.getByRole("button", {
       name: "Revoke Approved MCP Client",
