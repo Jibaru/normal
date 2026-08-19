@@ -18,15 +18,15 @@ const page = {
   props: {
     currentStatus: {
       status: "up",
-      last_checked: new Date().toISOString(),
+      last_checked: new Date().toISOString().replace("Z", "000Z"),
       services: { whatsapp_servers: "up" },
     },
     uptime: { "30d": 99.8 },
     scheduledOutages: [
       {
         affected_services: ["WhatsApp Server"],
-        starts_at: "2026-08-01T00:00:00.000Z",
-        ends_at: "2026-08-01T01:00:00.000Z",
+        starts_at: "2026-08-01T00:00:00.000000Z",
+        ends_at: "2026-08-01T01:00:00.000000Z",
         status: "completed",
       },
     ],

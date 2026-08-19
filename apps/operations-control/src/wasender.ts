@@ -1,8 +1,12 @@
 import type { OperationsFetch } from "./cloudflare";
-import { canonicalTimestamp } from "./config";
-
 const statusUrl = "https://www.wasenderapi.com/status";
 const windowMilliseconds = 30 * 86_400_000;
+const timestamp = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/u;
+
+const externalTimestamp = (value: unknown): value is string =>
+  typeof value === "string" &&
+  timestamp.test(value) &&
+  Number.isFinite(Date.parse(value));
 
 const decodeAttribute = (value: string) =>
   value
@@ -53,14 +57,20 @@ export const queryDependencyAvailability = async (
   };
   const current = page.props?.currentStatus;
   const wasenderPercent = page.props?.uptime?.["30d"];
+  const checkedAt =
+    current && externalTimestamp(current.last_checked)
+      ? Date.parse(current.last_checked)
+      : Number.NaN;
+  const now = Date.now();
   if (
     !current ||
-    !canonicalTimestamp(current.last_checked) ||
+    !Number.isFinite(checkedAt) ||
     !percentage(wasenderPercent) ||
     (current.status !== "up" && current.status !== "down") ||
     (current.services?.whatsapp_servers !== "up" &&
       current.services?.whatsapp_servers !== "down") ||
-    Date.now() - Date.parse(current.last_checked) > 15 * 60_000
+    checkedAt < now - 15 * 60_000 ||
+    checkedAt > now + 5 * 60_000
   )
     throw new Error("Wasender status response is invalid");
 
@@ -84,8 +94,9 @@ export const queryDependencyAvailability = async (
       !candidate.affected_services.every(
         (service) => typeof service === "string",
       ) ||
-      !canonicalTimestamp(candidate.starts_at) ||
-      !canonicalTimestamp(candidate.ends_at) ||
+      !externalTimestamp(candidate.starts_at) ||
+      !externalTimestamp(candidate.ends_at) ||
+      Date.parse(candidate.ends_at) < Date.parse(candidate.starts_at) ||
       candidate.status !== "completed"
     )
       throw new Error("Wasender status response is invalid");
