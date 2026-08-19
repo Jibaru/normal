@@ -138,8 +138,15 @@
     {
       "idx": 19,
       "version": "7",
+      "when": 1787119201000,
+      "tag": "0019_allow_api_keys_on_mcp",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
       "when": 1787122800000,
-      "tag": "0019_persist_onboarding_security_completion",
+      "tag": "0020_persist_onboarding_security_completion",
       "breakpoints": true
     }
   ]
