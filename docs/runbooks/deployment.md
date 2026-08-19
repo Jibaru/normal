@@ -172,6 +172,7 @@ tofu -chdir=infra/compute plan \
   -target=cloudflare_worker.provider_control \
   -target=cloudflare_worker.deletion_coordinator \
   -target=cloudflare_worker.restore_coordinator \
+  -target=cloudflare_worker.operations_control \
   -target=cloudflare_worker.recovery_game_day \
   -target=cloudflare_worker.recovery_verifier \
   -target=cloudflare_worker.recovery_control \
