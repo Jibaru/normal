@@ -1109,6 +1109,12 @@ resource "vercel_project" "web" {
   root_directory  = "apps/web"
   build_command   = "cd ../.. && bun x turbo run build --filter=@whatsapp-mcp/web --cache-dir=.turbo/cache"
   install_command = "cd ../.. && bun install --frozen-lockfile"
+  git_repository = var.deployment_environment == "production" ? {
+    type              = "github"
+    repo              = "cuevaio/normal"
+    production_branch = "main"
+  } : null
+  skew_protection = var.deployment_environment == "production" ? "12 hours" : null
 
   auto_assign_custom_domains                        = true
   automatically_expose_system_environment_variables = false

@@ -524,6 +524,16 @@ run "production_topology" {
     )
     error_message = "Production documentation must be the isolated static Vercel project with no runtime secret."
   }
+
+  assert {
+    condition = (
+      vercel_project.web.git_repository.type == "github" &&
+      vercel_project.web.git_repository.repo == "cuevaio/normal" &&
+      vercel_project.web.git_repository.production_branch == "main" &&
+      vercel_project.web.skew_protection == "12 hours"
+    )
+    error_message = "Production web must stay connected to main with twelve-hour skew protection."
+  }
 }
 
 run "reject_same_web_and_api_origin" {
