@@ -4,7 +4,6 @@ import type { RecoveryVerifierEnvironment } from "./environment";
 
 export interface AvailabilityEvidence {
   readonly firstPartyPercent: number;
-  readonly recoveredSourcePointAt: string;
   readonly sampledKeysUsable: true;
   readonly wasenderPercent: number;
   readonly whatsappPercent: number;
@@ -62,14 +61,13 @@ export const queryAvailability = async (
     typeof candidate !== "object" ||
     candidate === null ||
     Array.isArray(candidate) ||
-    Object.keys(candidate).length !== 15 ||
+    Object.keys(candidate).length !== 14 ||
     candidate.version !== 1 ||
     candidate.window !== "30d" ||
     candidate.as_of !== input.started_at ||
     candidate.operation !== input.operation ||
     candidate.recovery_branch_id !== input.recovery_branch_id ||
     candidate.source_point_at !== input.source_point_at ||
-    typeof candidate.recovered_source_point_at !== "string" ||
     candidate.verification_nonce !== input.verification_nonce ||
     candidate.replay_digest !== input.replay_digest ||
     !percentage(candidate.first_party_percent) ||
@@ -79,13 +77,9 @@ export const queryAvailability = async (
     throw new Error("Observability query returned invalid evidence");
   const started = Date.parse(String(candidate.window_started_at));
   const completed = Date.parse(String(candidate.window_completed_at));
-  const recoveredSourcePoint = Date.parse(candidate.recovered_source_point_at);
   if (
     !Number.isFinite(started) ||
     !Number.isFinite(completed) ||
-    !Number.isFinite(recoveredSourcePoint) ||
-    new Date(recoveredSourcePoint).toISOString() !==
-      candidate.recovered_source_point_at ||
     completed !== Date.parse(input.started_at) ||
     completed - started !== 30 * 86_400_000
   )
@@ -94,7 +88,6 @@ export const queryAvailability = async (
     throw new Error("Observability query returned invalid recovery evidence");
   return {
     firstPartyPercent: candidate.first_party_percent,
-    recoveredSourcePointAt: candidate.recovered_source_point_at,
     sampledKeysUsable: true,
     wasenderPercent: candidate.wasender_percent,
     whatsappPercent: candidate.whatsapp_percent,

@@ -50,7 +50,6 @@ describe("recovery availability evidence", () => {
         operation: input.operation,
         recovery_branch_id: input.recovery_branch_id,
         source_point_at: input.source_point_at,
-        recovered_source_point_at: "2026-08-17T11:59:30.000Z",
         verification_nonce: input.verification_nonce,
         replay_digest: input.replay_digest,
       }),
@@ -60,7 +59,6 @@ describe("recovery availability evidence", () => {
       wasenderPercent: 98.1,
       whatsappPercent: 97.2,
       sampledKeysUsable: true,
-      recoveredSourcePointAt: "2026-08-17T11:59:30.000Z",
     });
     expect(fetcher).toHaveBeenCalledOnce();
   });
@@ -81,7 +79,6 @@ describe("recovery availability evidence", () => {
         operation: input.operation,
         recovery_branch_id: input.recovery_branch_id,
         source_point_at: input.source_point_at,
-        recovered_source_point_at: input.source_point_at,
         verification_nonce: input.verification_nonce,
         replay_digest: input.replay_digest,
       }),

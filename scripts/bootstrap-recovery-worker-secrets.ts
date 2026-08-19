@@ -17,8 +17,21 @@ export const recoveryWorkers = [
       "KMS_RECOVERY_GAME_DAY_KEY_ARN",
       "PAGER_RECEIPT_TOKEN",
       "PAGER_RECEIPT_URL",
+      "PAGER_WEBHOOK_TOKEN",
       "PAGER_WEBHOOK_URL",
       "QUARTERLY_RECEIPT_SECRET",
+    ],
+  },
+  {
+    name: "whatsapp-mcp-operations-control",
+    secretNames: [
+      "CLOUDFLARE_ANALYTICS_TOKEN",
+      "CLOUDFLARE_ZONE_ID",
+      "OBSERVABILITY_QUERY_TOKEN",
+      "PAGER_DESTINATION_ADDRESS",
+      "PAGER_RECEIPT_TOKEN",
+      "PAGER_WEBHOOK_TOKEN",
+      "SMOKE_CHECK_SECRET",
     ],
   },
   {

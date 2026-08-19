@@ -72,6 +72,16 @@
         "typescript": "^5",
       },
     },
+    "apps/operations-control": {
+      "name": "@whatsapp-mcp/operations-control",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@cloudflare/vitest-pool-workers": "0.19.1",
+        "typescript": "^5",
+        "vitest": "4.1.10",
+        "wrangler": "4.116.0",
+      },
+    },
     "apps/provider-control": {
       "name": "@whatsapp-mcp/provider-control",
       "version": "0.1.0",
@@ -1024,6 +1034,8 @@
     "@whatsapp-mcp/domain": ["@whatsapp-mcp/domain@workspace:packages/domain"],
 
     "@whatsapp-mcp/neon-recovery": ["@whatsapp-mcp/neon-recovery@workspace:packages/neon-recovery"],
+
+    "@whatsapp-mcp/operations-control": ["@whatsapp-mcp/operations-control@workspace:apps/operations-control"],
 
     "@whatsapp-mcp/provider-control": ["@whatsapp-mcp/provider-control@workspace:apps/provider-control"],
 

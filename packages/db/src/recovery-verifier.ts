@@ -15,6 +15,7 @@ export interface RecoveryVerification {
   readonly recipientCutoffOk: boolean;
   readonly recipientTransitionOk: boolean;
   readonly schemaOk: boolean;
+  readonly sourcePointAt: string;
 }
 
 export interface RecoveryVerifierRepository {
@@ -173,6 +174,21 @@ export const makePgRecoveryVerifierRepository = (
           const verification = result[0];
           if (verification === undefined)
             throw new Error("recovery verification returned no result");
+          const sourcePointResult = await makeDatabase(connection).execute<{
+            source_point_at: Date | string;
+          }>(sql`
+            SELECT public.read_recovery_source_point() AS source_point_at
+          `);
+          const sourcePoint = sourcePointResult[0]?.source_point_at;
+          const sourcePointAt =
+            sourcePoint instanceof Date
+              ? sourcePoint.toISOString()
+              : sourcePoint;
+          if (
+            typeof sourcePointAt !== "string" ||
+            !Number.isFinite(Date.parse(sourcePointAt))
+          )
+            throw new Error("recovery source point returned no timestamp");
           return {
             apiKeyOk: verification.api_key_ok === true,
             auditOk: verification.audit_ok === true,
@@ -187,6 +203,7 @@ export const makePgRecoveryVerifierRepository = (
             recipientTransitionOk:
               verification.recipient_transition_ok === true,
             schemaOk: verification.schema_ok === true,
+            sourcePointAt: new Date(sourcePointAt).toISOString(),
           };
         },
         30_000,

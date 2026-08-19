@@ -3,6 +3,7 @@ const environments = ["development", "preview", "production"] as const;
 const deployables = [
   "api",
   "deletion-coordinator",
+  "operations-control",
   "provider-control",
   "recovery-control",
   "recovery-game-day",
@@ -11,6 +12,7 @@ const deployables = [
 ] as const;
 const oauthKvValidationId = "22222222222222222222222222222222";
 const recoveryKvValidationId = "33333333333333333333333333333333";
+const operationsKvValidationId = "44444444444444444444444444444444";
 const requiredApiCrons = ["* * * * *", "*/5 * * * *", "0 * * * *"].sort();
 
 const manifestConfigurations = (manifest: Record<string, unknown>) => [
@@ -115,6 +117,58 @@ for (const deployable of deployables) {
         ["hyperdrive", "kv_namespaces", "queues"],
         (key) => `Deletion coordinator must not declare ${key}.`,
       );
+    }
+  } else if (deployable === "operations-control") {
+    const required = [
+      "CLOUDFLARE_ANALYTICS_TOKEN",
+      "CLOUDFLARE_ZONE_ID",
+      "OBSERVABILITY_QUERY_TOKEN",
+      "PAGER_DESTINATION_ADDRESS",
+      "PAGER_RECEIPT_TOKEN",
+      "PAGER_WEBHOOK_TOKEN",
+      "SMOKE_CHECK_SECRET",
+    ].sort();
+    for (const [name, configuration] of manifestConfigurations(manifest)) {
+      if (!hasSameStrings(requiredSecrets(configuration), required))
+        throw new Error(
+          `Operations control ${name} has the wrong credentials.`,
+        );
+      assertAbsent(
+        configuration,
+        [
+          "d1_databases",
+          "durable_objects",
+          "hyperdrive",
+          "queues",
+          "r2_buckets",
+          "services",
+          "workflows",
+        ],
+        (key) => `Operations control must not declare ${key}.`,
+      );
+      const kv = (configuration.kv_namespaces ?? []) as ReadonlyArray<{
+        readonly binding?: unknown;
+      }>;
+      const email = (configuration.send_email ?? []) as ReadonlyArray<{
+        readonly allowed_destination_addresses?: unknown;
+        readonly allowed_sender_addresses?: unknown;
+        readonly name?: unknown;
+      }>;
+      if (kv.length !== 1 || kv[0]?.binding !== "ALERT_RECEIPTS")
+        throw new Error(
+          `Operations control ${name} must have only its pager receipt KV.`,
+        );
+      if (
+        email.length !== 1 ||
+        email[0]?.name !== "PAGER_EMAIL" ||
+        JSON.stringify(email[0]?.allowed_destination_addresses) !==
+          JSON.stringify(["hi@cueva.io"]) ||
+        JSON.stringify(email[0]?.allowed_sender_addresses) !==
+          JSON.stringify(["pager@alerts.normal.fast"])
+      )
+        throw new Error(
+          `Operations control ${name} must have only its restricted pager email binding.`,
+        );
     }
   } else if (deployable === "recovery-control") {
     const configurations = manifestConfigurations(manifest);
@@ -240,6 +294,7 @@ for (const deployable of deployables) {
       "KMS_RECOVERY_GAME_DAY_KEY_ARN",
       "PAGER_RECEIPT_TOKEN",
       "PAGER_RECEIPT_URL",
+      "PAGER_WEBHOOK_TOKEN",
       "PAGER_WEBHOOK_URL",
       "QUARTERLY_RECEIPT_SECRET",
     ].sort();
@@ -448,6 +503,37 @@ for (const deployable of deployables) {
         console.error(`${rendererStdout}\n${rendererStderr}`);
         throw new Error(`Could not render API ${environment} bindings.`);
       }
+    } else if (deployable === "operations-control") {
+      configPath = `${repositoryRoot}/.wrangler/manifest-validation/operations-control-${environment}.jsonc`;
+      const renderer = Bun.spawn(
+        [
+          "bun",
+          "scripts/render-operations-control-wrangler.ts",
+          configPath,
+          environment,
+        ],
+        {
+          cwd: repositoryRoot,
+          env: {
+            ...Bun.env,
+            CLOUDFLARE_OPERATIONS_KV_ID: operationsKvValidationId,
+          },
+          stderr: "pipe",
+          stdout: "pipe",
+        },
+      );
+      const [rendererExitCode, rendererStdout, rendererStderr] =
+        await Promise.all([
+          renderer.exited,
+          new Response(renderer.stdout).text(),
+          new Response(renderer.stderr).text(),
+        ]);
+      if (rendererExitCode !== 0) {
+        console.error(`${rendererStdout}\n${rendererStderr}`);
+        throw new Error(
+          `Could not render operations control ${environment} bindings.`,
+        );
+      }
     }
 
     const process = Bun.spawn(
@@ -559,6 +645,11 @@ for (const deployable of deployables) {
           );
         }
       }
+    } else if (deployable === "operations-control") {
+      if (!output.includes(`env.ALERT_RECEIPTS (${operationsKvValidationId})`))
+        throw new Error(
+          `Operations control ${environment} has the wrong pager receipt KV.`,
+        );
     } else if (
       deployable === "provider-control" &&
       ["KV Namespace", "Queue", "R2 Bucket"].some((resource) =>

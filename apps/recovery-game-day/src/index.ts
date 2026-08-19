@@ -30,6 +30,7 @@ export interface RecoveryGameDayEnvironment {
   readonly RECOVERY_KV: RecoveryKvNamespace;
   readonly PAGER_RECEIPT_TOKEN: string;
   readonly PAGER_RECEIPT_URL: string;
+  readonly PAGER_WEBHOOK_TOKEN: string;
   readonly PAGER_WEBHOOK_URL: string;
   readonly QUARTERLY_RECEIPT_SECRET: string;
   readonly RECOVERY_FIXTURES: RecoveryBucket;
@@ -351,7 +352,13 @@ export const executeGameDay = async (env: Env, candidate: unknown) => {
       method: "POST",
       redirect: "error",
       signal: AbortSignal.timeout(30_000),
-      headers: { "content-type": "application/json" },
+      headers: {
+        authorization: `Bearer ${required(
+          env.PAGER_WEBHOOK_TOKEN,
+          "Pager webhook token",
+        )}`,
+        "content-type": "application/json",
+      },
       body: JSON.stringify({
         alert: "recovery-game-day",
         severity: "ticket",
@@ -425,31 +432,43 @@ export const verifyGameDay = async (env: Env, candidate: unknown) => {
     throw new Error("Quarterly replay did not complete");
 
   const receiptUrl = safeHttpsUrl(env.PAGER_RECEIPT_URL, "Pager receipt URL");
-  const response = await fetch(receiptUrl, {
-    method: "POST",
-    redirect: "error",
-    signal: AbortSignal.timeout(30_000),
-    headers: {
-      accept: "application/json",
-      authorization: `Bearer ${required(env.PAGER_RECEIPT_TOKEN, "Pager receipt token")}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      alert: "recovery-game-day",
-      observed_at: state.alertObservedAt,
-    }),
-  });
-  const receiptBody = response.ok ? await response.json() : null;
-  if (
-    typeof receiptBody !== "object" ||
-    receiptBody === null ||
-    Array.isArray(receiptBody) ||
-    Object.keys(receiptBody).length !== 2 ||
-    (receiptBody as { delivered?: unknown }).delivered !== true ||
-    (receiptBody as { observed_at?: unknown }).observed_at !==
-      state.alertObservedAt
-  )
-    throw new Error("Pager delivery was not confirmed");
+  let alertDelivered = false;
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const response = await fetch(receiptUrl, {
+      method: "POST",
+      redirect: "error",
+      signal: AbortSignal.timeout(30_000),
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${required(
+          env.PAGER_RECEIPT_TOKEN,
+          "Pager receipt token",
+        )}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        alert: "recovery-game-day",
+        observed_at: state.alertObservedAt,
+      }),
+    });
+    const receiptBody = response.ok ? await response.json() : null;
+    if (
+      typeof receiptBody !== "object" ||
+      receiptBody === null ||
+      Array.isArray(receiptBody) ||
+      Object.keys(receiptBody).length !== 2 ||
+      typeof (receiptBody as { delivered?: unknown }).delivered !== "boolean" ||
+      (receiptBody as { observed_at?: unknown }).observed_at !==
+        state.alertObservedAt
+    )
+      throw new Error("Pager delivery was not confirmed");
+    if ((receiptBody as { delivered: boolean }).delivered) {
+      alertDelivered = true;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+  }
+  if (!alertDelivered) throw new Error("Pager delivery was not confirmed");
 
   return decodeQuarterlyRecoveryChecks({
     oauth_kv_reconstructed: state.oauthKvReconstructed,

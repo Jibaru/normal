@@ -13,6 +13,9 @@ describe("deployment rules", () => {
       "provider-control",
       "deletion-coordinator",
       "restore-coordinator",
+      "operations-control",
+      "recovery-game-day",
+      "recovery-verifier",
       "recovery-control",
     ]);
   });

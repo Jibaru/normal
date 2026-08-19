@@ -162,6 +162,13 @@
       "when": 1787130000000,
       "tag": "0022_gate_recovery_drill_verification",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1787166960000,
+      "tag": "0023_record_recovery_source_points",
+      "breakpoints": true
     }
   ]
 }

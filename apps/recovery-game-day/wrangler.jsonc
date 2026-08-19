@@ -18,6 +18,7 @@
       "KMS_RECOVERY_GAME_DAY_KEY_ARN",
       "PAGER_RECEIPT_TOKEN",
       "PAGER_RECEIPT_URL",
+      "PAGER_WEBHOOK_TOKEN",
       "PAGER_WEBHOOK_URL",
       "QUARTERLY_RECEIPT_SECRET"
     ]
@@ -58,6 +59,7 @@
           "KMS_RECOVERY_GAME_DAY_KEY_ARN",
           "PAGER_RECEIPT_TOKEN",
           "PAGER_RECEIPT_URL",
+          "PAGER_WEBHOOK_TOKEN",
           "PAGER_WEBHOOK_URL",
           "QUARTERLY_RECEIPT_SECRET"
         ]
@@ -100,6 +102,7 @@
           "KMS_RECOVERY_GAME_DAY_KEY_ARN",
           "PAGER_RECEIPT_TOKEN",
           "PAGER_RECEIPT_URL",
+          "PAGER_WEBHOOK_TOKEN",
           "PAGER_WEBHOOK_URL",
           "QUARTERLY_RECEIPT_SECRET"
         ]
@@ -143,6 +146,7 @@
           "KMS_RECOVERY_GAME_DAY_KEY_ARN",
           "PAGER_RECEIPT_TOKEN",
           "PAGER_RECEIPT_URL",
+          "PAGER_WEBHOOK_TOKEN",
           "PAGER_WEBHOOK_URL",
           "QUARTERLY_RECEIPT_SECRET"
         ]

@@ -8,6 +8,11 @@ output "recovery_control_origin" {
   value       = "https://${cloudflare_workers_custom_domain.recovery_control.hostname}/drills"
 }
 
+output "operations_control_origin" {
+  description = "Authenticated operations-control origin for availability evidence and pager delivery."
+  value       = "https://${cloudflare_workers_custom_domain.operations_control.hostname}"
+}
+
 output "web_origin" {
   description = "Public Vercel web origin."
   value       = "https://${vercel_project_domain.web.domain}"
@@ -52,6 +57,12 @@ output "oauth_kv_namespace_id" {
 output "recovery_kv_namespace_id" {
   description = "Dedicated recovery fixture KV namespace; never bind as OAuth protocol state."
   value       = cloudflare_workers_kv_namespace.recovery_fixtures.id
+  sensitive   = true
+}
+
+output "operations_kv_namespace_id" {
+  description = "Dedicated short-lived pager receipt KV namespace."
+  value       = cloudflare_workers_kv_namespace.operations_receipts.id
   sensitive   = true
 }
 

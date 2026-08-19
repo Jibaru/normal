@@ -10,7 +10,7 @@ describe("operator runbooks", () => {
     expect(deployment).toContain("## Initial production deployment");
     expect(deployment).toContain("## Rollback decision matrix");
     expect(deployment).toMatch(
-      /provider-control → deletion coordinator → restore coordinator → recovery game day → recovery verifier → recovery control\s+→ API → web → docs/u,
+      /provider-control → deletion coordinator → restore coordinator → operations control → recovery game day → recovery verifier → recovery control\s+→ API → web → docs/u,
     );
     expect(deployment).toContain("Database migrations are forward-only");
     expect(deployment).toContain("bun run deploy:smoke");

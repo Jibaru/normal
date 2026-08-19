@@ -195,7 +195,7 @@ BEGIN
       USING MESSAGE = 'recovery verifier branch mismatch';
   END IF;
   RETURN QUERY SELECT
-    COALESCE((SELECT max(migrations.created_at) = 1787130000000
+    COALESCE((SELECT max(migrations.created_at) = 1787166960000
       FROM public.drizzle_migrations AS migrations), false),
     NOT EXISTS (
       SELECT 1 FROM pg_catalog.pg_roles AS roles

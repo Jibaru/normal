@@ -43,7 +43,9 @@ jobs:
         run: bun scripts/bootstrap-recovery-worker-secrets.ts
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ANALYTICS_TOKEN: ${{ secrets.CLOUDFLARE_ANALYTICS_TOKEN }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
           DELETION_MARKER_HMAC_SECRET: ${{ secrets.DELETION_MARKER_HMAC_SECRET }}
           KMS_RECOVERY_GAME_DAY_KEY_ARN: ${{ vars.KMS_RECOVERY_GAME_DAY_KEY_ARN }}
           NEON_PARENT_BRANCH_ID: ${{ secrets.NEON_PARENT_BRANCH_ID }}
@@ -51,13 +53,16 @@ jobs:
           NEON_RECOVERY_API_KEY: ${{ secrets.NEON_RECOVERY_API_KEY }}
           OBSERVABILITY_QUERY_TOKEN: ${{ secrets.OBSERVABILITY_QUERY_TOKEN }}
           OBSERVABILITY_QUERY_URL: ${{ secrets.OBSERVABILITY_QUERY_URL }}
+          PAGER_DESTINATION_ADDRESS: ${{ secrets.PAGER_DESTINATION_ADDRESS }}
           PAGER_RECEIPT_TOKEN: ${{ secrets.PAGER_RECEIPT_TOKEN }}
           PAGER_RECEIPT_URL: ${{ secrets.PAGER_RECEIPT_URL }}
+          PAGER_WEBHOOK_TOKEN: ${{ secrets.PAGER_WEBHOOK_TOKEN }}
           PAGER_WEBHOOK_URL: ${{ secrets.PAGER_WEBHOOK_URL }}
           QUARTERLY_RECEIPT_SECRET: ${{ secrets.QUARTERLY_RECEIPT_SECRET }}
           RECIPIENT_TRANSITION_HMAC_SECRET: ${{ secrets.RECIPIENT_TRANSITION_HMAC_SECRET }}
           RECOVERY_CONTROL_TOKEN: ${{ secrets.RECOVERY_CONTROL_TOKEN }}
           RECOVERY_EVIDENCE_TOKEN: ${{ secrets.RECOVERY_EVIDENCE_TOKEN }}
+          SMOKE_CHECK_SECRET: ${{ secrets.SMOKE_CHECK_SECRET }}
 
   deploy:
     if: >-
@@ -103,6 +108,16 @@ jobs:
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Deploy operations control
+        run: |
+          mkdir -p apps/operations-control/.wrangler
+          bun scripts/render-operations-control-wrangler.ts apps/operations-control/.wrangler/production.jsonc production
+          bun run --cwd apps/operations-control wrangler deploy --config .wrangler/production.jsonc --env production
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_OPERATIONS_KV_ID: ${{ vars.CLOUDFLARE_OPERATIONS_KV_ID }}
 
       - name: Assume recovery game-day authority
         uses: aws-actions/configure-aws-credentials@v6.1.0

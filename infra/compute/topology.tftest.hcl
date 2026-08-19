@@ -17,6 +17,7 @@ run "development_topology" {
     vercel_team_id                = "team_developmentvalidation"
     api_hostname                  = "api.dev.example.com"
     recovery_hostname             = "recovery.dev.example.com"
+    operations_hostname           = "operations.dev.example.com"
     web_hostname                  = "app.dev.example.com"
     docs_hostname                 = "docs.dev.example.com"
     clerk_issuer                  = "https://clerk.dev.example.com"
@@ -77,6 +78,38 @@ run "development_topology" {
   }
 
   assert {
+    condition = (
+      cloudflare_worker.operations_control.name == "whatsapp-mcp-operations-control-development" &&
+      cloudflare_worker.operations_control.subdomain.enabled == false &&
+      cloudflare_worker.operations_control.subdomain.previews_enabled == false &&
+      cloudflare_workers_custom_domain.operations_control.hostname == "operations.dev.example.com" &&
+      output.operations_control_origin == "https://operations.dev.example.com" &&
+      cloudflare_workers_kv_namespace.operations_receipts.title == "whatsapp-mcp-operations-receipts-development"
+    )
+    error_message = "Operations control must use its isolated custom domain and pager receipt namespace."
+  }
+
+  assert {
+    condition = toset([
+      for binding in cloudflare_worker_version.operations_control.bindings :
+      "${binding.type}:${binding.name}"
+      ]) == toset([
+      "plain_text:API_ORIGIN",
+      "plain_text:DEPLOYMENT_ENVIRONMENT",
+      "inherit:CLOUDFLARE_ANALYTICS_TOKEN",
+      "inherit:CLOUDFLARE_ZONE_ID",
+      "inherit:OBSERVABILITY_QUERY_TOKEN",
+      "inherit:PAGER_DESTINATION_ADDRESS",
+      "inherit:PAGER_RECEIPT_TOKEN",
+      "inherit:PAGER_WEBHOOK_TOKEN",
+      "inherit:SMOKE_CHECK_SECRET",
+      "kv_namespace:ALERT_RECEIPTS",
+      "send_email:PAGER_EMAIL",
+    ])
+    error_message = "Operations control must have only analytics, smoke, pager, receipt, and email authority."
+  }
+
+  assert {
     condition = one([
       for binding in cloudflare_worker_version.api.bindings :
       binding.service if binding.name == "PROVIDER_CONTROL"
@@ -131,6 +164,7 @@ run "development_topology" {
       cloudflare_r2_bucket.recipient_transitions.name == "whatsapp-mcp-recipient-transitions-development" &&
       cloudflare_workers_kv_namespace.oauth.title == "whatsapp-mcp-oauth-development" &&
       cloudflare_workers_kv_namespace.recovery_fixtures.title == "whatsapp-mcp-recovery-fixtures-development" &&
+      cloudflare_workers_kv_namespace.operations_receipts.title == "whatsapp-mcp-operations-receipts-development" &&
       cloudflare_queue.connection_setup_provisioning.queue_name == "whatsapp-mcp-connection-setup-provisioning-development" &&
       cloudflare_queue.ingestion.queue_name == "whatsapp-mcp-ingestion-development" &&
       cloudflare_queue.dead_letter.queue_name == "whatsapp-mcp-ingestion-dlq-development" &&
@@ -298,6 +332,7 @@ run "preview_topology" {
     vercel_team_id                = "team_previewvalidation"
     api_hostname                  = "api.preview.example.com"
     recovery_hostname             = "recovery.preview.example.com"
+    operations_hostname           = "operations.preview.example.com"
     web_hostname                  = "app.preview.example.com"
     docs_hostname                 = "docs.preview.example.com"
     clerk_issuer                  = "https://clerk.preview.example.com"
@@ -355,6 +390,7 @@ run "production_topology" {
     vercel_team_id                = "team_productionvalidation"
     api_hostname                  = "api.example.com"
     recovery_hostname             = "recovery.example.com"
+    operations_hostname           = "operations.example.com"
     web_hostname                  = "app.example.com"
     docs_hostname                 = "docs.example.com"
     clerk_issuer                  = "https://clerk.example.com"
@@ -383,6 +419,15 @@ run "production_topology" {
       cloudflare_workers_custom_domain.recovery_control.hostname == "recovery.example.com"
     )
     error_message = "Production recovery control must retain its canonical private-operations identity."
+  }
+
+  assert {
+    condition = (
+      cloudflare_worker.operations_control.name == "whatsapp-mcp-operations-control" &&
+      cloudflare_workers_custom_domain.operations_control.hostname == "operations.example.com" &&
+      output.operations_control_origin == "https://operations.example.com"
+    )
+    error_message = "Production operations control must retain its canonical authenticated identity."
   }
 
   assert {
@@ -497,6 +542,7 @@ run "reject_same_web_and_api_origin" {
     vercel_team_id                = "team_productionvalidation"
     api_hostname                  = "app.example.com"
     recovery_hostname             = "recovery.example.com"
+    operations_hostname           = "operations.example.com"
     web_hostname                  = "app.example.com"
     docs_hostname                 = "docs.example.com"
     clerk_issuer                  = "https://clerk.example.com"
@@ -528,6 +574,7 @@ run "reject_same_docs_and_api_origin" {
     vercel_team_id                = "team_productionvalidation"
     api_hostname                  = "docs.example.com"
     recovery_hostname             = "recovery.example.com"
+    operations_hostname           = "operations.example.com"
     web_hostname                  = "app.example.com"
     docs_hostname                 = "docs.example.com"
     clerk_issuer                  = "https://clerk.example.com"
@@ -559,6 +606,7 @@ run "reject_same_docs_and_web_origin" {
     vercel_team_id                = "team_productionvalidation"
     api_hostname                  = "api.example.com"
     recovery_hostname             = "recovery.example.com"
+    operations_hostname           = "operations.example.com"
     web_hostname                  = "docs.example.com"
     docs_hostname                 = "docs.example.com"
     clerk_issuer                  = "https://clerk.example.com"
@@ -590,6 +638,7 @@ run "development_topology_with_posthog" {
     vercel_team_id                    = "team_developmentvalidation"
     api_hostname                      = "api.dev.example.com"
     recovery_hostname                 = "recovery.dev.example.com"
+    operations_hostname               = "operations.dev.example.com"
     web_hostname                      = "app.dev.example.com"
     docs_hostname                     = "docs.dev.example.com"
     clerk_issuer                      = "https://clerk.dev.example.com"
@@ -636,6 +685,7 @@ run "reject_partial_posthog_configuration" {
     vercel_team_id                = "team_developmentvalidation"
     api_hostname                  = "api.dev.example.com"
     recovery_hostname             = "recovery.dev.example.com"
+    operations_hostname           = "operations.dev.example.com"
     web_hostname                  = "app.dev.example.com"
     docs_hostname                 = "docs.dev.example.com"
     clerk_issuer                  = "https://clerk.dev.example.com"

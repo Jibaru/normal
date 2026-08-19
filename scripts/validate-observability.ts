@@ -25,6 +25,8 @@ const configSchema = z.object({
   owner: z.object({ team: z.string().min(1), runbook: z.string().min(1) }),
   delivery: z.object({
     channel: z.literal("PAGER_WEBHOOK_URL"),
+    receiptChannel: z.literal("PAGER_RECEIPT_URL"),
+    receiptEvidence: z.literal("cloudflare-email-final-delivery"),
     payloadFields: z.array(z.string()),
     canary: z.object({
       enabled: z.boolean(),
@@ -230,6 +232,11 @@ export const validateObservabilityConfig = (input: unknown): void => {
   }
   if (!config.delivery.canary.enabled)
     throw new Error("production alert delivery canary must be enabled");
+  if (
+    config.delivery.receiptChannel !== "PAGER_RECEIPT_URL" ||
+    config.delivery.receiptEvidence !== "cloudflare-email-final-delivery"
+  )
+    throw new Error("pager acceptance must have final delivery evidence");
   if (!alertIds.has(config.delivery.canary.alert))
     throw new Error("alert delivery canary must target a declared alert");
   if (

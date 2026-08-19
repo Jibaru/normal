@@ -26,8 +26,10 @@ flowchart LR
         recovery[recovery control Worker<br/>Authenticated non-serving drills]
         verifier[recovery verifier Worker<br/>Restricted aggregate checks]
         gameDay[recovery game-day Worker<br/>Disposable quarterly capabilities]
+        operations[operations control Worker<br/>Availability and pager boundary]
         oauth[(OAuth KV<br/>Protocol state only)]
         recoveryKv[(Recovery fixture KV<br/>Disposable game-day state)]
+        operationsKv[(Operations KV<br/>Short-lived pager receipts)]
         queues[(Queues<br/>Provisioning and ingestion)]
         webhook[(Private R2<br/>Encrypted Webhook Events)]
         media[(Private R2<br/>Encrypted Stored Media)]
@@ -78,9 +80,14 @@ flowchart LR
     recovery -->|authenticated private verification| verifier
     verifier -->|guarded verifier role on disposable child| neonControl
     verifier -->|quarterly capability request| gameDay
+    verifier -->|authenticated aggregate query| operations
     gameDay -->|disposable reconstruction fixture| recoveryKv
     gameDay -->|disposable replay fixture| queues
     gameDay -->|purpose-specific canary key| kms
+    gameDay -->|authenticated page and receipt| operations
+    operations -->|deployed subsystem smoke| api
+    operations -->|public status evidence| wasender
+    operations -->|short-lived message ID| operationsKv
 ```
 
 ## Boundary notes
@@ -103,6 +110,12 @@ flowchart LR
   child-branch deletion intents without deleting shared production objects.
   Completion requires a separate authenticated evidence authority; missing
   verifier or observability inputs fail the drill closed.
+* `operations-control` is public only on its dedicated authenticated custom
+  domain. It can read zone scoped Cloudflare HTTP and Email Service analytics,
+  invoke the deployed API smoke boundary, read the public Wasender status page,
+  send from the restricted pager address, and retain a message ID receipt for
+  one day. It has no database, Neon control plane, R2, Queue, KMS, provider
+  credential, tenant identity, or content authority.
 * Neon is authoritative for identity mappings, tenant data, authorization,
   quota reservations, audit records, and lifecycle state. KV, R2, and Queues do
   not become alternate authorities.

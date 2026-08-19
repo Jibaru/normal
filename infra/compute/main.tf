@@ -7,6 +7,7 @@ locals {
   recovery_control_worker_name             = "whatsapp-mcp-recovery-control${local.environment_suffix}"
   recovery_verifier_worker_name            = "whatsapp-mcp-recovery-verifier${local.environment_suffix}"
   recovery_game_day_worker_name            = "whatsapp-mcp-recovery-game-day${local.environment_suffix}"
+  operations_control_worker_name           = "whatsapp-mcp-operations-control${local.environment_suffix}"
   recovery_workflow_name                   = "whatsapp-mcp-production-recovery${local.environment_suffix}"
   web_project_name                         = "whatsapp-mcp-web${local.environment_suffix}"
   docs_project_name                        = "whatsapp-mcp-docs${local.environment_suffix}"
@@ -17,6 +18,7 @@ locals {
   recipient_transitions_bucket_name        = "whatsapp-mcp-recipient-transitions${local.environment_suffix}"
   oauth_kv_namespace_name                  = "whatsapp-mcp-oauth${local.environment_suffix}"
   recovery_kv_namespace_name               = "whatsapp-mcp-recovery-fixtures${local.environment_suffix}"
+  operations_kv_namespace_name             = "whatsapp-mcp-operations-receipts${local.environment_suffix}"
   ingestion_queue_name                     = "whatsapp-mcp-ingestion${local.environment_suffix}"
   dead_letter_queue_name                   = "whatsapp-mcp-ingestion-dlq${local.environment_suffix}"
   replay_queue_name                        = "whatsapp-mcp-ingestion-replay${local.environment_suffix}"
@@ -30,6 +32,7 @@ locals {
   recovery_control_bundle_path             = abspath("${path.root}/../../apps/recovery-control/dist/index.js")
   recovery_verifier_bundle_path            = abspath("${path.root}/../../apps/recovery-verifier/dist/index.js")
   recovery_game_day_bundle_path            = abspath("${path.root}/../../apps/recovery-game-day/dist/index.js")
+  operations_control_bundle_path           = abspath("${path.root}/../../apps/operations-control/dist/index.js")
 }
 
 resource "cloudflare_r2_bucket" "webhook_ingress" {
@@ -209,6 +212,11 @@ resource "cloudflare_workers_kv_namespace" "oauth" {
 resource "cloudflare_workers_kv_namespace" "recovery_fixtures" {
   account_id = var.cloudflare_account_id
   title      = local.recovery_kv_namespace_name
+}
+
+resource "cloudflare_workers_kv_namespace" "operations_receipts" {
+  account_id = var.cloudflare_account_id
+  title      = local.operations_kv_namespace_name
 }
 
 resource "cloudflare_queue" "ingestion" {
@@ -478,6 +486,62 @@ resource "cloudflare_workers_cron_trigger" "restore_coordinator" {
   depends_on  = [cloudflare_workers_deployment.restore_coordinator]
 }
 
+resource "cloudflare_worker" "operations_control" {
+  account_id = var.cloudflare_account_id
+  name       = local.operations_control_worker_name
+  tags = [
+    "cf:environment=${var.deployment_environment}",
+    "cf:service=${local.operations_control_worker_name}",
+  ]
+  subdomain = { enabled = false, previews_enabled = false }
+  observability = {
+    enabled = true, head_sampling_rate = 1
+    logs    = { enabled = true, head_sampling_rate = 1, invocation_logs = true, persist = true }
+    traces  = { enabled = true, head_sampling_rate = 1, persist = true }
+  }
+}
+
+resource "cloudflare_worker_version" "operations_control" {
+  account_id          = var.cloudflare_account_id
+  worker_id           = cloudflare_worker.operations_control.id
+  main_module         = "index.js"
+  compatibility_date  = "2026-08-06"
+  compatibility_flags = ["global_fetch_strictly_public"]
+  modules = [{
+    name         = "index.js", content_file = local.operations_control_bundle_path,
+    content_type = "application/javascript+module"
+  }]
+  bindings = [
+    { name = "API_ORIGIN", text = "https://${var.api_hostname}", type = "plain_text" },
+    { name = "DEPLOYMENT_ENVIRONMENT", text = var.deployment_environment, type = "plain_text" },
+    { name = "CLOUDFLARE_ANALYTICS_TOKEN", type = "inherit" },
+    { name = "CLOUDFLARE_ZONE_ID", type = "inherit" },
+    { name = "OBSERVABILITY_QUERY_TOKEN", type = "inherit" },
+    { name = "PAGER_DESTINATION_ADDRESS", type = "inherit" },
+    { name = "PAGER_RECEIPT_TOKEN", type = "inherit" },
+    { name = "PAGER_WEBHOOK_TOKEN", type = "inherit" },
+    { name = "SMOKE_CHECK_SECRET", type = "inherit" },
+    { name = "ALERT_RECEIPTS", namespace_id = cloudflare_workers_kv_namespace.operations_receipts.id, type = "kv_namespace" },
+    { name = "PAGER_EMAIL", allowed_destination_addresses = ["hi@cueva.io"], allowed_sender_addresses = ["pager@alerts.normal.fast"], type = "send_email" }
+  ]
+}
+
+resource "cloudflare_workers_deployment" "operations_control" {
+  account_id  = var.cloudflare_account_id
+  script_name = cloudflare_worker.operations_control.name
+  strategy    = "percentage"
+  versions    = [{ percentage = 100, version_id = cloudflare_worker_version.operations_control.id }]
+}
+
+resource "cloudflare_workers_custom_domain" "operations_control" {
+  account_id = var.cloudflare_account_id
+  zone_id    = var.cloudflare_zone_id
+  hostname   = var.operations_hostname
+  service    = cloudflare_worker.operations_control.name
+
+  depends_on = [cloudflare_workers_deployment.operations_control]
+}
+
 resource "cloudflare_worker" "recovery_game_day" {
   account_id = var.cloudflare_account_id
   name       = local.recovery_game_day_worker_name
@@ -516,6 +580,7 @@ resource "cloudflare_worker_version" "recovery_game_day" {
     { name = "KMS_RECOVERY_GAME_DAY_KEY_ARN", type = "inherit" },
     { name = "PAGER_RECEIPT_TOKEN", type = "inherit" },
     { name = "PAGER_RECEIPT_URL", type = "inherit" },
+    { name = "PAGER_WEBHOOK_TOKEN", type = "inherit" },
     { name = "PAGER_WEBHOOK_URL", type = "inherit" },
     { name = "QUARTERLY_RECEIPT_SECRET", type = "inherit" },
     { name = "RECOVERY_KV", namespace_id = cloudflare_workers_kv_namespace.recovery_fixtures.id, type = "kv_namespace" },

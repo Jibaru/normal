@@ -1,0 +1,19 @@
+{
+  "name": "@whatsapp-mcp/operations-control",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "CI=true wrangler deploy --dry-run --env production --outdir dist",
+    "lint": "biome check .",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "wrangler": "wrangler"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.19.1",
+    "typescript": "^5",
+    "vitest": "4.1.10",
+    "wrangler": "4.116.0"
+  }
+}

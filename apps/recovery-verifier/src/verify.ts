@@ -268,8 +268,7 @@ export const verifyRecovery = async (
   const availability = await queryAvailability(env, input);
   const hmac = await verifyIsolatedApiKeyHmacRotation();
   const achievedRpoSeconds = Math.abs(
-    (Date.parse(input.source_point_at) -
-      Date.parse(availability.recoveredSourcePointAt)) /
+    (Date.parse(input.source_point_at) - Date.parse(database.sourcePointAt)) /
       1_000,
   );
   if (!Number.isFinite(achievedRpoSeconds) || achievedRpoSeconds > 300)

@@ -8,12 +8,18 @@ describe("production deployment order", () => {
     const provider = workflow.indexOf("Deploy provider control");
     const deletion = workflow.indexOf("Deploy deletion coordinator");
     const restore = workflow.indexOf("Deploy restore coordinator");
+    const operations = workflow.indexOf("Deploy operations control");
+    const gameDay = workflow.indexOf("Deploy recovery game day");
+    const verifier = workflow.indexOf("Deploy recovery verifier");
     const recovery = workflow.indexOf("Deploy recovery control");
     const api = workflow.indexOf("Deploy API");
     expect(provider).toBeGreaterThan(-1);
     expect(deletion).toBeGreaterThan(provider);
     expect(restore).toBeGreaterThan(deletion);
-    expect(recovery).toBeGreaterThan(restore);
+    expect(operations).toBeGreaterThan(restore);
+    expect(gameDay).toBeGreaterThan(operations);
+    expect(verifier).toBeGreaterThan(gameDay);
+    expect(recovery).toBeGreaterThan(verifier);
     expect(api).toBeGreaterThan(recovery);
     expect(
       workflow.match(
@@ -48,6 +54,7 @@ describe("production deployment order", () => {
     expect(bootstrap).not.toContain('"deploy"');
     for (const name of [
       "whatsapp-mcp-recovery-game-day",
+      "whatsapp-mcp-operations-control",
       "whatsapp-mcp-recovery-verifier",
       "whatsapp-mcp-recovery-control",
     ]) {
@@ -56,7 +63,9 @@ describe("production deployment order", () => {
     for (const name of [
       "NEON_RECOVERY_API_KEY",
       "OBSERVABILITY_QUERY_TOKEN",
+      "PAGER_DESTINATION_ADDRESS",
       "PAGER_RECEIPT_TOKEN",
+      "PAGER_WEBHOOK_TOKEN",
       "QUARTERLY_RECEIPT_SECRET",
       "RECOVERY_EVIDENCE_TOKEN",
     ]) {

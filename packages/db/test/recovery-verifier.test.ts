@@ -55,6 +55,28 @@ describe("recovery verifier database boundary", () => {
     }
   });
 
+  test("records a committed source point through the API role and exposes only the timestamp to the verifier", async () => {
+    await database.exec("SET ROLE whatsapp_api_runtime");
+    const recorded = await database.query<{ observed_at: string }>(
+      "SELECT public.record_recovery_source_point() AS observed_at",
+    );
+    await database.exec("RESET ROLE");
+
+    await database.exec("SET ROLE whatsapp_recovery_verifier");
+    const recovered = await database.query<{ source_point_at: string }>(
+      "SELECT public.read_recovery_source_point() AS source_point_at",
+    );
+    await expect(
+      database.query("SELECT observed_at FROM public.recovery_source_points"),
+    ).rejects.toThrow();
+    await database.exec("RESET ROLE");
+
+    expect(Date.parse(recorded.rows[0]?.observed_at ?? "")).toBeFinite();
+    expect(
+      new Date(recovered.rows[0]?.source_point_at ?? "").toISOString(),
+    ).toBe(new Date(recorded.rows[0]?.observed_at ?? "").toISOString());
+  });
+
   test("denies a mismatched branch without disclosing readiness metadata", async () => {
     await database.query("SELECT * FROM public.begin_restore_replay($1, $2)", [
       branchId,

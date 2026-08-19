@@ -6,24 +6,28 @@ The production reporting contract is [`observability/production.json`](../../obs
 
 Platform Operations owns the dashboards, alert policies, weekly delivery canary, and incident response. The observability role may read persisted Cloudflare Worker logs, traces, and platform metrics and may manage dashboards and alert rules. It receives no database, R2, KV, KMS, Hyperdrive, Provider API Credential, OAuth secret, or Worker-secret access. It cannot decrypt Stored Messages, Stored Media, provider payloads, or identifiers. Do not copy tenant or User identity into annotations, alert destinations, tickets, or support tools.
 
-Configure the production alert destination as the protected GitHub Actions environment secret `PAGER_WEBHOOK_URL`. The URL must be HTTPS and must not be stored in source or Worker configuration. The destination must route `page` severity to the primary on-call and `ticket` severity to the Platform Operations queue.
+The production alert boundary is `https://operations.normal.fast`. Store its three paths and separate bearer credentials in the protected GitHub environments as `OBSERVABILITY_QUERY_URL`, `OBSERVABILITY_QUERY_TOKEN`, `PAGER_WEBHOOK_URL`, `PAGER_WEBHOOK_TOKEN`, `PAGER_RECEIPT_URL`, and `PAGER_RECEIPT_TOKEN`. The operations Worker routes both severities to the verified `hi@cueva.io` destination during private beta. The email contains only the four allowlisted alert fields.
 
 ## Provisioning
 
-In the production Cloudflare account, create the four dashboards and eight alert policies with the exact IDs, sources, fields, filters, thresholds, and windows in the reporting contract. Cloudflare platform fields come from Workers Analytics/Queues/KV/R2 service metrics; `workerTelemetry` fields come only from the structured events accepted by the runtime allowlist. Treat configuration drift from the committed contract as a deployment failure.
+In the production Cloudflare account, create the four dashboards and eight alert policies with the exact IDs, sources, fields, filters, thresholds, and windows in the reporting contract. Cloudflare platform fields come from Workers Analytics, Queues, KV, and R2 service metrics; `workerTelemetry` fields come only from the structured events accepted by the runtime allowlist. Treat configuration drift from the committed contract as a deployment failure.
 
-The availability dashboard must show three independent series. The first-party series is successful API/MCP service responses divided by eligible first-party requests over a rolling 30-day window, with scheduled maintenance included, against 99.5%. Wasender and WhatsApp series are dependency evidence and have no inherited objective; never subtract dependency failures from the first-party numerator or denominator.
+Activate Cloudflare Email Sending for `alerts.normal.fast`, complete every DNS verification record, and verify `hi@cueva.io` as the production pager destination. Provision a zone scoped token with Analytics Read only and store it as `CLOUDFLARE_ANALYTICS_TOKEN` on operations control. Store the exact zone as `CLOUDFLARE_ZONE_ID`. Bind Email Service as `PAGER_EMAIL`, allow only `pager@alerts.normal.fast` as sender and `hi@cueva.io` as destination, and bind the dedicated `ALERT_RECEIPTS` KV namespace. Do not grant database, R2, Queue, KMS, Neon, or provider access.
+
+The availability dashboard must show three independent series. Operations control computes the first party series from the production API hostname in Cloudflare HTTP analytics as one minus the 5xx response ratio over the exact rolling 30 day window, with scheduled maintenance included, against 99.5%. It reads Wasender's published 30 day uptime and WhatsApp component outage evidence separately. These dependency series have no inherited objective; never subtract dependency failures from the first party numerator or denominator.
 
 Queue lag and dead letters use Cloudflare Queue metrics. Quota pressure is authoritative Neon quota utilization exported as an aggregate only. KMS, Stored Media, deletion-deadline, and restore-gate panels count aggregate safe outcomes only. No query may group by an opaque reference, even when that reference is permitted in an incident log event.
 
-Vendor dashboard and alert API credentials are an external rollout gate and are intentionally not committed. After provisioning, run:
+The recovery availability query also runs the deployed API smoke boundary. That proof must complete the real database, provider safe read, Queue, R2, and sampled KMS path. Recovery RPO comes from the committed heartbeat inside the restored Neon branch, not from the operations Worker.
+
+After provisioning, run:
 
 ```sh
 bun run observability:validate
 bun run observability:canary
 ```
 
-Confirm the `alert-delivery-canary` arrives in the ticket destination with only `alert`, `severity`, `status`, and `observedAt`. GitHub Actions repeats this every Monday at 15:00 UTC; a failed workflow is itself a delivery-path incident.
+Confirm the `alert-delivery-canary` arrives in the ticket destination with only `alert`, `severity`, `status`, and `observedAt`. The canary succeeds only after `/v1/receipts` observes the matching final `delivered` Email Service event. Acceptance by `/v1/alerts` is not delivery proof. GitHub Actions repeats this every Monday at 15:00 UTC; a failed workflow is itself a delivery path incident.
 
 ## Alert response
 

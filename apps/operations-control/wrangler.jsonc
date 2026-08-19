@@ -1,0 +1,130 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "whatsapp-mcp-operations-control",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-06",
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "API_ORIGIN": "https://api.normal.fast",
+    "DEPLOYMENT_ENVIRONMENT": "production"
+  },
+  "secrets": {
+    "required": [
+      "CLOUDFLARE_ANALYTICS_TOKEN",
+      "CLOUDFLARE_ZONE_ID",
+      "OBSERVABILITY_QUERY_TOKEN",
+      "PAGER_DESTINATION_ADDRESS",
+      "PAGER_RECEIPT_TOKEN",
+      "PAGER_WEBHOOK_TOKEN",
+      "SMOKE_CHECK_SECRET"
+    ]
+  },
+  "kv_namespaces": [
+    { "binding": "ALERT_RECEIPTS", "id": "44444444444444444444444444444444" }
+  ],
+  "send_email": [
+    {
+      "name": "PAGER_EMAIL",
+      "allowed_sender_addresses": ["pager@alerts.normal.fast"],
+      "allowed_destination_addresses": ["hi@cueva.io"]
+    }
+  ],
+  "observability": { "enabled": true },
+  "env": {
+    "development": {
+      "name": "whatsapp-mcp-operations-control-development",
+      "vars": {
+        "API_ORIGIN": "https://api.development.example.test",
+        "DEPLOYMENT_ENVIRONMENT": "development"
+      },
+      "secrets": {
+        "required": [
+          "CLOUDFLARE_ANALYTICS_TOKEN",
+          "CLOUDFLARE_ZONE_ID",
+          "OBSERVABILITY_QUERY_TOKEN",
+          "PAGER_DESTINATION_ADDRESS",
+          "PAGER_RECEIPT_TOKEN",
+          "PAGER_WEBHOOK_TOKEN",
+          "SMOKE_CHECK_SECRET"
+        ]
+      },
+      "kv_namespaces": [
+        {
+          "binding": "ALERT_RECEIPTS",
+          "id": "44444444444444444444444444444444"
+        }
+      ],
+      "send_email": [
+        {
+          "name": "PAGER_EMAIL",
+          "allowed_sender_addresses": ["pager@alerts.normal.fast"],
+          "allowed_destination_addresses": ["hi@cueva.io"]
+        }
+      ]
+    },
+    "preview": {
+      "name": "whatsapp-mcp-operations-control-preview",
+      "vars": {
+        "API_ORIGIN": "https://api.preview.example.test",
+        "DEPLOYMENT_ENVIRONMENT": "preview"
+      },
+      "secrets": {
+        "required": [
+          "CLOUDFLARE_ANALYTICS_TOKEN",
+          "CLOUDFLARE_ZONE_ID",
+          "OBSERVABILITY_QUERY_TOKEN",
+          "PAGER_DESTINATION_ADDRESS",
+          "PAGER_RECEIPT_TOKEN",
+          "PAGER_WEBHOOK_TOKEN",
+          "SMOKE_CHECK_SECRET"
+        ]
+      },
+      "kv_namespaces": [
+        {
+          "binding": "ALERT_RECEIPTS",
+          "id": "44444444444444444444444444444444"
+        }
+      ],
+      "send_email": [
+        {
+          "name": "PAGER_EMAIL",
+          "allowed_sender_addresses": ["pager@alerts.normal.fast"],
+          "allowed_destination_addresses": ["hi@cueva.io"]
+        }
+      ]
+    },
+    "production": {
+      "name": "whatsapp-mcp-operations-control",
+      "vars": {
+        "API_ORIGIN": "https://api.normal.fast",
+        "DEPLOYMENT_ENVIRONMENT": "production"
+      },
+      "secrets": {
+        "required": [
+          "CLOUDFLARE_ANALYTICS_TOKEN",
+          "CLOUDFLARE_ZONE_ID",
+          "OBSERVABILITY_QUERY_TOKEN",
+          "PAGER_DESTINATION_ADDRESS",
+          "PAGER_RECEIPT_TOKEN",
+          "PAGER_WEBHOOK_TOKEN",
+          "SMOKE_CHECK_SECRET"
+        ]
+      },
+      "kv_namespaces": [
+        {
+          "binding": "ALERT_RECEIPTS",
+          "id": "44444444444444444444444444444444"
+        }
+      ],
+      "send_email": [
+        {
+          "name": "PAGER_EMAIL",
+          "allowed_sender_addresses": ["pager@alerts.normal.fast"],
+          "allowed_destination_addresses": ["hi@cueva.io"]
+        }
+      ]
+    }
+  }
+}

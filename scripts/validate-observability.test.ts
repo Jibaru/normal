@@ -43,6 +43,12 @@ describe("production observability configuration", () => {
       "production alert delivery canary must be enabled",
     );
 
+    const noDeliveryProof = structuredClone(config) as unknown as {
+      delivery: { receiptEvidence: string };
+    };
+    noDeliveryProof.delivery.receiptEvidence = "http-accepted";
+    expect(() => validateObservabilityConfig(noDeliveryProof)).toThrow();
+
     const weakenedAlert = structuredClone(config);
     const deletionAlert = weakenedAlert.alerts.find(
       ({ id }) => id === "deletion-cleanup-risk",

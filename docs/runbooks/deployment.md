@@ -44,7 +44,7 @@ production roles or read production CI secrets.
 
 Use one change record and one reviewed commit for the entire release. The
 ordered path is **infrastructure → environment population → migration →
-provider-control → deletion coordinator → restore coordinator → recovery game day → recovery verifier → recovery control
+provider-control → deletion coordinator → restore coordinator → operations control → recovery game day → recovery verifier → recovery control
 → API → web → docs → smoke check**. The deployer may stop between
 steps, but must not reorder them or serve traffic from a partially compatible
 set.
@@ -55,7 +55,7 @@ set.
    credentials or tenant data.
 2. [Bootstrap remote state](#bootstrap-remote-state), run [Verify](#verify),
    then create and inspect the saved infrastructure plans.
-3. Apply Neon, Hyperdrive, KMS, R2, Queue, KV, Worker-shell, route, and Vercel
+3. Apply Neon, Hyperdrive, KMS, R2, Queue, KV, Worker shell, route, and Vercel
    declarations. Do not populate a secret into a plan or state file.
 4. Populate every value in [deployment configuration](../configuration.md)
    through its named secret store and validate secret names, bindings, and
@@ -65,7 +65,7 @@ set.
    migration-owner connection. For an audited operator session, run those same
    commands locally and then remove the connection from the shell.
 6. Deploy in dependency order: **provider-control → deletion coordinator → restore
-   coordinator → recovery game day → recovery verifier → recovery control → API → web → docs**. Keep public
+   coordinator → operations control → recovery game day → recovery verifier → recovery control → API → web → docs**. Keep public
    traffic closed if migration readiness or any private service binding fails.
 7. Run the non-interactive `bun run deploy:smoke` boundary and retain only its
    normalized results, reviewed commit, deployment versions, plan digest, and
@@ -245,6 +245,12 @@ quarterly drill it also creates one synthetic Stored Media row under the first
 probe, requires the production R2 reader to observe the deleted dedicated
 fixture, invokes the production API-role failure transition, and verifies the
 authoritative child row became `failed` with released quota before cleanup.
+Populate operations control with the zone scoped Analytics Read token, exact
+zone ID, API smoke credential, three independent operations tokens, verified
+pager destination, native Email Service binding, and dedicated pager receipt
+KV. Its public custom domain is authenticated and is not an application data
+plane. It receives no database, Neon control plane, R2, Queue, KMS, provider,
+tenant, or content authority.
 Populate recovery game day separately with short-lived credentials for
 the purpose-specific recovery KMS key, pager delivery and receipt credentials,
 and its dedicated receipt key. Its only storage authorities are dedicated
@@ -267,8 +273,11 @@ Store the `recovery_game_day_role_arn` and `recovery_game_day_key_arn` AWS
 outputs as `AWS_RECOVERY_GAME_DAY_ROLE_ARN` and
 `KMS_RECOVERY_GAME_DAY_KEY_ARN` in both protected GitHub environments. Store
 the `recovery_kv_namespace_id` compute output as
-`CLOUDFLARE_RECOVERY_KV_ID` in production. The quarterly environment also
-needs the narrow Cloudflare deployment token solely to rotate the private
+`CLOUDFLARE_RECOVERY_KV_ID` in production. Store the
+`operations_kv_namespace_id` compute output as
+`CLOUDFLARE_OPERATIONS_KV_ID` in production. The quarterly environment also
+needs `PAGER_WEBHOOK_TOKEN` and the narrow Cloudflare deployment token solely
+to rotate the private
 game-day Worker's four short-lived AWS secret bindings. The runner requests a
 fresh one-hour session directly from GitHub OIDC and atomically refreshes those
 bindings at most every twenty minutes until the drill reaches a terminal
@@ -622,7 +631,7 @@ ready record and R2 object.
 
 ## Deploy
 
-OpenTofu uploads both Worker bundles and orders provider-control before the API
+OpenTofu uploads all Worker bundles and orders private dependencies before the API
 through the service-binding dependency. It also creates the isolated Vercel web
 and static docs projects and their custom domains, but application deployment
 to Vercel remains an explicit side effect. The docs project publishes `dist`
