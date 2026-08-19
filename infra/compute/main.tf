@@ -268,6 +268,10 @@ resource "cloudflare_queue" "recovery_game_day" {
 resource "cloudflare_worker" "provider_control" {
   account_id = var.cloudflare_account_id
   name       = local.provider_control_worker_name
+  tags = [
+    "cf:environment=${var.deployment_environment}",
+    "cf:service=${local.provider_control_worker_name}",
+  ]
 
   subdomain = {
     enabled          = false
@@ -338,6 +342,10 @@ resource "cloudflare_workers_deployment" "provider_control" {
 resource "cloudflare_worker" "deletion_coordinator" {
   account_id = var.cloudflare_account_id
   name       = local.deletion_coordinator_worker_name
+  tags = [
+    "cf:environment=${var.deployment_environment}",
+    "cf:service=${local.deletion_coordinator_worker_name}",
+  ]
   subdomain = {
     enabled          = false
     previews_enabled = false
@@ -404,6 +412,10 @@ resource "cloudflare_workers_cron_trigger" "deletion_coordinator" {
 resource "cloudflare_worker" "restore_coordinator" {
   account_id = var.cloudflare_account_id
   name       = local.restore_coordinator_worker_name
+  tags = [
+    "cf:environment=${var.deployment_environment}",
+    "cf:service=${local.restore_coordinator_worker_name}",
+  ]
   subdomain = {
     enabled          = false
     previews_enabled = false
@@ -469,6 +481,10 @@ resource "cloudflare_workers_cron_trigger" "restore_coordinator" {
 resource "cloudflare_worker" "recovery_game_day" {
   account_id = var.cloudflare_account_id
   name       = local.recovery_game_day_worker_name
+  tags = [
+    "cf:environment=${var.deployment_environment}",
+    "cf:service=${local.recovery_game_day_worker_name}",
+  ]
   subdomain = {
     enabled          = false
     previews_enabled = false
@@ -535,7 +551,11 @@ resource "cloudflare_workers_cron_trigger" "recovery_game_day" {
 resource "cloudflare_worker" "recovery_verifier" {
   account_id = var.cloudflare_account_id
   name       = local.recovery_verifier_worker_name
-  subdomain  = { enabled = false, previews_enabled = false }
+  tags = [
+    "cf:environment=${var.deployment_environment}",
+    "cf:service=${local.recovery_verifier_worker_name}",
+  ]
+  subdomain = { enabled = false, previews_enabled = false }
   observability = {
     enabled = true, head_sampling_rate = 1
     logs    = { enabled = true, head_sampling_rate = 1, invocation_logs = true, persist = true }
@@ -578,6 +598,10 @@ resource "cloudflare_workers_deployment" "recovery_verifier" {
 resource "cloudflare_worker" "recovery_control" {
   account_id = var.cloudflare_account_id
   name       = local.recovery_control_worker_name
+  tags = [
+    "cf:environment=${var.deployment_environment}",
+    "cf:service=${local.recovery_control_worker_name}",
+  ]
   subdomain = {
     enabled          = false
     previews_enabled = false
@@ -668,6 +692,10 @@ resource "cloudflare_workers_custom_domain" "recovery_control" {
 resource "cloudflare_worker" "api" {
   account_id = var.cloudflare_account_id
   name       = local.api_worker_name
+  tags = [
+    "cf:environment=${var.deployment_environment}",
+    "cf:service=${local.api_worker_name}",
+  ]
 
   subdomain = {
     enabled          = false
@@ -1023,6 +1051,13 @@ resource "vercel_project" "web" {
   directory_listing                                 = false
   git_fork_protection                               = true
   protected_sourcemaps                              = true
+  skew_protection                                   = "12 hours"
+
+  git_repository = {
+    type              = "github"
+    repo              = "cuevaio/normal"
+    production_branch = "main"
+  }
 
   environment = concat(
     [
