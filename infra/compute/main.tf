@@ -1051,13 +1051,6 @@ resource "vercel_project" "web" {
   directory_listing                                 = false
   git_fork_protection                               = true
   protected_sourcemaps                              = true
-  skew_protection                                   = "12 hours"
-
-  git_repository = {
-    type              = "github"
-    repo              = "cuevaio/normal"
-    production_branch = "main"
-  }
 
   resource_config = {
     fluid                    = true
