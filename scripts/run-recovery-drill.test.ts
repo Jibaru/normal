@@ -34,6 +34,7 @@ test("monthly automation requests a random prior-history point and non-serving b
   let requestBody: Record<string, unknown> | undefined;
   const now = new Date("2026-08-03T00:00:00.000Z");
   const source = "2026-07-29T12:00:00.000Z";
+  let credentialRefreshCompleted = false;
   const evidence: DrillEvidence = {
     version: 1,
     drill: "monthly_restore",
@@ -90,8 +91,12 @@ test("monthly automation requests a random prior-history point and non-serving b
   await runRecoveryDrill("monthly_restore", {
     now,
     sourcePoint: new Date(source),
+    beforeStart: async () => {
+      credentialRefreshCompleted = true;
+    },
     sleep: async () => {},
     fetch: completeAutomation(evidence, (_input, init) => {
+      expect(credentialRefreshCompleted).toBe(true);
       requestBody = JSON.parse(String(init?.body));
       expect(init?.redirect).toBe("error");
     }),

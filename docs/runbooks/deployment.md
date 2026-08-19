@@ -230,7 +230,11 @@ leave drills failing closed.
 Populate recovery verifier with the same exact project/parent recovery identity,
 the shared evidence token, and read-only observability query credentials. It has
 no public route, database URL, R2, KV, Queue, KMS, provider, or serving API
-binding. Populate recovery game day separately with short-lived credentials for
+binding. Its guarded Neon client may reset only the verifier and API runtime
+logins on the exact disposable child: the verifier creates two synthetic
+Personal Accounts, proves real no-context and cross-account API-role RLS
+isolation, removes both probes, and never emits either identifier. Populate
+recovery game day separately with short-lived credentials for
 the purpose-specific recovery KMS key, pager delivery and receipt credentials,
 and its dedicated receipt key. Its only storage authorities are dedicated
 recovery KV and R2 fixtures plus the recovery replay Queue. It never binds the
@@ -254,7 +258,12 @@ outputs as `AWS_RECOVERY_GAME_DAY_ROLE_ARN` and
 the `recovery_kv_namespace_id` compute output as
 `CLOUDFLARE_RECOVERY_KV_ID` in production. The quarterly environment also
 needs the narrow Cloudflare deployment token solely to rotate the private
-game-day Worker's four short-lived AWS secret bindings immediately before use.
+game-day Worker's four short-lived AWS secret bindings. The runner requests a
+fresh one-hour session directly from GitHub OIDC and atomically refreshes those
+bindings at most every twenty minutes until the drill reaches a terminal
+result. Any failed refresh stops the drill; the Worker never receives GitHub
+OIDC authority and no session value enters logs, arguments, outputs, or
+artifacts.
 
 In the same environment's Clerk dashboard, create the `whatsapp-api` custom JWT
 template with a 60-second lifetime and only an `aud` claim whose value is the
@@ -716,9 +725,10 @@ bun run deploy:smoke
 The command first reads the current refresh credential and proves durable write
 authority by creating an equivalent secret version before contacting OAuth. It
 then exchanges the one-time credential, persists the descendant, and only then
-uses the ephemeral ten-minute access token for MCP smoke. Both workflows use
-the `production` concurrency group, so only one production deployment, launch
-gate, or credential rotation can operate at a time.
+uses the ephemeral ten-minute access token for MCP smoke. All production
+deployment, migration, recovery, launch, release, and credential-rotation
+workflows use the `production-operations` concurrency group, so only one
+production operation can run at a time.
 
 The command validates web and API health, the static docs origin serving the
 generated OpenAPI document with reviewed security headers and no Scalar CDN or

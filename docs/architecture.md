@@ -140,7 +140,12 @@ For exact behavior, read [`CONTEXT.md`](../CONTEXT.md), the
 the [Wasender seam](wasender-seam.md), and the [ADRs](adr).
 * `recovery-verifier` has no public ingress. Recovery control reaches it through
   an authenticated service binding; it receives only guarded Neon child and
-  aggregate observability authority.
+  aggregate observability authority. On the disposable child only, it resets
+  the dedicated verifier login and the ordinary API runtime login, creates two
+  synthetic Personal Accounts through a branch-bound verifier function, proves
+  no-context and cross-account RLS isolation through the real API role, then
+  removes both probes before recording verification. No production tenant
+  identifier or database URL enters evidence.
 * `recovery-game-day` has no public ingress or tenant database binding. It owns
   only disposable recovery KV/R2/Queue fixtures, purpose-specific KMS access,
   and pager delivery confirmation.

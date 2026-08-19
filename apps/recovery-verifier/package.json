@@ -12,6 +12,7 @@
   "dependencies": {
     "@whatsapp-mcp/contracts": "workspace:*",
     "@whatsapp-mcp/db": "workspace:*",
+    "@whatsapp-mcp/domain": "workspace:*",
     "@whatsapp-mcp/neon-recovery": "workspace:*"
   },
   "devDependencies": {

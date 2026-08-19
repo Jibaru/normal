@@ -15,6 +15,7 @@ import type {
   AuthenticatedApiKey,
   CreateApiKeyResult,
 } from "@whatsapp-mcp/db/api-key";
+import { digestApiKeyCredential } from "@whatsapp-mcp/domain/api-key-hmac";
 import { Context, Data, Effect, type Layer } from "effect";
 import {
   HumanIdentity,
@@ -115,28 +116,10 @@ export const ApiKeyHmac = Context.GenericTag<ApiKeyHmacService>(
 // One generation only. Recovery replaces API_KEY_HMAC_SECRET; a predecessor
 // secret must not be consulted as a verification fallback.
 export const makeApiKeyHmac = (secretHex: string): ApiKeyHmacService => {
-  const keyBytes = Uint8Array.from(secretHex.match(/../gu) ?? [], (byte) =>
-    Number.parseInt(byte, 16),
-  );
   return {
     digest: (credential) =>
       Effect.tryPromise({
-        try: async () => {
-          const key = await crypto.subtle.importKey(
-            "raw",
-            keyBytes,
-            { hash: "SHA-256", name: "HMAC" },
-            false,
-            ["sign"],
-          );
-          return new Uint8Array(
-            await crypto.subtle.sign(
-              "HMAC",
-              key,
-              new TextEncoder().encode(credential),
-            ),
-          );
-        },
+        try: () => digestApiKeyCredential(secretHex, credential),
         catch: () => new ApiKeyHmacError(),
       }),
   };

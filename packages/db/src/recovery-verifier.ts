@@ -18,7 +18,17 @@ export interface RecoveryVerification {
 }
 
 export interface RecoveryVerifierRepository {
+  readonly completeRlsProbe: (
+    branchId: string,
+    firstAccountId: string,
+    secondAccountId: string,
+  ) => Promise<void>;
   readonly complete: (branchId: string, verifiedAt: string) => Promise<void>;
+  readonly prepareRlsProbe: (
+    branchId: string,
+    firstAccountId: string,
+    secondAccountId: string,
+  ) => Promise<void>;
   readonly verify: (
     branchId: string,
     observedAt: string,
@@ -32,6 +42,19 @@ export const makePgRecoveryVerifierRepository = (
     restrictedRecoveryVerifierConnectionString(connectionString);
 
   return {
+    completeRlsProbe: (branchId, firstAccountId, secondAccountId) =>
+      withPgQueryConnection(
+        restrictedConnectionString,
+        async (connection) => {
+          await makeDatabase(connection).execute(sql`
+            SELECT public.complete_recovery_rls_probe(
+              ${branchId}, ${firstAccountId}, ${secondAccountId}
+            )
+          `);
+        },
+        30_000,
+        10_000,
+      ),
     complete: (branchId, verifiedAt) =>
       withPgQueryConnection(
         restrictedConnectionString,
@@ -39,6 +62,19 @@ export const makePgRecoveryVerifierRepository = (
           await makeDatabase(connection).execute(sql`
             SELECT public.complete_recovery_drill_verification(
               ${branchId}, ${verifiedAt}
+            )
+          `);
+        },
+        30_000,
+        10_000,
+      ),
+    prepareRlsProbe: (branchId, firstAccountId, secondAccountId) =>
+      withPgQueryConnection(
+        restrictedConnectionString,
+        async (connection) => {
+          await makeDatabase(connection).execute(sql`
+            SELECT public.prepare_recovery_rls_probe(
+              ${branchId}, ${firstAccountId}, ${secondAccountId}
             )
           `);
         },
@@ -91,3 +127,47 @@ export const makePgRecoveryVerifierRepository = (
       ),
   };
 };
+
+export const verifyRecoveryRlsIsolation = (
+  connectionString: string,
+  firstAccountId: string,
+  secondAccountId: string,
+): Promise<void> =>
+  withPgQueryConnection(
+    connectionString,
+    async (connection) => {
+      const visibleProbeAccounts = async (accountId?: string) => {
+        await connection.query("BEGIN");
+        try {
+          if (accountId !== undefined) {
+            await connection.query(
+              "SELECT pg_catalog.set_config('public.personal_account_id', $1, true)",
+              [accountId],
+            );
+          }
+          return await connection.query<{ id: string }>(
+            `SELECT id::text FROM public.personal_accounts
+             WHERE id = ANY($1::uuid[]) ORDER BY id`,
+            [[firstAccountId, secondAccountId]],
+          );
+        } finally {
+          await connection.query("ROLLBACK");
+        }
+      };
+
+      const withoutContext = await visibleProbeAccounts();
+      const first = await visibleProbeAccounts(firstAccountId);
+      const second = await visibleProbeAccounts(secondAccountId);
+      if (
+        withoutContext.rows.length !== 0 ||
+        first.rows.length !== 1 ||
+        first.rows[0]?.id !== firstAccountId ||
+        second.rows.length !== 1 ||
+        second.rows[0]?.id !== secondAccountId
+      ) {
+        throw new Error("recovery RLS isolation failed");
+      }
+    },
+    30_000,
+    10_000,
+  );

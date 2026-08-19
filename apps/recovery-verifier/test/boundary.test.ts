@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { RecoveryVerifierEnvironment } from "../src/environment";
 import { handleRequest } from "../src/index";
+import { verifyIsolatedApiKeyHmacRotation } from "../src/verify";
 
 const token = "a".repeat(32);
 const call = (
@@ -13,6 +14,13 @@ const call = (
   );
 
 describe("recovery verifier boundary", () => {
+  test("exercises the production API Key digest path with an isolated replacement", async () => {
+    await expect(verifyIsolatedApiKeyHmacRotation()).resolves.toEqual({
+      predecessorRejected: true,
+      rotated: true,
+    });
+  });
+
   test("rejects missing credentials with a constant response", async () => {
     const response = await call(
       new Request("https://verifier.example.test/verify", { method: "POST" }),

@@ -1,3 +1,4 @@
+import { parseApiKeyCredential } from "@whatsapp-mcp/contracts/api-key";
 import {
   decodeQuarterlyRecoveryChecks,
   decodeQuarterlyRecoveryExecutionReceipt,
@@ -10,26 +11,35 @@ import {
   checkRestrictedDatabaseAccess,
 } from "@whatsapp-mcp/db/connectivity";
 import { RestoreReplayRequired } from "@whatsapp-mcp/db/readiness";
-import { makePgRecoveryVerifierRepository } from "@whatsapp-mcp/db/recovery-verifier";
+import {
+  makePgRecoveryVerifierRepository,
+  verifyRecoveryRlsIsolation,
+} from "@whatsapp-mcp/db/recovery-verifier";
+import { digestApiKeyCredential } from "@whatsapp-mcp/domain/api-key-hmac";
 import { createNeonRecoveryClient } from "@whatsapp-mcp/neon-recovery/client";
 import { queryAvailability } from "./availability";
 import { required } from "./config";
 import type { RecoveryVerifierEnvironment } from "./environment";
 
 const encoder = new TextEncoder();
-const toHex = (value: ArrayBuffer) =>
+const toHex = (value: ArrayBuffer | Uint8Array) =>
   [...new Uint8Array(value)]
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
 
-const recoveryClient = (env: RecoveryVerifierEnvironment) =>
+const recoveryClient = (
+  env: RecoveryVerifierEnvironment,
+  runtimeRole:
+    | "whatsapp_api_runtime"
+    | "whatsapp_recovery_verifier" = "whatsapp_recovery_verifier",
+) =>
   createNeonRecoveryClient({
     apiKey: required(env.NEON_RECOVERY_API_KEY, "Neon recovery API key"),
     projectId: required(env.NEON_PROJECT_ID, "Neon project identity"),
     parentBranchId: required(env.NEON_PARENT_BRANCH_ID, "Neon parent branch"),
     branchNamePrefix: env.RECOVERY_BRANCH_PREFIX,
     databaseName: env.RECOVERY_DATABASE_NAME,
-    runtimeRole: "whatsapp_recovery_verifier",
+    runtimeRole,
     polling: { maxAttempts: 120, intervalMs: 5_000, timeoutMs: 600_000 },
   });
 
@@ -59,40 +69,32 @@ const expectedReplayDigest = async (input: RecoveryVerificationRequest) =>
     ),
   );
 
-const verifyIsolatedApiKeyHmacRotation = async () => {
-  const credential = crypto.getRandomValues(new Uint8Array(64));
-  const predecessor = await crypto.subtle.importKey(
-    "raw",
-    crypto.getRandomValues(new Uint8Array(32)),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
+export const verifyIsolatedApiKeyHmacRotation = async () => {
+  const alphabet =
+    "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz-";
+  const randomPart = (length: number) =>
+    [...crypto.getRandomValues(new Uint8Array(length))]
+      .map((byte) => alphabet[byte & 63])
+      .join("");
+  const parsed = parseApiKeyCredential(
+    `normal_apk_${randomPart(21)}.${randomPart(43)}`,
   );
-  const replacement = await crypto.subtle.importKey(
-    "raw",
-    crypto.getRandomValues(new Uint8Array(32)),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign", "verify"],
+  if (parsed === null) throw new Error("Isolated API Key credential failed");
+  const predecessorSecret = toHex(crypto.getRandomValues(new Uint8Array(32)));
+  const replacementSecret = toHex(crypto.getRandomValues(new Uint8Array(32)));
+  const predecessorDigest = await digestApiKeyCredential(
+    predecessorSecret,
+    parsed.credential,
   );
-  const predecessorDigest = await crypto.subtle.sign(
-    "HMAC",
-    predecessor,
-    credential,
-  );
-  const replacementDigest = await crypto.subtle.sign(
-    "HMAC",
-    replacement,
-    credential,
+  const replacementDigest = await digestApiKeyCredential(
+    replacementSecret,
+    parsed.credential,
   );
   const rotated = toHex(predecessorDigest) !== toHex(replacementDigest);
-  const predecessorRejected = !(await crypto.subtle.verify(
-    "HMAC",
-    replacement,
-    predecessorDigest,
-    credential,
-  ));
-  credential.fill(0);
+  const predecessorRejected =
+    toHex(
+      await digestApiKeyCredential(replacementSecret, parsed.credential),
+    ) !== toHex(predecessorDigest);
   if (!rotated || !predecessorRejected)
     throw new Error("Isolated API Key HMAC rotation failed");
   return { rotated: true, predecessorRejected: true } as const;
@@ -138,6 +140,34 @@ export const verifyRecovery = async (
     activeUri = replacementUri;
     database = await repository.verify(branch.id, new Date().toISOString());
   }
+
+  const firstProbeAccountId = crypto.randomUUID();
+  const secondProbeAccountId = crypto.randomUUID();
+  await repository.prepareRlsProbe(
+    branch.id,
+    firstProbeAccountId,
+    secondProbeAccountId,
+  );
+  let rlsIsolated = false;
+  try {
+    const apiRuntimeClient = recoveryClient(env, "whatsapp_api_runtime");
+    await apiRuntimeClient.resetRestoreRuntimePassword(branch);
+    const apiRuntimeUri = await apiRuntimeClient.getDirectRestoreUri(branch);
+    await checkRestrictedDatabaseAccess(apiRuntimeUri);
+    await verifyRecoveryRlsIsolation(
+      apiRuntimeUri,
+      firstProbeAccountId,
+      secondProbeAccountId,
+    );
+    rlsIsolated = true;
+  } finally {
+    await repository.completeRlsProbe(
+      branch.id,
+      firstProbeAccountId,
+      secondProbeAccountId,
+    );
+  }
+  database = { ...database, rlsOk: database.rlsOk && rlsIsolated };
 
   const availability = await queryAvailability(env, input);
   const hmac = await verifyIsolatedApiKeyHmacRotation();

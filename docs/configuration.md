@@ -74,7 +74,7 @@ Secret examples never contain usable key material.
 | `QUARTERLY_RECEIPT_SECRET` | Secret | Recovery game-day executor only | Dedicated 32-byte hex HMAC key binding quarterly receipts to operation, branch, nonce, and replay digest. |
 | `PAGER_RECEIPT_URL` / `PAGER_RECEIPT_TOKEN` | Secret operational endpoint and read credential | Recovery game-day executor only | Confirms receipt by the pager authority; HTTP acceptance by `PAGER_WEBHOOK_URL` is not sufficient evidence. |
 | `KMS_RECOVERY_GAME_DAY_KEY_ARN` | Non-secret identifier | Recovery game-day executor only | Purpose-specific `us-east-1` KMS key restricted to the `recovery-game-day` encryption context. It is not the Content Root or Deletion Coordinator key. |
-| `AWS_RECOVERY_GAME_DAY_ROLE_ARN` | Non-secret identifier | Protected `production` and `production-recovery` GitHub environments | GitHub OIDC role that can use only the purpose-specific recovery game-day key. Each deployment and quarterly drill uploads a fresh one-hour session to the private Worker. |
+| `AWS_RECOVERY_GAME_DAY_ROLE_ARN` | Non-secret identifier | Protected `production` and `production-recovery` GitHub environments | GitHub OIDC role that can use only the purpose-specific recovery game-day key. Deployment uploads an initial one-hour session, while the quarterly runner obtains a fresh OIDC session and atomically rotates all four private Worker bindings at most every twenty minutes until the drill finishes. |
 | `WHATSAPP_NUMBER_RESERVATION_HMAC_SECRET` | Secret | API Connection Setup writer | Dedicated 32-byte hex HMAC key for platform-wide WhatsApp Number reservations. Generate independently with `openssl rand -hex 32`; never reuse Directory index, deletion-marker, provider-reference, webhook, cursor, OAuth, or content keys. Rotation requires rebuilding every retained reservation under a stopped-provisioning migration. |
 | `AWS_ACCESS_KEY_ID` | Secret | API and deletion coordinator | Per-Worker short-lived access key from the API's `ContentRuntimeRole` or coordinator's `DeletionCoordinatorRole`; never copy one Worker's credential to the other. |
 | `AWS_SECRET_ACCESS_KEY` | Secret | API and deletion coordinator | Short-lived secret paired with that Worker's `AWS_ACCESS_KEY_ID`; never log or commit it. |
@@ -292,9 +292,10 @@ Deployment automation keeps its current plaintext refresh credential only in
 the purpose-specific AWS Secrets Manager secret. Before refresh, the workflow
 proves that it can durably write that secret; after exchange it persists the
 descendant before invoking MCP and keeps the ten-minute access token in process
-memory only. Deployment, launch gate, and the public API release gate share the
-`production` concurrency group with production credential rotation, preserving
-one serialized credential lineage.
+memory only. Deployment, migration, recovery drills, launch gate, and the
+public API release gate share the `production-operations` concurrency group
+with production credential rotation, preserving one serialized credential
+lineage.
 Neither token may enter GitHub secrets, command arguments, outputs, artifacts,
 telemetry, repository state, or OpenTofu state.
 

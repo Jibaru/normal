@@ -139,6 +139,83 @@ describe("recovery verifier database boundary", () => {
     ).toEqual([{ ready: false, state: "drill_verified" }]);
   });
 
+  test("proves tenant RLS with disposable accounts on a drill branch", async () => {
+    const firstAccountId = "10000000-0000-4000-8000-000000000191";
+    const secondAccountId = "10000000-0000-4000-8000-000000000192";
+    const unrelatedAccountId = "10000000-0000-4000-8000-000000000193";
+    await database.query(
+      "SELECT * FROM public.begin_restore_replay($1, $2, true)",
+      [branchId, "2026-08-18T11:00:00.000Z"],
+    );
+    await database.query(
+      "SELECT public.complete_restore_replay($1, $2, 0, 0, 0)",
+      [branchId, "2026-08-18T11:30:00.000Z"],
+    );
+    await database.query(
+      `INSERT INTO public.whatsapp_recipient_transition_prefixes
+         (journal_prefix, recorded_at) VALUES ($1, $2)`,
+      ["b".repeat(64), "2026-08-18T11:31:00.000Z"],
+    );
+
+    await database.exec("SET ROLE whatsapp_recovery_verifier");
+    await database.query(
+      "SELECT public.prepare_recovery_rls_probe($1, $2, $3)",
+      [branchId, firstAccountId, secondAccountId],
+    );
+    await database.exec("RESET ROLE");
+
+    await database.query(
+      "INSERT INTO public.personal_accounts (id, state) VALUES ($1, 'active')",
+      [unrelatedAccountId],
+    );
+    await database.exec("SET ROLE whatsapp_recovery_verifier");
+    await expect(
+      database.query("SELECT public.complete_recovery_rls_probe($1, $2, $3)", [
+        branchId,
+        firstAccountId,
+        unrelatedAccountId,
+      ]),
+    ).rejects.toThrow("recovery RLS probe cleanup failed");
+    await database.exec("RESET ROLE");
+
+    for (const [context, expected] of [
+      [firstAccountId, firstAccountId],
+      [secondAccountId, secondAccountId],
+    ] as const) {
+      await database.exec("SET ROLE whatsapp_api_runtime; BEGIN");
+      try {
+        await database.query(
+          "SELECT set_config('public.personal_account_id', $1, true)",
+          [context],
+        );
+        const visible = await database.query<{ id: string }>(
+          `SELECT id::text FROM public.personal_accounts
+           WHERE id = ANY($1::uuid[])`,
+          [[firstAccountId, secondAccountId]],
+        );
+        expect(visible.rows).toEqual([{ id: expected }]);
+      } finally {
+        await database.exec("ROLLBACK; RESET ROLE");
+      }
+    }
+
+    await database.exec("SET ROLE whatsapp_recovery_verifier");
+    await database.query(
+      "SELECT public.complete_recovery_rls_probe($1, $2, $3)",
+      [branchId, firstAccountId, secondAccountId],
+    );
+    await database.exec("RESET ROLE");
+    expect(
+      (
+        await database.query<{ count: number }>(
+          `SELECT count(*)::integer AS count FROM public.personal_accounts
+           WHERE id = ANY($1::uuid[])`,
+          [[firstAccountId, secondAccountId, unrelatedAccountId]],
+        )
+      ).rows,
+    ).toEqual([{ count: 1 }]);
+  });
+
   test("rejects incomplete recipient cutoff and prepared-transition evidence", async () => {
     const accountId = "10000000-0000-4000-8000-000000000090";
     const connectionId = "20000000-0000-4000-8000-000000000090";

@@ -114,10 +114,13 @@
       "version": "0.1.0",
       "dependencies": {
         "@aws-sdk/client-kms": "3.1099.0",
+        "@whatsapp-mcp/api": "workspace:*",
         "@whatsapp-mcp/contracts": "workspace:*",
+        "effect": "3.22.1",
       },
       "devDependencies": {
         "@cloudflare/vitest-pool-workers": "0.19.1",
+        "@cloudflare/workers-types": "5.20260730.1",
         "typescript": "^5",
         "vitest": "4.1.10",
         "wrangler": "4.116.0",
@@ -129,6 +132,7 @@
       "dependencies": {
         "@whatsapp-mcp/contracts": "workspace:*",
         "@whatsapp-mcp/db": "workspace:*",
+        "@whatsapp-mcp/domain": "workspace:*",
         "@whatsapp-mcp/neon-recovery": "workspace:*",
       },
       "devDependencies": {

@@ -2,7 +2,17 @@
 -- moves them to an independently verifiable state, while ordinary incident
 -- restores retain the existing serving-ready transition.
 ALTER TABLE public.restore_readiness
-  ADD COLUMN verification_required boolean NOT NULL DEFAULT false;
+  ADD COLUMN verification_required boolean NOT NULL DEFAULT false,
+  ADD COLUMN rls_probe_first_account_id uuid,
+  ADD COLUMN rls_probe_second_account_id uuid,
+  ADD CONSTRAINT restore_readiness_rls_probe_check CHECK (
+    (rls_probe_first_account_id IS NULL AND rls_probe_second_account_id IS NULL)
+    OR (
+      rls_probe_first_account_id IS NOT NULL
+      AND rls_probe_second_account_id IS NOT NULL
+      AND rls_probe_first_account_id <> rls_probe_second_account_id
+    )
+  );
 --> statement-breakpoint
 
 ALTER TABLE public.restore_readiness
@@ -67,7 +77,8 @@ BEGIN
     state = 'replaying', started_at = excluded.started_at, completed_at = NULL,
     marker_count = NULL, deleted_entity_count = NULL, expired_record_count = NULL,
     api_keys_revoked = 0, api_key_digests_cleared = 0,
-    verification_required = excluded.verification_required
+    verification_required = excluded.verification_required,
+    rls_probe_first_account_id = NULL, rls_probe_second_account_id = NULL
   WHERE restore_readiness.branch_id IS DISTINCT FROM excluded.branch_id
     OR restore_readiness.state NOT IN ('ready', 'drill_verified');
   RETURN QUERY
@@ -305,6 +316,84 @@ END
 $function$;
 --> statement-breakpoint
 
+CREATE FUNCTION public.prepare_recovery_rls_probe(
+  requested_branch_id text,
+  first_account_id uuid,
+  second_account_id uuid
+)
+RETURNS void LANGUAGE plpgsql STRICT SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp AS $function$
+BEGIN
+  IF first_account_id = second_account_id THEN
+    RAISE insufficient_privilege
+      USING MESSAGE = 'recovery verifier branch mismatch';
+  END IF;
+  UPDATE public.restore_readiness SET
+    rls_probe_first_account_id = first_account_id,
+    rls_probe_second_account_id = second_account_id
+  WHERE singleton AND branch_id = requested_branch_id
+    AND state = 'awaiting_verification' AND verification_required
+    AND rls_probe_first_account_id IS NULL
+    AND rls_probe_second_account_id IS NULL;
+  IF NOT FOUND THEN
+    RAISE insufficient_privilege
+      USING MESSAGE = 'recovery verifier branch mismatch';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM public.personal_accounts
+    WHERE id IN (first_account_id, second_account_id)
+  ) THEN
+    RAISE integrity_constraint_violation
+      USING MESSAGE = 'recovery RLS probe identity already exists';
+  END IF;
+  INSERT INTO public.personal_accounts (id, state)
+  VALUES (first_account_id, 'active'), (second_account_id, 'active');
+END
+$function$;
+--> statement-breakpoint
+
+CREATE FUNCTION public.complete_recovery_rls_probe(
+  requested_branch_id text,
+  first_account_id uuid,
+  second_account_id uuid
+)
+RETURNS void LANGUAGE plpgsql STRICT SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp AS $function$
+DECLARE
+  deleted_count integer;
+BEGIN
+  IF first_account_id = second_account_id THEN
+    RAISE insufficient_privilege
+      USING MESSAGE = 'recovery verifier branch mismatch';
+  END IF;
+  DELETE FROM public.personal_accounts AS accounts
+  USING public.restore_readiness AS readiness
+  WHERE readiness.singleton AND readiness.branch_id = requested_branch_id
+    AND readiness.state = 'awaiting_verification'
+    AND readiness.verification_required
+    AND readiness.rls_probe_first_account_id = first_account_id
+    AND readiness.rls_probe_second_account_id = second_account_id
+    AND accounts.id IN (first_account_id, second_account_id);
+  GET DIAGNOSTICS deleted_count = ROW_COUNT;
+  IF deleted_count <> 2 THEN
+    RAISE integrity_constraint_violation
+      USING MESSAGE = 'recovery RLS probe cleanup failed';
+  END IF;
+  UPDATE public.restore_readiness SET
+    rls_probe_first_account_id = NULL,
+    rls_probe_second_account_id = NULL
+  WHERE singleton AND branch_id = requested_branch_id
+    AND state = 'awaiting_verification' AND verification_required
+    AND rls_probe_first_account_id = first_account_id
+    AND rls_probe_second_account_id = second_account_id;
+  IF NOT FOUND THEN
+    RAISE integrity_constraint_violation
+      USING MESSAGE = 'recovery RLS probe cleanup failed';
+  END IF;
+END
+$function$;
+--> statement-breakpoint
+
 CREATE FUNCTION public.complete_recovery_drill_verification(
   requested_branch_id text,
   verified_at timestamptz
@@ -322,6 +411,8 @@ BEGIN
   UPDATE public.restore_readiness SET state = 'drill_verified'
   WHERE singleton AND branch_id = requested_branch_id
     AND state = 'awaiting_verification' AND verification_required
+    AND rls_probe_first_account_id IS NULL
+    AND rls_probe_second_account_id IS NULL
     AND completed_at <= verified_at;
   IF NOT FOUND THEN
     RAISE insufficient_privilege
@@ -334,6 +425,8 @@ $function$;
 REVOKE ALL ON FUNCTION
   public.begin_restore_replay(text,timestamptz,boolean),
   public.verify_recovery_branch(text,timestamptz),
+  public.prepare_recovery_rls_probe(text,uuid,uuid),
+  public.complete_recovery_rls_probe(text,uuid,uuid),
   public.is_restore_ready(text),
   public.complete_recovery_drill_verification(text,timestamptz)
   FROM PUBLIC;
@@ -348,6 +441,14 @@ GRANT EXECUTE ON FUNCTION public.complete_recovery_drill_verification(text,times
 --> statement-breakpoint
 
 GRANT EXECUTE ON FUNCTION public.verify_recovery_branch(text,timestamptz)
+  TO whatsapp_recovery_verifier;
+--> statement-breakpoint
+
+GRANT EXECUTE ON FUNCTION public.prepare_recovery_rls_probe(text,uuid,uuid)
+  TO whatsapp_recovery_verifier;
+--> statement-breakpoint
+
+GRANT EXECUTE ON FUNCTION public.complete_recovery_rls_probe(text,uuid,uuid)
   TO whatsapp_recovery_verifier;
 --> statement-breakpoint
 

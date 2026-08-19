@@ -48,4 +48,6 @@ The recovery game-day stack creates a separate rotating KMS key and a GitHub
 OIDC role restricted to the `production-recovery` environment. Its only
 cryptographic authority is GenerateDataKey/Decrypt with the exact
 `production`/`recovery-game-day`/operation encryption context. The quarterly
-workflow uploads its one-hour session credentials immediately before a drill.
+workflow obtains one-hour sessions directly through GitHub OIDC and refreshes
+the private game-day Worker's complete AWS binding set at most every twenty
+minutes until the drill finishes. The Worker never receives OIDC authority.

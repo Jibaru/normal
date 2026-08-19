@@ -39,6 +39,8 @@ export const runRecoveryDrill = async (
     readonly pollIntervalMs?: number;
     readonly timeoutMs?: number;
     readonly clock?: () => number;
+    readonly beforeStart?: () => Promise<void>;
+    readonly beforePoll?: () => Promise<void>;
   } = {},
 ) => {
   const requestedAt = options.now ?? new Date();
@@ -64,6 +66,7 @@ export const runRecoveryDrill = async (
     AbortSignal.timeout(Math.max(1, deadline - clock()));
   const fetchImplementation = options.fetch ?? globalThis.fetch;
   const automationUrl = recoveryAutomationUrl();
+  await options.beforeStart?.();
   const response = await fetchImplementation(automationUrl, {
     method: "POST",
     redirect: "error",
@@ -103,6 +106,7 @@ export const runRecoveryDrill = async (
       new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
   let evidence: unknown;
   while (clock() < deadline) {
+    await options.beforePoll?.();
     await sleep(Math.min(pollIntervalMs, deadline - clock()));
     if (clock() >= deadline) break;
     const statusResponse = await fetchImplementation(statusUrl, {
@@ -160,7 +164,16 @@ if (import.meta.main) {
   const drill = process.argv[2] as DrillKind;
   if (!(["monthly_restore", "quarterly_game_day"] as const).includes(drill))
     throw new Error("expected monthly_restore or quarterly_game_day");
-  const evidence = await runRecoveryDrill(drill);
+  const beforePoll =
+    drill === "quarterly_game_day"
+      ? (
+          await import("./refresh-recovery-game-day-credentials")
+        ).makeRecoveryGameDayCredentialRefresher()
+      : undefined;
+  const evidence = await runRecoveryDrill(
+    drill,
+    beforePoll === undefined ? {} : { beforePoll, beforeStart: beforePoll },
+  );
   const output = process.env.RECOVERY_EVIDENCE_PATH ?? `${drill}.json`;
   await Bun.write(output, `${JSON.stringify(evidence, null, 2)}\n`);
   console.info(JSON.stringify({ drill, evidence: output, status: "complete" }));
