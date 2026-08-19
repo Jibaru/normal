@@ -11,6 +11,7 @@ const branchId = "br-recovery-123456";
 const timestamp = "2026-08-17T12:00:00.000Z";
 const branchName = "recovery/monthly-2026-08";
 const time = "2026-08-18T12:00:00Z";
+const recoveryAnnotation = `true:${parentId}:${timestamp}`;
 
 const branch = (overrides: Record<string, unknown> = {}) => ({
   id: branchId,
@@ -38,7 +39,7 @@ const branch = (overrides: Record<string, unknown> = {}) => ({
 
 const annotation = (overrides: Record<string, unknown> = {}) => ({
   object: { type: "console/branch", id: branchId },
-  value: { "production-recovery": "true" },
+  value: { "production-recovery": recoveryAnnotation },
   created_at: time,
   updated_at: time,
   ...overrides,
@@ -104,7 +105,7 @@ describe("Neon recovery control-plane client", () => {
       fetch: async (input, init) => {
         calls.push(`${init?.method} ${input}`);
         return json({
-          branches: [branch()],
+          branches: [branch({ parent_timestamp: undefined })],
           annotations: { [branchId]: annotation() },
           pagination: { sort_by: "updated_at", sort_order: "DESC" },
         });
@@ -186,7 +187,11 @@ describe("Neon recovery control-plane client", () => {
       }),
       json(
         {
-          branch: branch({ current_state: "init", pending_state: "ready" }),
+          branch: branch({
+            current_state: "init",
+            pending_state: "ready",
+            parent_timestamp: undefined,
+          }),
           endpoints: [
             {
               host: "ep-recovery.us-east-1.aws.neon.tech",
@@ -214,7 +219,10 @@ describe("Neon recovery control-plane client", () => {
       json({ code: "temporarily_unavailable", message: "retry" }, 503),
       json({ operation: operation("finished"), current_api_addition: true }),
       json({
-        branch: branch({ restricted_actions: [] }),
+        branch: branch({
+          parent_timestamp: undefined,
+          restricted_actions: [],
+        }),
         annotation: annotation(),
       }),
     ];
@@ -248,7 +256,7 @@ describe("Neon recovery control-plane client", () => {
         init_source: "parent-data",
       },
       endpoints: [{ type: "read_write" }],
-      annotation_value: { "production-recovery": "true" },
+      annotation_value: { "production-recovery": recoveryAnnotation },
     });
     expect(requests[2]?.url).toContain(
       "/operations/00000000-0000-4000-8000-000000000001",
@@ -439,13 +447,19 @@ describe("Neon recovery control-plane client", () => {
     expect(sleeps).toEqual([10]);
   });
 
-  test("requires the production recovery annotation on reconcile, guard, and deletion", async () => {
+  test("requires the exact recovery source annotation on reconcile, guard, and deletion", async () => {
     const reconcile = createNeonRecoveryClient(config(), {
       now: () => Date.parse(time),
       fetch: async () =>
         json({
           branches: [branch()],
-          annotations: {},
+          annotations: {
+            [branchId]: annotation({
+              value: {
+                "production-recovery": `true:${parentId}:2026-08-17T12:00:01.000Z`,
+              },
+            }),
+          },
           pagination: { sort_by: "updated_at", sort_order: "DESC" },
         }),
     });
@@ -468,7 +482,10 @@ describe("Neon recovery control-plane client", () => {
         json({
           branch: branch(),
           annotation: annotation({
-            value: { "production-recovery": "true", other: "true" },
+            value: {
+              "production-recovery": recoveryAnnotation,
+              other: "true",
+            },
           }),
         }),
     });

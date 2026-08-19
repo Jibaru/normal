@@ -319,9 +319,9 @@ const exactBranch = (
   (expected.id === undefined || branch.id === expected.id) &&
   branch.name === expected.name &&
   branch.parent_id === expected.parentId &&
-  branch.parent_timestamp !== undefined &&
-  new Date(branch.parent_timestamp).toISOString() ===
-    expected.parentTimestamp &&
+  (branch.parent_timestamp === undefined ||
+    new Date(branch.parent_timestamp).toISOString() ===
+      expected.parentTimestamp) &&
   branch.default === false &&
   branch.primary !== true &&
   branch.protected === false &&
@@ -330,11 +330,13 @@ const exactBranch = (
 const exactRecoveryAnnotation = (
   annotation: z.infer<typeof annotationSchema> | undefined,
   branchId: string,
+  expected: Omit<RecoveryBranch, "id">,
 ) =>
   annotation?.object.type === "console/branch" &&
   annotation.object.id === branchId &&
   Object.keys(annotation.value).length === 1 &&
-  annotation.value[RECOVERY_ANNOTATION_KEY] === RECOVERY_ANNOTATION_VALUE;
+  annotation.value[RECOVERY_ANNOTATION_KEY] ===
+    `${RECOVERY_ANNOTATION_VALUE}:${expected.parentId}:${expected.parentTimestamp}`;
 
 export const createNeonRecoveryClient = (
   input: NeonRecoveryConfig,
@@ -512,7 +514,7 @@ export const createNeonRecoveryClient = (
         throw new NeonRecoveryError(
           "Existing Neon branch does not match the requested PITR source",
         );
-      if (!exactRecoveryAnnotation(branchAnnotation, branch.id))
+      if (!exactRecoveryAnnotation(branchAnnotation, branch.id, expected))
         throw new NeonRecoveryError(
           "Neon recovery branch annotation guard failed",
         );
@@ -610,7 +612,7 @@ export const createNeonRecoveryClient = (
             },
             endpoints: [{ type: "read_write" }],
             annotation_value: {
-              [RECOVERY_ANNOTATION_KEY]: RECOVERY_ANNOTATION_VALUE,
+              [RECOVERY_ANNOTATION_KEY]: `${RECOVERY_ANNOTATION_VALUE}:${expected.parentId}:${expected.parentTimestamp}`,
             },
           }),
         },
@@ -656,7 +658,7 @@ export const createNeonRecoveryClient = (
         config.projectId,
       ) ||
       branch.current_state !== "ready" ||
-      !exactRecoveryAnnotation(annotation, branch.id)
+      !exactRecoveryAnnotation(annotation, branch.id, expected)
     )
       throw new NeonRecoveryError(
         "Neon did not reconcile the exact PITR branch",
@@ -696,7 +698,7 @@ export const createNeonRecoveryClient = (
     };
     if (
       !exactBranch(match.branch, expected, config.projectId) ||
-      !exactRecoveryAnnotation(match.annotation, match.branch.id)
+      !exactRecoveryAnnotation(match.annotation, match.branch.id, expected)
     )
       throw new NeonRecoveryError("Neon recovery branch cleanup guard failed");
     return expected;
@@ -872,7 +874,7 @@ export const createNeonRecoveryClient = (
     const branch = value.branch;
     if (
       !exactBranch(branch, expected, config.projectId) ||
-      !exactRecoveryAnnotation(value.annotation, branch.id)
+      !exactRecoveryAnnotation(value.annotation, branch.id, expected)
     )
       throw new NeonRecoveryError("Neon child branch identity guard failed");
     return branch;
@@ -893,7 +895,7 @@ export const createNeonRecoveryClient = (
     const branch = currentValue.branch;
     if (
       !exactBranch(branch, expected, config.projectId) ||
-      !exactRecoveryAnnotation(currentValue.annotation, branch.id)
+      !exactRecoveryAnnotation(currentValue.annotation, branch.id, expected)
     )
       throw new NeonRecoveryError("Neon child branch deletion guard failed");
     let deleted: {
@@ -918,7 +920,7 @@ export const createNeonRecoveryClient = (
       const stateValue = state.value as z.infer<typeof branchResponseSchema>;
       if (
         !exactBranch(stateValue.branch, expected, config.projectId) ||
-        !exactRecoveryAnnotation(stateValue.annotation, expected.id)
+        !exactRecoveryAnnotation(stateValue.annotation, expected.id, expected)
       )
         throw new NeonRecoveryError(
           "Neon child branch deletion reconciliation guard failed",
