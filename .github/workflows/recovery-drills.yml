@@ -21,7 +21,10 @@ concurrency:
 
 jobs:
   monthly-restore:
-    if: github.event_name == 'schedule' && github.event.schedule == '17 3 1 * *' || inputs.drill == 'monthly_restore'
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      ((github.event_name == 'schedule' && github.event.schedule == '17 3 1 * *') ||
+      inputs.drill == 'monthly_restore')
     runs-on: ubuntu-latest
     timeout-minutes: 250
     environment: production-recovery
@@ -43,7 +46,10 @@ jobs:
           retention-days: 400
 
   quarterly-game-day:
-    if: github.event_name == 'schedule' && github.event.schedule == '43 4 1 1,4,7,10 *' || inputs.drill == 'quarterly_game_day'
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      ((github.event_name == 'schedule' && github.event.schedule == '43 4 1 1,4,7,10 *') ||
+      inputs.drill == 'quarterly_game_day')
     runs-on: ubuntu-latest
     timeout-minutes: 250
     environment: production-recovery

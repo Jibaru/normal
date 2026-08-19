@@ -214,7 +214,7 @@ values. A new Cloudflare Worker namespace does not accept secret upload until
 it has a version. After the recovery Worker namespaces exist and all protected
 recovery values are populated in the `production` GitHub environment, dispatch
 `Deploy production` with operation `bootstrap_recovery_secrets` from the
-reviewed recovery branch. The job uploads one fail-closed 503 version without
+reviewed commit on `main`. The job uploads one fail-closed 503 version without
 deploying it, creates a second undeployed version with the exact allowlisted
 recovery secrets, and verifies names only. Inspect the job before proceeding.
 Delete the bootstrap plan after the Worker shells and bindings exist. For an

@@ -44,6 +44,9 @@ describe("production deployment order", () => {
     expect(workflow).toContain("id-token: write");
     expect(workflow).toContain("github.event.workflow_run.event == 'push'");
     expect(workflow).toContain(
+      "github.event.workflow_run.head_branch == 'main'",
+    );
+    expect(workflow).toContain(
       'git merge-base --is-ancestor "$(git rev-parse HEAD)" origin/main',
     );
     expect(bootstrap).toContain('"versions",\n    "upload"');
@@ -71,6 +74,23 @@ describe("production deployment order", () => {
     ]) {
       expect(bootstrap).toContain(name);
       expect(workflow).toContain(name);
+    }
+  });
+
+  test("admits production authority only from main", async () => {
+    for (const workflow of [
+      "deploy-production.yml",
+      "launch-gate.yml",
+      "migrate-production.yml",
+      "observability-canary.yml",
+      "public-api-release-gate.yml",
+      "recovery-drills.yml",
+      "rotate-production-content-credentials.yml",
+    ]) {
+      const source = await Bun.file(
+        new URL(`../.github/workflows/${workflow}`, import.meta.url),
+      ).text();
+      expect(source).toContain("github.ref == 'refs/heads/main'");
     }
   });
 });
