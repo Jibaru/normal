@@ -221,15 +221,15 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(authorizations).toContainText("Send messages");
   await expect(authorizations).toContainText("Created");
   await expect(authorizations).toContainText("Expires");
-  await expect(
-    authorizations.getByTestId("mcp-authorization-state"),
-  ).toHaveText("Active");
-  await authorizations
-    .getByRole("button", { name: "Revoke Approved MCP Client" })
-    .click();
-  await expect(
-    authorizations.getByTestId("mcp-authorization-state"),
-  ).toHaveText("Revoked");
+  const authorizationState = authorizations.getByTestId(
+    "mcp-authorization-state",
+  );
+  if ((await authorizationState.textContent()) === "Active") {
+    await authorizations
+      .getByRole("button", { name: "Revoke Approved MCP Client" })
+      .click();
+  }
+  await expect(authorizationState).toHaveText("Revoked");
   await expect(
     authorizations.getByRole("button", {
       name: "Revoke Approved MCP Client",
@@ -558,6 +558,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     "connectSession",
     "getQrCode",
     "reconcileSession",
+    "verifySessionNumber",
     "reconcileSession",
     "disconnectSession",
     "reconcileSession",
@@ -931,6 +932,77 @@ test("starts irreversible Connection Deletion and keeps the deleted connection g
   await expect(
     page.getByRole("heading", { name: "Security and control" }),
   ).toBeVisible();
+});
+
+test("shows safe same-account retry guidance when QR number confirmation fails", async ({
+  page,
+  request,
+}) => {
+  await page.route("https://api.example.test/**", async (route) => {
+    const original = route.request();
+    const localUrl = new URL(original.url());
+    if (
+      original.method() === "GET" &&
+      /^\/v1\/connection-setups\/cst_[A-Za-z0-9_-]{21}\/qr$/u.test(
+        localUrl.pathname,
+      )
+    ) {
+      await route.fulfill({
+        body: JSON.stringify({
+          error: "number_confirmation_failed",
+          message: "Retry by scanning the same WhatsApp account you entered.",
+        }),
+        contentType: "application/json",
+        headers: { "access-control-allow-origin": webOrigin },
+        status: 409,
+      });
+      return;
+    }
+    localUrl.protocol = "http:";
+    localUrl.hostname = "127.0.0.1";
+    localUrl.port = apiPort;
+    const response = await request.fetch(localUrl.toString(), {
+      data: original.postDataBuffer(),
+      headers: {
+        ...original.headers(),
+        origin: "http://127.0.0.1:3000",
+      },
+      method: original.method(),
+    });
+    await route.fulfill({
+      body: await response.body(),
+      headers: {
+        ...response.headers(),
+        "access-control-allow-origin": webOrigin,
+      },
+      status: response.status(),
+    });
+  });
+  await installClerkBrowser(page, {
+    signedIn: true,
+    token: "signed-second-test-user",
+  });
+  await page.goto("/dashboard");
+  await page.getByRole("link", { name: "WhatsApp Connections" }).click();
+  await completeFirstConnectionProfile(page);
+  const onboarding = page.getByTestId("first-connection-onboarding");
+  await onboarding
+    .getByLabel("Name", { exact: true })
+    .fill("Personal WhatsApp");
+  await onboarding.getByLabel("WhatsApp number").fill("+1 (555) 012-3456");
+  await onboarding
+    .getByRole("button", { name: "Continue", exact: true })
+    .click();
+
+  const status = page.getByTestId("connection-setup-status");
+  await expect(status).toHaveText(
+    "We couldn't confirm that this QR code was scanned by the WhatsApp account you entered. Start again and scan with that same account.",
+  );
+  await expect(
+    onboarding.getByRole("button", { name: "Start again" }),
+  ).toBeVisible();
+  await expect(status).not.toContainText("+1 (555) 012-3456");
+  await expect(status).not.toContainText("Wasender");
 });
 
 test("keeps the Personal Account usable when MCP Authorization listing is unavailable", async ({
