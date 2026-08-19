@@ -111,16 +111,17 @@ const readSecretNames = async (workerName: string) => {
   };
 };
 
+export const isMissingWorkerError = (stderr: string, workerName: string) =>
+  stderr.includes(`Worker "${workerName}" not found.`) ||
+  (stderr.includes("not found") && stderr.includes("10007"));
+
 const ensureUploadableWorker = async (
   workerName: string,
   bootstrapEntry: string,
 ) => {
   const existing = await readSecretNames(workerName);
   if (existing.exitCode === 0) return;
-  if (
-    !existing.stderr.includes("not found") ||
-    !existing.stderr.includes("10007")
-  ) {
+  if (!isMissingWorkerError(existing.stderr, workerName)) {
     throw new Error(`Could not inspect recovery Worker ${workerName}`);
   }
 
