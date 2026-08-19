@@ -209,9 +209,16 @@ unset WASENDER_REFERENCE_SECRET WASENDER_API_CREDENTIAL
 ```
 
 The secret list must contain exactly the two names; it never returns their
-values. Delete the bootstrap plan after the Worker shell and bindings exist.
-For an existing environment where the list already contains both names, skip
-the bootstrap target and bulk upload.
+values. A new Cloudflare Worker namespace does not accept secret upload until
+it has a version. After the recovery Worker namespaces exist and all protected
+recovery values are populated in the `production` GitHub environment, dispatch
+`Deploy production` with operation `bootstrap_recovery_secrets` from the
+reviewed recovery branch. The job uploads one fail-closed 503 version without
+deploying it, creates a second undeployed version with the exact allowlisted
+recovery secrets, and verifies names only. Inspect the job before proceeding.
+Delete the bootstrap plan after the Worker shells and bindings exist. For an
+existing environment where each secret list is already exact, the same job
+only refreshes the allowlisted values in an undeployed version.
 
 Populate recovery control only after the project-scoped Neon key, exact project
 and parent branch, independent control token, and separate evidence authority

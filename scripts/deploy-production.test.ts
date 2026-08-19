@@ -21,4 +21,43 @@ describe("production deployment order", () => {
       ),
     ).toHaveLength(1);
   });
+
+  test("bootstraps exact recovery secrets without deploying the bootstrap versions", async () => {
+    const workflow = await Bun.file(
+      new URL("../.github/workflows/deploy-production.yml", import.meta.url),
+    ).text();
+    const bootstrap = await Bun.file(
+      new URL("bootstrap-recovery-worker-secrets.ts", import.meta.url),
+    ).text();
+
+    expect(workflow).toContain("bootstrap_recovery_secrets");
+    expect(workflow).toContain(
+      "bun scripts/bootstrap-recovery-worker-secrets.ts",
+    );
+    expect(workflow).toContain("environment: production");
+    expect(workflow).toContain("id-token: write");
+    expect(bootstrap).toContain('"versions",\n    "upload"');
+    expect(bootstrap).toContain(
+      '["versions", "secret", "bulk", "--name", worker.name]',
+    );
+    expect(bootstrap).toContain("Fail-closed secret bootstrap; never deploy");
+    expect(bootstrap).not.toContain('"deploy"');
+    for (const name of [
+      "whatsapp-mcp-recovery-game-day",
+      "whatsapp-mcp-recovery-verifier",
+      "whatsapp-mcp-recovery-control",
+    ]) {
+      expect(bootstrap).toContain(name);
+    }
+    for (const name of [
+      "NEON_RECOVERY_API_KEY",
+      "OBSERVABILITY_QUERY_TOKEN",
+      "PAGER_RECEIPT_TOKEN",
+      "QUARTERLY_RECEIPT_SECRET",
+      "RECOVERY_EVIDENCE_TOKEN",
+    ]) {
+      expect(bootstrap).toContain(name);
+      expect(workflow).toContain(name);
+    }
+  });
 });
