@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { isMissingWorkerError } from "./bootstrap-recovery-worker-secrets";
 
 describe("production deployment order", () => {
   test("deploys every coordinator before the public API", async () => {
@@ -75,6 +76,26 @@ describe("production deployment order", () => {
       expect(bootstrap).toContain(name);
       expect(workflow).toContain(name);
     }
+  });
+
+  test("recognizes current and legacy Wrangler missing Worker errors", () => {
+    const workerName = "whatsapp-mcp-recovery-game-day";
+
+    expect(
+      isMissingWorkerError(`Worker "${workerName}" not found.`, workerName),
+    ).toBe(true);
+    expect(
+      isMissingWorkerError(
+        `Worker ${workerName} not found (10007)`,
+        workerName,
+      ),
+    ).toBe(true);
+    expect(
+      isMissingWorkerError("Authentication error (10000)", workerName),
+    ).toBe(false);
+    expect(
+      isMissingWorkerError('Worker "whatsapp-mcp-api" not found.', workerName),
+    ).toBe(false);
   });
 
   test("admits production authority only from main", async () => {
