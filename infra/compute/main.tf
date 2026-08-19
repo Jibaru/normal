@@ -1059,6 +1059,11 @@ resource "vercel_project" "web" {
     production_branch = "main"
   }
 
+  resource_config = {
+    fluid                    = true
+    function_default_regions = ["iad1"]
+  }
+
   environment = concat(
     [
       {
