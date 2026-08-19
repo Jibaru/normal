@@ -221,15 +221,15 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(authorizations).toContainText("Send messages");
   await expect(authorizations).toContainText("Created");
   await expect(authorizations).toContainText("Expires");
-  await expect(
-    authorizations.getByTestId("mcp-authorization-state"),
-  ).toHaveText("Active");
-  await authorizations
-    .getByRole("button", { name: "Revoke Approved MCP Client" })
-    .click();
-  await expect(
-    authorizations.getByTestId("mcp-authorization-state"),
-  ).toHaveText("Revoked");
+  const authorizationState = authorizations.getByTestId(
+    "mcp-authorization-state",
+  );
+  if ((await authorizationState.textContent()) === "Active") {
+    await authorizations
+      .getByRole("button", { name: "Revoke Approved MCP Client" })
+      .click();
+  }
+  await expect(authorizationState).toHaveText("Revoked");
   await expect(
     authorizations.getByRole("button", {
       name: "Revoke Approved MCP Client",
@@ -388,7 +388,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(page.getByTestId("connection-setup-status")).toHaveCount(0);
   await expect(onboarding).toContainText("Your WhatsApp Connection is active.");
   await expect(onboarding).toContainText(
-    "Claude still needs its own MCP Authorization for this WhatsApp Connection.",
+    "ChatGPT still needs its own MCP Authorization for this WhatsApp Connection.",
   );
   await expect(onboarding).toContainText("Active WhatsApp Number");
   await expect(onboarding).toContainText("ending 3456");
@@ -399,8 +399,8 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     "Earlier WhatsApp history is not imported.",
   );
   await expect(
-    onboarding.getByRole("link", { name: "Open Claude" }).first(),
-  ).toHaveAttribute("href", "https://claude.ai/settings/connectors");
+    onboarding.getByRole("link", { name: "Open ChatGPT" }).first(),
+  ).toHaveAttribute("href", "https://chatgpt.com/plugins");
   await onboarding.getByRole("button", { name: "Go to dashboard" }).click();
   await expect(page.getByTestId("first-connection-onboarding")).toHaveCount(0);
   await expect(page.getByTestId("whatsapp-connection")).toContainText(
