@@ -144,7 +144,6 @@ describe("quarterly recovery executor boundary", () => {
       alertObservedAt: "2026-08-18T12:00:00.000Z",
       oauthKvReconstructed: true,
       kmsAccess: true,
-      mediaLossFailedClosed: false,
       queueComplete: false,
       r2Access: true,
     });

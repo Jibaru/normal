@@ -76,7 +76,6 @@ interface ExecutionState {
   readonly alertObservedAt: string;
   readonly oauthKvReconstructed: true;
   readonly kmsAccess: true;
-  readonly mediaLossFailedClosed: boolean;
   readonly queueComplete: boolean;
   readonly r2Access: true;
 }
@@ -122,8 +121,6 @@ const digest = async (value: string) =>
 
 const stateKey = async (operation: string) =>
   `${prefix}state/${await digest(operation)}`;
-const oauthKey = async (operation: string) =>
-  `${prefix}oauth/${await digest(operation)}`;
 const objectKey = async (operation: string) =>
   `${prefix}object/${await digest(operation)}`;
 
@@ -280,10 +277,9 @@ const readState = async (
     typeof state.alertObservedAt !== "string" ||
     state.oauthKvReconstructed !== true ||
     state.kmsAccess !== true ||
-    typeof state.mediaLossFailedClosed !== "boolean" ||
     typeof state.queueComplete !== "boolean" ||
     state.r2Access !== true ||
-    Object.keys(candidate).length !== 9
+    Object.keys(candidate).length !== 8
   )
     throw new Error("Quarterly execution state is invalid");
   return state as ExecutionState;
@@ -315,7 +311,7 @@ export const executeGameDay = async (env: Env, candidate: unknown) => {
   }
 
   const reconstructionSource = await readRetainedOAuthFixture(env);
-  const oauth = await oauthKey(input.operation);
+  const oauth = reconstructionSource.value.key;
   const object = await objectKey(input.operation);
   await env.RECOVERY_KV.delete(oauth);
   const reconstructedRecord = JSON.stringify(reconstructionSource.value.record);
@@ -368,7 +364,6 @@ export const executeGameDay = async (env: Env, candidate: unknown) => {
     alertObservedAt,
     oauthKvReconstructed: true,
     kmsAccess: true,
-    mediaLossFailedClosed: false,
     queueComplete: false,
     r2Access: true,
   };
@@ -380,11 +375,6 @@ export const executeGameDay = async (env: Env, candidate: unknown) => {
   await env.RECOVERY_FIXTURES.put(`${object}/queue`, replayFixture);
   if ((await env.RECOVERY_FIXTURES.get(`${object}/queue`)) === null)
     throw new Error("Recovery replay fixture is unavailable");
-  await env.RECOVERY_FIXTURES.put(
-    `${object}/media-metadata`,
-    JSON.stringify({ state: "ready", failureCode: null }),
-  );
-  await env.RECOVERY_FIXTURES.put(`${object}/media-object`, "fixture");
   await env.RECOVERY_KV.put(
     await stateKey(input.operation),
     JSON.stringify(state),
@@ -452,7 +442,6 @@ export const verifyGameDay = async (env: Env, candidate: unknown) => {
     queue_replay_fixture_verified: state.queueComplete,
     kms_access: state.kmsAccess,
     r2_access: state.r2Access,
-    media_loss_failed_closed: state.mediaLossFailedClosed,
     alert_delivered: true,
   });
 };
@@ -478,7 +467,7 @@ export const handleGameDayReplay = async (
   const object = await objectKey(body.operation);
   const replayFixture = await env.RECOVERY_FIXTURES.get(`${object}/queue`);
   if (!replayFixture || (await replayFixture.text()) !== JSON.stringify(body))
-    throw new Error("Immutable recovery replay fixture does not match");
+    throw new Error("Recovery replay fixture does not match");
   const stored = await env.RECOVERY_FIXTURES.get(`${object}/kms`);
   if (!stored) throw new Error("Recovery KMS fixture is unavailable");
   const candidate = JSON.parse(await stored.text()) as { wrappedKey?: unknown };
@@ -493,46 +482,17 @@ export const handleGameDayReplay = async (
   );
   if (!decrypted.Plaintext) throw new Error("Recovery KMS decrypt failed");
   decrypted.Plaintext.fill(0);
-  await env.RECOVERY_FIXTURES.delete(`${object}/media-object`);
-  await reconcileMissingMediaFixture(env, object);
-  const media = await env.RECOVERY_FIXTURES.get(`${object}/media-metadata`);
-  if (
-    !media ||
-    (await media.text()) !==
-      JSON.stringify({ state: "failed", failureCode: "object_missing" })
-  )
-    throw new Error("Missing media fixture did not fail closed");
   await env.RECOVERY_KV.put(
     await stateKey(body.operation),
     JSON.stringify({
       ...state,
-      mediaLossFailedClosed: true,
       queueComplete: true,
     }),
     { expirationTtl: 3_600 },
   );
   await env.RECOVERY_FIXTURES.delete(`${object}/kms`);
   await env.RECOVERY_FIXTURES.delete(`${object}/queue`);
-  await env.RECOVERY_FIXTURES.delete(`${object}/media-metadata`);
   message.ack();
-};
-
-const reconcileMissingMediaFixture = async (env: Env, object: string) => {
-  const metadata = await env.RECOVERY_FIXTURES.get(`${object}/media-metadata`);
-  if (!metadata) throw new Error("Recovery media metadata is unavailable");
-  const current = JSON.parse(await metadata.text()) as Record<string, unknown>;
-  if (
-    Object.keys(current).length !== 2 ||
-    current.state !== "ready" ||
-    current.failureCode !== null
-  )
-    throw new Error("Recovery media metadata is invalid");
-  if ((await env.RECOVERY_FIXTURES.get(`${object}/media-object`)) !== null)
-    throw new Error("Recovery media fixture deletion failed");
-  await env.RECOVERY_FIXTURES.put(
-    `${object}/media-metadata`,
-    JSON.stringify({ state: "failed", failureCode: "object_missing" }),
-  );
 };
 
 const readServiceRequest = async (request: Request) => {

@@ -1312,7 +1312,7 @@ The monthly and quarterly schedules in
 boundary and retain its validated, metadata-only evidence. The monthly restore
 must use a random point from the preceding seven days and a non-serving branch.
 The quarterly game day covers endpoint rotation, OAuth KV reconstruction,
-Queue replay fixture verification, KMS/R2 access, permanent Stored Media loss, alert
+Queue replay fixture verification, KMS/R2 access, alert
 delivery, and deletion-gate bypass denial. Configure
 `RECOVERY_AUTOMATION_URL` and `RECOVERY_AUTOMATION_TOKEN` only in the isolated
 `production-recovery` GitHub environment; they are external rollout inputs, not

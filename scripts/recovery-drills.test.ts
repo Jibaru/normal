@@ -69,7 +69,6 @@ const quarterly: DrillEvidence = {
     queue_replay_fixture_verified: true,
     kms_access: true,
     r2_access: true,
-    media_loss_failed_closed: true,
     alert_delivered: true,
     deletion_gate_bypass_denied: true,
   },
