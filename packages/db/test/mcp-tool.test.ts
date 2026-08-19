@@ -1957,11 +1957,12 @@ describe("MCP tool repository", () => {
       [accountId],
     );
     const auditLogId = "50000000-0000-4000-8000-000000000046";
+    const concurrentAuditLogId = "50000000-0000-4000-8000-000000000049";
     const material = await repository.reserveStoredMediaRead({
       ...authorization,
       auditLogId,
       connectionPublicId: connectionA,
-      dailyByteLimit: 15,
+      dailyByteLimit: 30,
       mediaPublicId: "med_123456789012345678946",
       messagePublicId: "msg_123456789012345678946",
       observedAt,
@@ -1970,6 +1971,19 @@ describe("MCP tool repository", () => {
       mediaId: "72000000-0000-4000-8000-000000000046",
       objectKey: "opaque-object",
       plaintextSizeBytes: 15,
+    });
+    await expect(
+      repository.reserveStoredMediaRead({
+        ...authorization,
+        auditLogId: concurrentAuditLogId,
+        connectionPublicId: connectionA,
+        dailyByteLimit: 30,
+        mediaPublicId: "med_123456789012345678946",
+        messagePublicId: "msg_123456789012345678946",
+        observedAt,
+      }),
+    ).resolves.toMatchObject({
+      mediaId: "72000000-0000-4000-8000-000000000046",
     });
     const log = await database.query(
       `SELECT outcome,media_bytes_reserved FROM public.tool_call_logs WHERE id=$1`,
@@ -1982,9 +1996,25 @@ describe("MCP tool repository", () => {
       auditLogId,
       completedAt: new Date(observedAt.getTime() + 1_000),
       errorCode: "resource_unavailable",
-      failureCode: "processing_failed",
       mediaId: "72000000-0000-4000-8000-000000000046",
+      mediaFailureCode: "processing_failed",
     });
+    await repository.failStoredMediaRead({
+      auditLogId: concurrentAuditLogId,
+      completedAt: new Date(observedAt.getTime() + 1_001),
+      errorCode: "resource_unavailable",
+      mediaId: "72000000-0000-4000-8000-000000000046",
+      mediaFailureCode: "object_missing",
+    });
+    await expect(
+      repository.failStoredMediaRead({
+        auditLogId,
+        completedAt: new Date(observedAt.getTime() + 1_000),
+        errorCode: "resource_unavailable",
+        mediaId: "72000000-0000-4000-8000-000000000046",
+        mediaFailureCode: "processing_failed",
+      }),
+    ).resolves.toBeUndefined();
     const failedLog = await database.query(
       `SELECT logs.outcome,logs.error_code,logs.result_count,
               logs.media_bytes_reserved,media.state,media.failure_code,
@@ -2012,6 +2042,19 @@ describe("MCP tool repository", () => {
         result_count: 0,
         state: "failed",
         stored_media_used_bytes: 0,
+      },
+    ]);
+    const concurrentLog = await database.query(
+      `SELECT outcome,error_code,result_count,media_bytes_reserved
+       FROM public.tool_call_logs WHERE id=$1`,
+      [concurrentAuditLogId],
+    );
+    expect(concurrentLog.rows).toEqual([
+      {
+        error_code: "resource_unavailable",
+        media_bytes_reserved: 0,
+        outcome: "execution_error",
+        result_count: 0,
       },
     ]);
     await expect(

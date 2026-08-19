@@ -9,8 +9,15 @@ import type {
 } from "@whatsapp-mcp/db/mcp-tool";
 import { Effect, Layer } from "effect";
 import { describe, expect, test } from "vitest";
-import { EnvelopeEncryptionService } from "../src/encryption/envelope";
-import { StoredMediaContainerService } from "../src/encryption/stored-media-container";
+import {
+  EncryptionError,
+  EnvelopeEncryptionService,
+} from "../src/encryption/envelope";
+import {
+  StoredMediaContainerError,
+  type StoredMediaContainerFailure,
+  StoredMediaContainerService,
+} from "../src/encryption/stored-media-container";
 import type { SendTextMessageResult } from "../src/mcp";
 import {
   createMcpRequestHandler,
@@ -154,6 +161,9 @@ const makeHarness = (
     readonly messageSearchPage?: McpToolMessageSearchPage;
     readonly messageSearchHasMore?: boolean;
     readonly cursorKey?: CryptoKey;
+    readonly invalidMediaMetadata?: boolean;
+    readonly mediaContainerFailure?: StoredMediaContainerFailure;
+    readonly mediaDecryptFails?: boolean;
     readonly sendResult?: SendTextMessageResult;
     readonly sendStatusNotFound?: boolean;
     readonly tombstone?: boolean;
@@ -202,12 +212,24 @@ const makeHarness = (
     Layer.succeed(EnvelopeEncryptionService, {
       createConnectionKey: () => Effect.die("not used"),
       createPersonalAccountKey: () => Effect.die("not used"),
-      decrypt: ({ ciphertext }) =>
-        Effect.succeed(
+      decrypt: ({ ciphertext }) => {
+        if (overrides.mediaDecryptFails) {
+          return Effect.fail(
+            new EncryptionError({
+              operation: "decrypt",
+              stage: "ciphertext",
+            }),
+          );
+        }
+        if (overrides.invalidMediaMetadata) {
+          return Effect.succeed(new TextEncoder().encode("invalid"));
+        }
+        return Effect.succeed(
           Uint8Array.from(atob(ciphertext.ciphertext), (value) =>
             value.charCodeAt(0),
           ),
-        ),
+        );
+      },
       decryptMany: ({ items }) => {
         observations.push("decrypt-many");
         return Effect.succeed(
@@ -223,6 +245,14 @@ const makeHarness = (
     Layer.succeed(StoredMediaContainerService, {
       read: () => {
         observations.push("decrypt-media-object");
+        if (overrides.mediaContainerFailure !== undefined) {
+          return Effect.fail(
+            new StoredMediaContainerError({
+              operation: "read",
+              reason: overrides.mediaContainerFailure,
+            }),
+          );
+        }
         return Effect.succeed(
           new ReadableStream<Uint8Array>({
             start(controller) {
@@ -252,8 +282,12 @@ const makeHarness = (
       },
     }),
     Layer.succeed(McpToolPersistence, {
-      failStoredMediaRead: () => {
-        observations.push("fail-media-read");
+      failStoredMediaRead: (input) => {
+        observations.push(
+          input.mediaFailureCode === null
+            ? "fail-media-read:transient"
+            : `fail-media-read:${input.mediaFailureCode}`,
+        );
         return Effect.void;
       },
       beginProtectedOperation: (input) => {
@@ -2413,7 +2447,7 @@ describe("Stored Media MCP resource boundary", () => {
     );
   });
 
-  test("releases reserved bytes when the protected read fails before response", async () => {
+  test("preserves ready media when audit completion fails after the read", async () => {
     const harness = makeHarness({
       failComplete: true,
       mediaRead: "ready",
@@ -2431,7 +2465,57 @@ describe("Stored Media MCP resource boundary", () => {
       code: -32602,
       message: "Resource not found",
     });
-    expect(harness.observations).toContain("fail-media-read");
+    expect(harness.observations).toContain("fail-media-read:transient");
+    expect(harness.observations).not.toContain(
+      "fail-media-read:processing_failed",
+    );
+  });
+
+  test("terminalizes only proven missing or corrupt Stored Media", async () => {
+    for (const overrides of [
+      { mediaContainerFailure: "not-found" as const },
+      { invalidMediaMetadata: true },
+    ]) {
+      const harness = makeHarness({
+        ...overrides,
+        mediaRead: "ready",
+        scopes: ["messages:read"],
+      });
+      await harness.handler(
+        jsonRpcRequest("resources/read", { uri }),
+        {},
+        executionContext,
+        authorization,
+      );
+      expect(
+        harness.observations.some(
+          (value) =>
+            value.startsWith("fail-media-read:") &&
+            value !== "fail-media-read:transient",
+        ),
+      ).toBe(true);
+    }
+
+    for (const overrides of [
+      { mediaContainerFailure: "storage-failed" as const },
+      { mediaDecryptFails: true },
+    ]) {
+      const harness = makeHarness({
+        ...overrides,
+        mediaRead: "ready",
+        scopes: ["messages:read"],
+      });
+      await harness.handler(
+        jsonRpcRequest("resources/read", { uri }),
+        {},
+        executionContext,
+        authorization,
+      );
+      expect(harness.observations).toContain("fail-media-read:transient");
+      expect(harness.observations).not.toContain(
+        "fail-media-read:processing_failed",
+      );
+    }
   });
 
   test.each([

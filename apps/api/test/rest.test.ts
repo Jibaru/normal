@@ -15,7 +15,11 @@ import {
   EncryptionError,
   EnvelopeEncryptionService,
 } from "../src/encryption/envelope";
-import { StoredMediaContainerService } from "../src/encryption/stored-media-container";
+import {
+  StoredMediaContainerError,
+  type StoredMediaContainerFailure,
+  StoredMediaContainerService,
+} from "../src/encryption/stored-media-container";
 import { SendTextMessage, type SendTextMessageResult } from "../src/mcp";
 import {
   createRestHandler,
@@ -2689,9 +2693,11 @@ const readyMediaMaterial = {
 };
 
 const makeMediaHarness = (options?: {
+  readonly containerFailure?: StoredMediaContainerFailure;
   readonly decryptFails?: boolean;
   readonly failComplete?: boolean;
   readonly failReserve?: boolean;
+  readonly invalidMetadata?: boolean;
   readonly permissions?: ReadonlyArray<
     "connections:read" | "directory:read" | "messages:read" | "messages:send"
   >;
@@ -2714,10 +2720,12 @@ const makeMediaHarness = (options?: {
               outcome: "started" as const,
             },
       ),
-    completeProtectedOperation: () =>
-      options?.failComplete
+    completeProtectedOperation: () => {
+      observations.push("complete");
+      return options?.failComplete
         ? Effect.fail(new RestPersistenceError())
-        : Effect.void,
+        : Effect.void;
+    },
     listConnections: () => Effect.succeed([]),
     loadContactReadMaterial: () => Effect.succeed(null),
     listEncryptedContacts: () => Effect.succeed(null),
@@ -2728,8 +2736,12 @@ const makeMediaHarness = (options?: {
     searchMessages: () => Effect.succeed(null),
     completeMessageRecordRead: () =>
       Effect.succeed({ outcome: "success" as const }),
-    failStoredMediaRead: () => {
-      observations.push("fail-media-read");
+    failStoredMediaRead: (input) => {
+      observations.push(
+        input.mediaFailureCode === null
+          ? "fail-media-read:transient"
+          : `fail-media-read:${input.mediaFailureCode}`,
+      );
       return Effect.void;
     },
     reserveStoredMediaRead:
@@ -2794,6 +2806,14 @@ const makeMediaHarness = (options?: {
     Layer.succeed(StoredMediaContainerService, {
       read: () => {
         observations.push("decrypt-media-object");
+        if (options?.containerFailure !== undefined) {
+          return Effect.fail(
+            new StoredMediaContainerError({
+              operation: "read",
+              reason: options.containerFailure,
+            }),
+          );
+        }
         return Effect.succeed(
           new ReadableStream<Uint8Array>({
             start(controller) {
@@ -2817,11 +2837,13 @@ const makeMediaHarness = (options?: {
                 stage: "ciphertext",
               }),
             )
-          : Effect.succeed(
-              Uint8Array.from(atob(ciphertext.ciphertext), (value) =>
-                value.charCodeAt(0),
-              ),
-            );
+          : options?.invalidMetadata
+            ? Effect.succeed(new TextEncoder().encode("invalid"))
+            : Effect.succeed(
+                Uint8Array.from(atob(ciphertext.ciphertext), (value) =>
+                  value.charCodeAt(0),
+                ),
+              );
       },
       decryptMany: () => Effect.die("unused"),
       encrypt: () => Effect.die("unused"),
@@ -2940,17 +2962,47 @@ describe("REST Stored Media", () => {
     expect(harness.observations).not.toContain("decrypt-media-object");
   });
 
-  test("releases reserved bytes and uses not-found when decryption fails", async () => {
+  test("preserves ready media when metadata decryption fails transiently", async () => {
     const harness = makeMediaHarness({ decryptFails: true });
     const response = await harness.handler(request(mediaPath));
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(503);
     const body = await response.json();
     expect(body).toMatchObject({
-      code: "not_found",
-      status: 404,
+      code: "unavailable",
+      status: 503,
     });
     expect(JSON.stringify(body)).not.toContain("protected bytes");
     expect(JSON.stringify(body)).not.toContain("stored-media/opaque-object");
-    expect(harness.observations).toContain("fail-media-read");
+    expect(harness.observations).toContain("fail-media-read:transient");
+    expect(harness.observations).not.toContain(
+      "fail-media-read:processing_failed",
+    );
+  });
+
+  test("terminalizes only proven missing or corrupt Stored Media", async () => {
+    for (const options of [
+      { containerFailure: "not-found" as const },
+      { invalidMetadata: true },
+    ]) {
+      const harness = makeMediaHarness(options);
+      const response = await harness.handler(request(mediaPath));
+      expect(response.status).toBe(404);
+      expect(
+        harness.observations.some(
+          (value) =>
+            value.startsWith("fail-media-read:") &&
+            value !== "fail-media-read:transient",
+        ),
+      ).toBe(true);
+    }
+
+    const transient = makeMediaHarness({
+      containerFailure: "storage-failed",
+    });
+    expect((await transient.handler(request(mediaPath))).status).toBe(503);
+    expect(transient.observations).toContain("fail-media-read:transient");
+    expect(transient.observations).not.toContain(
+      "fail-media-read:processing_failed",
+    );
   });
 });

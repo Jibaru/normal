@@ -236,8 +236,8 @@ describe("recovery verifier database boundary", () => {
       auditLogId,
       completedAt: new Date(observedAt),
       errorCode: "resource_unavailable",
-      failureCode: "object_missing",
       mediaId,
+      mediaFailureCode: "object_missing",
     });
     await database.exec("RESET ROLE");
     await database.exec("SET ROLE whatsapp_recovery_verifier");

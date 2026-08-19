@@ -242,8 +242,8 @@ export const verifyRecovery = async (
             auditLogId: probeAuditLogId,
             completedAt: new Date(),
             errorCode: "resource_unavailable",
-            failureCode: "object_missing",
             mediaId: probeMediaId,
+            mediaFailureCode: "object_missing",
           });
         }
         mediaLossStateTransitioned = await repository.verifyMediaLossProbe(
