@@ -29,7 +29,7 @@ export const queryAvailability = async (
     safeHttpsUrl(env.OBSERVABILITY_QUERY_URL, "Observability query URL"),
     {
       method: "POST",
-      redirect: "error",
+      redirect: "manual",
       signal: AbortSignal.timeout(60_000),
       headers: {
         accept: "application/json",

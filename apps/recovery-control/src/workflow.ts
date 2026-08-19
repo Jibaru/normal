@@ -194,7 +194,7 @@ export class ProductionRecoveryWorkflow extends WorkflowEntrypoint<
           "https://recovery-verifier.internal/verify",
           {
             method: "POST",
-            redirect: "error",
+            redirect: "manual",
             signal: AbortSignal.timeout(300_000),
             headers: {
               accept: "application/json",

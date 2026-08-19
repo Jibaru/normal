@@ -114,4 +114,29 @@ describe("production deployment order", () => {
       expect(source).toContain("github.ref == 'refs/heads/main'");
     }
   });
+
+  test("uses redirect modes supported by the Cloudflare Workers runtime", async () => {
+    const runtimeRoots = [
+      "apps/api/src",
+      "apps/operations-control/src",
+      "apps/provider-control/src",
+      "apps/recovery-control/src",
+      "apps/recovery-game-day/src",
+      "apps/recovery-verifier/src",
+      "packages/neon-recovery/src",
+      "packages/wasender/src",
+    ] as const;
+
+    for (const root of runtimeRoots) {
+      const glob = new Bun.Glob("**/*.ts");
+      for await (const path of glob.scan(
+        new URL(`../${root}`, import.meta.url).pathname,
+      )) {
+        const source = await Bun.file(
+          new URL(`../${root}/${path}`, import.meta.url),
+        ).text();
+        expect(source).not.toContain('redirect: "error"');
+      }
+    }
+  });
 });

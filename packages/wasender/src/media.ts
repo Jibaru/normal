@@ -678,7 +678,7 @@ const resolveWithDnsOverHttps = async (
     url.searchParams.set("type", type);
     const response = await globalThis.fetch(url, {
       headers: { accept: "application/dns-json" },
-      redirect: "error",
+      redirect: "manual",
       signal,
     });
     const payload = await readDnsJson(response);

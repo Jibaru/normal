@@ -700,6 +700,8 @@ resource "cloudflare_workflow" "production_recovery" {
   depends_on = [cloudflare_workers_deployment.recovery_control]
 }
 
+# Wrangler owns the Durable Object migration history. OpenTofu reconciles the
+# deployed Worker version without replaying an already applied migration tag.
 resource "cloudflare_worker_version" "recovery_control" {
   account_id          = var.cloudflare_account_id
   worker_id           = cloudflare_worker.recovery_control.id
@@ -711,10 +713,6 @@ resource "cloudflare_worker_version" "recovery_control" {
     content_file = local.recovery_control_bundle_path
     content_type = "application/javascript+module"
   }]
-  migrations = {
-    new_tag            = "v1"
-    new_sqlite_classes = ["RecoveryGate"]
-  }
   bindings = [
     { name = "DEPLOYMENT_ENVIRONMENT", text = var.deployment_environment, type = "plain_text" },
     { name = "RECOVERY_BRANCH_PREFIX", text = "recovery/${var.deployment_environment}-", type = "plain_text" },

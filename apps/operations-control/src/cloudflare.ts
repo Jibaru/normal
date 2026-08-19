@@ -62,7 +62,7 @@ const query = async (
 ) => {
   const response = await fetcher(endpoint, {
     method: "POST",
-    redirect: "error",
+    redirect: "manual",
     signal: AbortSignal.timeout(30_000),
     headers: {
       accept: "application/json",

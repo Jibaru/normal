@@ -318,6 +318,12 @@ for (const deployable of deployables) {
       const kv = (configuration.kv_namespaces ?? []) as ReadonlyArray<{
         binding?: unknown;
       }>;
+      const environmentSuffix =
+        name === "top level" || name === "production" ? "" : `-${name}`;
+      const replay = findQueueConsumer(
+        configuration,
+        `whatsapp-mcp-recovery-game-day-replay${environmentSuffix}`,
+      );
       if (
         buckets.length !== 1 ||
         buckets[0]?.binding !== "RECOVERY_FIXTURES" ||
@@ -326,6 +332,15 @@ for (const deployable of deployables) {
       )
         throw new Error(
           `Recovery game day ${name} must have only recovery fixture R2 and KV.`,
+        );
+      if (
+        replay?.max_batch_size !== 1 ||
+        replay.max_batch_timeout !== 1 ||
+        replay.max_retries !== 3 ||
+        replay.retry_delay !== 60
+      )
+        throw new Error(
+          `Recovery game day ${name} must match the production replay retry policy.`,
         );
     }
   } else if (deployable === "restore-coordinator") {

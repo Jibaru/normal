@@ -359,7 +359,7 @@ export const createNeonRecoveryClient = (
     try {
       response = await fetchImplementation(url(path), {
         ...init,
-        redirect: "error",
+        redirect: "manual",
         signal: init.signal ?? AbortSignal.timeout(config.polling.timeoutMs),
         headers: {
           accept: "application/json",

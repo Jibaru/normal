@@ -39,7 +39,7 @@ export const queryDependencyAvailability = async (
 ) => {
   const response = await fetcher(statusUrl, {
     headers: { accept: "text/html" },
-    redirect: "error",
+    redirect: "manual",
     signal: AbortSignal.timeout(15_000),
   });
   if (!response.ok) throw new Error("Wasender status is unavailable");
