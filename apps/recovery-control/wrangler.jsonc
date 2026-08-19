@@ -149,7 +149,7 @@
       "vars": {
         "DEPLOYMENT_ENVIRONMENT": "production",
         "RECOVERY_BRANCH_PREFIX": "recovery/production-",
-        "RECOVERY_DATABASE_NAME": "neondb"
+        "RECOVERY_DATABASE_NAME": "whatsapp_mcp"
       },
       "secrets": {
         "required": [

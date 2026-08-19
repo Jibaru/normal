@@ -641,7 +641,7 @@ resource "cloudflare_worker_version" "recovery_verifier" {
   bindings = [
     { name = "DEPLOYMENT_ENVIRONMENT", text = var.deployment_environment, type = "plain_text" },
     { name = "RECOVERY_BRANCH_PREFIX", text = "recovery/${var.deployment_environment}-", type = "plain_text" },
-    { name = "RECOVERY_DATABASE_NAME", text = "neondb", type = "plain_text" },
+    { name = "RECOVERY_DATABASE_NAME", text = "whatsapp_mcp", type = "plain_text" },
     { name = "NEON_PARENT_BRANCH_ID", type = "inherit" },
     { name = "NEON_PROJECT_ID", type = "inherit" },
     { name = "NEON_RECOVERY_API_KEY", type = "inherit" },
@@ -716,7 +716,7 @@ resource "cloudflare_worker_version" "recovery_control" {
   bindings = [
     { name = "DEPLOYMENT_ENVIRONMENT", text = var.deployment_environment, type = "plain_text" },
     { name = "RECOVERY_BRANCH_PREFIX", text = "recovery/${var.deployment_environment}-", type = "plain_text" },
-    { name = "RECOVERY_DATABASE_NAME", text = "neondb", type = "plain_text" },
+    { name = "RECOVERY_DATABASE_NAME", text = "whatsapp_mcp", type = "plain_text" },
     { name = "DELETION_MARKER_HMAC_SECRET", type = "inherit" },
     { name = "NEON_RECOVERY_API_KEY", type = "inherit" },
     { name = "NEON_PARENT_BRANCH_ID", type = "inherit" },
