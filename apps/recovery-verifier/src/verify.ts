@@ -10,6 +10,7 @@ import {
   checkDatabaseReadiness,
   checkRestrictedDatabaseAccess,
 } from "@whatsapp-mcp/db/connectivity";
+import { makePgMcpToolRepository } from "@whatsapp-mcp/db/mcp-tool";
 import { RestoreReplayRequired } from "@whatsapp-mcp/db/readiness";
 import {
   makePgRecoveryVerifierRepository,
@@ -68,6 +69,28 @@ const expectedReplayDigest = async (input: RecoveryVerificationRequest) =>
       encoder.encode(JSON.stringify(input.replay)),
     ),
   );
+
+export const stableRecoveryProbeId = async (
+  input: Pick<RecoveryVerificationRequest, "operation" | "recovery_branch_id">,
+  ordinal: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8,
+) => {
+  const bytes = new Uint8Array(
+    await crypto.subtle.digest(
+      "SHA-256",
+      encoder.encode(
+        `${input.operation}:${input.recovery_branch_id}:rls-probe:${ordinal}`,
+      ),
+    ),
+  ).slice(0, 16);
+  const versionByte = bytes[6];
+  const variantByte = bytes[8];
+  if (versionByte === undefined || variantByte === undefined)
+    throw new Error("Recovery RLS probe identity failed");
+  bytes[6] = (versionByte & 0x0f) | 0x40;
+  bytes[8] = (variantByte & 0x3f) | 0x80;
+  const hex = toHex(bytes);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+};
 
 export const verifyIsolatedApiKeyHmacRotation = async () => {
   const alphabet =
@@ -141,31 +164,104 @@ export const verifyRecovery = async (
     database = await repository.verify(branch.id, new Date().toISOString());
   }
 
-  const firstProbeAccountId = crypto.randomUUID();
-  const secondProbeAccountId = crypto.randomUUID();
-  await repository.prepareRlsProbe(
+  let quarterly: ReturnType<typeof decodeQuarterlyRecoveryChecks> | undefined;
+  if (input.drill === "quarterly_game_day") {
+    const execution = {
+      version: 1,
+      operation: input.operation,
+      recoveryBranchId: input.recovery_branch_id,
+      verificationNonce: input.verification_nonce,
+      replayDigest: input.replay_digest,
+    } as const;
+    const receipt = await gameDayRequest(
+      env,
+      "/execute",
+      execution,
+      decodeQuarterlyRecoveryExecutionReceipt,
+    );
+    quarterly = await gameDayRequest(
+      env,
+      "/verify",
+      { ...execution, receipt: receipt.receipt },
+      decodeQuarterlyRecoveryChecks,
+    );
+  }
+
+  const probeIds = await Promise.all([
+    stableRecoveryProbeId(input, 1),
+    stableRecoveryProbeId(input, 2),
+    stableRecoveryProbeId(input, 3),
+    stableRecoveryProbeId(input, 4),
+    stableRecoveryProbeId(input, 5),
+    stableRecoveryProbeId(input, 6),
+    stableRecoveryProbeId(input, 7),
+    stableRecoveryProbeId(input, 8),
+  ]);
+  const [
+    firstProbeAccountId,
+    secondProbeAccountId,
+    probeConnectionId,
+    probeConversationId,
+    probeMessageId,
+    probeMediaId,
+    probeAuthorizationId,
+    probeAuditLogId,
+  ] = probeIds;
+  const probeRequired = await repository.prepareRlsProbe(
     branch.id,
     firstProbeAccountId,
     secondProbeAccountId,
   );
-  let rlsIsolated = false;
-  try {
-    const apiRuntimeClient = recoveryClient(env, "whatsapp_api_runtime");
-    await apiRuntimeClient.resetRestoreRuntimePassword(branch);
-    const apiRuntimeUri = await apiRuntimeClient.getDirectRestoreUri(branch);
-    await checkRestrictedDatabaseAccess(apiRuntimeUri);
-    await verifyRecoveryRlsIsolation(
-      apiRuntimeUri,
-      firstProbeAccountId,
-      secondProbeAccountId,
-    );
-    rlsIsolated = true;
-  } finally {
-    await repository.completeRlsProbe(
-      branch.id,
-      firstProbeAccountId,
-      secondProbeAccountId,
-    );
+  let rlsIsolated = !probeRequired;
+  let mediaLossStateTransitioned = !probeRequired;
+  if (probeRequired) {
+    try {
+      const apiRuntimeClient = recoveryClient(env, "whatsapp_api_runtime");
+      await apiRuntimeClient.resetRestoreRuntimePassword(branch);
+      const apiRuntimeUri = await apiRuntimeClient.getDirectRestoreUri(branch);
+      await checkRestrictedDatabaseAccess(apiRuntimeUri);
+      await verifyRecoveryRlsIsolation(
+        apiRuntimeUri,
+        firstProbeAccountId,
+        secondProbeAccountId,
+      );
+      rlsIsolated = true;
+      if (quarterly !== undefined) {
+        const mediaFailureRequired = await repository.prepareMediaLossProbe(
+          branch.id,
+          firstProbeAccountId,
+          probeConnectionId,
+          probeConversationId,
+          probeMessageId,
+          probeMediaId,
+          probeAuthorizationId,
+          probeAuditLogId,
+        );
+        if (mediaFailureRequired) {
+          await makePgMcpToolRepository(apiRuntimeUri).failStoredMediaRead({
+            auditLogId: probeAuditLogId,
+            completedAt: new Date(),
+            errorCode: "resource_unavailable",
+            failureCode: "object_missing",
+            mediaId: probeMediaId,
+          });
+        }
+        mediaLossStateTransitioned = await repository.verifyMediaLossProbe(
+          branch.id,
+          firstProbeAccountId,
+          probeMediaId,
+          probeAuditLogId,
+        );
+        if (!mediaLossStateTransitioned)
+          throw new Error("Stored Media loss did not become failed");
+      }
+    } finally {
+      await repository.completeRlsProbe(
+        branch.id,
+        firstProbeAccountId,
+        secondProbeAccountId,
+      );
+    }
   }
   database = { ...database, rlsOk: database.rlsOk && rlsIsolated };
 
@@ -210,25 +306,8 @@ export const verifyRecovery = async (
 
   let checks: Record<string, boolean> = monthlyChecks;
   if (input.drill === "quarterly_game_day") {
-    const execution = {
-      version: 1,
-      operation: input.operation,
-      recoveryBranchId: input.recovery_branch_id,
-      verificationNonce: input.verification_nonce,
-      replayDigest: input.replay_digest,
-    } as const;
-    const receipt = await gameDayRequest(
-      env,
-      "/execute",
-      execution,
-      decodeQuarterlyRecoveryExecutionReceipt,
-    );
-    const quarterly = await gameDayRequest(
-      env,
-      "/verify",
-      { ...execution, receipt: receipt.receipt },
-      decodeQuarterlyRecoveryChecks,
-    );
+    if (quarterly === undefined || !mediaLossStateTransitioned)
+      throw new Error("Quarterly recovery checks are incomplete");
     let bypassDenied = false;
     try {
       await checkDatabaseReadiness(activeUri, branch.id);

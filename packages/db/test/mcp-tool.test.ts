@@ -1951,6 +1951,11 @@ describe("MCP tool repository", () => {
        VALUES ('72000000-0000-4000-8000-000000000046',$1,'20000000-0000-4000-8000-000000000030',$2,'med_123456789012345678946','ready','image','opaque-object',15,repeat('a',64),1,1,decode(repeat('13',12),'hex'),decode(repeat('14',32),'hex'))`,
       [accountId, messageId],
     );
+    await database.query(
+      `UPDATE public.personal_accounts
+       SET stored_media_used_bytes = 15 WHERE id = $1`,
+      [accountId],
+    );
     const auditLogId = "50000000-0000-4000-8000-000000000046";
     const material = await repository.reserveStoredMediaRead({
       ...authorization,
@@ -1977,17 +1982,36 @@ describe("MCP tool repository", () => {
       auditLogId,
       completedAt: new Date(observedAt.getTime() + 1_000),
       errorCode: "resource_unavailable",
+      failureCode: "processing_failed",
+      mediaId: "72000000-0000-4000-8000-000000000046",
     });
     const failedLog = await database.query(
-      `SELECT outcome,error_code,result_count,media_bytes_reserved FROM public.tool_call_logs WHERE id=$1`,
+      `SELECT logs.outcome,logs.error_code,logs.result_count,
+              logs.media_bytes_reserved,media.state,media.failure_code,
+              media.object_key,accounts.stored_media_used_bytes,
+              deletions.object_key AS deletion_object_key
+       FROM public.tool_call_logs logs
+       JOIN public.personal_accounts accounts
+         ON accounts.id = logs.personal_account_id
+       JOIN public.stored_media media
+         ON media.id = '72000000-0000-4000-8000-000000000046'
+        AND media.personal_account_id = logs.personal_account_id
+       LEFT JOIN public.stored_media_object_deletions deletions
+         ON deletions.personal_account_id = logs.personal_account_id
+       WHERE logs.id=$1`,
       [auditLogId],
     );
     expect(failedLog.rows).toEqual([
       {
         error_code: "resource_unavailable",
+        failure_code: "processing_failed",
+        deletion_object_key: "opaque-object",
         media_bytes_reserved: 0,
+        object_key: null,
         outcome: "execution_error",
         result_count: 0,
+        state: "failed",
+        stored_media_used_bytes: 0,
       },
     ]);
     await expect(

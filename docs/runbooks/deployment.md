@@ -233,8 +233,12 @@ no public route, database URL, R2, KV, Queue, KMS, provider, or serving API
 binding. Its guarded Neon client may reset only the verifier and API runtime
 logins on the exact disposable child: the verifier creates two synthetic
 Personal Accounts, proves real no-context and cross-account API-role RLS
-isolation, removes both probes, and never emits either identifier. Populate
-recovery game day separately with short-lived credentials for
+isolation, removes both probes, and never emits either identifier. During a
+quarterly drill it also creates one synthetic Stored Media row under the first
+probe, requires the production R2 reader to observe the deleted dedicated
+fixture, invokes the production API-role failure transition, and verifies the
+authoritative child row became `failed` with released quota before cleanup.
+Populate recovery game day separately with short-lived credentials for
 the purpose-specific recovery KMS key, pager delivery and receipt credentials,
 and its dedicated receipt key. Its only storage authorities are dedicated
 recovery KV and R2 fixtures plus the recovery replay Queue. It never binds the

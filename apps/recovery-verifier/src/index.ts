@@ -49,6 +49,8 @@ export const handleRequest = async (
     )
       return json({ status: "failed" }, 404);
     const input = await readRequest(request);
+    if (request.headers.get("idempotency-key") !== input.operation)
+      throw new Error("Recovery verification identity mismatch");
     return json(await verifyRecovery(env, input));
   } catch {
     return json({ status: "failed" }, 503);

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { PGlite } from "@electric-sql/pglite";
+import { makeMcpToolRepository } from "../src/mcp-tool";
 import { runMigrations } from "../src/migrations";
 
 const branchId = "br-monthly-recovery";
@@ -143,6 +144,12 @@ describe("recovery verifier database boundary", () => {
     const firstAccountId = "10000000-0000-4000-8000-000000000191";
     const secondAccountId = "10000000-0000-4000-8000-000000000192";
     const unrelatedAccountId = "10000000-0000-4000-8000-000000000193";
+    const connectionId = "20000000-0000-4000-8000-000000000193";
+    const conversationId = "70000000-0000-4000-8000-000000000193";
+    const messageId = "71000000-0000-4000-8000-000000000193";
+    const mediaId = "72000000-0000-4000-8000-000000000193";
+    const authorizationId = "40000000-0000-4000-8000-000000000193";
+    const auditLogId = "50000000-0000-4000-8000-000000000193";
     await database.query(
       "SELECT * FROM public.begin_restore_replay($1, $2, true)",
       [branchId, "2026-08-18T11:00:00.000Z"],
@@ -158,10 +165,32 @@ describe("recovery verifier database boundary", () => {
     );
 
     await database.exec("SET ROLE whatsapp_recovery_verifier");
-    await database.query(
-      "SELECT public.prepare_recovery_rls_probe($1, $2, $3)",
+    const prepared = await database.query<{ prepared: boolean }>(
+      "SELECT public.prepare_recovery_rls_probe($1, $2, $3) AS prepared",
       [branchId, firstAccountId, secondAccountId],
     );
+    expect(prepared.rows).toEqual([{ prepared: true }]);
+    const retryPrepared = await database.query<{ prepared: boolean }>(
+      "SELECT public.prepare_recovery_rls_probe($1, $2, $3) AS prepared",
+      [branchId, firstAccountId, secondAccountId],
+    );
+    expect(retryPrepared.rows).toEqual([{ prepared: true }]);
+    const mediaPrepared = await database.query<{ prepared: boolean }>(
+      `SELECT public.prepare_recovery_media_loss_probe(
+         $1,$2,$3,$4,$5,$6,$7,$8
+       ) AS prepared`,
+      [
+        branchId,
+        firstAccountId,
+        connectionId,
+        conversationId,
+        messageId,
+        mediaId,
+        authorizationId,
+        auditLogId,
+      ],
+    );
+    expect(mediaPrepared.rows).toEqual([{ prepared: true }]);
     await database.exec("RESET ROLE");
 
     await database.query(
@@ -199,11 +228,69 @@ describe("recovery verifier database boundary", () => {
       }
     }
 
+    const runtimeRepository = makeMcpToolRepository({
+      withConnection: (use) => use(database as never),
+    });
+    await database.exec("SET ROLE whatsapp_api_runtime");
+    await runtimeRepository.failStoredMediaRead({
+      auditLogId,
+      completedAt: new Date(observedAt),
+      errorCode: "resource_unavailable",
+      failureCode: "object_missing",
+      mediaId,
+    });
+    await database.exec("RESET ROLE");
+    await database.exec("SET ROLE whatsapp_recovery_verifier");
+    expect(
+      (
+        await database.query<{ verified: boolean }>(
+          `SELECT public.verify_recovery_media_loss_probe(
+             $1,$2,$3,$4
+           ) AS verified`,
+          [branchId, firstAccountId, mediaId, auditLogId],
+        )
+      ).rows,
+    ).toEqual([{ verified: true }]);
+    expect(
+      (
+        await database.query<{ prepared: boolean }>(
+          `SELECT public.prepare_recovery_media_loss_probe(
+             $1,$2,$3,$4,$5,$6,$7,$8
+           ) AS prepared`,
+          [
+            branchId,
+            firstAccountId,
+            connectionId,
+            conversationId,
+            messageId,
+            mediaId,
+            authorizationId,
+            auditLogId,
+          ],
+        )
+      ).rows,
+    ).toEqual([{ prepared: false }]);
+    await database.exec("RESET ROLE");
+
     await database.exec("SET ROLE whatsapp_recovery_verifier");
     await database.query(
       "SELECT public.complete_recovery_rls_probe($1, $2, $3)",
       [branchId, firstAccountId, secondAccountId],
     );
+    await database.exec("RESET ROLE");
+    await database.exec("SET ROLE whatsapp_recovery_verifier");
+    await database.query(
+      "SELECT public.complete_recovery_drill_verification($1, $2)",
+      [branchId, observedAt],
+    );
+    expect(
+      (
+        await database.query<{ prepared: boolean }>(
+          "SELECT public.prepare_recovery_rls_probe($1, $2, $3) AS prepared",
+          [branchId, firstAccountId, secondAccountId],
+        )
+      ).rows,
+    ).toEqual([{ prepared: false }]);
     await database.exec("RESET ROLE");
     expect(
       (

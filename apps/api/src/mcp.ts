@@ -122,6 +122,8 @@ export interface McpToolPersistenceService {
     readonly auditLogId: string;
     readonly completedAt: Date;
     readonly errorCode: string;
+    readonly failureCode: "object_missing" | "processing_failed";
+    readonly mediaId: string;
   }) => Effect.Effect<void, McpToolPersistenceError>;
   readonly reserveStoredMediaRead: (
     input: McpAccessGrant & {
@@ -3301,6 +3303,7 @@ export const createMcpRequestHandler =
             const parsed = Option.getOrUndefined(parseStoredMediaUri(uri.href));
             if (parsed === undefined) return notFound();
             let reservedAuditLogId: string | null = null;
+            let reservedMediaId: string | null = null;
             try {
               const result = await Effect.runPromise(
                 Effect.gen(function* () {
@@ -3324,6 +3327,7 @@ export const createMcpRequestHandler =
                   });
                   if (material === null) return null;
                   reservedAuditLogId = auditLogId;
+                  reservedMediaId = material.mediaId;
                   const metadataBytes = yield* encryption.decrypt({
                     accountKey: material.accountKey,
                     connectionKey: material.connectionKey,
@@ -3404,8 +3408,9 @@ export const createMcpRequestHandler =
                 ],
               };
             } catch {
-              if (reservedAuditLogId !== null) {
+              if (reservedAuditLogId !== null && reservedMediaId !== null) {
                 const auditLogId = reservedAuditLogId;
+                const mediaId = reservedMediaId;
                 await Effect.runPromise(
                   Effect.gen(function* () {
                     const clock = yield* McpToolClock;
@@ -3414,6 +3419,8 @@ export const createMcpRequestHandler =
                       auditLogId,
                       completedAt: yield* clock.now,
                       errorCode: "resource_unavailable",
+                      failureCode: "processing_failed",
+                      mediaId,
                     });
                   }).pipe(
                     Effect.provide(options.layer),

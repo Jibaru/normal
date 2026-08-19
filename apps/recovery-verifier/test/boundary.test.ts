@@ -1,7 +1,10 @@
 import { describe, expect, test } from "vitest";
 import type { RecoveryVerifierEnvironment } from "../src/environment";
 import { handleRequest } from "../src/index";
-import { verifyIsolatedApiKeyHmacRotation } from "../src/verify";
+import {
+  stableRecoveryProbeId,
+  verifyIsolatedApiKeyHmacRotation,
+} from "../src/verify";
 
 const token = "a".repeat(32);
 const call = (
@@ -19,6 +22,19 @@ describe("recovery verifier boundary", () => {
       predecessorRejected: true,
       rotated: true,
     });
+  });
+
+  test("derives stable distinct probe identities for workflow retries", async () => {
+    const input = {
+      operation: "recovery_operation_123",
+      recovery_branch_id: "br-recovery-123",
+    } as const;
+    const first = await stableRecoveryProbeId(input, 1);
+    expect(await stableRecoveryProbeId(input, 1)).toBe(first);
+    expect(await stableRecoveryProbeId(input, 2)).not.toBe(first);
+    expect(first).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+    );
   });
 
   test("rejects missing credentials with a constant response", async () => {

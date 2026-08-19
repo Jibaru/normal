@@ -144,8 +144,10 @@ the [Wasender seam](wasender-seam.md), and the [ADRs](adr).
   the dedicated verifier login and the ordinary API runtime login, creates two
   synthetic Personal Accounts through a branch-bound verifier function, proves
   no-context and cross-account RLS isolation through the real API role, then
-  removes both probes before recording verification. No production tenant
-  identifier or database URL enters evidence.
+  removes both probes before recording verification. A quarterly run also
+  binds the production missing-object result to the production API-role Stored
+  Media failure transition and verifies the synthetic authoritative row became
+  `failed`. No production tenant identifier or database URL enters evidence.
 * `recovery-game-day` has no public ingress or tenant database binding. It owns
   only disposable recovery KV/R2/Queue fixtures, purpose-specific KMS access,
   and pager delivery confirmation.

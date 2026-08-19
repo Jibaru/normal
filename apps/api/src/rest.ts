@@ -251,6 +251,8 @@ export interface RestPersistenceService {
     readonly auditLogId: string;
     readonly completedAt: Date;
     readonly errorCode: string;
+    readonly failureCode: "object_missing" | "processing_failed";
+    readonly mediaId: string;
   }) => Effect.Effect<void, RestPersistenceError>;
   readonly reserveStoredMediaRead: (input: {
     readonly apiKeyGrantId: string;
@@ -3053,6 +3055,8 @@ const getStoredMedia = (
             auditLogId,
             completedAt: yield* clock.now,
             errorCode: "resource_unavailable",
+            failureCode: "processing_failed",
+            mediaId: material.mediaId,
           })
           .pipe(Effect.either);
         yield* emitCompletion(
@@ -3090,6 +3094,8 @@ const getStoredMedia = (
             auditLogId,
             completedAt: yield* clock.now,
             errorCode: "resource_unavailable",
+            failureCode: "processing_failed",
+            mediaId: material.mediaId,
           })
           .pipe(Effect.either);
         yield* emitCompletion(
@@ -3120,6 +3126,11 @@ const getStoredMedia = (
             auditLogId,
             completedAt: yield* clock.now,
             errorCode: "resource_unavailable",
+            failureCode:
+              stream.left.reason === "not-found"
+                ? "object_missing"
+                : "processing_failed",
+            mediaId: material.mediaId,
           })
           .pipe(Effect.either);
         yield* emitCompletion(
@@ -3141,6 +3152,8 @@ const getStoredMedia = (
             auditLogId,
             completedAt: yield* clock.now,
             errorCode: "resource_unavailable",
+            failureCode: "processing_failed",
+            mediaId: material.mediaId,
           })
           .pipe(Effect.either);
         yield* emitCompletion(

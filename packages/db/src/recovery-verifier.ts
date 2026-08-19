@@ -28,7 +28,23 @@ export interface RecoveryVerifierRepository {
     branchId: string,
     firstAccountId: string,
     secondAccountId: string,
-  ) => Promise<void>;
+  ) => Promise<boolean>;
+  readonly prepareMediaLossProbe: (
+    branchId: string,
+    accountId: string,
+    connectionId: string,
+    conversationId: string,
+    messageId: string,
+    mediaId: string,
+    authorizationId: string,
+    auditLogId: string,
+  ) => Promise<boolean>;
+  readonly verifyMediaLossProbe: (
+    branchId: string,
+    accountId: string,
+    mediaId: string,
+    auditLogId: string,
+  ) => Promise<boolean>;
   readonly verify: (
     branchId: string,
     observedAt: string,
@@ -72,11 +88,62 @@ export const makePgRecoveryVerifierRepository = (
       withPgQueryConnection(
         restrictedConnectionString,
         async (connection) => {
-          await makeDatabase(connection).execute(sql`
+          const result = await makeDatabase(connection).execute<{
+            prepared: boolean;
+          }>(sql`
             SELECT public.prepare_recovery_rls_probe(
               ${branchId}, ${firstAccountId}, ${secondAccountId}
-            )
+            ) AS prepared
           `);
+          const prepared = result[0]?.prepared;
+          if (prepared !== true && prepared !== false)
+            throw new Error("recovery RLS probe returned no result");
+          return prepared;
+        },
+        30_000,
+        10_000,
+      ),
+    prepareMediaLossProbe: (
+      branchId,
+      accountId,
+      connectionId,
+      conversationId,
+      messageId,
+      mediaId,
+      authorizationId,
+      auditLogId,
+    ) =>
+      withPgQueryConnection(
+        restrictedConnectionString,
+        async (connection) => {
+          const result = await makeDatabase(connection).execute<{
+            prepared: boolean;
+          }>(sql`
+            SELECT public.prepare_recovery_media_loss_probe(
+              ${branchId}, ${accountId}, ${connectionId}, ${conversationId},
+              ${messageId}, ${mediaId}, ${authorizationId}, ${auditLogId}
+            ) AS prepared
+          `);
+          const prepared = result[0]?.prepared;
+          if (prepared !== true && prepared !== false)
+            throw new Error("recovery Stored Media probe returned no result");
+          return prepared;
+        },
+        30_000,
+        10_000,
+      ),
+    verifyMediaLossProbe: (branchId, accountId, mediaId, auditLogId) =>
+      withPgQueryConnection(
+        restrictedConnectionString,
+        async (connection) => {
+          const result = await makeDatabase(connection).execute<{
+            verified: boolean;
+          }>(sql`
+            SELECT public.verify_recovery_media_loss_probe(
+              ${branchId}, ${accountId}, ${mediaId}, ${auditLogId}
+            ) AS verified
+          `);
+          return result[0]?.verified === true;
         },
         30_000,
         10_000,

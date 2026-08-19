@@ -321,21 +321,51 @@ CREATE FUNCTION public.prepare_recovery_rls_probe(
   first_account_id uuid,
   second_account_id uuid
 )
-RETURNS void LANGUAGE plpgsql STRICT SECURITY DEFINER
+RETURNS boolean LANGUAGE plpgsql STRICT SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp AS $function$
+DECLARE
+  current_state text;
+  current_first_account_id uuid;
+  current_second_account_id uuid;
+  existing_count integer;
 BEGIN
   IF first_account_id = second_account_id THEN
     RAISE insufficient_privilege
       USING MESSAGE = 'recovery verifier branch mismatch';
   END IF;
-  UPDATE public.restore_readiness SET
-    rls_probe_first_account_id = first_account_id,
-    rls_probe_second_account_id = second_account_id
+  SELECT state, rls_probe_first_account_id, rls_probe_second_account_id
+    INTO current_state, current_first_account_id, current_second_account_id
+  FROM public.restore_readiness
   WHERE singleton AND branch_id = requested_branch_id
-    AND state = 'awaiting_verification' AND verification_required
-    AND rls_probe_first_account_id IS NULL
-    AND rls_probe_second_account_id IS NULL;
+    AND verification_required
+    AND state IN ('awaiting_verification', 'drill_verified')
+  FOR UPDATE;
   IF NOT FOUND THEN
+    RAISE insufficient_privilege
+      USING MESSAGE = 'recovery verifier branch mismatch';
+  END IF;
+  IF current_state = 'drill_verified'
+    AND current_first_account_id IS NULL
+    AND current_second_account_id IS NULL THEN
+    RETURN false;
+  END IF;
+  IF current_state <> 'awaiting_verification' THEN
+    RAISE insufficient_privilege
+      USING MESSAGE = 'recovery verifier branch mismatch';
+  END IF;
+  IF current_first_account_id = first_account_id
+    AND current_second_account_id = second_account_id THEN
+    SELECT count(*) INTO existing_count
+    FROM public.personal_accounts
+    WHERE id IN (first_account_id, second_account_id);
+    IF existing_count <> 2 THEN
+      RAISE integrity_constraint_violation
+        USING MESSAGE = 'recovery RLS probe state is incomplete';
+    END IF;
+    RETURN true;
+  END IF;
+  IF current_first_account_id IS NOT NULL
+    OR current_second_account_id IS NOT NULL THEN
     RAISE insufficient_privilege
       USING MESSAGE = 'recovery verifier branch mismatch';
   END IF;
@@ -346,8 +376,13 @@ BEGIN
     RAISE integrity_constraint_violation
       USING MESSAGE = 'recovery RLS probe identity already exists';
   END IF;
+  UPDATE public.restore_readiness SET
+    rls_probe_first_account_id = first_account_id,
+    rls_probe_second_account_id = second_account_id
+  WHERE singleton AND branch_id = requested_branch_id;
   INSERT INTO public.personal_accounts (id, state)
   VALUES (first_account_id, 'active'), (second_account_id, 'active');
+  RETURN true;
 END
 $function$;
 --> statement-breakpoint
@@ -366,6 +401,14 @@ BEGIN
     RAISE insufficient_privilege
       USING MESSAGE = 'recovery verifier branch mismatch';
   END IF;
+  DELETE FROM public.stored_media_object_deletions AS deletions
+  USING public.restore_readiness AS readiness
+  WHERE readiness.singleton AND readiness.branch_id = requested_branch_id
+    AND readiness.state = 'awaiting_verification'
+    AND readiness.verification_required
+    AND readiness.rls_probe_first_account_id = first_account_id
+    AND readiness.rls_probe_second_account_id = second_account_id
+    AND deletions.personal_account_id IN (first_account_id, second_account_id);
   DELETE FROM public.personal_accounts AS accounts
   USING public.restore_readiness AS readiness
   WHERE readiness.singleton AND readiness.branch_id = requested_branch_id
@@ -391,6 +434,149 @@ BEGIN
       USING MESSAGE = 'recovery RLS probe cleanup failed';
   END IF;
 END
+$function$;
+--> statement-breakpoint
+
+CREATE FUNCTION public.prepare_recovery_media_loss_probe(
+  requested_branch_id text,
+  account_id uuid,
+  connection_id uuid,
+  conversation_id uuid,
+  message_id uuid,
+  media_id uuid,
+  authorization_id uuid,
+  audit_log_id uuid
+)
+RETURNS boolean LANGUAGE plpgsql STRICT SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp AS $function$
+DECLARE
+  probe_at timestamptz := statement_timestamp();
+  existing_state text;
+  existing_failure_code text;
+  existing_log_outcome text;
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM public.restore_readiness
+    WHERE singleton AND branch_id = requested_branch_id
+      AND state = 'awaiting_verification' AND verification_required
+      AND rls_probe_first_account_id = account_id
+      AND rls_probe_second_account_id IS NOT NULL
+  ) THEN
+    RAISE insufficient_privilege
+      USING MESSAGE = 'recovery verifier branch mismatch';
+  END IF;
+  SELECT media.state, media.failure_code, logs.outcome
+    INTO existing_state, existing_failure_code, existing_log_outcome
+  FROM public.stored_media AS media
+  JOIN public.tool_call_logs AS logs
+    ON logs.id = audit_log_id
+    AND logs.personal_account_id = media.personal_account_id
+  WHERE media.id = media_id AND media.personal_account_id = account_id;
+  IF FOUND THEN
+    IF existing_state = 'ready' AND existing_failure_code IS NULL
+      AND existing_log_outcome = 'started' THEN
+      RETURN true;
+    END IF;
+    IF existing_state = 'failed' AND existing_failure_code = 'object_missing'
+      AND existing_log_outcome = 'execution_error' THEN
+      RETURN false;
+    END IF;
+    RAISE integrity_constraint_violation
+      USING MESSAGE = 'recovery Stored Media probe state is invalid';
+  END IF;
+  INSERT INTO public.whatsapp_connections(
+    id, personal_account_id, webhook_ingress_id, display_name_fallback,
+    public_id, state, state_changed_at
+  ) VALUES (
+    connection_id, account_id, conversation_id, 'Calm Otter',
+    'con_' || substr(md5(connection_id::text), 1, 21),
+    'connected', probe_at
+  );
+  INSERT INTO public.whatsapp_conversations(
+    id, personal_account_id, whatsapp_connection_id, public_id, kind,
+    recipient_locator, recipient_public_id, last_activity_at,
+    last_activity_direction
+  ) VALUES (
+    conversation_id, account_id, connection_id,
+    'cvs_' || substr(md5(conversation_id::text), 1, 21), 'direct',
+    'di1_' || substr(md5(conversation_id::text) || md5(requested_branch_id), 1, 43),
+    'ctc_' || substr(md5(conversation_id::text), 1, 21), probe_at, 'inbound'
+  );
+  INSERT INTO public.stored_messages(
+    id, personal_account_id, whatsapp_connection_id, conversation_id,
+    public_id, message_identity, direction, sent_at, content_type,
+    content_ciphertext_version, content_key_version, content_nonce,
+    content_ciphertext, received_at
+  ) VALUES (
+    message_id, account_id, connection_id, conversation_id,
+    'msg_' || substr(md5(message_id::text), 1, 21),
+    'wi1_' || substr(md5(message_id::text) || md5(requested_branch_id), 1, 43),
+    'inbound', probe_at, 'image', 1, 1,
+    decode(repeat('11', 12), 'hex'), decode(repeat('12', 32), 'hex'), probe_at
+  );
+  INSERT INTO public.stored_media(
+    id, personal_account_id, whatsapp_connection_id, stored_message_id,
+    public_id, state, media_type, object_key, plaintext_size_bytes, sha256,
+    metadata_ciphertext_version, metadata_key_version, metadata_nonce,
+    metadata_ciphertext
+  ) VALUES (
+    media_id, account_id, connection_id, message_id,
+    'med_' || substr(md5(media_id::text), 1, 21), 'ready', 'image',
+    'production-recovery/media-loss/' || media_id::text, 1, repeat('a', 64),
+    1, 1, decode(repeat('13', 12), 'hex'), decode(repeat('14', 32), 'hex')
+  );
+  UPDATE public.personal_accounts
+  SET stored_media_used_bytes = stored_media_used_bytes + 1
+  WHERE id = account_id;
+  INSERT INTO public.mcp_authorizations(
+    id, personal_account_id, oauth_subject, client_id, client_class, scopes,
+    reverified_at, authorized_at, absolute_expires_at
+  ) VALUES (
+    authorization_id, account_id,
+    substr(replace(authorization_id::text, '-', '') || md5(authorization_id::text), 1, 43),
+    'recovery-verifier', 'recovery', ARRAY['messages:read']::text[],
+    probe_at, probe_at, probe_at + interval '1 day'
+  );
+  INSERT INTO public.tool_call_logs(
+    id, personal_account_id, mcp_authorization_id, channel, tool_name,
+    started_at, outcome, quota_reserved, expires_at, media_bytes_reserved,
+    connection_public_id
+  ) VALUES (
+    audit_log_id, account_id, authorization_id, 'mcp', 'read_stored_media',
+    probe_at, 'started', true, probe_at + interval '90 days', 1,
+    'con_' || substr(md5(connection_id::text), 1, 21)
+  );
+  RETURN true;
+END
+$function$;
+--> statement-breakpoint
+
+CREATE FUNCTION public.verify_recovery_media_loss_probe(
+  requested_branch_id text,
+  account_id uuid,
+  media_id uuid,
+  audit_log_id uuid
+)
+RETURNS boolean LANGUAGE sql STABLE STRICT SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp AS $function$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.restore_readiness AS readiness
+    JOIN public.stored_media AS media
+      ON media.personal_account_id = readiness.rls_probe_first_account_id
+    JOIN public.tool_call_logs AS logs
+      ON logs.personal_account_id = media.personal_account_id
+    WHERE readiness.singleton AND readiness.branch_id = requested_branch_id
+      AND readiness.state = 'awaiting_verification'
+      AND readiness.verification_required
+      AND readiness.rls_probe_first_account_id = account_id
+      AND media.id = media_id AND media.state = 'failed'
+      AND media.failure_code = 'object_missing' AND media.object_key IS NULL
+      AND media.plaintext_size_bytes IS NULL
+      AND logs.id = audit_log_id AND logs.outcome = 'execution_error'
+      AND logs.error_code = 'resource_unavailable'
+      AND logs.media_bytes_reserved = 0
+  )
 $function$;
 --> statement-breakpoint
 
@@ -427,6 +613,8 @@ REVOKE ALL ON FUNCTION
   public.verify_recovery_branch(text,timestamptz),
   public.prepare_recovery_rls_probe(text,uuid,uuid),
   public.complete_recovery_rls_probe(text,uuid,uuid),
+  public.prepare_recovery_media_loss_probe(text,uuid,uuid,uuid,uuid,uuid,uuid,uuid),
+  public.verify_recovery_media_loss_probe(text,uuid,uuid,uuid),
   public.is_restore_ready(text),
   public.complete_recovery_drill_verification(text,timestamptz)
   FROM PUBLIC;
@@ -449,6 +637,12 @@ GRANT EXECUTE ON FUNCTION public.prepare_recovery_rls_probe(text,uuid,uuid)
 --> statement-breakpoint
 
 GRANT EXECUTE ON FUNCTION public.complete_recovery_rls_probe(text,uuid,uuid)
+  TO whatsapp_recovery_verifier;
+--> statement-breakpoint
+
+GRANT EXECUTE ON FUNCTION
+  public.prepare_recovery_media_loss_probe(text,uuid,uuid,uuid,uuid,uuid,uuid,uuid),
+  public.verify_recovery_media_loss_probe(text,uuid,uuid,uuid)
   TO whatsapp_recovery_verifier;
 --> statement-breakpoint
 

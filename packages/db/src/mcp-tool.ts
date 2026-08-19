@@ -23,6 +23,8 @@ import {
   mcpAuthorizationsInApp,
   personalAccountsInApp,
   sendOperationsInApp,
+  storedMediaInApp,
+  storedMediaObjectDeletionsInApp,
   whatsappConnectionsInApp,
   whatsappGroupsInApp,
 } from "./schema";
@@ -392,6 +394,8 @@ export interface McpToolRepository {
     readonly auditLogId: string;
     readonly completedAt: Date;
     readonly errorCode: string;
+    readonly failureCode: "object_missing" | "processing_failed";
+    readonly mediaId: string;
   }) => Promise<void>;
   readonly reserveStoredMediaRead: (
     input: McpAccessAuthorization & {
@@ -1917,6 +1921,78 @@ export const makeMcpToolRepository = (
         await db.execute(
           sql`SELECT set_config('public.personal_account_id', ${personalAccountId}, true)`,
         );
+        const selectedMedia = await db
+          .select({
+            objectKey: storedMediaInApp.objectKey,
+            plaintextSizeBytes: storedMediaInApp.plaintextSizeBytes,
+          })
+          .from(storedMediaInApp)
+          .where(
+            and(
+              eq(storedMediaInApp.id, input.mediaId),
+              eq(storedMediaInApp.personalAccountId, personalAccountId),
+              eq(storedMediaInApp.state, "ready"),
+            ),
+          )
+          .for("update");
+        const failed = selectedMedia[0];
+        if (
+          failed === undefined ||
+          typeof failed.objectKey !== "string" ||
+          typeof failed.plaintextSizeBytes !== "number"
+        )
+          throw new Error("Stored Media unavailable");
+        const failedMedia = await db
+          .update(storedMediaInApp)
+          .set({
+            failureCode: input.failureCode,
+            metadataCiphertext: null,
+            metadataCiphertextVersion: null,
+            metadataKeyVersion: null,
+            metadataNonce: null,
+            objectKey: null,
+            plaintextSizeBytes: null,
+            sha256: null,
+            state: "failed",
+            updatedAt: input.completedAt.toISOString(),
+          })
+          .where(
+            and(
+              eq(storedMediaInApp.id, input.mediaId),
+              eq(storedMediaInApp.personalAccountId, personalAccountId),
+              eq(storedMediaInApp.state, "ready"),
+            ),
+          )
+          .returning({ id: storedMediaInApp.id });
+        if (failedMedia.length !== 1)
+          throw new Error("Stored Media unavailable");
+        if (input.failureCode === "processing_failed") {
+          await db
+            .insert(storedMediaObjectDeletionsInApp)
+            .values({
+              objectKey: failed.objectKey,
+              personalAccountId,
+              requestedAt: input.completedAt.toISOString(),
+            })
+            .onConflictDoNothing();
+        }
+        const released = await db
+          .update(personalAccountsInApp)
+          .set({
+            storedMediaUsedBytes: sql`${personalAccountsInApp.storedMediaUsedBytes} - ${failed.plaintextSizeBytes}`,
+          })
+          .where(
+            and(
+              eq(personalAccountsInApp.id, personalAccountId),
+              gte(
+                personalAccountsInApp.storedMediaUsedBytes,
+                failed.plaintextSizeBytes,
+              ),
+            ),
+          )
+          .returning({ id: personalAccountsInApp.id });
+        if (released.length !== 1)
+          throw new Error("Stored Media quota release failed");
         const updated = await db
           .update(activityLogsInApp)
           .set({
