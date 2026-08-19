@@ -47,8 +47,6 @@ describe("recovery availability evidence", () => {
         wasender_percent: 98.1,
         whatsapp_percent: 97.2,
         sampled_keys_usable: true,
-        api_key_hmac_rotated: true,
-        predecessor_hmac_rejected: true,
         operation: input.operation,
         recovery_branch_id: input.recovery_branch_id,
         source_point_at: input.source_point_at,
@@ -62,8 +60,6 @@ describe("recovery availability evidence", () => {
       wasenderPercent: 98.1,
       whatsappPercent: 97.2,
       sampledKeysUsable: true,
-      apiKeyHmacRotated: true,
-      predecessorHmacRejected: true,
       recoveredSourcePointAt: "2026-08-17T11:59:30.000Z",
     });
     expect(fetcher).toHaveBeenCalledOnce();
@@ -82,8 +78,6 @@ describe("recovery availability evidence", () => {
         whatsapp_percent: 100,
         tenant_id: "forbidden",
         sampled_keys_usable: true,
-        api_key_hmac_rotated: true,
-        predecessor_hmac_rejected: true,
         operation: input.operation,
         recovery_branch_id: input.recovery_branch_id,
         source_point_at: input.source_point_at,

@@ -244,8 +244,9 @@ The private game-day Worker refreshes its dedicated retained OAuth recovery
 fixture daily at 02:11 UTC. A quarterly execution accepts only a fixture that
 predates the execution by at least one hour and is no more than 14 days old; it
 must never create its reconstruction source during the drill it is attesting.
-The fixture uses the production dynamic-client registry key/value and 90-day
-expiry shape. Ephemeral authorization handoffs and tokens are intentionally not
+The fixture uses the production dynamic-client cache serializer, registry
+key/value shape, and 90-day expiry in an isolated namespace. Ephemeral
+authorization handoffs and tokens are intentionally not
 recovered; reconstructing them would reopen expired or consumed protocol state.
 Store the `recovery_game_day_role_arn` and `recovery_game_day_key_arn` AWS
 outputs as `AWS_RECOVERY_GAME_DAY_ROLE_ARN` and
@@ -471,7 +472,8 @@ tofu -chdir=infra/aws plan \
   -var="deletion_coordinator_assumer_arn=arn:aws:iam::111122223333:role/replace-deletion-bootstrap" \
   -var="provider_control_assumer_arn=arn:aws:iam::111122223333:role/replace-provider-bootstrap" \
   -var="ordinary_operator_assumer_arn=arn:aws:iam::111122223333:role/replace-human-operator-bootstrap" \
-  -var="break_glass_assumer_arn=arn:aws:iam::111122223333:role/replace-incident-credential-broker"
+  -var="break_glass_assumer_arn=arn:aws:iam::111122223333:role/replace-incident-credential-broker" \
+  -var="github_oidc_provider_arn=arn:aws:iam::111122223333:oidc-provider/token.actions.githubusercontent.com"
 
 tofu -chdir=infra/aws apply kms.tfplan
 ```
@@ -1312,7 +1314,8 @@ The monthly and quarterly schedules in
 boundary and retain its validated, metadata-only evidence. The monthly restore
 must use a random point from the preceding seven days and a non-serving branch.
 The quarterly game day covers endpoint rotation, OAuth KV reconstruction,
-Queue replay fixture verification, KMS/R2 access, alert
+create-only receipt-bound Queue fixture replay, KMS/R2 access, production Stored
+Media missing-object fail-closed behavior, alert
 delivery, and deletion-gate bypass denial. Configure
 `RECOVERY_AUTOMATION_URL` and `RECOVERY_AUTOMATION_TOKEN` only in the isolated
 `production-recovery` GitHub environment; they are external rollout inputs, not

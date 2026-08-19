@@ -1,12 +1,12 @@
 import {
   type AuthRequest,
-  type ClientInfo,
   OAuthError,
   type OAuthHelpers,
   OAuthProvider,
 } from "@cloudflare/workers-oauth-provider";
 import { Config, ConfigProvider, Data, Effect, Redacted } from "effect";
 import { decodeBase64Url, encodeBase64Url } from "./base64-url";
+import { oauthClientCacheRecordFor } from "./oauth-client-cache";
 import type {
   OAuthAuthorizationRequestCompletedEvent,
   OAuthProtocolRequestFailedEvent,
@@ -541,14 +541,8 @@ const requestedParameter = (url: URL, name: string): string | undefined => {
   return values.length === 1 && values[0] !== "" ? values[0] : undefined;
 };
 
-const clientInfoFor = (client: AllowlistedOAuthClient): ClientInfo => ({
-  clientId: client.clientId,
-  clientName: client.clientName,
-  grantTypes: ["authorization_code", "refresh_token"],
-  redirectUris: [...client.redirectUris],
-  responseTypes: ["code"],
-  tokenEndpointAuthMethod: "none",
-});
+const clientInfoFor = (client: AllowlistedOAuthClient) =>
+  oauthClientCacheRecordFor(client);
 
 export const makeOAuthClientRegistryKv = (
   kv: OAuthKv,

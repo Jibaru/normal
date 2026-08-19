@@ -4,6 +4,8 @@ import {
   GenerateDataKeyCommand,
   KMSClient,
 } from "@aws-sdk/client-kms";
+import { makeStoredMediaContainer } from "@whatsapp-mcp/api/encryption/stored-media-container";
+import { oauthClientCacheRecordFor } from "@whatsapp-mcp/api/oauth-client-cache";
 import {
   decodeQuarterlyRecoveryChecks,
   decodeQuarterlyRecoveryExecutionReceipt,
@@ -11,6 +13,7 @@ import {
   decodeQuarterlyRecoveryVerificationRequest,
   type QuarterlyRecoveryExecutionRequest,
 } from "@whatsapp-mcp/contracts/recovery";
+import { Effect } from "effect";
 import { required, safeHttpsUrl } from "./config";
 
 const prefix = "production-recovery/game-day/";
@@ -51,7 +54,13 @@ export interface RecoveryBucket {
   readonly get: (
     key: string,
   ) => Promise<{ readonly text: () => Promise<string> } | null>;
-  readonly put: (key: string, value: string) => Promise<unknown>;
+  readonly put: (
+    key: string,
+    value: string,
+    options?: {
+      readonly onlyIf?: { readonly etagDoesNotMatch?: string };
+    },
+  ) => Promise<unknown | null>;
 }
 
 export interface RecoveryQueue {
@@ -76,6 +85,7 @@ interface ExecutionState {
   readonly alertObservedAt: string;
   readonly oauthKvReconstructed: true;
   readonly kmsAccess: true;
+  readonly mediaLossFailedClosed: boolean;
   readonly queueComplete: boolean;
   readonly r2Access: true;
 }
@@ -94,9 +104,9 @@ interface RetainedOAuthFixture {
   readonly key: string;
   readonly record: {
     readonly clientId: string;
-    readonly clientName: "ChatGPT";
+    readonly clientName: string;
     readonly grantTypes: readonly ["authorization_code", "refresh_token"];
-    readonly redirectUris: readonly [string];
+    readonly redirectUris: ReadonlyArray<string>;
     readonly responseTypes: readonly ["code"];
     readonly tokenEndpointAuthMethod: "none";
   };
@@ -126,10 +136,7 @@ const objectKey = async (operation: string) =>
 
 const readRetainedOAuthFixture = async (
   env: Env,
-): Promise<{
-  readonly serialized: string;
-  readonly value: RetainedOAuthFixture;
-}> => {
+): Promise<RetainedOAuthFixture> => {
   const source = await env.RECOVERY_FIXTURES.get(retainedOAuthKey);
   if (!source)
     throw new Error("Retained OAuth reconstruction fixture is unavailable");
@@ -177,7 +184,7 @@ const readRetainedOAuthFixture = async (
     age > 14 * 86_400_000
   )
     throw new Error("Retained OAuth reconstruction fixture is invalid");
-  return { serialized, value: fixture as RetainedOAuthFixture };
+  return fixture as RetainedOAuthFixture;
 };
 
 export const prepareRetainedRecoveryFixtures = async (
@@ -193,14 +200,11 @@ export const prepareRetainedRecoveryFixtures = async (
       capturedAt,
       expirationTtl: 7_776_000,
       key: "client:https://chatgpt.com/oauth/recovery-game-day/client.json",
-      record: {
+      record: oauthClientCacheRecordFor({
         clientId: "https://chatgpt.com/oauth/recovery-game-day/client.json",
         clientName: "ChatGPT",
-        grantTypes: ["authorization_code", "refresh_token"],
         redirectUris: ["https://chatgpt.com/connector/oauth/recovery-game-day"],
-        responseTypes: ["code"],
-        tokenEndpointAuthMethod: "none",
-      },
+      }),
     } satisfies RetainedOAuthFixture),
   );
 };
@@ -277,9 +281,10 @@ const readState = async (
     typeof state.alertObservedAt !== "string" ||
     state.oauthKvReconstructed !== true ||
     state.kmsAccess !== true ||
+    typeof state.mediaLossFailedClosed !== "boolean" ||
     typeof state.queueComplete !== "boolean" ||
     state.r2Access !== true ||
-    Object.keys(candidate).length !== 8
+    Object.keys(candidate).length !== 9
   )
     throw new Error("Quarterly execution state is invalid");
   return state as ExecutionState;
@@ -311,12 +316,12 @@ export const executeGameDay = async (env: Env, candidate: unknown) => {
   }
 
   const reconstructionSource = await readRetainedOAuthFixture(env);
-  const oauth = reconstructionSource.value.key;
+  const oauth = reconstructionSource.key;
   const object = await objectKey(input.operation);
   await env.RECOVERY_KV.delete(oauth);
-  const reconstructedRecord = JSON.stringify(reconstructionSource.value.record);
+  const reconstructedRecord = JSON.stringify(reconstructionSource.record);
   await env.RECOVERY_KV.put(oauth, reconstructedRecord, {
-    expirationTtl: reconstructionSource.value.expirationTtl,
+    expirationTtl: reconstructionSource.expirationTtl,
   });
   if ((await env.RECOVERY_KV.get(oauth)) !== reconstructedRecord)
     throw new Error("OAuth KV reconstruction failed");
@@ -364,6 +369,7 @@ export const executeGameDay = async (env: Env, candidate: unknown) => {
     alertObservedAt,
     oauthKvReconstructed: true,
     kmsAccess: true,
+    mediaLossFailedClosed: false,
     queueComplete: false,
     r2Access: true,
   };
@@ -372,9 +378,17 @@ export const executeGameDay = async (env: Env, candidate: unknown) => {
     operation: input.operation,
     receipt,
   } satisfies ReplayMessage);
-  await env.RECOVERY_FIXTURES.put(`${object}/queue`, replayFixture);
-  if ((await env.RECOVERY_FIXTURES.get(`${object}/queue`)) === null)
+  const created = await env.RECOVERY_FIXTURES.put(
+    `${object}/queue`,
+    replayFixture,
+    { onlyIf: { etagDoesNotMatch: "*" } },
+  );
+  if (
+    created === null ||
+    (await env.RECOVERY_FIXTURES.get(`${object}/queue`)) === null
+  )
     throw new Error("Recovery replay fixture is unavailable");
+  await env.RECOVERY_FIXTURES.put(`${object}/media-object`, "fixture");
   await env.RECOVERY_KV.put(
     await stateKey(input.operation),
     JSON.stringify(state),
@@ -439,11 +453,69 @@ export const verifyGameDay = async (env: Env, candidate: unknown) => {
 
   return decodeQuarterlyRecoveryChecks({
     oauth_kv_reconstructed: state.oauthKvReconstructed,
-    queue_replay_fixture_verified: state.queueComplete,
+    immutable_queue_replay: state.queueComplete,
     kms_access: state.kmsAccess,
     r2_access: state.r2Access,
+    media_loss_failed_closed: state.mediaLossFailedClosed,
     alert_delivered: true,
   });
+};
+
+export const verifyStoredMediaLossFailsClosed = async (
+  env: Env,
+  object: string,
+) => {
+  const mediaObject = `${object}/media-object`;
+  await env.RECOVERY_FIXTURES.delete(mediaObject);
+  const events: Array<{
+    readonly operation: string;
+    readonly outcome: string;
+  }> = [];
+  const container = makeStoredMediaContainer({
+    bucket: env.RECOVERY_FIXTURES as unknown as R2Bucket,
+    encryption: {} as never,
+    environment: "production",
+    telemetry: (event) => events.push(event),
+  });
+  const personalAccountId = "recovery-game-day-account";
+  const connectionId = "recovery-game-day-connection";
+  const result = await Effect.runPromise(
+    Effect.either(
+      container.read({
+        accountKey: {
+          ciphertext: "unused",
+          keyVersion: 1,
+          kmsKeyId: "unused",
+          personalAccountId,
+          version: 1,
+        },
+        connectionKey: {
+          accountKeyVersion: 1,
+          ciphertext: "unused",
+          connectionId,
+          keyVersion: 1,
+          nonce: "unused",
+          personalAccountId,
+          version: 1,
+        },
+        context: {
+          connectionId,
+          mediaObjectId: "recovery-game-day-media",
+          personalAccountId,
+        },
+        objectKey: mediaObject,
+      }),
+    ),
+  );
+  if (
+    result._tag !== "Left" ||
+    result.left.operation !== "read" ||
+    result.left.reason !== "not-found" ||
+    events.length !== 1 ||
+    events[0]?.operation !== "read" ||
+    events[0]?.outcome !== "not-found"
+  )
+    throw new Error("Stored Media loss did not fail closed");
 };
 
 export const handleGameDayReplay = async (
@@ -482,10 +554,12 @@ export const handleGameDayReplay = async (
   );
   if (!decrypted.Plaintext) throw new Error("Recovery KMS decrypt failed");
   decrypted.Plaintext.fill(0);
+  await verifyStoredMediaLossFailsClosed(env, object);
   await env.RECOVERY_KV.put(
     await stateKey(body.operation),
     JSON.stringify({
       ...state,
+      mediaLossFailedClosed: true,
       queueComplete: true,
     }),
     { expirationTtl: 3_600 },

@@ -7,6 +7,7 @@ import {
   type RecoveryKvNamespace,
   type RecoveryMessage,
   verifyGameDay,
+  verifyStoredMediaLossFailsClosed,
 } from "../src/index";
 
 const operation = `recovery_operation_${"a".repeat(32)}`;
@@ -134,6 +135,24 @@ describe("quarterly recovery executor boundary", () => {
     expect(get).not.toHaveBeenCalled();
   });
 
+  test("uses the production Stored Media reader to fail closed after object loss", async () => {
+    const deleteObject = vi.fn(async () => undefined);
+    const get = vi.fn(async () => null);
+    await expect(
+      verifyStoredMediaLossFailsClosed(
+        environment({
+          RECOVERY_FIXTURES: {
+            delete: deleteObject,
+            get,
+          } as unknown as RecoveryGameDayEnvironment["RECOVERY_FIXTURES"],
+        }),
+        "production-recovery/game-day/object/test",
+      ),
+    ).resolves.toBeUndefined();
+    expect(deleteObject).toHaveBeenCalledOnce();
+    expect(get).toHaveBeenCalledOnce();
+  });
+
   test("resubmits a receipt-bound replay when persisted state is incomplete", async () => {
     const send = vi.fn(async () => undefined);
     const receipt = await quarterlyReceipt();
@@ -144,6 +163,7 @@ describe("quarterly recovery executor boundary", () => {
       alertObservedAt: "2026-08-18T12:00:00.000Z",
       oauthKvReconstructed: true,
       kmsAccess: true,
+      mediaLossFailedClosed: false,
       queueComplete: false,
       r2Access: true,
     });

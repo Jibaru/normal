@@ -23,7 +23,6 @@ export interface RecoveryVerifierRepository {
     branchId: string,
     observedAt: string,
   ) => Promise<RecoveryVerification>;
-  readonly servingReady: (branchId: string) => Promise<boolean>;
 }
 
 export const makePgRecoveryVerifierRepository = (
@@ -42,20 +41,6 @@ export const makePgRecoveryVerifierRepository = (
               ${branchId}, ${verifiedAt}
             )
           `);
-        },
-        30_000,
-        10_000,
-      ),
-    servingReady: (branchId) =>
-      withPgQueryConnection(
-        restrictedConnectionString,
-        async (connection) => {
-          const result = await makeDatabase(connection).execute<{
-            ready: boolean;
-          }>(sql`SELECT public.is_restore_ready(${branchId}) AS ready`);
-          if (result.length !== 1 || typeof result[0]?.ready !== "boolean")
-            throw new Error("recovery serving gate returned an invalid result");
-          return result[0].ready;
         },
         30_000,
         10_000,

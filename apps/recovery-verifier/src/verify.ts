@@ -5,7 +5,11 @@ import {
   decodeRecoveryVerificationResponse,
   type RecoveryVerificationRequest,
 } from "@whatsapp-mcp/contracts/recovery";
-import { checkRestrictedDatabaseAccess } from "@whatsapp-mcp/db/connectivity";
+import {
+  checkDatabaseReadiness,
+  checkRestrictedDatabaseAccess,
+} from "@whatsapp-mcp/db/connectivity";
+import { RestoreReplayRequired } from "@whatsapp-mcp/db/readiness";
 import { makePgRecoveryVerifierRepository } from "@whatsapp-mcp/db/recovery-verifier";
 import { createNeonRecoveryClient } from "@whatsapp-mcp/neon-recovery/client";
 import { queryAvailability } from "./availability";
@@ -55,6 +59,45 @@ const expectedReplayDigest = async (input: RecoveryVerificationRequest) =>
     ),
   );
 
+const verifyIsolatedApiKeyHmacRotation = async () => {
+  const credential = crypto.getRandomValues(new Uint8Array(64));
+  const predecessor = await crypto.subtle.importKey(
+    "raw",
+    crypto.getRandomValues(new Uint8Array(32)),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const replacement = await crypto.subtle.importKey(
+    "raw",
+    crypto.getRandomValues(new Uint8Array(32)),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign", "verify"],
+  );
+  const predecessorDigest = await crypto.subtle.sign(
+    "HMAC",
+    predecessor,
+    credential,
+  );
+  const replacementDigest = await crypto.subtle.sign(
+    "HMAC",
+    replacement,
+    credential,
+  );
+  const rotated = toHex(predecessorDigest) !== toHex(replacementDigest);
+  const predecessorRejected = !(await crypto.subtle.verify(
+    "HMAC",
+    replacement,
+    predecessorDigest,
+    credential,
+  ));
+  credential.fill(0);
+  if (!rotated || !predecessorRejected)
+    throw new Error("Isolated API Key HMAC rotation failed");
+  return { rotated: true, predecessorRejected: true } as const;
+};
+
 export const verifyRecovery = async (
   env: RecoveryVerifierEnvironment,
   candidate: unknown,
@@ -75,6 +118,7 @@ export const verifyRecovery = async (
   const firstUri = await client.getDirectRestoreUri(branch);
   await checkRestrictedDatabaseAccess(firstUri);
   let repository = makePgRecoveryVerifierRepository(firstUri);
+  let activeUri = firstUri;
   let database = await repository.verify(branch.id, new Date().toISOString());
 
   let endpointRotation = true;
@@ -91,10 +135,12 @@ export const verifyRecovery = async (
       throw new Error("Predecessor verifier endpoint remained usable");
     await checkRestrictedDatabaseAccess(replacementUri);
     repository = makePgRecoveryVerifierRepository(replacementUri);
+    activeUri = replacementUri;
     database = await repository.verify(branch.id, new Date().toISOString());
   }
 
   const availability = await queryAvailability(env, input);
+  const hmac = await verifyIsolatedApiKeyHmacRotation();
   const achievedRpoSeconds = Math.abs(
     (Date.parse(input.source_point_at) -
       Date.parse(availability.recoveredSourcePointAt)) /
@@ -128,8 +174,8 @@ export const verifyRecovery = async (
       database.deletionOk && input.replay.deleted_identifiers_remaining === 0,
     api_keys_revoked: database.apiKeyOk,
     api_key_digests_cleared: database.apiKeyOk,
-    api_key_hmac_rotated: availability.apiKeyHmacRotated,
-    predecessor_hmac_rejected: availability.predecessorHmacRejected,
+    api_key_hmac_rotated: hmac.rotated,
+    predecessor_hmac_rejected: hmac.predecessorRejected,
   } as const;
 
   let checks: Record<string, boolean> = monthlyChecks;
@@ -153,7 +199,13 @@ export const verifyRecovery = async (
       { ...execution, receipt: receipt.receipt },
       decodeQuarterlyRecoveryChecks,
     );
-    const bypassDenied = !(await repository.servingReady(branch.id));
+    let bypassDenied = false;
+    try {
+      await checkDatabaseReadiness(activeUri, branch.id);
+    } catch (error) {
+      if (error instanceof RestoreReplayRequired) bypassDenied = true;
+      else throw error;
+    }
     if (!bypassDenied) throw new Error("Deletion gate bypass was not denied");
     checks = {
       ...monthlyChecks,

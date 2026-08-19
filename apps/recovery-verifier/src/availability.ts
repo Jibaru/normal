@@ -3,9 +3,7 @@ import { required, safeHttpsUrl } from "./config";
 import type { RecoveryVerifierEnvironment } from "./environment";
 
 export interface AvailabilityEvidence {
-  readonly apiKeyHmacRotated: true;
   readonly firstPartyPercent: number;
-  readonly predecessorHmacRejected: true;
   readonly recoveredSourcePointAt: string;
   readonly sampledKeysUsable: true;
   readonly wasenderPercent: number;
@@ -64,7 +62,7 @@ export const queryAvailability = async (
     typeof candidate !== "object" ||
     candidate === null ||
     Array.isArray(candidate) ||
-    Object.keys(candidate).length !== 17 ||
+    Object.keys(candidate).length !== 15 ||
     candidate.version !== 1 ||
     candidate.window !== "30d" ||
     candidate.as_of !== input.started_at ||
@@ -92,16 +90,10 @@ export const queryAvailability = async (
     completed - started !== 30 * 86_400_000
   )
     throw new Error("Observability query returned the wrong window");
-  if (
-    candidate.sampled_keys_usable !== true ||
-    candidate.api_key_hmac_rotated !== true ||
-    candidate.predecessor_hmac_rejected !== true
-  )
+  if (candidate.sampled_keys_usable !== true)
     throw new Error("Observability query returned invalid recovery evidence");
   return {
-    apiKeyHmacRotated: true,
     firstPartyPercent: candidate.first_party_percent,
-    predecessorHmacRejected: true,
     recoveredSourcePointAt: candidate.recovered_source_point_at,
     sampledKeysUsable: true,
     wasenderPercent: candidate.wasender_percent,
