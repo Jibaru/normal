@@ -329,6 +329,42 @@ describe("Neon recovery control-plane client", () => {
     expect(requests[3]).toContain("pooled=false");
   });
 
+  test("uses the migration owner only for the guarded recovery branch", async () => {
+    const requests: string[] = [];
+    const responses = [
+      json({ branch: branch(), annotation: annotation() }),
+      json({
+        role: {
+          branch_id: branchId,
+          name: "whatsapp_migration_owner",
+          password: "migration-secret",
+          created_at: time,
+          updated_at: time,
+        },
+        operations: [],
+      }),
+      json({ branch: branch(), annotation: annotation() }),
+      json({
+        uri: "postgresql://whatsapp_migration_owner:migration-secret@ep-recovery.us-east-1.aws.neon.tech/normal?sslmode=require",
+      }),
+    ];
+    const client = createNeonRecoveryClient(config(), {
+      fetch: async (input) => {
+        requests.push(String(input));
+        return responses.shift() ?? json({}, 500);
+      },
+    });
+
+    await client.resetMigrationOwnerPassword(expected);
+    await expect(client.getDirectMigrationUri(expected)).resolves.toContain(
+      "postgresql://whatsapp_migration_owner:",
+    );
+    expect(requests[1]).toEndWith(
+      `/branches/${branchId}/roles/whatsapp_migration_owner/reset_password`,
+    );
+    expect(requests[3]).toContain("role_name=whatsapp_migration_owner");
+  });
+
   test("uses the explicitly configured recovery verifier role", async () => {
     const requests: string[] = [];
     const client = createNeonRecoveryClient(

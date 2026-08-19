@@ -2,6 +2,7 @@ import { z } from "zod";
 
 const API_ORIGIN = "https://console.neon.tech/api/v2";
 const RESTORE_ROLE = "whatsapp_restore_runtime";
+const MIGRATION_OWNER_ROLE = "whatsapp_migration_owner";
 const runtimeRoleSchema = z.enum([
   RESTORE_ROLE,
   "whatsapp_api_runtime",
@@ -735,13 +736,14 @@ export const createNeonRecoveryClient = (
     return expected;
   };
 
-  const resetRestoreRuntimePassword = async (
+  const resetRolePassword = async (
     branch: RecoveryBranch,
+    role: z.infer<typeof runtimeRoleSchema> | typeof MIGRATION_OWNER_ROLE,
   ): Promise<void> => {
     const verified = await getGuardedBranch(branch);
     const resetPassword = () =>
       request(
-        `/projects/${config.projectId}/branches/${verified.id}/roles/${config.runtimeRole}/reset_password`,
+        `/projects/${config.projectId}/branches/${verified.id}/roles/${role}/reset_password`,
         { method: "POST" },
         roleOperationsResponseSchema,
         [],
@@ -756,22 +758,20 @@ export const createNeonRecoveryClient = (
       result = await resetPassword();
     }
     const value = result.value as z.infer<typeof roleOperationsResponseSchema>;
-    if (
-      value.role.branch_id !== verified.id ||
-      value.role.name !== config.runtimeRole
-    )
+    if (value.role.branch_id !== verified.id || value.role.name !== role)
       throw new NeonRecoveryError("Neon reset a different role credential");
     await waitForOperations(value.operations);
   };
 
-  const getDirectRestoreUri = async (
+  const getDirectUri = async (
     branch: RecoveryBranch,
+    role: z.infer<typeof runtimeRoleSchema> | typeof MIGRATION_OWNER_ROLE,
   ): Promise<string> => {
     const verified = await getGuardedBranch(branch);
     const query = new URLSearchParams({
       branch_id: verified.id,
       database_name: config.databaseName,
-      role_name: config.runtimeRole,
+      role_name: role,
       pooled: "false",
     });
     const result = await request(
@@ -792,7 +792,7 @@ export const createNeonRecoveryClient = (
     }
     if (
       !["postgres:", "postgresql:"].includes(parsed.protocol) ||
-      decodeURIComponent(parsed.username) !== config.runtimeRole ||
+      decodeURIComponent(parsed.username) !== role ||
       parsed.password.length === 0 ||
       decodeURIComponent(parsed.pathname.slice(1)) !== config.databaseName ||
       !parsed.hostname.endsWith(".neon.tech") ||
@@ -804,6 +804,18 @@ export const createNeonRecoveryClient = (
       );
     return uri;
   };
+
+  const resetRestoreRuntimePassword = (branch: RecoveryBranch) =>
+    resetRolePassword(branch, config.runtimeRole);
+
+  const getDirectRestoreUri = (branch: RecoveryBranch) =>
+    getDirectUri(branch, config.runtimeRole);
+
+  const resetMigrationOwnerPassword = (branch: RecoveryBranch) =>
+    resetRolePassword(branch, MIGRATION_OWNER_ROLE);
+
+  const getDirectMigrationUri = (branch: RecoveryBranch) =>
+    getDirectUri(branch, MIGRATION_OWNER_ROLE);
 
   const rotateGuardedEndpoint = async (branch: RecoveryBranch) => {
     const verified = await getGuardedBranch(branch);
@@ -1000,7 +1012,9 @@ export const createNeonRecoveryClient = (
   return {
     findGuardedPitrBranch,
     reconcilePitrBranch,
+    resetMigrationOwnerPassword,
     resetRestoreRuntimePassword,
+    getDirectMigrationUri,
     getDirectRestoreUri,
     rotateGuardedEndpoint,
     deleteGuardedBranch,
