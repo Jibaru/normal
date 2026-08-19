@@ -2996,13 +2996,16 @@ describe("REST Stored Media", () => {
       ).toBe(true);
     }
 
-    const transient = makeMediaHarness({
-      containerFailure: "storage-failed",
-    });
-    expect((await transient.handler(request(mediaPath))).status).toBe(503);
-    expect(transient.observations).toContain("fail-media-read:transient");
-    expect(transient.observations).not.toContain(
-      "fail-media-read:processing_failed",
-    );
+    for (const containerFailure of [
+      "dependency-failed" as const,
+      "storage-failed" as const,
+    ]) {
+      const transient = makeMediaHarness({ containerFailure });
+      expect((await transient.handler(request(mediaPath))).status).toBe(503);
+      expect(transient.observations).toContain("fail-media-read:transient");
+      expect(transient.observations).not.toContain(
+        "fail-media-read:processing_failed",
+      );
+    }
   });
 });

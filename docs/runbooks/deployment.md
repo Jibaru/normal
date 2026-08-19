@@ -603,13 +603,15 @@ object, wrong key version, and unsupported container versions. It also verifies
 that R2 HTTP and custom metadata remain empty.
 
 Alert on repeated `stored-media.container.completed` events with
-`authentication-failed` or `storage-failed`. Those events contain only the
-operation, normalized outcome, format version, authenticated chunk count, and
-processed plaintext byte count; do not enrich them with object keys, tenant or
-connection identifiers, media metadata, key material, plaintext, ciphertext,
-or nonces. Treat an authentication failure or missing primary R2 object as
-unavailable Stored Media, never return a verified prefix, and transition the
-authoritative Stored Media record to `failed` through its owning workflow.
+`authentication-failed`, `dependency-failed`, or `storage-failed`. Those events
+contain only the operation, normalized outcome, format version, authenticated
+chunk count, and processed plaintext byte count; do not enrich them with object
+keys, tenant or connection identifiers, media metadata, key material,
+plaintext, ciphertext, or nonces. Treat an authentication failure or missing
+primary R2 object as unavailable Stored Media, never return a verified prefix,
+and transition the authoritative Stored Media record to `failed` through its
+owning workflow. Treat a dependency failure as transient and preserve the
+ready record and R2 object.
 
 ## Deploy
 

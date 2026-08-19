@@ -1958,11 +1958,13 @@ describe("MCP tool repository", () => {
     );
     const auditLogId = "50000000-0000-4000-8000-000000000046";
     const concurrentAuditLogId = "50000000-0000-4000-8000-000000000049";
+    const retentionAuditLogId = "50000000-0000-4000-8000-000000000048";
+    const deletedAuditLogId = "50000000-0000-4000-8000-000000000045";
     const material = await repository.reserveStoredMediaRead({
       ...authorization,
       auditLogId,
       connectionPublicId: connectionA,
-      dailyByteLimit: 30,
+      dailyByteLimit: 100,
       mediaPublicId: "med_123456789012345678946",
       messagePublicId: "msg_123456789012345678946",
       observedAt,
@@ -1977,7 +1979,7 @@ describe("MCP tool repository", () => {
         ...authorization,
         auditLogId: concurrentAuditLogId,
         connectionPublicId: connectionA,
-        dailyByteLimit: 30,
+        dailyByteLimit: 100,
         mediaPublicId: "med_123456789012345678946",
         messagePublicId: "msg_123456789012345678946",
         observedAt,
@@ -1985,6 +1987,21 @@ describe("MCP tool repository", () => {
     ).resolves.toMatchObject({
       mediaId: "72000000-0000-4000-8000-000000000046",
     });
+    for (const concurrentId of [retentionAuditLogId, deletedAuditLogId]) {
+      await expect(
+        repository.reserveStoredMediaRead({
+          ...authorization,
+          auditLogId: concurrentId,
+          connectionPublicId: connectionA,
+          dailyByteLimit: 100,
+          mediaPublicId: "med_123456789012345678946",
+          messagePublicId: "msg_123456789012345678946",
+          observedAt,
+        }),
+      ).resolves.toMatchObject({
+        mediaId: "72000000-0000-4000-8000-000000000046",
+      });
+    }
     const log = await database.query(
       `SELECT outcome,media_bytes_reserved FROM public.tool_call_logs WHERE id=$1`,
       [auditLogId],
@@ -1992,6 +2009,40 @@ describe("MCP tool repository", () => {
     expect(log.rows).toEqual([
       { media_bytes_reserved: 15, outcome: "started" },
     ]);
+    await database.query(
+      `UPDATE public.stored_media SET state = 'purging'
+       WHERE id = '72000000-0000-4000-8000-000000000046'`,
+    );
+    await repository.failStoredMediaRead({
+      auditLogId: retentionAuditLogId,
+      completedAt: new Date(observedAt.getTime() + 999),
+      errorCode: "resource_unavailable",
+      mediaId: "72000000-0000-4000-8000-000000000046",
+      mediaFailureCode: "processing_failed",
+    });
+    const retentionResult = await database.query(
+      `SELECT logs.outcome, logs.media_bytes_reserved, media.state,
+              accounts.stored_media_used_bytes
+       FROM public.tool_call_logs logs
+       JOIN public.personal_accounts accounts
+         ON accounts.id = logs.personal_account_id
+       JOIN public.stored_media media
+         ON media.id = '72000000-0000-4000-8000-000000000046'
+       WHERE logs.id = $1`,
+      [retentionAuditLogId],
+    );
+    expect(retentionResult.rows).toEqual([
+      {
+        media_bytes_reserved: 0,
+        outcome: "execution_error",
+        state: "purging",
+        stored_media_used_bytes: 15,
+      },
+    ]);
+    await database.query(
+      `UPDATE public.stored_media SET state = 'ready'
+       WHERE id = '72000000-0000-4000-8000-000000000046'`,
+    );
     await repository.failStoredMediaRead({
       auditLogId,
       completedAt: new Date(observedAt.getTime() + 1_000),
@@ -2056,6 +2107,27 @@ describe("MCP tool repository", () => {
         outcome: "execution_error",
         result_count: 0,
       },
+    ]);
+    await database.query(
+      `DELETE FROM public.stored_media
+       WHERE id = '72000000-0000-4000-8000-000000000046'`,
+    );
+    await expect(
+      repository.failStoredMediaRead({
+        auditLogId: deletedAuditLogId,
+        completedAt: new Date(observedAt.getTime() + 1_002),
+        errorCode: "resource_unavailable",
+        mediaId: "72000000-0000-4000-8000-000000000046",
+        mediaFailureCode: "processing_failed",
+      }),
+    ).resolves.toBeUndefined();
+    const deletedResult = await database.query(
+      `SELECT outcome, media_bytes_reserved
+       FROM public.tool_call_logs WHERE id = $1`,
+      [deletedAuditLogId],
+    );
+    expect(deletedResult.rows).toEqual([
+      { media_bytes_reserved: 0, outcome: "execution_error" },
     ]);
     await expect(
       repository.reserveStoredMediaRead({

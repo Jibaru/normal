@@ -2497,6 +2497,7 @@ describe("Stored Media MCP resource boundary", () => {
     }
 
     for (const overrides of [
+      { mediaContainerFailure: "dependency-failed" as const },
       { mediaContainerFailure: "storage-failed" as const },
       { mediaDecryptFails: true },
     ]) {

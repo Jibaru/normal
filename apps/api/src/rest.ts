@@ -3116,6 +3116,7 @@ const getStoredMedia = (
       if (stream._tag === "Left") {
         if (
           stream.left.reason === "cancelled" ||
+          stream.left.reason === "dependency-failed" ||
           stream.left.reason === "storage-failed"
         ) {
           return yield* failReservedMedia(null);

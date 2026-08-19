@@ -1923,7 +1923,6 @@ export const makeMcpToolRepository = (
         );
         const selectedMedia = await db
           .select({
-            failureCode: storedMediaInApp.failureCode,
             objectKey: storedMediaInApp.objectKey,
             plaintextSizeBytes: storedMediaInApp.plaintextSizeBytes,
             state: storedMediaInApp.state,
@@ -1937,8 +1936,11 @@ export const makeMcpToolRepository = (
           )
           .for("update");
         const failed = selectedMedia[0];
-        if (failed === undefined) throw new Error("Stored Media unavailable");
-        if (input.mediaFailureCode !== null && failed.state === "ready") {
+        if (
+          input.mediaFailureCode !== null &&
+          failed !== undefined &&
+          failed.state === "ready"
+        ) {
           if (
             typeof failed.objectKey !== "string" ||
             typeof failed.plaintextSizeBytes !== "number"
@@ -1995,13 +1997,6 @@ export const makeMcpToolRepository = (
             .returning({ id: personalAccountsInApp.id });
           if (released.length !== 1)
             throw new Error("Stored Media quota release failed");
-        } else if (
-          input.mediaFailureCode !== null &&
-          (failed.state !== "failed" ||
-            (failed.failureCode !== "object_missing" &&
-              failed.failureCode !== "processing_failed"))
-        ) {
-          throw new Error("Stored Media unavailable");
         }
         const updated = await db
           .update(activityLogsInApp)

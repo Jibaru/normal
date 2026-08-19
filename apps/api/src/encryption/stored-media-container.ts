@@ -30,6 +30,7 @@ export type StoredMediaContainerOperation = "read" | "write";
 export type StoredMediaContainerFailure =
   | "authentication-failed"
   | "cancelled"
+  | "dependency-failed"
   | "invalid-input"
   | "not-found"
   | "storage-failed"
@@ -628,16 +629,25 @@ const makeDecryptionStream = (options: {
     if (parsed.keyVersion !== options.connectionKey.keyVersion) {
       throw error("read", "authentication-failed");
     }
-    const mediaKey = await Effect.runPromise(
-      options.encryption
-        .decrypt({
+    const decrypted = await Effect.runPromise(
+      Effect.either(
+        options.encryption.decrypt({
           accountKey: options.accountKey,
           ciphertext: parsed.wrappedKey,
           connectionKey: options.connectionKey,
           context: mediaKeyContext(options.context),
-        })
-        .pipe(Effect.mapError(() => error("read", "authentication-failed"))),
+        }),
+      ),
     );
+    if (decrypted._tag === "Left") {
+      throw error(
+        "read",
+        decrypted.left.stage === "key-service"
+          ? "dependency-failed"
+          : "authentication-failed",
+      );
+    }
+    const mediaKey = decrypted.right;
     try {
       cryptoKey = await importMediaKey("read", mediaKey);
       header = parsed;

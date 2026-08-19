@@ -3387,6 +3387,7 @@ export const createMcpRequestHandler =
                       terminalMediaFailure = "object_missing";
                     } else if (
                       read.left.reason !== "cancelled" &&
+                      read.left.reason !== "dependency-failed" &&
                       read.left.reason !== "storage-failed"
                     ) {
                       terminalMediaFailure = "processing_failed";
