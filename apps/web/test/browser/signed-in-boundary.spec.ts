@@ -16,7 +16,8 @@ const completeFirstConnectionProfile = async (
   const welcome = page.getByRole("heading", {
     name: "Connect WhatsApp to Normal",
   });
-  if (await welcome.isVisible()) {
+  const startedFromWelcome = await welcome.isVisible();
+  if (startedFromWelcome) {
     await onboarding.getByRole("button", { name: "Start onboarding" }).click();
     await expect(
       page.getByRole("heading", {
@@ -42,9 +43,12 @@ const completeFirstConnectionProfile = async (
   const securityHeading = page.getByRole("heading", {
     name: "Review security before you scan",
   });
+  if (startedFromWelcome) {
+    await expect(securityHeading).toBeVisible();
+    await expect(securityHeading).toBeFocused();
+  }
   const needsSecurityReview = await securityHeading.isVisible();
   if (needsSecurityReview) {
-    await expect(securityHeading).toBeFocused();
     await expect(onboarding).toContainText(
       "send permission does not imply message read permission",
     );

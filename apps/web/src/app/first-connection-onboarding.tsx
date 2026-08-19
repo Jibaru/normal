@@ -7,6 +7,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -1158,7 +1159,7 @@ export function FirstConnectionOnboarding({
     }
   }, [stage]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (previousStage.current === stage) return;
     previousStage.current = stage;
     headingRef.current?.focus();
@@ -1619,6 +1620,15 @@ export function FirstConnectionOnboarding({
                   <a
                     className={buttonVariants({ size: "lg" })}
                     href={successModel.nextActionHref}
+                    onClick={
+                      intendedMcpClient === "chatgpt"
+                        ? () =>
+                            captureProductAnalyticsEvent({
+                              event: "feature_used",
+                              feature: "onboarding_chatgpt_opened",
+                            })
+                        : undefined
+                    }
                     rel="noreferrer"
                     target="_blank"
                   >
