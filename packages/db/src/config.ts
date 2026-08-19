@@ -3,6 +3,7 @@ import { Config, Redacted } from "effect";
 export {
   restrictedApiRuntimeConnectionString,
   restrictedDeletionRuntimeConnectionString,
+  restrictedRecoveryVerifierConnectionString,
   restrictedRestoreRuntimeConnectionString,
 } from "./restricted-runtime-config";
 

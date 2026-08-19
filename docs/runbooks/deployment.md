@@ -44,7 +44,7 @@ production roles or read production CI secrets.
 
 Use one change record and one reviewed commit for the entire release. The
 ordered path is **infrastructure → environment population → migration →
-provider-control → deletion coordinator → restore coordinator → recovery control
+provider-control → deletion coordinator → restore coordinator → operations control → recovery game day → recovery verifier → recovery control
 → API → web → docs → smoke check**. The deployer may stop between
 steps, but must not reorder them or serve traffic from a partially compatible
 set.
@@ -55,7 +55,7 @@ set.
    credentials or tenant data.
 2. [Bootstrap remote state](#bootstrap-remote-state), run [Verify](#verify),
    then create and inspect the saved infrastructure plans.
-3. Apply Neon, Hyperdrive, KMS, R2, Queue, KV, Worker-shell, route, and Vercel
+3. Apply Neon, Hyperdrive, KMS, R2, Queue, KV, Worker shell, route, and Vercel
    declarations. Do not populate a secret into a plan or state file.
 4. Populate every value in [deployment configuration](../configuration.md)
    through its named secret store and validate secret names, bindings, and
@@ -65,7 +65,7 @@ set.
    migration-owner connection. For an audited operator session, run those same
    commands locally and then remove the connection from the shell.
 6. Deploy in dependency order: **provider-control → deletion coordinator → restore
-   coordinator → recovery control → API → web → docs**. Keep public
+   coordinator → operations control → recovery game day → recovery verifier → recovery control → API → web → docs**. Keep public
    traffic closed if migration readiness or any private service binding fails.
 7. Run the non-interactive `bun run deploy:smoke` boundary and retain only its
    normalized results, reviewed commit, deployment versions, plan digest, and
@@ -172,6 +172,9 @@ tofu -chdir=infra/compute plan \
   -target=cloudflare_worker.provider_control \
   -target=cloudflare_worker.deletion_coordinator \
   -target=cloudflare_worker.restore_coordinator \
+  -target=cloudflare_worker.operations_control \
+  -target=cloudflare_worker.recovery_game_day \
+  -target=cloudflare_worker.recovery_verifier \
   -target=cloudflare_worker.recovery_control \
   -target=cloudflare_worker.api \
   -var-file="$TFVARS_PATH" \
@@ -207,23 +210,81 @@ unset WASENDER_REFERENCE_SECRET WASENDER_API_CREDENTIAL
 ```
 
 The secret list must contain exactly the two names; it never returns their
-values. Delete the bootstrap plan after the Worker shell and bindings exist.
-For an existing environment where the list already contains both names, skip
-the bootstrap target and bulk upload.
+values. A new Cloudflare Worker namespace does not accept secret upload until
+it has a version. After the recovery Worker namespaces exist and all protected
+recovery values are populated in the `production` GitHub environment, dispatch
+`Deploy production` with operation `bootstrap_recovery_secrets` from the
+reviewed commit on `main`. The job uploads one fail-closed 503 version without
+deploying it, creates a second undeployed version with the exact allowlisted
+recovery secrets, and verifies names only. Inspect the job before proceeding.
+Delete the bootstrap plan after the Worker shells and bindings exist. For an
+existing environment where each secret list is already exact, the same job
+only refreshes the allowlisted values in an undeployed version.
 
 Populate recovery control only after the project-scoped Neon key, exact project
 and parent branch, independent control token, and separate evidence authority
 are available. Bulk upload exactly `NEON_RECOVERY_API_KEY`, `NEON_PROJECT_ID`,
-`NEON_PARENT_BRANCH_ID`, `RECOVERY_CONTROL_TOKEN`, `RECOVERY_EVIDENCE_URL`,
+`NEON_PARENT_BRANCH_ID`, `RECOVERY_CONTROL_TOKEN`,
 `RECOVERY_EVIDENCE_TOKEN`, `DELETION_MARKER_HMAC_SECRET`, and
 `RECIPIENT_TRANSITION_HMAC_SECRET` to the recovery-control Worker. It receives
 only the locked marker and transition R2 bindings, its serialization Durable
-Object, and its Workflow. Never add `MIGRATION_DATABASE_URL`, Stored Media,
+Object, its Workflow, and the private recovery-verifier service binding. Never add `MIGRATION_DATABASE_URL`, Stored Media,
 Webhook Ingress, API/Clerk/provider credentials, KMS, KV, Queue, Hyperdrive, or
 ordinary runtime authority. Set the protected `production-recovery`
 `RECOVERY_AUTOMATION_URL` to the `recovery_control_origin` output and its token
 to the same `RECOVERY_CONTROL_TOKEN`. Missing verifier/monitoring authority must
 leave drills failing closed.
+
+Populate recovery verifier with the same exact project/parent recovery identity,
+the shared evidence token, and read-only observability query credentials. It has
+no public route, database URL, R2, KV, Queue, KMS, provider, or serving API
+binding. Its guarded Neon client may reset only the verifier and API runtime
+logins on the exact disposable child: the verifier creates two synthetic
+Personal Accounts, proves real no-context and cross-account API-role RLS
+isolation, removes both probes, and never emits either identifier. During a
+quarterly drill it also creates one synthetic Stored Media row under the first
+probe, requires the production R2 reader to observe the deleted dedicated
+fixture, invokes the production API-role failure transition, and verifies the
+authoritative child row became `failed` with released quota before cleanup.
+Populate operations control with the zone scoped Analytics Read token, exact
+zone ID, API smoke credential, three independent operations tokens, verified
+pager destination, native Email Service binding, and dedicated pager receipt
+KV. Its public custom domain is authenticated and is not an application data
+plane. It receives no database, Neon control plane, R2, Queue, KMS, provider,
+tenant, or content authority.
+Populate recovery game day separately with short-lived credentials for
+the purpose-specific recovery KMS key, pager delivery and receipt credentials,
+and its dedicated receipt key. Its only storage authorities are dedicated
+recovery KV and R2 fixtures plus the recovery replay Queue. It never binds the
+production OAuth namespace. Missing pager receipt,
+monitoring coverage, Queue completion, or KMS context authority fails the drill.
+For a new environment, upload every required recovery-verifier and game-day
+secret to their newly created Worker shells before the full compute plan. The
+first managed Worker versions use `inherit` deliberately and must fail if these
+bindings do not already exist; never substitute secret values into OpenTofu.
+The private game-day Worker refreshes its dedicated retained OAuth recovery
+fixture daily at 02:11 UTC. A quarterly execution accepts only a fixture that
+predates the execution by at least one hour and is no more than 14 days old; it
+must never create its reconstruction source during the drill it is attesting.
+The fixture uses the production dynamic-client cache serializer, registry
+key/value shape, and 90-day expiry in an isolated namespace. Ephemeral
+authorization handoffs and tokens are intentionally not
+recovered; reconstructing them would reopen expired or consumed protocol state.
+Store the `recovery_game_day_role_arn` and `recovery_game_day_key_arn` AWS
+outputs as `AWS_RECOVERY_GAME_DAY_ROLE_ARN` and
+`KMS_RECOVERY_GAME_DAY_KEY_ARN` in both protected GitHub environments. Store
+the `recovery_kv_namespace_id` compute output as
+`CLOUDFLARE_RECOVERY_KV_ID` in production. Store the
+`operations_kv_namespace_id` compute output as
+`CLOUDFLARE_OPERATIONS_KV_ID` in production. The quarterly environment also
+needs `PAGER_WEBHOOK_TOKEN` and the narrow Cloudflare deployment token solely
+to rotate the private
+game-day Worker's four short-lived AWS secret bindings. The runner requests a
+fresh one-hour session directly from GitHub OIDC and atomically refreshes those
+bindings at most every twenty minutes until the drill reaches a terminal
+result. Any failed refresh stops the drill; the Worker never receives GitHub
+OIDC authority and no session value enters logs, arguments, outputs, or
+artifacts.
 
 In the same environment's Clerk dashboard, create the `whatsapp-api` custom JWT
 template with a 60-second lifetime and only an `aud` claim whose value is the
@@ -441,7 +502,8 @@ tofu -chdir=infra/aws plan \
   -var="deletion_coordinator_assumer_arn=arn:aws:iam::111122223333:role/replace-deletion-bootstrap" \
   -var="provider_control_assumer_arn=arn:aws:iam::111122223333:role/replace-provider-bootstrap" \
   -var="ordinary_operator_assumer_arn=arn:aws:iam::111122223333:role/replace-human-operator-bootstrap" \
-  -var="break_glass_assumer_arn=arn:aws:iam::111122223333:role/replace-incident-credential-broker"
+  -var="break_glass_assumer_arn=arn:aws:iam::111122223333:role/replace-incident-credential-broker" \
+  -var="github_oidc_provider_arn=arn:aws:iam::111122223333:oidc-provider/token.actions.githubusercontent.com"
 
 tofu -chdir=infra/aws apply kms.tfplan
 ```
@@ -558,17 +620,19 @@ object, wrong key version, and unsupported container versions. It also verifies
 that R2 HTTP and custom metadata remain empty.
 
 Alert on repeated `stored-media.container.completed` events with
-`authentication-failed` or `storage-failed`. Those events contain only the
-operation, normalized outcome, format version, authenticated chunk count, and
-processed plaintext byte count; do not enrich them with object keys, tenant or
-connection identifiers, media metadata, key material, plaintext, ciphertext,
-or nonces. Treat an authentication failure or missing primary R2 object as
-unavailable Stored Media, never return a verified prefix, and transition the
-authoritative Stored Media record to `failed` through its owning workflow.
+`authentication-failed`, `dependency-failed`, or `storage-failed`. Those events
+contain only the operation, normalized outcome, format version, authenticated
+chunk count, and processed plaintext byte count; do not enrich them with object
+keys, tenant or connection identifiers, media metadata, key material,
+plaintext, ciphertext, or nonces. Treat an authentication failure or missing
+primary R2 object as unavailable Stored Media, never return a verified prefix,
+and transition the authoritative Stored Media record to `failed` through its
+owning workflow. Treat a dependency failure as transient and preserve the
+ready record and R2 object.
 
 ## Deploy
 
-OpenTofu uploads both Worker bundles and orders provider-control before the API
+OpenTofu uploads all Worker bundles and orders private dependencies before the API
 through the service-binding dependency. It also creates the isolated Vercel web
 and static docs projects and their custom domains, but application deployment
 to Vercel remains an explicit side effect. The docs project publishes `dist`
@@ -684,9 +748,10 @@ bun run deploy:smoke
 The command first reads the current refresh credential and proves durable write
 authority by creating an equivalent secret version before contacting OAuth. It
 then exchanges the one-time credential, persists the descendant, and only then
-uses the ephemeral ten-minute access token for MCP smoke. Both workflows use
-the `production` concurrency group, so only one production deployment, launch
-gate, or credential rotation can operate at a time.
+uses the ephemeral ten-minute access token for MCP smoke. All production
+deployment, migration, recovery, launch, release, and credential-rotation
+workflows use the `production-operations` concurrency group, so only one
+production operation can run at a time.
 
 The command validates web and API health, the static docs origin serving the
 generated OpenAPI document with reviewed security headers and no Scalar CDN or
@@ -1282,7 +1347,8 @@ The monthly and quarterly schedules in
 boundary and retain its validated, metadata-only evidence. The monthly restore
 must use a random point from the preceding seven days and a non-serving branch.
 The quarterly game day covers endpoint rotation, OAuth KV reconstruction,
-immutable Queue replay, KMS/R2 access, permanent Stored Media loss, alert
+create-only receipt-bound Queue fixture replay, KMS/R2 access, production Stored
+Media missing-object fail-closed behavior, alert
 delivery, and deletion-gate bypass denial. Configure
 `RECOVERY_AUTOMATION_URL` and `RECOVERY_AUTOMATION_TOKEN` only in the isolated
 `production-recovery` GitHub environment; they are external rollout inputs, not

@@ -35,6 +35,7 @@ export interface RestoreRepository {
   readonly begin: (
     branchId: string,
     observedAt: string,
+    requireVerification: boolean,
   ) => Promise<ReadonlyArray<RestoreCandidate>>;
   readonly complete: (input: {
     readonly branchId: string;
@@ -89,14 +90,16 @@ const withClient = <Value>(
 export const makePgRestoreRepository = (
   connectionString: string,
 ): RestoreRepository => ({
-  begin: (branchId, observedAt) =>
+  begin: (branchId, observedAt, requireVerification) =>
     withClient(connectionString, async (client) => {
       const db = makeDatabase(client);
       const result = await db.execute<{
         deletion_kind: RestoreCandidate["deletionKind"];
         opaque_entity_id: string;
       }>(sql`
-        SELECT * FROM public.begin_restore_replay(${branchId}, ${observedAt})
+        SELECT * FROM public.begin_restore_replay(
+          ${branchId}, ${observedAt}, ${requireVerification}
+        )
       `);
       return result.map((row) => ({
         deletionKind: row.deletion_kind,

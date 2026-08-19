@@ -19,6 +19,8 @@ This is a Bun and Turbo monorepo with seven deployable apps:
 | `apps/deletion-coordinator` | Continues deletion after access and key use have stopped | Cloudflare Workers |
 | `apps/restore-coordinator` | Reconciles restored data with deletion markers and recovery rules | Cloudflare Workers |
 | `apps/recovery-control` | Runs authenticated, serialized, non-serving production recovery drills | Cloudflare Workers and Workflows |
+| `apps/recovery-verifier` | Independently verifies guarded recovery branches and aggregate objectives | Cloudflare Workers |
+| `apps/recovery-game-day` | Exercises disposable quarterly KV, Queue, R2, KMS, and pager capabilities | Cloudflare Workers |
 
 Shared code is split by responsibility:
 

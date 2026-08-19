@@ -72,6 +72,16 @@
         "typescript": "^5",
       },
     },
+    "apps/operations-control": {
+      "name": "@whatsapp-mcp/operations-control",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@cloudflare/vitest-pool-workers": "0.19.1",
+        "typescript": "^5",
+        "vitest": "4.1.10",
+        "wrangler": "4.116.0",
+      },
+    },
     "apps/provider-control": {
       "name": "@whatsapp-mcp/provider-control",
       "version": "0.1.0",
@@ -95,11 +105,45 @@
       "version": "0.1.0",
       "dependencies": {
         "@whatsapp-mcp/api": "workspace:*",
+        "@whatsapp-mcp/contracts": "workspace:*",
         "@whatsapp-mcp/db": "workspace:*",
         "@whatsapp-mcp/neon-recovery": "workspace:*",
         "@whatsapp-mcp/restore-coordinator": "workspace:*",
         "effect": "3.22.1",
         "zod": "4.4.3",
+      },
+      "devDependencies": {
+        "@cloudflare/vitest-pool-workers": "0.19.1",
+        "typescript": "^5",
+        "vitest": "4.1.10",
+        "wrangler": "4.116.0",
+      },
+    },
+    "apps/recovery-game-day": {
+      "name": "@whatsapp-mcp/recovery-game-day",
+      "version": "0.1.0",
+      "dependencies": {
+        "@aws-sdk/client-kms": "3.1099.0",
+        "@whatsapp-mcp/api": "workspace:*",
+        "@whatsapp-mcp/contracts": "workspace:*",
+        "effect": "3.22.1",
+      },
+      "devDependencies": {
+        "@cloudflare/vitest-pool-workers": "0.19.1",
+        "@cloudflare/workers-types": "5.20260730.1",
+        "typescript": "^5",
+        "vitest": "4.1.10",
+        "wrangler": "4.116.0",
+      },
+    },
+    "apps/recovery-verifier": {
+      "name": "@whatsapp-mcp/recovery-verifier",
+      "version": "0.1.0",
+      "dependencies": {
+        "@whatsapp-mcp/contracts": "workspace:*",
+        "@whatsapp-mcp/db": "workspace:*",
+        "@whatsapp-mcp/domain": "workspace:*",
+        "@whatsapp-mcp/neon-recovery": "workspace:*",
       },
       "devDependencies": {
         "@cloudflare/vitest-pool-workers": "0.19.1",
@@ -991,9 +1035,15 @@
 
     "@whatsapp-mcp/neon-recovery": ["@whatsapp-mcp/neon-recovery@workspace:packages/neon-recovery"],
 
+    "@whatsapp-mcp/operations-control": ["@whatsapp-mcp/operations-control@workspace:apps/operations-control"],
+
     "@whatsapp-mcp/provider-control": ["@whatsapp-mcp/provider-control@workspace:apps/provider-control"],
 
     "@whatsapp-mcp/recovery-control": ["@whatsapp-mcp/recovery-control@workspace:apps/recovery-control"],
+
+    "@whatsapp-mcp/recovery-game-day": ["@whatsapp-mcp/recovery-game-day@workspace:apps/recovery-game-day"],
+
+    "@whatsapp-mcp/recovery-verifier": ["@whatsapp-mcp/recovery-verifier@workspace:apps/recovery-verifier"],
 
     "@whatsapp-mcp/restore-coordinator": ["@whatsapp-mcp/restore-coordinator@workspace:apps/restore-coordinator"],
 

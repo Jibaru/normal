@@ -251,6 +251,8 @@ export interface RestPersistenceService {
     readonly auditLogId: string;
     readonly completedAt: Date;
     readonly errorCode: string;
+    readonly mediaId: string;
+    readonly mediaFailureCode: "object_missing" | "processing_failed" | null;
   }) => Effect.Effect<void, RestPersistenceError>;
   readonly reserveStoredMediaRead: (input: {
     readonly apiKeyGrantId: string;
@@ -3031,6 +3033,29 @@ const getStoredMedia = (
       }
 
       const material = reserved.right.material;
+      const failReservedMedia = (
+        mediaFailureCode: "object_missing" | "processing_failed" | null,
+      ) =>
+        Effect.gen(function* () {
+          const failed = yield* persistence
+            .failStoredMediaRead({
+              auditLogId,
+              completedAt: yield* clock.now,
+              errorCode: "resource_unavailable",
+              mediaFailureCode,
+              mediaId: material.mediaId,
+            })
+            .pipe(Effect.either);
+          yield* emitCompletion(
+            READ_STORED_MEDIA,
+            failed._tag === "Left" ? "audit_unavailable" : "unavailable",
+          );
+          return failed._tag === "Left"
+            ? problemResponse("unavailable", 503)
+            : mediaFailureCode === null
+              ? problemResponse("unavailable", 503)
+              : problemResponse("not_found", 404);
+        });
       const encryption = yield* EnvelopeEncryptionService;
       const container = yield* StoredMediaContainerService;
       const metadataBytes = yield* encryption
@@ -3048,20 +3073,7 @@ const getStoredMedia = (
         })
         .pipe(Effect.either);
       if (metadataBytes._tag === "Left") {
-        const failed = yield* persistence
-          .failStoredMediaRead({
-            auditLogId,
-            completedAt: yield* clock.now,
-            errorCode: "resource_unavailable",
-          })
-          .pipe(Effect.either);
-        yield* emitCompletion(
-          READ_STORED_MEDIA,
-          failed._tag === "Left" ? "audit_unavailable" : "unavailable",
-        );
-        return failed._tag === "Left"
-          ? problemResponse("unavailable", 503)
-          : problemResponse("not_found", 404);
+        return yield* failReservedMedia(null);
       }
 
       let metadata: { fileName: string | null; mimeType: string };
@@ -3085,20 +3097,7 @@ const getStoredMedia = (
         metadata = decoded as typeof metadata;
       } catch {
         metadataBytes.right.fill(0);
-        const failed = yield* persistence
-          .failStoredMediaRead({
-            auditLogId,
-            completedAt: yield* clock.now,
-            errorCode: "resource_unavailable",
-          })
-          .pipe(Effect.either);
-        yield* emitCompletion(
-          READ_STORED_MEDIA,
-          failed._tag === "Left" ? "audit_unavailable" : "unavailable",
-        );
-        return failed._tag === "Left"
-          ? problemResponse("unavailable", 503)
-          : problemResponse("not_found", 404);
+        return yield* failReservedMedia("processing_failed");
       }
       metadataBytes.right.fill(0);
 
@@ -3115,20 +3114,18 @@ const getStoredMedia = (
         })
         .pipe(Effect.either);
       if (stream._tag === "Left") {
-        const failed = yield* persistence
-          .failStoredMediaRead({
-            auditLogId,
-            completedAt: yield* clock.now,
-            errorCode: "resource_unavailable",
-          })
-          .pipe(Effect.either);
-        yield* emitCompletion(
-          READ_STORED_MEDIA,
-          failed._tag === "Left" ? "audit_unavailable" : "unavailable",
+        if (
+          stream.left.reason === "cancelled" ||
+          stream.left.reason === "dependency-failed" ||
+          stream.left.reason === "storage-failed"
+        ) {
+          return yield* failReservedMedia(null);
+        }
+        return yield* failReservedMedia(
+          stream.left.reason === "not-found"
+            ? "object_missing"
+            : "processing_failed",
         );
-        return failed._tag === "Left"
-          ? problemResponse("unavailable", 503)
-          : problemResponse("not_found", 404);
       }
 
       const bytes = yield* Effect.tryPromise({
@@ -3136,20 +3133,7 @@ const getStoredMedia = (
         catch: () => new RestPersistenceError(),
       }).pipe(Effect.either);
       if (bytes._tag === "Left") {
-        const failed = yield* persistence
-          .failStoredMediaRead({
-            auditLogId,
-            completedAt: yield* clock.now,
-            errorCode: "resource_unavailable",
-          })
-          .pipe(Effect.either);
-        yield* emitCompletion(
-          READ_STORED_MEDIA,
-          failed._tag === "Left" ? "audit_unavailable" : "unavailable",
-        );
-        return failed._tag === "Left"
-          ? problemResponse("unavailable", 503)
-          : problemResponse("not_found", 404);
+        return yield* failReservedMedia(null);
       }
 
       const filename =

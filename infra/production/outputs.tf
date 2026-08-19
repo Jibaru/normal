@@ -20,6 +20,12 @@ output "restore_database_url" {
   sensitive   = true
 }
 
+output "recovery_verifier_database_url" {
+  description = "Direct TLS URL for the metadata-only recovery verifier role."
+  value       = "postgresql://${postgresql_role.recovery_verifier.name}:${urlencode(random_password.database_roles[local.recovery_verifier_role].result)}@${neon_project.private_beta.database_host}/${local.database_name}?sslmode=require"
+  sensitive   = true
+}
+
 output "migration_database_url" {
   description = "Direct owner URL used only by the serialized migration command."
   value       = neon_project.private_beta.connection_uri

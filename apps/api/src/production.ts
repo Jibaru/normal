@@ -37,6 +37,7 @@ import {
   type PersonalAccountRepository,
 } from "@whatsapp-mcp/db/personal-account";
 import { makePgRecipientExclusionRepository } from "@whatsapp-mcp/db/recipient-exclusion";
+import { recordRecoverySourcePoint } from "@whatsapp-mcp/db/recovery-source-point";
 import { withPgRequestConnectionScope } from "@whatsapp-mcp/db/request-connection";
 import {
   type AtomicSendRepository,
@@ -3392,6 +3393,9 @@ export const createProductionScheduledHandler =
       readonly expireApiKeyCredentials?: (limit: number) => Promise<number>;
       readonly purgeExpiredApiKeyMetadata?: (limit: number) => Promise<number>;
       readonly purgePersonalAccounts?: (observedAt: string) => Promise<void>;
+      readonly recordRecoverySourcePoint?: (
+        connectionString: string,
+      ) => Promise<string>;
       readonly now?: () => string;
       readonly retainWebhookSources?: (observedAt: string) => Promise<void>;
       readonly runMessageSearchBackfill?: (observedAt: string) => Promise<void>;
@@ -3727,10 +3731,16 @@ export const createProductionScheduledHandler =
     ) {
       throw new Error("Connection Setup provisioning recovery unavailable");
     }
+    const observedAt = new Date(controller.scheduledTime).toISOString();
+    await (
+      dependencies.recordRecoverySourcePoint ??
+      (dependencies.makeRepository === undefined
+        ? recordRecoverySourcePoint
+        : async () => observedAt)
+    )(connectionString);
     const repository = (
       dependencies.makeRepository ?? makePgConnectionSetupRepository
     )(connectionString);
-    const observedAt = new Date(controller.scheduledTime).toISOString();
     const expiredSendCount = await (
       dependencies.makeSendRepository ??
       makePgAtomicSendRepositoryFromConnectionString

@@ -122,6 +122,8 @@ export interface McpToolPersistenceService {
     readonly auditLogId: string;
     readonly completedAt: Date;
     readonly errorCode: string;
+    readonly mediaId: string;
+    readonly mediaFailureCode: "object_missing" | "processing_failed" | null;
   }) => Effect.Effect<void, McpToolPersistenceError>;
   readonly reserveStoredMediaRead: (
     input: McpAccessGrant & {
@@ -3301,6 +3303,11 @@ export const createMcpRequestHandler =
             const parsed = Option.getOrUndefined(parseStoredMediaUri(uri.href));
             if (parsed === undefined) return notFound();
             let reservedAuditLogId: string | null = null;
+            let reservedMediaId: string | null = null;
+            let terminalMediaFailure:
+              | "object_missing"
+              | "processing_failed"
+              | null = null;
             try {
               const result = await Effect.runPromise(
                 Effect.gen(function* () {
@@ -3324,6 +3331,7 @@ export const createMcpRequestHandler =
                   });
                   if (material === null) return null;
                   reservedAuditLogId = auditLogId;
+                  reservedMediaId = material.mediaId;
                   const metadataBytes = yield* encryption.decrypt({
                     accountKey: material.accountKey,
                     connectionKey: material.connectionKey,
@@ -3355,19 +3363,38 @@ export const createMcpRequestHandler =
                     )
                       throw new Error("Stored Media metadata was invalid");
                     metadata = decoded as typeof metadata;
+                  } catch (cause) {
+                    terminalMediaFailure = "processing_failed";
+                    throw cause;
                   } finally {
                     metadataBytes.fill(0);
                   }
-                  const stream = yield* container.read({
-                    accountKey: material.accountKey,
-                    connectionKey: material.connectionKey,
-                    context: {
-                      connectionId: material.connectionKey.connectionId,
-                      mediaObjectId: material.mediaId,
-                      personalAccountId: material.accountKey.personalAccountId,
-                    },
-                    objectKey: material.objectKey,
-                  });
+                  const read = yield* container
+                    .read({
+                      accountKey: material.accountKey,
+                      connectionKey: material.connectionKey,
+                      context: {
+                        connectionId: material.connectionKey.connectionId,
+                        mediaObjectId: material.mediaId,
+                        personalAccountId:
+                          material.accountKey.personalAccountId,
+                      },
+                      objectKey: material.objectKey,
+                    })
+                    .pipe(Effect.either);
+                  if (read._tag === "Left") {
+                    if (read.left.reason === "not-found") {
+                      terminalMediaFailure = "object_missing";
+                    } else if (
+                      read.left.reason !== "cancelled" &&
+                      read.left.reason !== "dependency-failed" &&
+                      read.left.reason !== "storage-failed"
+                    ) {
+                      terminalMediaFailure = "processing_failed";
+                    }
+                    return yield* Effect.fail(read.left);
+                  }
+                  const stream = read.right;
                   const blob = yield* Effect.tryPromise(() =>
                     streamToBase64(stream, material.plaintextSizeBytes),
                   );
@@ -3404,8 +3431,10 @@ export const createMcpRequestHandler =
                 ],
               };
             } catch {
-              if (reservedAuditLogId !== null) {
+              if (reservedAuditLogId !== null && reservedMediaId !== null) {
                 const auditLogId = reservedAuditLogId;
+                const mediaId = reservedMediaId;
+                const failureCode = terminalMediaFailure;
                 await Effect.runPromise(
                   Effect.gen(function* () {
                     const clock = yield* McpToolClock;
@@ -3414,6 +3443,8 @@ export const createMcpRequestHandler =
                       auditLogId,
                       completedAt: yield* clock.now,
                       errorCode: "resource_unavailable",
+                      mediaFailureCode: failureCode,
+                      mediaId,
                     });
                   }).pipe(
                     Effect.provide(options.layer),

@@ -2,6 +2,11 @@ import { z } from "zod";
 
 const API_ORIGIN = "https://console.neon.tech/api/v2";
 const RESTORE_ROLE = "whatsapp_restore_runtime";
+const runtimeRoleSchema = z.enum([
+  RESTORE_ROLE,
+  "whatsapp_api_runtime",
+  "whatsapp_recovery_verifier",
+]);
 const RECOVERY_ANNOTATION_KEY = "production-recovery";
 const RECOVERY_ANNOTATION_VALUE = "true";
 const HISTORY_WINDOW_MS = 7 * 86_400_000;
@@ -144,7 +149,7 @@ const endpointSchema = z
     pending_state: z.enum(["init", "active", "idle"]).optional(),
     settings: z
       .object({
-        pg_settings: z.record(z.string(), z.string()),
+        pg_settings: z.record(z.string(), z.string()).optional(),
         preload_libraries: z
           .object({
             use_defaults: z.boolean().optional(),
@@ -236,6 +241,12 @@ const roleOperationsResponseSchema = z
 const connectionUriResponseSchema = z
   .object({ uri: z.string().min(1) })
   .passthrough();
+const endpointsResponseSchema = z
+  .object({ endpoints: z.array(endpointSchema) })
+  .passthrough();
+const endpointOperationsResponseSchema = z
+  .object({ endpoint: endpointSchema, operations: operationsSchema })
+  .passthrough();
 
 const configSchema = z
   .object({
@@ -260,6 +271,7 @@ const configSchema = z
       .max(128)
       .regex(/^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/u),
     databaseName: z.string().regex(/^[a-z_][a-z0-9_$]{0,62}$/u),
+    runtimeRole: runtimeRoleSchema.optional().default(RESTORE_ROLE),
     polling: z
       .object({
         maxAttempts: z.number().int().min(1).max(300),
@@ -696,7 +708,7 @@ export const createNeonRecoveryClient = (
     const verified = await getGuardedBranch(branch);
     const resetPassword = () =>
       request(
-        `/projects/${config.projectId}/branches/${verified.id}/roles/${RESTORE_ROLE}/reset_password`,
+        `/projects/${config.projectId}/branches/${verified.id}/roles/${config.runtimeRole}/reset_password`,
         { method: "POST" },
         roleOperationsResponseSchema,
         [],
@@ -713,7 +725,7 @@ export const createNeonRecoveryClient = (
     const value = result.value as z.infer<typeof roleOperationsResponseSchema>;
     if (
       value.role.branch_id !== verified.id ||
-      value.role.name !== RESTORE_ROLE
+      value.role.name !== config.runtimeRole
     )
       throw new NeonRecoveryError("Neon reset a different role credential");
     await waitForOperations(value.operations);
@@ -726,7 +738,7 @@ export const createNeonRecoveryClient = (
     const query = new URLSearchParams({
       branch_id: verified.id,
       database_name: config.databaseName,
-      role_name: RESTORE_ROLE,
+      role_name: config.runtimeRole,
       pooled: "false",
     });
     const result = await request(
@@ -747,7 +759,7 @@ export const createNeonRecoveryClient = (
     }
     if (
       !["postgres:", "postgresql:"].includes(parsed.protocol) ||
-      decodeURIComponent(parsed.username) !== RESTORE_ROLE ||
+      decodeURIComponent(parsed.username) !== config.runtimeRole ||
       parsed.password.length === 0 ||
       decodeURIComponent(parsed.pathname.slice(1)) !== config.databaseName ||
       !parsed.hostname.endsWith(".neon.tech") ||
@@ -758,6 +770,94 @@ export const createNeonRecoveryClient = (
         "Neon returned an unsafe restore database URI",
       );
     return uri;
+  };
+
+  const rotateGuardedEndpoint = async (branch: RecoveryBranch) => {
+    const verified = await getGuardedBranch(branch);
+    const list = async () => {
+      const result = await request(
+        `/projects/${config.projectId}/endpoints`,
+        { method: "GET" },
+        endpointsResponseSchema,
+        [],
+      );
+      return (
+        result.value as z.infer<typeof endpointsResponseSchema>
+      ).endpoints.filter(
+        (endpoint) =>
+          endpoint.branch_id === verified.id && endpoint.type === "read_write",
+      );
+    };
+    const existing = await list();
+    if (existing.length !== 1)
+      throw new NeonRecoveryError(
+        "Guarded recovery branch must have one read-write endpoint",
+      );
+    const predecessor = existing[0] as z.infer<typeof endpointSchema>;
+    try {
+      const deleted = await request(
+        `/projects/${config.projectId}/endpoints/${predecessor.id}`,
+        { method: "DELETE" },
+        endpointOperationsResponseSchema,
+        [204],
+      );
+      if (deleted.status !== 204) {
+        const value = deleted.value as z.infer<
+          typeof endpointOperationsResponseSchema
+        >;
+        if (
+          value.endpoint.id !== predecessor.id ||
+          value.endpoint.branch_id !== verified.id
+        )
+          throw new NeonRecoveryError("Neon deleted a different endpoint");
+        await waitForOperations(value.operations);
+      }
+    } catch (error) {
+      if ((await list()).some((endpoint) => endpoint.id === predecessor.id))
+        throw error;
+    }
+    if ((await list()).length !== 0)
+      throw new NeonRecoveryError("Predecessor recovery endpoint remained");
+
+    let replacement: z.infer<typeof endpointSchema> | undefined;
+    try {
+      const created = await request(
+        `/projects/${config.projectId}/endpoints`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            endpoint: { branch_id: verified.id, type: "read_write" },
+          }),
+        },
+        endpointOperationsResponseSchema,
+        [],
+      );
+      const value = created.value as z.infer<
+        typeof endpointOperationsResponseSchema
+      >;
+      replacement = value.endpoint;
+      await waitForOperations(value.operations);
+    } catch (error) {
+      const reconciled = await list();
+      if (reconciled.length !== 1) throw error;
+      replacement = reconciled[0];
+    }
+    const reconciled = await list();
+    if (
+      replacement === undefined ||
+      reconciled.length !== 1 ||
+      reconciled[0]?.id !== replacement.id ||
+      replacement.branch_id !== verified.id ||
+      replacement.id === predecessor.id ||
+      replacement.host === predecessor.host
+    )
+      throw new NeonRecoveryError(
+        "Recovery endpoint rotation did not converge",
+      );
+    return {
+      predecessorEndpointId: predecessor.id,
+      replacementEndpointId: replacement.id,
+    } as const;
   };
 
   async function getGuardedBranch(expected: RecoveryBranch) {
@@ -869,6 +969,7 @@ export const createNeonRecoveryClient = (
     reconcilePitrBranch,
     resetRestoreRuntimePassword,
     getDirectRestoreUri,
+    rotateGuardedEndpoint,
     deleteGuardedBranch,
   } as const;
 };

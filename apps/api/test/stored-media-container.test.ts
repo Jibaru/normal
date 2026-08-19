@@ -128,13 +128,14 @@ const setup = async (
     readonly bucket?: Pick<R2Bucket, "createMultipartUpload" | "get">;
     readonly chunkSize?: number;
     readonly environment?: DeploymentEnvironment;
+    readonly kms?: KmsKeyService;
   } = {},
 ): Promise<Setup> => {
   const environment = options.environment ?? "preview";
   const encryption = makeEnvelopeEncryption({
     contentRootKeyId: "arn:aws:kms:us-east-1:111122223333:key/content-root-key",
     environment,
-    kms: makeTestKms(),
+    kms: options.kms ?? makeTestKms(),
   });
   const accountKey = await Effect.runPromise(
     encryption.createPersonalAccountKey({
@@ -340,6 +341,49 @@ describe("encrypted R2 Stored Media container", () => {
 
     expect(result.chunkCount).toBe(0);
     expect(await read(setupValue, "objects/empty")).toEqual(new Uint8Array());
+  });
+
+  test("keeps a key service outage distinct from authenticated corruption", async () => {
+    const availableKms = makeTestKms();
+    let dependencyAvailable = true;
+    const kms: KmsKeyService = {
+      decrypt: (input) =>
+        dependencyAvailable
+          ? availableKms.decrypt(input)
+          : Effect.fail(new Error("test KMS unavailable")),
+      generateDataKey: availableKms.generateDataKey,
+    };
+    const setupValue = await setup({ chunkSize: 16, kms });
+    await write(
+      setupValue,
+      "objects/dependency-outage",
+      textEncoder.encode("preserve this media"),
+    );
+    dependencyAvailable = false;
+
+    const result = await Effect.runPromise(
+      Effect.either(
+        setupValue.container.read({
+          accountKey: setupValue.accountKey,
+          connectionKey: setupValue.connectionKey,
+          context: setupValue.context,
+          objectKey: "objects/dependency-outage",
+        }),
+      ),
+    );
+
+    expect(result).toMatchObject({
+      _tag: "Left",
+      left: {
+        _tag: "StoredMediaContainerError",
+        operation: "read",
+        reason: "dependency-failed",
+      },
+    });
+    expect(setupValue.events.at(-1)).toMatchObject({
+      operation: "read",
+      outcome: "dependency-failed",
+    });
   });
 
   test("rejects key versions that cannot be represented by the container header", async () => {

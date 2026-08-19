@@ -5,6 +5,7 @@ import {
   migrationConfig,
   restrictedApiRuntimeConnectionString,
   restrictedDeletionRuntimeConnectionString,
+  restrictedRecoveryVerifierConnectionString,
   restrictedRestoreRuntimeConnectionString,
 } from "../src/config";
 
@@ -18,6 +19,21 @@ describe("restrictedRestoreRuntimeConnectionString", () => {
         "postgresql://whatsapp_api_runtime:secret@ep-example.neon.tech/database?sslmode=require",
       ),
     ).toThrow("database URL is not the restricted TLS restore runtime");
+  });
+});
+
+describe("restrictedRecoveryVerifierConnectionString", () => {
+  test("accepts only the verifier role over direct TLS to Neon", () => {
+    const value =
+      "postgresql://whatsapp_recovery_verifier:secret@ep-example.neon.tech/database?sslmode=require";
+    expect(restrictedRecoveryVerifierConnectionString(value)).toBe(value);
+    expect(() =>
+      restrictedRecoveryVerifierConnectionString(
+        "postgresql://whatsapp_recovery_verifier:secret@ep-example-pooler.neon.tech/database?sslmode=require",
+      ),
+    ).toThrow(
+      "database URL is not the direct restricted TLS recovery verifier",
+    );
   });
 });
 

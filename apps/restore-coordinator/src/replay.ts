@@ -94,16 +94,22 @@ export const replayRestore = async (input: {
   readonly observedAt: string;
   readonly recipientHmacSecret: Redacted.Redacted<string>;
   readonly recipientJournal: RecipientJournalBucket;
+  readonly requireVerification?: boolean;
   readonly repository: RestoreRepository;
 }) => {
   const [candidates, markerReferences] = await Promise.all([
-    input.repository.begin(input.branchId, input.observedAt),
+    input.repository.begin(
+      input.branchId,
+      input.observedAt,
+      input.requireVerification ?? false,
+    ),
     Effect.runPromise(input.markers.enumerate()),
   ]);
   const markers = new Map(
     markerReferences.map((reference) => [reference.markerId, reference]),
   );
   let deletedEntityCount = 0;
+  let deletedIdentifierCountRemaining = 0;
   for (const candidate of candidates) {
     const markerId = await deriveDeletionMarkerId(
       input.environment,
@@ -121,6 +127,8 @@ export const replayRestore = async (input: {
       })
     ) {
       deletedEntityCount += 1;
+    } else {
+      deletedIdentifierCountRemaining += 1;
     }
   }
 
@@ -188,6 +196,7 @@ export const replayRestore = async (input: {
     apiKeyDigestsCleared,
     apiKeysRevoked,
     deletedEntityCount,
+    deletedIdentifierCountRemaining,
     expiredRecordCount,
     markerCount: markerReferences.length,
     objectDeletionCount,

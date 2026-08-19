@@ -34,6 +34,7 @@ test("monthly automation requests a random prior-history point and non-serving b
   let requestBody: Record<string, unknown> | undefined;
   const now = new Date("2026-08-03T00:00:00.000Z");
   const source = "2026-07-29T12:00:00.000Z";
+  let credentialRefreshCompleted = false;
   const evidence: DrillEvidence = {
     version: 1,
     drill: "monthly_restore",
@@ -57,6 +58,7 @@ test("monthly automation requests a random prior-history point and non-serving b
       deletion_markers_enumerated: 10,
       deletion_marker_failures: 0,
       deleted_entities_repurged: 2,
+      deleted_identifiers_remaining: 0,
       recipient_transitions_replayed: 4,
       recipient_transition_failures: 0,
       unresolved_recipient_prefixes: 1,
@@ -89,8 +91,12 @@ test("monthly automation requests a random prior-history point and non-serving b
   await runRecoveryDrill("monthly_restore", {
     now,
     sourcePoint: new Date(source),
+    beforeStart: async () => {
+      credentialRefreshCompleted = true;
+    },
     sleep: async () => {},
     fetch: completeAutomation(evidence, (_input, init) => {
+      expect(credentialRefreshCompleted).toBe(true);
       requestBody = JSON.parse(String(init?.body));
       expect(init?.redirect).toBe("error");
     }),
@@ -135,6 +141,7 @@ test("random restore selection spans the configured seven-day history", async ()
           deletion_markers_enumerated: 10,
           deletion_marker_failures: 0,
           deleted_entities_repurged: 2,
+          deleted_identifiers_remaining: 0,
           recipient_transitions_replayed: 4,
           recipient_transition_failures: 0,
           unresolved_recipient_prefixes: 1,
@@ -209,6 +216,7 @@ test("rejects evidence for a different drill kind", async () => {
           deletion_markers_enumerated: 10,
           deletion_marker_failures: 0,
           deleted_entities_repurged: 2,
+          deleted_identifiers_remaining: 0,
           recipient_transitions_replayed: 4,
           recipient_transition_failures: 0,
           unresolved_recipient_prefixes: 1,

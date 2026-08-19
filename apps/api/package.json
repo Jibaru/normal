@@ -8,6 +8,8 @@
     "./deletion/connection-cleanup": "./src/deletion/connection-cleanup.ts",
     "./deletion/marker": "./src/deletion/marker.ts",
     "./encryption/aws-kms": "./src/encryption/aws-kms.ts",
+    "./encryption/stored-media-container": "./src/encryption/stored-media-container.ts",
+    "./oauth-client-cache": "./src/oauth-client-cache.ts",
     "./recipient/journal": "./src/recipient/journal.ts"
   },
   "scripts": {

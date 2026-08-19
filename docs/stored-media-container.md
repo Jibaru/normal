@@ -90,4 +90,6 @@ context. The owning Stored Media workflow should transition the authoritative
 record to `failed`, retain only safe operational evidence, and follow incident
 response if failures are repeated or correlated. Missing R2 objects likewise
 surface as unavailable rather than as recoverable media because R2 is the sole
-retained Stored Media copy.
+retained Stored Media copy. A `dependency-failed` outcome means the key service
+could not unwrap key material. Callers must preserve the ready record and R2
+object so a later request can retry safely.

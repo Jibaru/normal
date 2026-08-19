@@ -239,6 +239,9 @@ export const restoreReadinessInAppPrivate = publicSchema.table(
     expiredRecordCount: integer("expired_record_count"),
     apiKeysRevoked: integer("api_keys_revoked"),
     apiKeyDigestsCleared: integer("api_key_digests_cleared"),
+    verificationRequired: boolean("verification_required")
+      .default(false)
+      .notNull(),
   },
   (_table) => [
     check("restore_readiness_singleton_check", sql`CHECK (singleton)`),
@@ -248,7 +251,7 @@ export const restoreReadinessInAppPrivate = publicSchema.table(
     ),
     check(
       "restore_readiness_state_check",
-      sql`state = ANY (ARRAY['replaying'::text, 'ready'::text])`,
+      sql`state = ANY (ARRAY['replaying'::text, 'awaiting_verification'::text, 'drill_verified'::text, 'ready'::text])`,
     ),
     check(
       "restore_readiness_marker_count_check",
@@ -272,7 +275,7 @@ export const restoreReadinessInAppPrivate = publicSchema.table(
     ),
     check(
       "restore_readiness_check",
-      sql`((state = 'replaying'::text) AND (completed_at IS NULL)) OR ((state = 'ready'::text) AND (completed_at IS NOT NULL) AND (marker_count IS NOT NULL) AND (deleted_entity_count IS NOT NULL) AND (expired_record_count IS NOT NULL) AND (api_keys_revoked IS NOT NULL) AND (api_key_digests_cleared IS NOT NULL))`,
+      sql`((state = 'replaying'::text) AND (completed_at IS NULL)) OR ((state = ANY (ARRAY['awaiting_verification'::text, 'drill_verified'::text, 'ready'::text])) AND (completed_at IS NOT NULL) AND (marker_count IS NOT NULL) AND (deleted_entity_count IS NOT NULL) AND (expired_record_count IS NOT NULL) AND (api_keys_revoked IS NOT NULL) AND (api_key_digests_cleared IS NOT NULL) AND ((verification_required AND (state = ANY (ARRAY['awaiting_verification'::text, 'drill_verified'::text]))) OR ((NOT verification_required) AND (state = 'ready'::text))))`,
     ),
   ],
 );

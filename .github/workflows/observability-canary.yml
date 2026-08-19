@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   deliver:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment: production
@@ -21,4 +22,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun scripts/send-observability-canary.ts
         env:
+          PAGER_RECEIPT_TOKEN: ${{ secrets.PAGER_RECEIPT_TOKEN }}
+          PAGER_RECEIPT_URL: ${{ secrets.PAGER_RECEIPT_URL }}
+          PAGER_WEBHOOK_TOKEN: ${{ secrets.PAGER_WEBHOOK_TOKEN }}
           PAGER_WEBHOOK_URL: ${{ secrets.PAGER_WEBHOOK_URL }}

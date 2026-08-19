@@ -16,12 +16,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: production-recovery
+  group: production-operations
   cancel-in-progress: false
 
 jobs:
   monthly-restore:
-    if: github.event_name == 'schedule' && github.event.schedule == '17 3 1 * *' || inputs.drill == 'monthly_restore'
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      ((github.event_name == 'schedule' && github.event.schedule == '17 3 1 * *') ||
+      inputs.drill == 'monthly_restore')
     runs-on: ubuntu-latest
     timeout-minutes: 250
     environment: production-recovery
@@ -43,10 +46,16 @@ jobs:
           retention-days: 400
 
   quarterly-game-day:
-    if: github.event_name == 'schedule' && github.event.schedule == '43 4 1 1,4,7,10 *' || inputs.drill == 'quarterly_game_day'
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      ((github.event_name == 'schedule' && github.event.schedule == '43 4 1 1,4,7,10 *') ||
+      inputs.drill == 'quarterly_game_day')
     runs-on: ubuntu-latest
     timeout-minutes: 250
     environment: production-recovery
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -55,6 +64,10 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun scripts/run-recovery-drill.ts quarterly_game_day
         env:
+          AWS_RECOVERY_GAME_DAY_ROLE_ARN: ${{ vars.AWS_RECOVERY_GAME_DAY_ROLE_ARN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          KMS_RECOVERY_GAME_DAY_KEY_ARN: ${{ vars.KMS_RECOVERY_GAME_DAY_KEY_ARN }}
           RECOVERY_AUTOMATION_URL: ${{ secrets.RECOVERY_AUTOMATION_URL }}
           RECOVERY_AUTOMATION_TOKEN: ${{ secrets.RECOVERY_AUTOMATION_TOKEN }}
           RECOVERY_EVIDENCE_PATH: quarterly_game_day.json

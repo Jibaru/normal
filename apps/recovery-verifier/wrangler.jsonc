@@ -1,0 +1,105 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "whatsapp-mcp-recovery-verifier",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-31",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "DEPLOYMENT_ENVIRONMENT": "production",
+    "RECOVERY_BRANCH_PREFIX": "recovery/production-",
+    "RECOVERY_DATABASE_NAME": "neondb"
+  },
+  "secrets": {
+    "required": [
+      "NEON_PARENT_BRANCH_ID",
+      "NEON_PROJECT_ID",
+      "NEON_RECOVERY_API_KEY",
+      "OBSERVABILITY_QUERY_TOKEN",
+      "OBSERVABILITY_QUERY_URL",
+      "RECOVERY_EVIDENCE_TOKEN"
+    ]
+  },
+  "services": [
+    {
+      "binding": "RECOVERY_GAME_DAY",
+      "service": "whatsapp-mcp-recovery-game-day"
+    }
+  ],
+  "observability": { "enabled": true },
+  "env": {
+    "development": {
+      "name": "whatsapp-mcp-recovery-verifier-development",
+      "vars": {
+        "DEPLOYMENT_ENVIRONMENT": "development",
+        "RECOVERY_BRANCH_PREFIX": "recovery/development-",
+        "RECOVERY_DATABASE_NAME": "neondb"
+      },
+      "secrets": {
+        "required": [
+          "NEON_PARENT_BRANCH_ID",
+          "NEON_PROJECT_ID",
+          "NEON_RECOVERY_API_KEY",
+          "OBSERVABILITY_QUERY_TOKEN",
+          "OBSERVABILITY_QUERY_URL",
+          "RECOVERY_EVIDENCE_TOKEN"
+        ]
+      },
+      "services": [
+        {
+          "binding": "RECOVERY_GAME_DAY",
+          "service": "whatsapp-mcp-recovery-game-day-development"
+        }
+      ]
+    },
+    "preview": {
+      "name": "whatsapp-mcp-recovery-verifier-preview",
+      "vars": {
+        "DEPLOYMENT_ENVIRONMENT": "preview",
+        "RECOVERY_BRANCH_PREFIX": "recovery/preview-",
+        "RECOVERY_DATABASE_NAME": "neondb"
+      },
+      "secrets": {
+        "required": [
+          "NEON_PARENT_BRANCH_ID",
+          "NEON_PROJECT_ID",
+          "NEON_RECOVERY_API_KEY",
+          "OBSERVABILITY_QUERY_TOKEN",
+          "OBSERVABILITY_QUERY_URL",
+          "RECOVERY_EVIDENCE_TOKEN"
+        ]
+      },
+      "services": [
+        {
+          "binding": "RECOVERY_GAME_DAY",
+          "service": "whatsapp-mcp-recovery-game-day-preview"
+        }
+      ]
+    },
+    "production": {
+      "name": "whatsapp-mcp-recovery-verifier",
+      "vars": {
+        "DEPLOYMENT_ENVIRONMENT": "production",
+        "RECOVERY_BRANCH_PREFIX": "recovery/production-",
+        "RECOVERY_DATABASE_NAME": "neondb"
+      },
+      "secrets": {
+        "required": [
+          "NEON_PARENT_BRANCH_ID",
+          "NEON_PROJECT_ID",
+          "NEON_RECOVERY_API_KEY",
+          "OBSERVABILITY_QUERY_TOKEN",
+          "OBSERVABILITY_QUERY_URL",
+          "RECOVERY_EVIDENCE_TOKEN"
+        ]
+      },
+      "services": [
+        {
+          "binding": "RECOVERY_GAME_DAY",
+          "service": "whatsapp-mcp-recovery-game-day"
+        }
+      ]
+    }
+  }
+}

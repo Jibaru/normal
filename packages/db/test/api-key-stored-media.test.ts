@@ -185,6 +185,11 @@ describe("API Key Stored Media", () => {
         oversizedMediaPublicId,
       ],
     );
+    await database.query(
+      `UPDATE public.personal_accounts
+       SET stored_media_used_bytes = 16777232 WHERE id = $1`,
+      [accountId],
+    );
 
     const provider: McpToolConnectionProvider &
       PersonalAccountConnectionProvider = {
@@ -303,18 +308,67 @@ describe("API Key Stored Media", () => {
       auditLogId,
       completedAt: new Date(observedAt.getTime() + 1_000),
       errorCode: "resource_unavailable",
+      mediaId,
+      mediaFailureCode: null,
+    });
+    const preserved = await database.query(
+      `SELECT logs.outcome,logs.media_bytes_reserved,media.state,
+              media.failure_code,media.object_key,accounts.stored_media_used_bytes
+       FROM public.tool_call_logs logs
+       JOIN public.personal_accounts accounts
+         ON accounts.id = logs.personal_account_id
+       JOIN public.stored_media media
+         ON media.id = $2 AND media.personal_account_id = logs.personal_account_id
+       WHERE logs.id=$1`,
+      [auditLogId, mediaId],
+    );
+    expect(preserved.rows).toEqual([
+      {
+        failure_code: null,
+        media_bytes_reserved: 0,
+        object_key: "opaque-object",
+        outcome: "execution_error",
+        state: "ready",
+        stored_media_used_bytes: 16_777_232,
+      },
+    ]);
+
+    const terminalAuditLogId = "50000000-0000-4000-8000-000000000190";
+    await expect(startRead(terminalAuditLogId)).resolves.toMatchObject({
+      outcome: "started",
+    });
+    await expect(
+      reserve({ auditLogId: terminalAuditLogId }),
+    ).resolves.toMatchObject({ outcome: "ready" });
+    await repository.failStoredMediaRead({
+      auditLogId: terminalAuditLogId,
+      completedAt: new Date(observedAt.getTime() + 2_000),
+      errorCode: "resource_unavailable",
+      mediaId,
+      mediaFailureCode: "object_missing",
     });
     const failed = await database.query(
-      `SELECT outcome,error_code,result_count,media_bytes_reserved
-       FROM public.tool_call_logs WHERE id=$1`,
-      [auditLogId],
+      `SELECT logs.outcome,logs.error_code,logs.result_count,
+              logs.media_bytes_reserved,media.state,media.failure_code,
+              media.object_key,accounts.stored_media_used_bytes
+       FROM public.tool_call_logs logs
+       JOIN public.personal_accounts accounts
+         ON accounts.id = logs.personal_account_id
+       JOIN public.stored_media media
+         ON media.id = $2 AND media.personal_account_id = logs.personal_account_id
+       WHERE logs.id=$1`,
+      [terminalAuditLogId, mediaId],
     );
     expect(failed.rows).toEqual([
       {
         error_code: "resource_unavailable",
+        failure_code: "object_missing",
         media_bytes_reserved: 0,
+        object_key: null,
         outcome: "execution_error",
         result_count: 0,
+        state: "failed",
+        stored_media_used_bytes: 16_777_217,
       },
     ]);
   });

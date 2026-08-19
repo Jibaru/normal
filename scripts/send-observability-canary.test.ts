@@ -5,14 +5,30 @@ describe("production alert delivery canary", () => {
   test("delivers only the identity-free alert envelope", async () => {
     let body: string | undefined;
     let headers: RequestInit["headers"];
-    await sendCanary(
-      "https://pager.invalid/hooks/production",
-      async (_input, init) => {
-        body = String(init?.body);
-        headers = init?.headers;
-        return new Response(null, { status: 202 });
+    const requests: Array<{ input: string; init?: RequestInit }> = [];
+    await sendCanary({
+      endpoint: "https://pager.invalid/hooks/production",
+      receiptEndpoint: "https://pager.invalid/receipts/production",
+      receiptToken: "r".repeat(64),
+      webhookToken: "w".repeat(64),
+      observedAt: new Date(0),
+      fetcher: async (input, init) => {
+        requests.push({
+          input: String(input),
+          ...(init === undefined ? {} : { init }),
+        });
+        if (requests.length === 1) {
+          body = String(init?.body);
+          headers = init?.headers;
+        }
+        return requests.length === 1
+          ? new Response(null, { status: 202 })
+          : Response.json({
+              delivered: true,
+              observed_at: new Date(0).toISOString(),
+            });
       },
-    );
+    });
     expect(JSON.parse(body ?? "null")).toEqual({
       alert: "alert-delivery-canary",
       observedAt: expect.any(String),
@@ -20,6 +36,7 @@ describe("production alert delivery canary", () => {
       status: "firing",
     });
     expect([...new Headers(headers)]).toEqual([
+      ["authorization", `Bearer ${"w".repeat(64)}`],
       ["content-type", "application/json"],
     ]);
   });
@@ -30,15 +47,23 @@ describe("production alert delivery canary", () => {
       "http://pager.test",
       "https://example.test/hook",
     ]) {
-      await expect(sendCanary(endpoint)).rejects.toThrow(
-        "PAGER_WEBHOOK_URL is unavailable",
-      );
+      await expect(
+        sendCanary({
+          endpoint,
+          receiptEndpoint: "https://pager.invalid/receipt",
+          receiptToken: "r".repeat(64),
+          webhookToken: "w".repeat(64),
+        }),
+      ).rejects.toThrow("PAGER_WEBHOOK_URL is unavailable");
     }
     await expect(
-      sendCanary(
-        "https://pager.invalid/hook",
-        async () => new Response(null, { status: 503 }),
-      ),
+      sendCanary({
+        endpoint: "https://pager.invalid/hook",
+        receiptEndpoint: "https://pager.invalid/receipt",
+        receiptToken: "r".repeat(64),
+        webhookToken: "w".repeat(64),
+        fetcher: async () => new Response(null, { status: 503 }),
+      }),
     ).rejects.toThrow("Alert canary delivery failed (503)");
   });
 

@@ -5,6 +5,7 @@ const restrictedRuntimeConnectionString = (
   value: string,
   username: string,
   errorMessage: string,
+  direct = false,
 ): string => {
   try {
     const url = new URL(value);
@@ -15,6 +16,7 @@ const restrictedRuntimeConnectionString = (
     if (
       (url.protocol === "postgres:" || url.protocol === "postgresql:") &&
       url.hostname.endsWith(".neon.tech") &&
+      (!direct || !url.hostname.split(".", 1)[0]?.endsWith("-pooler")) &&
       url.username === username &&
       url.password.length > 0 &&
       !hasAuthorityOverride &&
@@ -53,4 +55,14 @@ export const restrictedRestoreRuntimeConnectionString = (
     value,
     "whatsapp_restore_runtime",
     "database URL is not the restricted TLS restore runtime",
+  );
+
+export const restrictedRecoveryVerifierConnectionString = (
+  value: string,
+): string =>
+  restrictedRuntimeConnectionString(
+    value,
+    "whatsapp_recovery_verifier",
+    "database URL is not the direct restricted TLS recovery verifier",
+    true,
   );

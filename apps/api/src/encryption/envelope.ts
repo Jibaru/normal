@@ -14,7 +14,11 @@ export type EncryptionOperation =
 
 export class EncryptionError extends Data.TaggedError("EncryptionError")<{
   readonly operation: EncryptionOperation;
-  readonly stage?: "account-key" | "connection-key" | "ciphertext";
+  readonly stage?:
+    | "account-key"
+    | "connection-key"
+    | "ciphertext"
+    | "key-service";
 }> {}
 
 export interface KmsKeyService {
@@ -244,22 +248,26 @@ export const makeEnvelopeEncryption = ({
       return Effect.fail(operationError(operation, "account-key"));
     }
 
-    const acquire = Effect.try({
+    const decoded = Effect.try({
       try: () => decodeBase64(envelope.ciphertext),
       catch: () => operationError(operation, "account-key"),
-    }).pipe(
+    });
+    const acquire = decoded.pipe(
       Effect.flatMap((ciphertext) =>
-        kms.decrypt({
-          ciphertext,
-          encryptionContext: accountKeyContext(
-            environment,
-            envelope.personalAccountId,
-            envelope.keyVersion,
+        kms
+          .decrypt({
+            ciphertext,
+            encryptionContext: accountKeyContext(
+              environment,
+              envelope.personalAccountId,
+              envelope.keyVersion,
+            ),
+            keyId: envelope.kmsKeyId,
+          })
+          .pipe(
+            Effect.mapError(() => operationError(operation, "key-service")),
           ),
-          keyId: envelope.kmsKeyId,
-        }),
       ),
-      Effect.mapError(() => operationError(operation, "account-key")),
     );
 
     return Effect.acquireUseRelease(

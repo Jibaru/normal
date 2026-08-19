@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./api-key-hmac": "./src/api-key-hmac.ts",
     "./connection-setup": "./src/connection-setup.ts",
     "./deployment": "./src/deployment.ts",
     "./whatsapp-connection": "./src/whatsapp-connection.ts"

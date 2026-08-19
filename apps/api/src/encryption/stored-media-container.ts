@@ -24,12 +24,13 @@ const R2_OBJECT_KEY_MAX_BYTES = 1_024;
 const R2_MULTIPART_PART_BYTES = 5 * 1_048_576;
 const TERMINAL_FRAME = 1;
 
-export const STORED_MEDIA_CONTAINER_CHUNK_BYTES = 1_048_576;
+export const MEDIA_CONTAINER_CHUNK_BYTES = 1_048_576;
 
 export type StoredMediaContainerOperation = "read" | "write";
 export type StoredMediaContainerFailure =
   | "authentication-failed"
   | "cancelled"
+  | "dependency-failed"
   | "invalid-input"
   | "not-found"
   | "storage-failed"
@@ -126,7 +127,7 @@ const isOpaqueObjectKey = (value: string) =>
 const isChunkSize = (value: number) =>
   Number.isSafeInteger(value) &&
   value > 0 &&
-  value <= STORED_MEDIA_CONTAINER_CHUNK_BYTES;
+  value <= MEDIA_CONTAINER_CHUNK_BYTES;
 
 const isContainerKeyVersion = (value: number) =>
   Number.isSafeInteger(value) && value > 0 && value <= MAX_CHUNK_INDEX;
@@ -628,16 +629,25 @@ const makeDecryptionStream = (options: {
     if (parsed.keyVersion !== options.connectionKey.keyVersion) {
       throw error("read", "authentication-failed");
     }
-    const mediaKey = await Effect.runPromise(
-      options.encryption
-        .decrypt({
+    const decrypted = await Effect.runPromise(
+      Effect.either(
+        options.encryption.decrypt({
           accountKey: options.accountKey,
           ciphertext: parsed.wrappedKey,
           connectionKey: options.connectionKey,
           context: mediaKeyContext(options.context),
-        })
-        .pipe(Effect.mapError(() => error("read", "authentication-failed"))),
+        }),
+      ),
     );
+    if (decrypted._tag === "Left") {
+      throw error(
+        "read",
+        decrypted.left.stage === "key-service"
+          ? "dependency-failed"
+          : "authentication-failed",
+      );
+    }
+    const mediaKey = decrypted.right;
     try {
       cryptoKey = await importMediaKey("read", mediaKey);
       header = parsed;
@@ -774,7 +784,7 @@ const isR2ObjectBody = (value: unknown): value is R2ObjectBody => {
 
 export const makeStoredMediaContainer = ({
   bucket,
-  chunkSize = STORED_MEDIA_CONTAINER_CHUNK_BYTES,
+  chunkSize = MEDIA_CONTAINER_CHUNK_BYTES,
   encryption,
   environment,
   randomBytes = (length) => crypto.getRandomValues(new Uint8Array(length)),

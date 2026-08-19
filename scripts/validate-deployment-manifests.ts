@@ -3,11 +3,16 @@ const environments = ["development", "preview", "production"] as const;
 const deployables = [
   "api",
   "deletion-coordinator",
+  "operations-control",
   "provider-control",
   "recovery-control",
+  "recovery-game-day",
+  "recovery-verifier",
   "restore-coordinator",
 ] as const;
 const oauthKvValidationId = "22222222222222222222222222222222";
+const recoveryKvValidationId = "33333333333333333333333333333333";
+const operationsKvValidationId = "44444444444444444444444444444444";
 const requiredApiCrons = ["* * * * *", "*/5 * * * *", "0 * * * *"].sort();
 
 const manifestConfigurations = (manifest: Record<string, unknown>) => [
@@ -113,6 +118,58 @@ for (const deployable of deployables) {
         (key) => `Deletion coordinator must not declare ${key}.`,
       );
     }
+  } else if (deployable === "operations-control") {
+    const required = [
+      "CLOUDFLARE_ANALYTICS_TOKEN",
+      "CLOUDFLARE_ZONE_ID",
+      "OBSERVABILITY_QUERY_TOKEN",
+      "PAGER_DESTINATION_ADDRESS",
+      "PAGER_RECEIPT_TOKEN",
+      "PAGER_WEBHOOK_TOKEN",
+      "SMOKE_CHECK_SECRET",
+    ].sort();
+    for (const [name, configuration] of manifestConfigurations(manifest)) {
+      if (!hasSameStrings(requiredSecrets(configuration), required))
+        throw new Error(
+          `Operations control ${name} has the wrong credentials.`,
+        );
+      assertAbsent(
+        configuration,
+        [
+          "d1_databases",
+          "durable_objects",
+          "hyperdrive",
+          "queues",
+          "r2_buckets",
+          "services",
+          "workflows",
+        ],
+        (key) => `Operations control must not declare ${key}.`,
+      );
+      const kv = (configuration.kv_namespaces ?? []) as ReadonlyArray<{
+        readonly binding?: unknown;
+      }>;
+      const email = (configuration.send_email ?? []) as ReadonlyArray<{
+        readonly allowed_destination_addresses?: unknown;
+        readonly allowed_sender_addresses?: unknown;
+        readonly name?: unknown;
+      }>;
+      if (kv.length !== 1 || kv[0]?.binding !== "ALERT_RECEIPTS")
+        throw new Error(
+          `Operations control ${name} must have only its pager receipt KV.`,
+        );
+      if (
+        email.length !== 1 ||
+        email[0]?.name !== "PAGER_EMAIL" ||
+        JSON.stringify(email[0]?.allowed_destination_addresses) !==
+          JSON.stringify(["hi@cueva.io"]) ||
+        JSON.stringify(email[0]?.allowed_sender_addresses) !==
+          JSON.stringify(["pager@alerts.normal.fast"])
+      )
+        throw new Error(
+          `Operations control ${name} must have only its restricted pager email binding.`,
+        );
+    }
   } else if (deployable === "recovery-control") {
     const configurations = manifestConfigurations(manifest);
     const required = [
@@ -123,7 +180,6 @@ for (const deployable of deployables) {
       "RECIPIENT_TRANSITION_HMAC_SECRET",
       "RECOVERY_CONTROL_TOKEN",
       "RECOVERY_EVIDENCE_TOKEN",
-      "RECOVERY_EVIDENCE_URL",
     ].sort();
     for (const [name, configuration] of configurations) {
       if (!hasSameStrings(requiredSecrets(configuration), required)) {
@@ -133,7 +189,7 @@ for (const deployable of deployables) {
       }
       assertAbsent(
         configuration,
-        ["d1_databases", "hyperdrive", "kv_namespaces", "queues", "services"],
+        ["d1_databases", "hyperdrive", "kv_namespaces", "queues"],
         (key) => `Recovery control must not declare ${key}.`,
       );
       const buckets = (configuration.r2_buckets ?? []) as ReadonlyArray<{
@@ -174,6 +230,16 @@ for (const deployable of deployables) {
         throw new Error(
           `Recovery control ${name} must have the exact bounded production recovery Workflow.`,
         );
+      const services = configuration.services as
+        | ReadonlyArray<Record<string, unknown>>
+        | undefined;
+      if (
+        services?.length !== 1 ||
+        services[0]?.binding !== "RECOVERY_VERIFIER"
+      )
+        throw new Error(
+          `Recovery control ${name} must bind only to the recovery verifier.`,
+        );
     }
     const compatibilityFlags = manifest.compatibility_flags;
     if (
@@ -184,6 +250,84 @@ for (const deployable of deployables) {
       throw new Error(
         "Recovery control must enable Node.js compatibility and strict public global fetch.",
       );
+  } else if (deployable === "recovery-verifier") {
+    const required = [
+      "NEON_PARENT_BRANCH_ID",
+      "NEON_PROJECT_ID",
+      "NEON_RECOVERY_API_KEY",
+      "OBSERVABILITY_QUERY_TOKEN",
+      "OBSERVABILITY_QUERY_URL",
+      "RECOVERY_EVIDENCE_TOKEN",
+    ].sort();
+    for (const [name, configuration] of manifestConfigurations(manifest)) {
+      if (!hasSameStrings(requiredSecrets(configuration), required))
+        throw new Error(`Recovery verifier ${name} has the wrong credentials.`);
+      assertAbsent(
+        configuration,
+        [
+          "d1_databases",
+          "durable_objects",
+          "hyperdrive",
+          "kv_namespaces",
+          "queues",
+          "r2_buckets",
+          "workflows",
+        ],
+        (key) => `Recovery verifier must not declare ${key}.`,
+      );
+      const services = configuration.services as
+        | ReadonlyArray<Record<string, unknown>>
+        | undefined;
+      if (
+        services?.length !== 1 ||
+        services[0]?.binding !== "RECOVERY_GAME_DAY"
+      )
+        throw new Error(
+          `Recovery verifier ${name} must bind only to game-day execution.`,
+        );
+    }
+  } else if (deployable === "recovery-game-day") {
+    const required = [
+      "AWS_ACCESS_KEY_ID",
+      "AWS_SECRET_ACCESS_KEY",
+      "AWS_SESSION_TOKEN",
+      "KMS_RECOVERY_GAME_DAY_KEY_ARN",
+      "PAGER_RECEIPT_TOKEN",
+      "PAGER_RECEIPT_URL",
+      "PAGER_WEBHOOK_TOKEN",
+      "PAGER_WEBHOOK_URL",
+      "QUARTERLY_RECEIPT_SECRET",
+    ].sort();
+    for (const [name, configuration] of manifestConfigurations(manifest)) {
+      if (!hasSameStrings(requiredSecrets(configuration), required))
+        throw new Error(`Recovery game day ${name} has the wrong credentials.`);
+      assertAbsent(
+        configuration,
+        [
+          "d1_databases",
+          "durable_objects",
+          "hyperdrive",
+          "services",
+          "workflows",
+        ],
+        (key) => `Recovery game day must not declare ${key}.`,
+      );
+      const buckets = (configuration.r2_buckets ?? []) as ReadonlyArray<{
+        binding?: unknown;
+      }>;
+      const kv = (configuration.kv_namespaces ?? []) as ReadonlyArray<{
+        binding?: unknown;
+      }>;
+      if (
+        buckets.length !== 1 ||
+        buckets[0]?.binding !== "RECOVERY_FIXTURES" ||
+        kv.length !== 1 ||
+        kv[0]?.binding !== "RECOVERY_KV"
+      )
+        throw new Error(
+          `Recovery game day ${name} must have only recovery fixture R2 and KV.`,
+        );
+    }
   } else if (deployable === "restore-coordinator") {
     const configurations = manifestConfigurations(manifest);
     const required = [
@@ -359,6 +503,37 @@ for (const deployable of deployables) {
         console.error(`${rendererStdout}\n${rendererStderr}`);
         throw new Error(`Could not render API ${environment} bindings.`);
       }
+    } else if (deployable === "operations-control") {
+      configPath = `${repositoryRoot}/.wrangler/manifest-validation/operations-control-${environment}.jsonc`;
+      const renderer = Bun.spawn(
+        [
+          "bun",
+          "scripts/render-operations-control-wrangler.ts",
+          configPath,
+          environment,
+        ],
+        {
+          cwd: repositoryRoot,
+          env: {
+            ...Bun.env,
+            CLOUDFLARE_OPERATIONS_KV_ID: operationsKvValidationId,
+          },
+          stderr: "pipe",
+          stdout: "pipe",
+        },
+      );
+      const [rendererExitCode, rendererStdout, rendererStderr] =
+        await Promise.all([
+          renderer.exited,
+          new Response(renderer.stdout).text(),
+          new Response(renderer.stderr).text(),
+        ]);
+      if (rendererExitCode !== 0) {
+        console.error(`${rendererStdout}\n${rendererStderr}`);
+        throw new Error(
+          `Could not render operations control ${environment} bindings.`,
+        );
+      }
     }
 
     const process = Bun.spawn(
@@ -470,6 +645,11 @@ for (const deployable of deployables) {
           );
         }
       }
+    } else if (deployable === "operations-control") {
+      if (!output.includes(`env.ALERT_RECEIPTS (${operationsKvValidationId})`))
+        throw new Error(
+          `Operations control ${environment} has the wrong pager receipt KV.`,
+        );
     } else if (
       deployable === "provider-control" &&
       ["KV Namespace", "Queue", "R2 Bucket"].some((resource) =>
@@ -485,6 +665,7 @@ for (const deployable of deployables) {
         `env.RECOVERY_WORKFLOW (ProductionRecoveryWorkflow)`,
         `env.DELETION_MARKERS (whatsapp-mcp-deletion-markers${workerSuffix})`,
         `env.RECIPIENT_TRANSITIONS (whatsapp-mcp-recipient-transitions${workerSuffix})`,
+        `env.RECOVERY_VERIFIER (whatsapp-mcp-recovery-verifier${workerSuffix})`,
       ]) {
         if (!output.includes(binding))
           throw new Error(
@@ -499,6 +680,25 @@ for (const deployable of deployables) {
         throw new Error(
           `Recovery control ${environment} received forbidden data-plane authority.`,
         );
+    } else if (deployable === "recovery-verifier") {
+      if (
+        !output.includes(
+          `env.RECOVERY_GAME_DAY (whatsapp-mcp-recovery-game-day${workerSuffix})`,
+        )
+      )
+        throw new Error(
+          `Recovery verifier ${environment} has the wrong game-day service.`,
+        );
+    } else if (deployable === "recovery-game-day") {
+      for (const binding of [
+        `env.RECOVERY_KV (${recoveryKvValidationId})`,
+        `env.RECOVERY_FIXTURES (whatsapp-mcp-recovery-fixtures${workerSuffix})`,
+        `env.RECOVERY_REPLAY_QUEUE (whatsapp-mcp-recovery-game-day-replay${workerSuffix})`,
+      ])
+        if (!output.includes(binding))
+          throw new Error(
+            `Recovery game day ${environment} is missing ${binding}.`,
+          );
     } else if (deployable === "restore-coordinator") {
       for (const binding of [
         `env.DELETION_MARKERS (whatsapp-mcp-deletion-markers${workerSuffix})`,
