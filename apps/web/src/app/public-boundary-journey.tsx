@@ -139,6 +139,7 @@ interface ActivityLog {
     | "execution_error"
     | "rate_limited"
     | "authorization_denied";
+  readonly principal: "api_key" | "mcp_authorization";
   readonly references: ReadonlyArray<string>;
   readonly startedAt: string;
 }
@@ -224,9 +225,8 @@ const decodeActivityLogs = (value: unknown): ActivityLogPage | null => {
       (references.api_key_id !== null &&
         references.api_key_id !== undefined &&
         !Schema.is(ApiKeyId)(references.api_key_id)) ||
-      (log.channel === "api"
-        ? typeof references.api_key_id !== "string"
-        : typeof references.mcp_authorization_id !== "string") ||
+      (typeof references.api_key_id === "string") ===
+        (typeof references.mcp_authorization_id === "string") ||
       (references.whatsapp_connection_id !== null &&
         (typeof references.whatsapp_connection_id !== "string" ||
           !/^con_[A-Za-z0-9_-]{21}$/u.test(
@@ -248,6 +248,10 @@ const decodeActivityLogs = (value: unknown): ActivityLogPage | null => {
       errorCode: log.error_code,
       latencyMs: log.latency_ms,
       outcome: log.outcome,
+      principal:
+        typeof references.api_key_id === "string"
+          ? "api_key"
+          : "mcp_authorization",
       references: [
         ...(typeof references.mcp_authorization_id === "string"
           ? [references.mcp_authorization_id]
@@ -2148,7 +2152,7 @@ export function PublicBoundaryJourney({
                                 {log.capability.replaceAll("_", " ")}
                               </p>
                               <p className="whitespace-nowrap text-xs text-muted-foreground">
-                                {log.channel === "api"
+                                {log.principal === "api_key"
                                   ? `API Key · ${log.client.name}`
                                   : log.client.name}
                               </p>
