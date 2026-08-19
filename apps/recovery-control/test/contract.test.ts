@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { verificationResponseSchema } from "../src/contract";
+import { decodeRecoveryVerificationResponse } from "../src/contract";
 
 const monthlyChecks = {
   schema_compatible: true,
@@ -38,28 +38,28 @@ const response = {
 
 describe("recovery verifier response contract", () => {
   test("accepts exact branch-bound aggregate evidence", () => {
-    expect(verificationResponseSchema.parse(response)).toEqual(response);
+    expect(decodeRecoveryVerificationResponse(response)).toEqual(response);
   });
 
   test("rejects generic, stale, or extended attestations", () => {
-    expect(
-      verificationResponseSchema.safeParse({
+    expect(() =>
+      decodeRecoveryVerificationResponse({
         ...response,
         recovery_branch_id: undefined,
-      }).success,
-    ).toBe(false);
-    expect(
-      verificationResponseSchema.safeParse({
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeRecoveryVerificationResponse({
         ...response,
         verification_nonce: "d".repeat(64),
         tenant: "forbidden",
-      }).success,
-    ).toBe(false);
-    expect(
-      verificationResponseSchema.safeParse({
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeRecoveryVerificationResponse({
         ...response,
         checks: { ...monthlyChecks, schema_compatible: false },
-      }).success,
-    ).toBe(false);
+      }),
+    ).toThrow();
   });
 });

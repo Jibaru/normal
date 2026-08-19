@@ -104,6 +104,7 @@ describe("restore replay", () => {
       apiKeyDigestsCleared: 3,
       apiKeysRevoked: 3,
       deletedEntityCount: 1,
+      deletedIdentifierCountRemaining: 0,
       expiredRecordCount: 2,
       markerCount: 1,
       objectDeletionCount: 1,

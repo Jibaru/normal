@@ -19,8 +19,7 @@
       "NEON_PROJECT_ID",
       "RECIPIENT_TRANSITION_HMAC_SECRET",
       "RECOVERY_CONTROL_TOKEN",
-      "RECOVERY_EVIDENCE_TOKEN",
-      "RECOVERY_EVIDENCE_URL"
+      "RECOVERY_EVIDENCE_TOKEN"
     ]
   },
   "durable_objects": {
@@ -45,6 +44,12 @@
       "limits": { "steps": 100 }
     }
   ],
+  "services": [
+    {
+      "binding": "RECOVERY_VERIFIER",
+      "service": "whatsapp-mcp-recovery-verifier"
+    }
+  ],
   "observability": { "enabled": true },
   "env": {
     "development": {
@@ -62,8 +67,7 @@
           "NEON_PROJECT_ID",
           "RECIPIENT_TRANSITION_HMAC_SECRET",
           "RECOVERY_CONTROL_TOKEN",
-          "RECOVERY_EVIDENCE_TOKEN",
-          "RECOVERY_EVIDENCE_URL"
+          "RECOVERY_EVIDENCE_TOKEN"
         ]
       },
       "durable_objects": {
@@ -86,6 +90,12 @@
           "class_name": "ProductionRecoveryWorkflow",
           "limits": { "steps": 100 }
         }
+      ],
+      "services": [
+        {
+          "binding": "RECOVERY_VERIFIER",
+          "service": "whatsapp-mcp-recovery-verifier-development"
+        }
       ]
     },
     "preview": {
@@ -103,8 +113,7 @@
           "NEON_PROJECT_ID",
           "RECIPIENT_TRANSITION_HMAC_SECRET",
           "RECOVERY_CONTROL_TOKEN",
-          "RECOVERY_EVIDENCE_TOKEN",
-          "RECOVERY_EVIDENCE_URL"
+          "RECOVERY_EVIDENCE_TOKEN"
         ]
       },
       "durable_objects": {
@@ -127,6 +136,12 @@
           "class_name": "ProductionRecoveryWorkflow",
           "limits": { "steps": 100 }
         }
+      ],
+      "services": [
+        {
+          "binding": "RECOVERY_VERIFIER",
+          "service": "whatsapp-mcp-recovery-verifier-preview"
+        }
       ]
     },
     "production": {
@@ -144,8 +159,7 @@
           "NEON_PROJECT_ID",
           "RECIPIENT_TRANSITION_HMAC_SECRET",
           "RECOVERY_CONTROL_TOKEN",
-          "RECOVERY_EVIDENCE_TOKEN",
-          "RECOVERY_EVIDENCE_URL"
+          "RECOVERY_EVIDENCE_TOKEN"
         ]
       },
       "durable_objects": {
@@ -167,6 +181,12 @@
           "name": "whatsapp-mcp-production-recovery",
           "class_name": "ProductionRecoveryWorkflow",
           "limits": { "steps": 100 }
+        }
+      ],
+      "services": [
+        {
+          "binding": "RECOVERY_VERIFIER",
+          "service": "whatsapp-mcp-recovery-verifier"
         }
       ]
     }

@@ -1,0 +1,149 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Purpose-specific KMS authority for isolated production recovery game days",
+  "Parameters": {
+    "DeploymentEnvironment": {
+      "AllowedValues": ["production"],
+      "Type": "String"
+    },
+    "GitHubOidcProviderArn": {
+      "AllowedPattern": "^arn:aws(-[a-z]+)?:iam::[0-9]{12}:oidc-provider/token\\.actions\\.githubusercontent\\.com$",
+      "Type": "String"
+    },
+    "GitHubRepositoryIdentity": {
+      "AllowedPattern": "^[A-Za-z0-9_.@/-]+$",
+      "Type": "String"
+    }
+  },
+  "Resources": {
+    "RecoveryGameDayRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": {
+                "StringEquals": {
+                  "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+                  "token.actions.githubusercontent.com:sub": [
+                    {
+                      "Fn::Sub": "repo:${GitHubRepositoryIdentity}:environment:production"
+                    },
+                    {
+                      "Fn::Sub": "repo:${GitHubRepositoryIdentity}:environment:production-recovery"
+                    }
+                  ]
+                }
+              },
+              "Effect": "Allow",
+              "Principal": {
+                "Federated": { "Ref": "GitHubOidcProviderArn" }
+              }
+            }
+          ]
+        },
+        "Description": "Short-lived isolated recovery game-day KMS authority.",
+        "ManagedPolicyArns": [],
+        "MaxSessionDuration": 3600,
+        "RoleName": "whatsapp-mcp-production-recovery-game-day"
+      }
+    },
+    "RecoveryGameDayKey": {
+      "Type": "AWS::KMS::Key",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "Description": "Normal production isolated recovery game-day canary key",
+        "Enabled": true,
+        "EnableKeyRotation": true,
+        "KeySpec": "SYMMETRIC_DEFAULT",
+        "KeyUsage": "ENCRYPT_DECRYPT",
+        "MultiRegion": false,
+        "PendingWindowInDays": 30,
+        "KeyPolicy": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "AllowAccountLifecycleAdministration",
+              "Action": [
+                "kms:CancelKeyDeletion",
+                "kms:CreateAlias",
+                "kms:DeleteAlias",
+                "kms:DescribeKey",
+                "kms:DisableKey",
+                "kms:DisableKeyRotation",
+                "kms:EnableKey",
+                "kms:EnableKeyRotation",
+                "kms:GetKeyPolicy",
+                "kms:GetKeyRotationStatus",
+                "kms:ListAliases",
+                "kms:ListResourceTags",
+                "kms:PutKeyPolicy",
+                "kms:ScheduleKeyDeletion",
+                "kms:TagResource",
+                "kms:UntagResource",
+                "kms:UpdateAlias",
+                "kms:UpdateKeyDescription"
+              ],
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"
+                }
+              },
+              "Resource": "*"
+            },
+            {
+              "Sid": "AllowRecoveryGameDayCanary",
+              "Action": ["kms:GenerateDataKey", "kms:Decrypt"],
+              "Condition": {
+                "ForAllValues:StringEquals": {
+                  "kms:EncryptionContextKeys": [
+                    "environment",
+                    "purpose",
+                    "operation"
+                  ]
+                },
+                "Null": {
+                  "kms:EncryptionContext:environment": "false",
+                  "kms:EncryptionContext:operation": "false",
+                  "kms:EncryptionContext:purpose": "false"
+                },
+                "StringEquals": {
+                  "kms:EncryptionContext:environment": "production",
+                  "kms:EncryptionContext:purpose": "recovery-game-day"
+                }
+              },
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": { "Fn::GetAtt": ["RecoveryGameDayRole", "Arn"] }
+              },
+              "Resource": "*"
+            }
+          ]
+        },
+        "Tags": [
+          { "Key": "environment", "Value": "production" },
+          { "Key": "purpose", "Value": "recovery-game-day" }
+        ]
+      }
+    },
+    "RecoveryGameDayAlias": {
+      "Type": "AWS::KMS::Alias",
+      "Properties": {
+        "AliasName": "alias/whatsapp-mcp/production/recovery-game-day",
+        "TargetKeyId": { "Ref": "RecoveryGameDayKey" }
+      }
+    }
+  },
+  "Outputs": {
+    "RecoveryGameDayKeyArn": {
+      "Value": { "Fn::GetAtt": ["RecoveryGameDayKey", "Arn"] }
+    },
+    "RecoveryGameDayRoleArn": {
+      "Value": { "Fn::GetAtt": ["RecoveryGameDayRole", "Arn"] }
+    }
+  }
+}

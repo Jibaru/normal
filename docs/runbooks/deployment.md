@@ -44,7 +44,7 @@ production roles or read production CI secrets.
 
 Use one change record and one reviewed commit for the entire release. The
 ordered path is **infrastructure → environment population → migration →
-provider-control → deletion coordinator → restore coordinator → recovery control
+provider-control → deletion coordinator → restore coordinator → recovery game day → recovery verifier → recovery control
 → API → web → docs → smoke check**. The deployer may stop between
 steps, but must not reorder them or serve traffic from a partially compatible
 set.
@@ -65,7 +65,7 @@ set.
    migration-owner connection. For an audited operator session, run those same
    commands locally and then remove the connection from the shell.
 6. Deploy in dependency order: **provider-control → deletion coordinator → restore
-   coordinator → recovery control → API → web → docs**. Keep public
+   coordinator → recovery game day → recovery verifier → recovery control → API → web → docs**. Keep public
    traffic closed if migration readiness or any private service binding fails.
 7. Run the non-interactive `bun run deploy:smoke` boundary and retain only its
    normalized results, reviewed commit, deployment versions, plan digest, and
@@ -214,16 +214,33 @@ the bootstrap target and bulk upload.
 Populate recovery control only after the project-scoped Neon key, exact project
 and parent branch, independent control token, and separate evidence authority
 are available. Bulk upload exactly `NEON_RECOVERY_API_KEY`, `NEON_PROJECT_ID`,
-`NEON_PARENT_BRANCH_ID`, `RECOVERY_CONTROL_TOKEN`, `RECOVERY_EVIDENCE_URL`,
+`NEON_PARENT_BRANCH_ID`, `RECOVERY_CONTROL_TOKEN`,
 `RECOVERY_EVIDENCE_TOKEN`, `DELETION_MARKER_HMAC_SECRET`, and
 `RECIPIENT_TRANSITION_HMAC_SECRET` to the recovery-control Worker. It receives
 only the locked marker and transition R2 bindings, its serialization Durable
-Object, and its Workflow. Never add `MIGRATION_DATABASE_URL`, Stored Media,
+Object, its Workflow, and the private recovery-verifier service binding. Never add `MIGRATION_DATABASE_URL`, Stored Media,
 Webhook Ingress, API/Clerk/provider credentials, KMS, KV, Queue, Hyperdrive, or
 ordinary runtime authority. Set the protected `production-recovery`
 `RECOVERY_AUTOMATION_URL` to the `recovery_control_origin` output and its token
 to the same `RECOVERY_CONTROL_TOKEN`. Missing verifier/monitoring authority must
 leave drills failing closed.
+
+Populate recovery verifier with the same exact project/parent recovery identity,
+the shared evidence token, and read-only observability query credentials. It has
+no public route, database URL, R2, KV, Queue, KMS, provider, or serving API
+binding. Populate recovery game day separately with short-lived credentials for
+the purpose-specific recovery KMS key, pager delivery and receipt credentials,
+and its dedicated receipt key. Its only storage authorities are dedicated
+recovery KV and R2 fixtures plus the recovery replay Queue. It never binds the
+production OAuth namespace. Missing pager receipt,
+monitoring coverage, Queue completion, or KMS context authority fails the drill.
+Store the `recovery_game_day_role_arn` and `recovery_game_day_key_arn` AWS
+outputs as `AWS_RECOVERY_GAME_DAY_ROLE_ARN` and
+`KMS_RECOVERY_GAME_DAY_KEY_ARN` in both protected GitHub environments. Store
+the `recovery_kv_namespace_id` compute output as
+`CLOUDFLARE_RECOVERY_KV_ID` in production. The quarterly environment also
+needs the narrow Cloudflare deployment token solely to rotate the private
+game-day Worker's four short-lived AWS secret bindings immediately before use.
 
 In the same environment's Clerk dashboard, create the `whatsapp-api` custom JWT
 template with a 60-second lifetime and only an `aud` claim whose value is the

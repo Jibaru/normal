@@ -5,6 +5,8 @@ locals {
   deletion_coordinator_worker_name         = "whatsapp-mcp-deletion-coordinator${local.environment_suffix}"
   restore_coordinator_worker_name          = "whatsapp-mcp-restore-coordinator${local.environment_suffix}"
   recovery_control_worker_name             = "whatsapp-mcp-recovery-control${local.environment_suffix}"
+  recovery_verifier_worker_name            = "whatsapp-mcp-recovery-verifier${local.environment_suffix}"
+  recovery_game_day_worker_name            = "whatsapp-mcp-recovery-game-day${local.environment_suffix}"
   recovery_workflow_name                   = "whatsapp-mcp-production-recovery${local.environment_suffix}"
   web_project_name                         = "whatsapp-mcp-web${local.environment_suffix}"
   docs_project_name                        = "whatsapp-mcp-docs${local.environment_suffix}"
@@ -14,15 +16,20 @@ locals {
   deletion_markers_bucket_name             = "whatsapp-mcp-deletion-markers${local.environment_suffix}"
   recipient_transitions_bucket_name        = "whatsapp-mcp-recipient-transitions${local.environment_suffix}"
   oauth_kv_namespace_name                  = "whatsapp-mcp-oauth${local.environment_suffix}"
+  recovery_kv_namespace_name               = "whatsapp-mcp-recovery-fixtures${local.environment_suffix}"
   ingestion_queue_name                     = "whatsapp-mcp-ingestion${local.environment_suffix}"
   dead_letter_queue_name                   = "whatsapp-mcp-ingestion-dlq${local.environment_suffix}"
   replay_queue_name                        = "whatsapp-mcp-ingestion-replay${local.environment_suffix}"
   connection_setup_provisioning_queue_name = "whatsapp-mcp-connection-setup-provisioning${local.environment_suffix}"
+  recovery_game_day_queue_name             = "whatsapp-mcp-recovery-game-day-replay${local.environment_suffix}"
+  recovery_fixture_bucket_name             = "whatsapp-mcp-recovery-fixtures${local.environment_suffix}"
   api_bundle_path                          = abspath("${path.root}/../../apps/api/.wrangler/dist/index.js")
   provider_control_bundle_path             = abspath("${path.root}/../../apps/provider-control/dist/index.js")
   deletion_coordinator_bundle_path         = abspath("${path.root}/../../apps/deletion-coordinator/dist/index.js")
   restore_coordinator_bundle_path          = abspath("${path.root}/../../apps/restore-coordinator/dist/index.js")
   recovery_control_bundle_path             = abspath("${path.root}/../../apps/recovery-control/dist/index.js")
+  recovery_verifier_bundle_path            = abspath("${path.root}/../../apps/recovery-verifier/dist/index.js")
+  recovery_game_day_bundle_path            = abspath("${path.root}/../../apps/recovery-game-day/dist/index.js")
 }
 
 resource "cloudflare_r2_bucket" "webhook_ingress" {
@@ -60,6 +67,31 @@ resource "cloudflare_r2_bucket" "stored_media" {
   account_id    = var.cloudflare_account_id
   name          = local.stored_media_bucket_name
   storage_class = "Standard"
+}
+
+resource "cloudflare_r2_bucket" "recovery_fixtures" {
+  account_id    = var.cloudflare_account_id
+  name          = local.recovery_fixture_bucket_name
+  storage_class = "Standard"
+}
+
+resource "cloudflare_r2_bucket_lifecycle" "recovery_fixtures" {
+  account_id  = var.cloudflare_account_id
+  bucket_name = cloudflare_r2_bucket.recovery_fixtures.name
+  rules = [{
+    id         = "expire-recovery-game-day-fixtures"
+    enabled    = true
+    conditions = { prefix = "production-recovery/game-day/" }
+    delete_objects_transition = {
+      condition = { max_age = 86400, type = "Age" }
+    }
+  }]
+}
+
+resource "cloudflare_r2_managed_domain" "recovery_fixtures" {
+  account_id  = var.cloudflare_account_id
+  bucket_name = cloudflare_r2_bucket.recovery_fixtures.name
+  enabled     = false
 }
 
 resource "cloudflare_r2_bucket" "deletion_capsules" {
@@ -174,6 +206,11 @@ resource "cloudflare_workers_kv_namespace" "oauth" {
   title      = local.oauth_kv_namespace_name
 }
 
+resource "cloudflare_workers_kv_namespace" "recovery_fixtures" {
+  account_id = var.cloudflare_account_id
+  title      = local.recovery_kv_namespace_name
+}
+
 resource "cloudflare_queue" "ingestion" {
   account_id = var.cloudflare_account_id
   queue_name = local.ingestion_queue_name
@@ -211,6 +248,16 @@ resource "cloudflare_queue" "connection_setup_provisioning" {
   account_id = var.cloudflare_account_id
   queue_name = local.connection_setup_provisioning_queue_name
 
+  settings = {
+    delivery_delay           = 0
+    delivery_paused          = false
+    message_retention_period = 86400
+  }
+}
+
+resource "cloudflare_queue" "recovery_game_day" {
+  account_id = var.cloudflare_account_id
+  queue_name = local.recovery_game_day_queue_name
   settings = {
     delivery_delay           = 0
     delivery_paused          = false
@@ -419,6 +466,107 @@ resource "cloudflare_workers_cron_trigger" "restore_coordinator" {
   depends_on  = [cloudflare_workers_deployment.restore_coordinator]
 }
 
+resource "cloudflare_worker" "recovery_game_day" {
+  account_id = var.cloudflare_account_id
+  name       = local.recovery_game_day_worker_name
+  subdomain = {
+    enabled          = false
+    previews_enabled = false
+  }
+  observability = {
+    enabled            = true
+    head_sampling_rate = 1
+    logs               = { enabled = true, head_sampling_rate = 1, invocation_logs = true, persist = true }
+    traces             = { enabled = true, head_sampling_rate = 1, persist = true }
+  }
+}
+
+resource "cloudflare_worker_version" "recovery_game_day" {
+  account_id          = var.cloudflare_account_id
+  worker_id           = cloudflare_worker.recovery_game_day.id
+  main_module         = "index.js"
+  compatibility_date  = "2026-07-31"
+  compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
+  modules = [{
+    name         = "index.js", content_file = local.recovery_game_day_bundle_path,
+    content_type = "application/javascript+module"
+  }]
+  bindings = [
+    { name = "DEPLOYMENT_ENVIRONMENT", text = var.deployment_environment, type = "plain_text" },
+    { name = "AWS_KMS_REGION", text = "us-east-1", type = "plain_text" },
+    { name = "AWS_ACCESS_KEY_ID", type = "inherit" },
+    { name = "AWS_SECRET_ACCESS_KEY", type = "inherit" },
+    { name = "AWS_SESSION_TOKEN", type = "inherit" },
+    { name = "KMS_RECOVERY_GAME_DAY_KEY_ARN", type = "inherit" },
+    { name = "PAGER_RECEIPT_TOKEN", type = "inherit" },
+    { name = "PAGER_RECEIPT_URL", type = "inherit" },
+    { name = "PAGER_WEBHOOK_URL", type = "inherit" },
+    { name = "QUARTERLY_RECEIPT_SECRET", type = "inherit" },
+    { name = "RECOVERY_KV", namespace_id = cloudflare_workers_kv_namespace.recovery_fixtures.id, type = "kv_namespace" },
+    { name = "RECOVERY_FIXTURES", bucket_name = cloudflare_r2_bucket.recovery_fixtures.name, type = "r2_bucket" },
+    { name = "RECOVERY_REPLAY_QUEUE", queue_name = cloudflare_queue.recovery_game_day.queue_name, type = "queue" }
+  ]
+}
+
+resource "cloudflare_workers_deployment" "recovery_game_day" {
+  account_id  = var.cloudflare_account_id
+  script_name = cloudflare_worker.recovery_game_day.name
+  strategy    = "percentage"
+  versions    = [{ percentage = 100, version_id = cloudflare_worker_version.recovery_game_day.id }]
+}
+
+resource "cloudflare_queue_consumer" "recovery_game_day" {
+  account_id  = var.cloudflare_account_id
+  queue_id    = cloudflare_queue.recovery_game_day.queue_id
+  script_name = cloudflare_worker.recovery_game_day.name
+  type        = "worker"
+  settings    = { batch_size = 1, max_retries = 3, max_wait_time_ms = 1000, retry_delay = 60 }
+  depends_on  = [cloudflare_workers_deployment.recovery_game_day]
+}
+
+resource "cloudflare_worker" "recovery_verifier" {
+  account_id = var.cloudflare_account_id
+  name       = local.recovery_verifier_worker_name
+  subdomain  = { enabled = false, previews_enabled = false }
+  observability = {
+    enabled = true, head_sampling_rate = 1
+    logs    = { enabled = true, head_sampling_rate = 1, invocation_logs = true, persist = true }
+    traces  = { enabled = true, head_sampling_rate = 1, persist = true }
+  }
+}
+
+resource "cloudflare_worker_version" "recovery_verifier" {
+  account_id          = var.cloudflare_account_id
+  worker_id           = cloudflare_worker.recovery_verifier.id
+  main_module         = "index.js"
+  compatibility_date  = "2026-07-31"
+  compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
+  modules = [{
+    name         = "index.js", content_file = local.recovery_verifier_bundle_path,
+    content_type = "application/javascript+module"
+  }]
+  bindings = [
+    { name = "DEPLOYMENT_ENVIRONMENT", text = var.deployment_environment, type = "plain_text" },
+    { name = "RECOVERY_BRANCH_PREFIX", text = "recovery/${var.deployment_environment}-", type = "plain_text" },
+    { name = "RECOVERY_DATABASE_NAME", text = "neondb", type = "plain_text" },
+    { name = "NEON_PARENT_BRANCH_ID", type = "inherit" },
+    { name = "NEON_PROJECT_ID", type = "inherit" },
+    { name = "NEON_RECOVERY_API_KEY", type = "inherit" },
+    { name = "OBSERVABILITY_QUERY_TOKEN", type = "inherit" },
+    { name = "OBSERVABILITY_QUERY_URL", type = "inherit" },
+    { name = "RECOVERY_EVIDENCE_TOKEN", type = "inherit" },
+    { name = "RECOVERY_GAME_DAY", service = cloudflare_worker.recovery_game_day.name, type = "service" }
+  ]
+  depends_on = [cloudflare_workers_deployment.recovery_game_day]
+}
+
+resource "cloudflare_workers_deployment" "recovery_verifier" {
+  account_id  = var.cloudflare_account_id
+  script_name = cloudflare_worker.recovery_verifier.name
+  strategy    = "percentage"
+  versions    = [{ percentage = 100, version_id = cloudflare_worker_version.recovery_verifier.id }]
+}
+
 resource "cloudflare_worker" "recovery_control" {
   account_id = var.cloudflare_account_id
   name       = local.recovery_control_worker_name
@@ -481,12 +629,13 @@ resource "cloudflare_worker_version" "recovery_control" {
     { name = "RECIPIENT_TRANSITION_HMAC_SECRET", type = "inherit" },
     { name = "RECOVERY_CONTROL_TOKEN", type = "inherit" },
     { name = "RECOVERY_EVIDENCE_TOKEN", type = "inherit" },
-    { name = "RECOVERY_EVIDENCE_URL", type = "inherit" },
     { name = "DELETION_MARKERS", bucket_name = cloudflare_r2_bucket.deletion_markers.name, type = "r2_bucket" },
     { name = "RECIPIENT_TRANSITIONS", bucket_name = cloudflare_r2_bucket.recipient_transitions.name, type = "r2_bucket" },
     { name = "RECOVERY_GATE", class_name = "RecoveryGate", script_name = cloudflare_worker.recovery_control.name, type = "durable_object_namespace" },
-    { name = "RECOVERY_WORKFLOW", class_name = "ProductionRecoveryWorkflow", workflow_name = local.recovery_workflow_name, type = "workflow" }
+    { name = "RECOVERY_WORKFLOW", class_name = "ProductionRecoveryWorkflow", workflow_name = local.recovery_workflow_name, type = "workflow" },
+    { name = "RECOVERY_VERIFIER", service = cloudflare_worker.recovery_verifier.name, type = "service" }
   ]
+  depends_on = [cloudflare_workers_deployment.recovery_verifier]
 }
 
 resource "cloudflare_workers_deployment" "recovery_control" {

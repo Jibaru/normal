@@ -16,6 +16,7 @@
     "./openapi-artifact": "./src/write-openapi.ts",
     "./openapi-guides": "./src/openapi-guides.ts",
     "./rest": "./src/rest.ts",
+    "./recovery": "./src/recovery.ts",
     "./provider-control": "./src/provider-control.ts",
     "./stored-media-uri": "./src/stored-media-uri.ts"
   },

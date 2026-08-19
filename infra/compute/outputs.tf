@@ -49,6 +49,12 @@ output "oauth_kv_namespace_id" {
   sensitive   = true
 }
 
+output "recovery_kv_namespace_id" {
+  description = "Dedicated recovery fixture KV namespace; never bind as OAuth protocol state."
+  value       = cloudflare_workers_kv_namespace.recovery_fixtures.id
+  sensitive   = true
+}
+
 output "r2_bucket_names" {
   description = "Private R2 buckets bound only to the API Worker."
   value = {

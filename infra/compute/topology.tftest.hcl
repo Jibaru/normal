@@ -67,9 +67,9 @@ run "development_topology" {
       "inherit:RECIPIENT_TRANSITION_HMAC_SECRET",
       "inherit:RECOVERY_CONTROL_TOKEN",
       "inherit:RECOVERY_EVIDENCE_TOKEN",
-      "inherit:RECOVERY_EVIDENCE_URL",
       "r2_bucket:DELETION_MARKERS",
       "r2_bucket:RECIPIENT_TRANSITIONS",
+      "service:RECOVERY_VERIFIER",
       "durable_object_namespace:RECOVERY_GATE",
       "workflow:RECOVERY_WORKFLOW",
     ])
@@ -130,6 +130,7 @@ run "development_topology" {
       cloudflare_r2_bucket.deletion_markers.name == "whatsapp-mcp-deletion-markers-development" &&
       cloudflare_r2_bucket.recipient_transitions.name == "whatsapp-mcp-recipient-transitions-development" &&
       cloudflare_workers_kv_namespace.oauth.title == "whatsapp-mcp-oauth-development" &&
+      cloudflare_workers_kv_namespace.recovery_fixtures.title == "whatsapp-mcp-recovery-fixtures-development" &&
       cloudflare_queue.connection_setup_provisioning.queue_name == "whatsapp-mcp-connection-setup-provisioning-development" &&
       cloudflare_queue.ingestion.queue_name == "whatsapp-mcp-ingestion-development" &&
       cloudflare_queue.dead_letter.queue_name == "whatsapp-mcp-ingestion-dlq-development" &&

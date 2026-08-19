@@ -28,6 +28,7 @@ const monthly: DrillEvidence = {
     deletion_markers_enumerated: 10,
     deletion_marker_failures: 0,
     deleted_entities_repurged: 2,
+    deleted_identifiers_remaining: 0,
     recipient_transitions_replayed: 4,
     recipient_transition_failures: 0,
     unresolved_recipient_prefixes: 1,

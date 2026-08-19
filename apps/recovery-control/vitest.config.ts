@@ -8,6 +8,10 @@ export default defineConfig({
         bindings: {
           RECOVERY_CONTROL_TOKEN: "a".repeat(32),
         },
+        serviceBindings: {
+          RECOVERY_VERIFIER: () =>
+            Response.json({ status: "failed" }, { status: 503 }),
+        },
       },
       wrangler: { configPath: "./wrangler.jsonc" },
     }),

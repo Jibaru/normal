@@ -13,9 +13,12 @@ import { restrictedRestoreRuntimeConnectionString } from "@whatsapp-mcp/db/restr
 import { createNeonRecoveryClient } from "@whatsapp-mcp/neon-recovery/client";
 import { replayRestore } from "@whatsapp-mcp/restore-coordinator/replay";
 import { Redacted } from "effect";
-import { required, safeHttpsUrl } from "./config";
-import type { ReplayEvidence, StartRequest } from "./contract";
-import { verificationResponseSchema } from "./contract";
+import { required } from "./config";
+import {
+  decodeRecoveryVerificationResponse,
+  type ReplayEvidence,
+  type StartRequest,
+} from "./contract";
 
 const stepConfig = {
   retries: { limit: 2, delay: 10_000, backoff: "exponential" as const },
@@ -142,12 +145,16 @@ export class ProductionRecoveryWorkflow extends WorkflowEntrypoint<
           ),
           recipientJournal: this.env
             .RECIPIENT_TRANSITIONS as unknown as RecipientJournalBucket,
+          requireVerification: true,
           repository: makePgRestoreRepository(connectionString),
         });
+        if (result.deletedIdentifierCountRemaining !== 0)
+          throw new Error("Deleted identifiers remain after recovery replay");
         return {
           deletion_markers_enumerated: result.markerCount,
           deletion_marker_failures: 0,
           deleted_entities_repurged: result.deletedEntityCount,
+          deleted_identifiers_remaining: 0,
           recipient_transitions_replayed: result.recipientTransitionCount,
           recipient_transition_failures: 0,
           unresolved_recipient_prefixes: result.unresolvedRecipientPrefixCount,
@@ -183,8 +190,8 @@ export class ProductionRecoveryWorkflow extends WorkflowEntrypoint<
       "verify recovery and aggregate availability",
       stepConfig,
       async () => {
-        const response = await fetch(
-          safeHttpsUrl(this.env.RECOVERY_EVIDENCE_URL, "Recovery evidence URL"),
+        const response = await this.env.RECOVERY_VERIFIER.fetch(
+          "https://recovery-verifier.internal/verify",
           {
             method: "POST",
             redirect: "error",
@@ -220,7 +227,7 @@ export class ProductionRecoveryWorkflow extends WorkflowEntrypoint<
             .startsWith("application/json")
         )
           throw new Error("Recovery evidence verification failed");
-        const parsed = verificationResponseSchema.parse(
+        const parsed = decodeRecoveryVerificationResponse(
           await readBoundedJson(response),
         );
         if (

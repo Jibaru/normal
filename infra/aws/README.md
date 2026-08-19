@@ -2,7 +2,8 @@
 
 `main.tf` is the OpenTofu entry point and manages `kms.template.json` as one
 CloudFormation stack per environment. In production it also manages the
-purpose-specific `mcp-smoke-credential.template.json` stack. The KMS template
+purpose-specific `mcp-smoke-credential.template.json` and
+`recovery-game-day.template.json` stacks. The KMS template
 declares two non-exportable,
 single-Region symmetric KMS keys and six separated IAM authorities. Deploy it
 only in `us-east-1`; both OpenTofu and the template enforce that region.
@@ -42,3 +43,9 @@ The MCP smoke stack creates one retained Secrets Manager secret and one GitHub
 OIDC role restricted to that secret. The secret has no generated value: an
 operator bootstraps the current refresh credential out of band so plaintext
 never enters source, OpenTofu input, plans, or state.
+
+The recovery game-day stack creates a separate rotating KMS key and a GitHub
+OIDC role restricted to the `production-recovery` environment. Its only
+cryptographic authority is GenerateDataKey/Decrypt with the exact
+`production`/`recovery-game-day`/operation encryption context. The quarterly
+workflow uploads its one-hour session credentials immediately before a drill.

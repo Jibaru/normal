@@ -128,6 +128,27 @@ resource "aws_cloudformation_stack" "mcp_smoke_credential" {
   }
 }
 
+resource "aws_cloudformation_stack" "recovery_game_day" {
+  count         = var.deployment_environment == "production" ? 1 : 0
+  name          = "whatsapp-mcp-production-recovery-game-day"
+  capabilities  = ["CAPABILITY_NAMED_IAM"]
+  on_failure    = "ROLLBACK"
+  template_body = file("${path.module}/recovery-game-day.template.json")
+
+  parameters = {
+    DeploymentEnvironment    = var.deployment_environment
+    GitHubOidcProviderArn    = var.github_oidc_provider_arn
+    GitHubRepositoryIdentity = "cuevaio/normal"
+  }
+
+  lifecycle {
+    precondition {
+      condition     = var.github_oidc_provider_arn != null
+      error_message = "Production recovery game day requires the existing GitHub OIDC provider ARN."
+    }
+  }
+}
+
 output "content_root_key_arn" {
   description = "Configure the API as KMS_CONTENT_ROOT_KEY_ARN."
   value       = aws_cloudformation_stack.kms.outputs["ContentRootKeyArn"]
@@ -157,4 +178,12 @@ output "mcp_smoke_credential_role_arn" {
 
 output "mcp_smoke_refresh_secret_id" {
   value = try(aws_cloudformation_stack.mcp_smoke_credential[0].outputs["McpSmokeRefreshSecretId"], null)
+}
+
+output "recovery_game_day_key_arn" {
+  value = try(aws_cloudformation_stack.recovery_game_day[0].outputs["RecoveryGameDayKeyArn"], null)
+}
+
+output "recovery_game_day_role_arn" {
+  value = try(aws_cloudformation_stack.recovery_game_day[0].outputs["RecoveryGameDayRoleArn"], null)
 }

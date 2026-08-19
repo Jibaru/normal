@@ -24,7 +24,10 @@ flowchart LR
         deletion[deletion coordinator Worker]
         restore[restore coordinator Worker]
         recovery[recovery control Worker<br/>Authenticated non-serving drills]
+        verifier[recovery verifier Worker<br/>Restricted aggregate checks]
+        gameDay[recovery game-day Worker<br/>Disposable quarterly capabilities]
         oauth[(OAuth KV<br/>Protocol state only)]
+        recoveryKv[(Recovery fixture KV<br/>Disposable game-day state)]
         queues[(Queues<br/>Provisioning and ingestion)]
         webhook[(Private R2<br/>Encrypted Webhook Events)]
         media[(Private R2<br/>Encrypted Stored Media)]
@@ -72,6 +75,12 @@ flowchart LR
     recovery -->|restricted replay on disposable child| neon
     recovery -->|read locked evidence| lifecycle
     recovery -->|read locked evidence| transitions
+    recovery -->|authenticated private verification| verifier
+    verifier -->|guarded verifier role on disposable child| neonControl
+    verifier -->|quarterly capability request| gameDay
+    gameDay -->|disposable reconstruction fixture| recoveryKv
+    gameDay -->|disposable replay fixture| queues
+    gameDay -->|purpose-specific canary key| kms
 ```
 
 ## Boundary notes
@@ -129,3 +138,9 @@ flowchart LR
 For exact behavior, read [`CONTEXT.md`](../CONTEXT.md), the
 [MCP contract](mcp-contract.md), the [configuration reference](configuration.md),
 the [Wasender seam](wasender-seam.md), and the [ADRs](adr).
+* `recovery-verifier` has no public ingress. Recovery control reaches it through
+  an authenticated service binding; it receives only guarded Neon child and
+  aggregate observability authority.
+* `recovery-game-day` has no public ingress or tenant database binding. It owns
+  only disposable recovery KV/R2/Queue fixtures, purpose-specific KMS access,
+  and pager delivery confirmation.

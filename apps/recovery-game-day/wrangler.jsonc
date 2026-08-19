@@ -1,0 +1,174 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "whatsapp-mcp-recovery-game-day",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-31",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "DEPLOYMENT_ENVIRONMENT": "production",
+    "AWS_KMS_REGION": "us-east-1"
+  },
+  "secrets": {
+    "required": [
+      "AWS_ACCESS_KEY_ID",
+      "AWS_SECRET_ACCESS_KEY",
+      "AWS_SESSION_TOKEN",
+      "KMS_RECOVERY_GAME_DAY_KEY_ARN",
+      "PAGER_RECEIPT_TOKEN",
+      "PAGER_RECEIPT_URL",
+      "PAGER_WEBHOOK_URL",
+      "QUARTERLY_RECEIPT_SECRET"
+    ]
+  },
+  "kv_namespaces": [
+    { "binding": "RECOVERY_KV", "id": "33333333333333333333333333333333" }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "RECOVERY_FIXTURES",
+      "bucket_name": "whatsapp-mcp-recovery-fixtures"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "RECOVERY_REPLAY_QUEUE",
+        "queue": "whatsapp-mcp-recovery-game-day-replay"
+      }
+    ],
+    "consumers": [
+      { "queue": "whatsapp-mcp-recovery-game-day-replay", "max_batch_size": 1 }
+    ]
+  },
+  "observability": { "enabled": true },
+  "env": {
+    "development": {
+      "name": "whatsapp-mcp-recovery-game-day-development",
+      "vars": {
+        "DEPLOYMENT_ENVIRONMENT": "development",
+        "AWS_KMS_REGION": "us-east-1"
+      },
+      "secrets": {
+        "required": [
+          "AWS_ACCESS_KEY_ID",
+          "AWS_SECRET_ACCESS_KEY",
+          "AWS_SESSION_TOKEN",
+          "KMS_RECOVERY_GAME_DAY_KEY_ARN",
+          "PAGER_RECEIPT_TOKEN",
+          "PAGER_RECEIPT_URL",
+          "PAGER_WEBHOOK_URL",
+          "QUARTERLY_RECEIPT_SECRET"
+        ]
+      },
+      "kv_namespaces": [
+        { "binding": "RECOVERY_KV", "id": "33333333333333333333333333333333" }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "RECOVERY_FIXTURES",
+          "bucket_name": "whatsapp-mcp-recovery-fixtures-development"
+        }
+      ],
+      "queues": {
+        "producers": [
+          {
+            "binding": "RECOVERY_REPLAY_QUEUE",
+            "queue": "whatsapp-mcp-recovery-game-day-replay-development"
+          }
+        ],
+        "consumers": [
+          {
+            "queue": "whatsapp-mcp-recovery-game-day-replay-development",
+            "max_batch_size": 1
+          }
+        ]
+      }
+    },
+    "preview": {
+      "name": "whatsapp-mcp-recovery-game-day-preview",
+      "vars": {
+        "DEPLOYMENT_ENVIRONMENT": "preview",
+        "AWS_KMS_REGION": "us-east-1"
+      },
+      "secrets": {
+        "required": [
+          "AWS_ACCESS_KEY_ID",
+          "AWS_SECRET_ACCESS_KEY",
+          "AWS_SESSION_TOKEN",
+          "KMS_RECOVERY_GAME_DAY_KEY_ARN",
+          "PAGER_RECEIPT_TOKEN",
+          "PAGER_RECEIPT_URL",
+          "PAGER_WEBHOOK_URL",
+          "QUARTERLY_RECEIPT_SECRET"
+        ]
+      },
+      "kv_namespaces": [
+        { "binding": "RECOVERY_KV", "id": "33333333333333333333333333333333" }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "RECOVERY_FIXTURES",
+          "bucket_name": "whatsapp-mcp-recovery-fixtures-preview"
+        }
+      ],
+      "queues": {
+        "producers": [
+          {
+            "binding": "RECOVERY_REPLAY_QUEUE",
+            "queue": "whatsapp-mcp-recovery-game-day-replay-preview"
+          }
+        ],
+        "consumers": [
+          {
+            "queue": "whatsapp-mcp-recovery-game-day-replay-preview",
+            "max_batch_size": 1
+          }
+        ]
+      }
+    },
+    "production": {
+      "name": "whatsapp-mcp-recovery-game-day",
+      "vars": {
+        "DEPLOYMENT_ENVIRONMENT": "production",
+        "AWS_KMS_REGION": "us-east-1"
+      },
+      "secrets": {
+        "required": [
+          "AWS_ACCESS_KEY_ID",
+          "AWS_SECRET_ACCESS_KEY",
+          "AWS_SESSION_TOKEN",
+          "KMS_RECOVERY_GAME_DAY_KEY_ARN",
+          "PAGER_RECEIPT_TOKEN",
+          "PAGER_RECEIPT_URL",
+          "PAGER_WEBHOOK_URL",
+          "QUARTERLY_RECEIPT_SECRET"
+        ]
+      },
+      "kv_namespaces": [
+        { "binding": "RECOVERY_KV", "id": "33333333333333333333333333333333" }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "RECOVERY_FIXTURES",
+          "bucket_name": "whatsapp-mcp-recovery-fixtures"
+        }
+      ],
+      "queues": {
+        "producers": [
+          {
+            "binding": "RECOVERY_REPLAY_QUEUE",
+            "queue": "whatsapp-mcp-recovery-game-day-replay"
+          }
+        ],
+        "consumers": [
+          {
+            "queue": "whatsapp-mcp-recovery-game-day-replay",
+            "max_batch_size": 1
+          }
+        ]
+      }
+    }
+  }
+}

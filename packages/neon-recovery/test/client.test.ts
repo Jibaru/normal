@@ -59,6 +59,25 @@ const operation = (
   total_duration_ms: status === "finished" ? 10 : 0,
 });
 
+const endpoint = (
+  id = "ep-recovery-123456",
+  host = "ep-recovery.us-east-1.aws.neon.tech",
+) => ({
+  host,
+  id,
+  project_id: projectId,
+  branch_id: branchId,
+  region_id: "aws-us-east-1",
+  type: "read_write",
+  current_state: "idle",
+  settings: {},
+  pooler_enabled: false,
+  disabled: false,
+  passwordless_access: false,
+  created_at: time,
+  updated_at: time,
+});
+
 const json = (value: unknown, status = 200) => Response.json(value, { status });
 const config = (
   polling = { maxAttempts: 4, intervalMs: 10, timeoutMs: 1_000 },
@@ -124,6 +143,37 @@ describe("Neon recovery control-plane client", () => {
       }),
     ).resolves.toEqual(expected);
     expect(methods).toEqual(["GET"]);
+  });
+
+  test("rotates the exact disposable branch endpoint", async () => {
+    const predecessor = endpoint();
+    const replacement = endpoint(
+      "ep-replacement-123456",
+      "ep-replacement.us-east-1.aws.neon.tech",
+    );
+    const responses = [
+      json({ branch: branch(), annotation: annotation() }),
+      json({ endpoints: [predecessor] }),
+      json({ endpoint: predecessor, operations: [] }),
+      json({ endpoints: [] }),
+      json({ endpoint: replacement, operations: [] }, 201),
+      json({ endpoints: [replacement] }),
+    ];
+    const methods: string[] = [];
+    const client = createNeonRecoveryClient(config(), {
+      fetch: async (_input, init) => {
+        methods.push(String(init?.method));
+        const response = responses.shift();
+        if (!response) throw new Error("unexpected request");
+        return response;
+      },
+    });
+
+    await expect(client.rotateGuardedEndpoint(expected)).resolves.toEqual({
+      predecessorEndpointId: predecessor.id,
+      replacementEndpointId: replacement.id,
+    });
+    expect(methods).toEqual(["GET", "GET", "DELETE", "GET", "POST", "GET"]);
   });
 
   test("creates the exact child, polls its operations, and verifies fresh identity", async () => {
@@ -246,6 +296,43 @@ describe("Neon recovery control-plane client", () => {
       `/branches/${branchId}/roles/whatsapp_restore_runtime/reset_password`,
     );
     expect(requests[3]).toContain("pooled=false");
+  });
+
+  test("uses the explicitly configured recovery verifier role", async () => {
+    const requests: string[] = [];
+    const client = createNeonRecoveryClient(
+      { ...config(), runtimeRole: "whatsapp_recovery_verifier" },
+      {
+        fetch: async (input) => {
+          requests.push(String(input));
+          if (requests.length === 1 || requests.length === 3)
+            return json({ branch: branch(), annotation: annotation() });
+          if (requests.length === 2)
+            return json({
+              role: {
+                branch_id: branchId,
+                name: "whatsapp_recovery_verifier",
+                password: "verifier-secret",
+                created_at: time,
+                updated_at: time,
+              },
+              operations: [],
+            });
+          return json({
+            uri: "postgresql://whatsapp_recovery_verifier:verifier-secret@ep-recovery.us-east-1.aws.neon.tech/normal?sslmode=require",
+          });
+        },
+      },
+    );
+
+    await client.resetRestoreRuntimePassword(expected);
+    await expect(client.getDirectRestoreUri(expected)).resolves.toContain(
+      "postgresql://whatsapp_recovery_verifier:",
+    );
+    expect(requests[1]).toEndWith(
+      `/branches/${branchId}/roles/whatsapp_recovery_verifier/reset_password`,
+    );
+    expect(requests[3]).toContain("role_name=whatsapp_recovery_verifier");
   });
 
   test("reconciles the exact child before retrying an ambiguous role reset", async () => {

@@ -26,6 +26,7 @@ export interface DrillEvidence {
     readonly deletion_markers_enumerated: number;
     readonly deletion_marker_failures: 0;
     readonly deleted_entities_repurged: number;
+    readonly deleted_identifiers_remaining: 0;
     readonly recipient_transitions_replayed: number;
     readonly recipient_transition_failures: 0;
     readonly unresolved_recipient_prefixes: number;
@@ -120,6 +121,7 @@ const replayKeys = [
   "deletion_markers_enumerated",
   "deletion_marker_failures",
   "deleted_entities_repurged",
+  "deleted_identifiers_remaining",
   "recipient_transitions_replayed",
   "recipient_transition_failures",
   "unresolved_recipient_prefixes",
