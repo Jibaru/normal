@@ -309,23 +309,36 @@ export class NeonRecoveryError extends Error {
   }
 }
 
+const branchIdentityMismatches = (
+  branch: z.infer<typeof branchSchema>,
+  expected: Omit<RecoveryBranch, "id"> & { readonly id?: string },
+  projectId: string,
+) => {
+  const checks = {
+    project: branch.project_id === projectId,
+    parent_identity: branch.id !== expected.parentId,
+    identity: expected.id === undefined || branch.id === expected.id,
+    name: branch.name === expected.name,
+    parent: branch.parent_id === expected.parentId,
+    parent_timestamp:
+      branch.parent_timestamp === undefined ||
+      new Date(branch.parent_timestamp).toISOString() ===
+        expected.parentTimestamp,
+    default: branch.default === false,
+    primary: branch.primary !== true,
+    protected: branch.protected === false,
+    init_source: branch.init_source === "parent-data",
+  } as const;
+  return Object.entries(checks)
+    .filter(([, matches]) => !matches)
+    .map(([field]) => field);
+};
+
 const exactBranch = (
   branch: z.infer<typeof branchSchema>,
   expected: Omit<RecoveryBranch, "id"> & { readonly id?: string },
   projectId: string,
-) =>
-  branch.project_id === projectId &&
-  branch.id !== expected.parentId &&
-  (expected.id === undefined || branch.id === expected.id) &&
-  branch.name === expected.name &&
-  branch.parent_id === expected.parentId &&
-  (branch.parent_timestamp === undefined ||
-    new Date(branch.parent_timestamp).toISOString() ===
-      expected.parentTimestamp) &&
-  branch.default === false &&
-  branch.primary !== true &&
-  branch.protected === false &&
-  branch.init_source === "parent-data";
+) => branchIdentityMismatches(branch, expected, projectId).length === 0;
 
 const exactRecoveryAnnotation = (
   annotation: z.infer<typeof annotationSchema> | undefined,
@@ -512,7 +525,7 @@ export const createNeonRecoveryClient = (
     for (let attempt = 1; ; attempt += 1) {
       if (!exactBranch(branch, expected, config.projectId))
         throw new NeonRecoveryError(
-          "Existing Neon branch does not match the requested PITR source",
+          `Existing Neon branch does not match the requested PITR source (${branchIdentityMismatches(branch, expected, config.projectId).join(", ")})`,
         );
       if (!exactRecoveryAnnotation(branchAnnotation, branch.id, expected))
         throw new NeonRecoveryError(
