@@ -340,6 +340,19 @@ const exactBranch = (
   projectId: string,
 ) => branchIdentityMismatches(branch, expected, projectId).length === 0;
 
+const branchIdentityMismatchSummary = (
+  branch: z.infer<typeof branchSchema>,
+  expected: Omit<RecoveryBranch, "id"> & { readonly id?: string },
+  projectId: string,
+) =>
+  branchIdentityMismatches(branch, expected, projectId)
+    .map((field) => {
+      if (field !== "parent_timestamp" || branch.parent_timestamp === undefined)
+        return field;
+      return `${field}:${Date.parse(branch.parent_timestamp) - Date.parse(expected.parentTimestamp)}ms`;
+    })
+    .join(", ");
+
 const exactRecoveryAnnotation = (
   annotation: z.infer<typeof annotationSchema> | undefined,
   branchId: string,
@@ -525,7 +538,7 @@ export const createNeonRecoveryClient = (
     for (let attempt = 1; ; attempt += 1) {
       if (!exactBranch(branch, expected, config.projectId))
         throw new NeonRecoveryError(
-          `Existing Neon branch does not match the requested PITR source (${branchIdentityMismatches(branch, expected, config.projectId).join(", ")})`,
+          `Existing Neon branch does not match the requested PITR source (${branchIdentityMismatchSummary(branch, expected, config.projectId)})`,
         );
       if (!exactRecoveryAnnotation(branchAnnotation, branch.id, expected))
         throw new NeonRecoveryError(
