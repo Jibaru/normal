@@ -273,7 +273,9 @@ const makeHarness = (
                     failureCode: options.initialFailureCode ?? "unavailable",
                     outcome: "provisioning_failed" as const,
                   }
-                : { outcome: setupState },
+                : {
+                    outcome: setupState,
+                  },
       ),
   };
 
@@ -481,6 +483,11 @@ describe("WhatsApp Connection HTTP boundary", () => {
     expect(response.headers.get("content-type")).toBe("image/svg+xml");
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(qrBytes);
+    expect(harness.events).toContainEqual({
+      event: "connection_setup.qr.completed",
+      outcome: "qr_available",
+      service: "api",
+    });
     expect(harness.providerCalls).toEqual([
       "reconcileSession",
       "connectSession",

@@ -24,6 +24,11 @@ export type ProductAnalyticsEvent =
       event: "connection_setup_completed";
       outcome: "success" | "failed" | "cancelled" | "capacity_unavailable";
     }
+  | {
+      durationMs: number;
+      event: "connection_setup_timing_recorded";
+      phase: "code_observed_to_active_observed" | "start_to_code_observed";
+    }
   | { event: "onboarding_completed" }
   | {
       event: "feature_used";
@@ -50,6 +55,7 @@ const allowedEventNames = new Set<ProductAnalyticsEvent["event"]>([
   "onboarding_security_reached",
   "connection_setup_started",
   "connection_setup_completed",
+  "connection_setup_timing_recorded",
   "onboarding_completed",
   "feature_used",
 ]);
@@ -66,6 +72,10 @@ const connectionSetupOutcomes = new Set([
   "failed",
   "cancelled",
   "capacity_unavailable",
+]);
+const connectionSetupTimingPhases = new Set([
+  "code_observed_to_active_observed",
+  "start_to_code_observed",
 ]);
 const features = new Set([
   "additional_connection_setup",
@@ -111,6 +121,17 @@ const decodeEvent = (value: unknown): ProductAnalyticsEvent | null => {
     return hasExactKeys(event, ["event", "outcome"]) &&
       typeof event.outcome === "string" &&
       connectionSetupOutcomes.has(event.outcome)
+      ? (event as unknown as ProductAnalyticsEvent)
+      : null;
+  }
+  if (event.event === "connection_setup_timing_recorded") {
+    return hasExactKeys(event, ["durationMs", "event", "phase"]) &&
+      typeof event.durationMs === "number" &&
+      Number.isFinite(event.durationMs) &&
+      event.durationMs >= 0 &&
+      event.durationMs <= 900_000 &&
+      typeof event.phase === "string" &&
+      connectionSetupTimingPhases.has(event.phase)
       ? (event as unknown as ProductAnalyticsEvent)
       : null;
   }

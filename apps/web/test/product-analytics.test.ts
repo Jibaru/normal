@@ -77,14 +77,26 @@ describe("product analytics boundary", () => {
         outcome: "provider_error",
       }),
     ).toBe(false);
+    expect(
+      isAllowlistedProductAnalyticsEvent({
+        durationMs: 320,
+        event: "connection_setup_timing_recorded",
+        phase: "start_to_code_observed",
+      }),
+    ).toBe(true);
 
     captureProductAnalyticsEvent(allowed);
+    captureProductAnalyticsEvent({
+      durationMs: 320,
+      event: "connection_setup_timing_recorded",
+      phase: "start_to_code_observed",
+    });
     captureProductAnalyticsEvent({
       event: "onboarding_completed",
       email: "user@example.test",
     } as ProductAnalyticsEvent);
 
-    expect(requests).toHaveLength(1);
+    expect(requests).toHaveLength(2);
     expect(requests[0]?.url).toBe("https://us.i.posthog.com/capture/");
     expect(requests[0]?.body).toMatchObject({
       api_key: "phc_example",
@@ -92,6 +104,15 @@ describe("product analytics boundary", () => {
       properties: {
         $process_person_profile: false,
         stage: "welcome",
+      },
+    });
+    expect(requests[1]?.body).toMatchObject({
+      api_key: "phc_example",
+      event: "connection_setup_timing_recorded",
+      properties: {
+        $process_person_profile: false,
+        durationMs: 320,
+        phase: "start_to_code_observed",
       },
     });
     const body = requests[0]?.body as {
