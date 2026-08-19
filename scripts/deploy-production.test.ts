@@ -36,6 +36,10 @@ describe("production deployment order", () => {
     );
     expect(workflow).toContain("environment: production");
     expect(workflow).toContain("id-token: write");
+    expect(workflow).toContain("github.event.workflow_run.event == 'push'");
+    expect(workflow).toContain(
+      'git merge-base --is-ancestor "$(git rev-parse HEAD)" origin/main',
+    );
     expect(bootstrap).toContain('"versions",\n    "upload"');
     expect(bootstrap).toContain(
       '["versions", "secret", "bulk", "--name", worker.name]',
