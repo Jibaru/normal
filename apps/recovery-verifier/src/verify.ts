@@ -35,7 +35,9 @@ export type RecoveryVerificationStage =
   | "quarterly_game_day"
   | "rls_prepare"
   | "rls_verification"
-  | "verifier_connection";
+  | "verifier_access"
+  | "verifier_password"
+  | "verifier_uri";
 const toHex = (value: ArrayBuffer | Uint8Array) =>
   [...new Uint8Array(value)]
     .map((byte) => byte.toString(16).padStart(2, "0"))
@@ -155,9 +157,11 @@ export const verifyRecovery = async (
   });
   if (branch === "absent" || branch.id !== input.recovery_branch_id)
     throw new Error("Guarded recovery branch is unavailable");
-  reportStage("verifier_connection");
+  reportStage("verifier_password");
   await client.resetRestoreRuntimePassword(branch);
+  reportStage("verifier_uri");
   const firstUri = await client.getDirectRestoreUri(branch);
+  reportStage("verifier_access");
   await checkRestrictedDatabaseAccess(firstUri);
   reportStage("database_verification");
   let repository = makePgRecoveryVerifierRepository(firstUri);
