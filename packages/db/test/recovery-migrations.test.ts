@@ -67,6 +67,10 @@ describe("recovery migrations", () => {
     const client: QueryConnection = {
       query: async <Row extends Record<string, unknown>>(text: string) => {
         queries.push(text);
+        if (text.includes("AS eligible"))
+          return { rows: [{ eligible: true }] as unknown as Array<Row> };
+        if (text.includes("AS hardened"))
+          return { rows: [{ hardened: true }] as unknown as Array<Row> };
         return { rows: [] as Array<Row> };
       },
     };
@@ -74,11 +78,11 @@ describe("recovery migrations", () => {
     await hardenRecoveryVerifierRoleWithClient(client);
 
     expect(queries[0]).toBe("BEGIN");
-    expect(queries[1]).toContain(
-      "current_user <> 'whatsapp_recovery_verifier'",
-    );
-    expect(queries[1]).toContain("REVOKE %I FROM whatsapp_recovery_verifier");
-    expect(queries[1]).toContain("NOREPLICATION NOBYPASSRLS");
+    expect(queries[1]).toContain("pg_has_role");
+    expect(queries[2]).toBe("SET LOCAL ROLE neon_superuser");
+    expect(queries[3]).toContain("REVOKE %I FROM whatsapp_recovery_verifier");
+    expect(queries[3]).toContain("NOREPLICATION NOBYPASSRLS");
+    expect(queries[4]).toBe("RESET ROLE");
     expect(queries.at(-1)).toBe("COMMIT");
   });
 

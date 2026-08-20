@@ -87,12 +87,12 @@ DO $role$
 DECLARE
   granted_role name;
 BEGIN
-  IF current_user <> 'whatsapp_recovery_verifier' THEN
+  IF session_user <> 'whatsapp_recovery_verifier' THEN
     RAISE EXCEPTION 'recovery verifier hardening role mismatch';
   END IF;
   IF EXISTS (
     SELECT 1 FROM pg_catalog.pg_roles
-    WHERE rolname = current_user AND rolsuper
+    WHERE rolname = session_user AND rolsuper
   ) THEN
     RAISE EXCEPTION 'recovery verifier has prohibited superuser authority';
   END IF;
@@ -103,26 +103,12 @@ BEGIN
       ON parent.oid = memberships.roleid
     JOIN pg_catalog.pg_roles AS member
       ON member.oid = memberships.member
-    WHERE member.rolname = current_user
+    WHERE member.rolname = session_user
   LOOP
     EXECUTE format('REVOKE %I FROM whatsapp_recovery_verifier', granted_role);
   END LOOP;
   ALTER ROLE whatsapp_recovery_verifier
     NOREPLICATION NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT LOGIN;
-  IF EXISTS (
-    SELECT 1 FROM pg_catalog.pg_roles
-    WHERE rolname = current_user
-      AND (rolsuper OR rolreplication OR rolbypassrls OR rolcreatedb
-        OR rolcreaterole OR rolinherit OR NOT rolcanlogin)
-  ) OR EXISTS (
-    SELECT 1
-    FROM pg_catalog.pg_auth_members AS memberships
-    JOIN pg_catalog.pg_roles AS member
-      ON member.oid = memberships.member
-    WHERE member.rolname = current_user
-  ) THEN
-    RAISE EXCEPTION 'recovery verifier hardening failed';
-  END IF;
 END
 $role$`;
 
@@ -131,7 +117,30 @@ export const hardenRecoveryVerifierRoleWithClient = async (
 ) => {
   await client.query("BEGIN");
   try {
+    const eligibility = await client.query<{ eligible: boolean }>(
+      `SELECT current_user = 'whatsapp_recovery_verifier'
+        AND pg_catalog.pg_has_role(current_user, 'neon_superuser', 'MEMBER')
+        AS eligible`,
+    );
+    if (eligibility.rows[0]?.eligible !== true)
+      throw new Error("Recovery verifier hardening authority is unavailable");
+    await client.query("SET LOCAL ROLE neon_superuser");
     await client.query(hardenRecoveryVerifierRoleSql);
+    await client.query("RESET ROLE");
+    const verification = await client.query<{ hardened: boolean }>(
+      `SELECT current_user = 'whatsapp_recovery_verifier'
+        AND NOT rolsuper AND NOT rolreplication AND NOT rolbypassrls
+        AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolinherit
+        AND rolcanlogin
+        AND NOT EXISTS (
+          SELECT 1 FROM pg_catalog.pg_auth_members AS memberships
+          WHERE memberships.member = roles.oid
+        ) AS hardened
+      FROM pg_catalog.pg_roles AS roles
+      WHERE rolname = current_user`,
+    );
+    if (verification.rows[0]?.hardened !== true)
+      throw new Error("Recovery verifier hardening failed");
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
