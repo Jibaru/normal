@@ -32,9 +32,14 @@ describe("recovery migrations", () => {
     };
 
     await expect(applyRecoveryMigrationsWithClient(client)).resolves.toBe(3);
-    expect(queries.filter(({ text }) => text === "BEGIN")).toHaveLength(3);
-    expect(queries.filter(({ text }) => text === "COMMIT")).toHaveLength(3);
+    expect(queries.filter(({ text }) => text === "BEGIN")).toHaveLength(4);
+    expect(queries.filter(({ text }) => text === "COMMIT")).toHaveLength(4);
     expect(queries.filter(({ text }) => text === "ROLLBACK")).toHaveLength(0);
+    expect(
+      queries.some(({ text }) =>
+        text.includes("ALTER ROLE whatsapp_recovery_verifier"),
+      ),
+    ).toBe(true);
     expect(
       queries
         .filter(({ text }) => text.startsWith("INSERT INTO public"))
@@ -51,7 +56,12 @@ describe("recovery migrations", () => {
           return {
             rows: [{ created_at: "1787122800000" }] as unknown as Array<Row>,
           };
-        if (text !== "BEGIN" && text !== "ROLLBACK")
+        if (
+          text !== "BEGIN" &&
+          text !== "COMMIT" &&
+          text !== "ROLLBACK" &&
+          text.includes("ALTER ROLE whatsapp_recovery_verifier") === false
+        )
           throw new Error("migration statement failed");
         return { rows: [] };
       },

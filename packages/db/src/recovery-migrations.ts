@@ -59,6 +59,36 @@ const toHex = (value: ArrayBuffer) =>
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
 
+const hardenRecoveryVerifierRole = `
+DO $roles$
+DECLARE
+  granted_role name;
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_catalog.pg_roles
+    WHERE rolname = 'whatsapp_recovery_verifier'
+  ) THEN
+    ALTER ROLE whatsapp_recovery_verifier
+      NOSUPERUSER NOREPLICATION NOBYPASSRLS
+      NOCREATEDB NOCREATEROLE NOINHERIT LOGIN;
+    FOR granted_role IN
+      SELECT parent.rolname
+      FROM pg_catalog.pg_auth_members AS memberships
+      JOIN pg_catalog.pg_roles AS parent
+        ON parent.oid = memberships.roleid
+      JOIN pg_catalog.pg_roles AS member
+        ON member.oid = memberships.member
+      WHERE member.rolname = 'whatsapp_recovery_verifier'
+    LOOP
+      EXECUTE format(
+        'REVOKE %I FROM whatsapp_recovery_verifier',
+        granted_role
+      );
+    END LOOP;
+  END IF;
+END
+$roles$`;
+
 export const applyRecoveryMigrationsWithClient = async (
   client: QueryConnection,
 ) => {
@@ -68,6 +98,15 @@ export const applyRecoveryMigrationsWithClient = async (
   const lastApplied = Number(ledger.rows[0]?.created_at ?? 0);
   if (!Number.isFinite(lastApplied) || lastApplied < 0)
     throw new Error("Recovery migration ledger is invalid");
+
+  await client.query("BEGIN");
+  try {
+    await client.query(hardenRecoveryVerifierRole);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
 
   let applied = 0;
   for (const [createdAt, source] of migrations) {
