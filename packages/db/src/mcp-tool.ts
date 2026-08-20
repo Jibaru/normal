@@ -72,6 +72,7 @@ export type McpToolName =
   | "list_contacts"
   | "list_groups"
   | "send_text_message"
+  | "send_pdf_file"
   | "get_send_status"
   | "list_chats"
   | "read_messages"
@@ -1707,7 +1708,9 @@ const lockAccountAndListReservedStarts = async (
 const requiredScope = (toolName: McpToolName): McpAuthorizationScope =>
   toolName === "list_connections"
     ? "connections:read"
-    : toolName === "send_text_message" || toolName === "get_send_status"
+    : toolName === "send_text_message" ||
+        toolName === "send_pdf_file" ||
+        toolName === "get_send_status"
       ? "messages:send"
       : toolName === "list_chats"
         ? "messages:read"

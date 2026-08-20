@@ -6,6 +6,8 @@ import {
   activityLogsInApp,
   directoryContactsInApp,
   pendingSendContentsInApp,
+  personalAccountsInApp,
+  sendOperationObjectsInApp,
   sendOperationsInApp,
   storedMessagesInApp,
   whatsappConversationsInApp,
@@ -67,7 +69,7 @@ export interface SendReceiptRecord {
   readonly statusChangedAt: Date;
 }
 
-export type CommitSendResult =
+type CommitSendBaseResult =
   | {
       readonly outcome:
         | "authorization_denied"
@@ -87,10 +89,26 @@ export type CommitSendResult =
       readonly receipt: SendReceiptRecord;
     };
 
+export type CommitSendResult<Input extends CommitSendInput = CommitSendInput> =
+  | CommitSendBaseResult
+  | (Input extends { readonly attachment: CommitSendInput["attachment"] }
+      ? { readonly outcome: "stored_media_quota_exceeded" }
+      : never);
+
+type InternalCommitSendResult =
+  | CommitSendBaseResult
+  | { readonly outcome: "stored_media_quota_exceeded" };
+
 export type { SendGrantIdentity };
 export { apiSendGrant, mcpSendGrant } from "./mcp-tool";
 
 export type CommitSendInput = {
+  readonly attachment?:
+    | {
+        readonly plaintextSizeBytes: number;
+        readonly sha256: string;
+      }
+    | undefined;
   readonly auditLogId: string;
   readonly channel: "api" | "mcp";
   readonly connectionPublicId: string;
@@ -100,6 +118,7 @@ export type CommitSendInput = {
   readonly idempotencyKey: string;
   readonly minuteRequestLimit: number;
   readonly observedAt: Date;
+  readonly operationName: "send_pdf_file" | "send_text_message";
   readonly pendingExpiresAt: Date;
   readonly directRecipientType?: "phone" | "username";
   readonly recipientPublicId: string | null;
@@ -109,12 +128,29 @@ export type CommitSendInput = {
   readonly sendPerMinuteLimit: number;
 };
 
+export type CommitSendContent = SendCiphertext & {
+  readonly attachment?: { readonly objectKey: string };
+};
+
 export interface AtomicSendRepository {
-  readonly commit: (
-    input: CommitSendInput,
-    encrypt: (material: SendEncryptionMaterial) => Promise<SendCiphertext>,
-  ) => Promise<CommitSendResult>;
+  readonly preflight?: (input: {
+    readonly auditLogId: string;
+    readonly channel: "api" | "mcp";
+    readonly connectionPublicId: string;
+    readonly grant: SendGrantIdentity;
+    readonly observedAt: Date;
+    readonly operationName: "send_pdf_file" | "send_text_message";
+  }) => Promise<"authorization_denied" | "authorized">;
+  readonly commit: <Input extends CommitSendInput>(
+    input: Input,
+    encrypt: (material: SendEncryptionMaterial) => Promise<CommitSendContent>,
+  ) => Promise<CommitSendResult<Input>>;
   readonly expireLeases: (observedAt: Date) => Promise<number>;
+  readonly enqueueStoredMediaObjectDeletion?: (input: {
+    readonly objectKey: string;
+    readonly personalAccountId: string;
+    readonly requestedAt: Date;
+  }) => Promise<void>;
   readonly recordProviderOutcome: (input: {
     readonly changedAt: Date;
     readonly messageIdentity?: string;
@@ -196,8 +232,136 @@ const grantPrincipal = (grant: SendGrantIdentity, channel: "api" | "mcp") =>
 export const makePgAtomicSendRepository = (
   provider: McpToolConnectionProvider,
 ): AtomicSendRepository => ({
-  commit: (input, encrypt) =>
+  preflight: (input) =>
     provider.withConnection(async (connection) => {
+      const db = makeDatabase(connection);
+      await db.execute(sql`BEGIN`);
+      try {
+        const principal = grantPrincipal(input.grant, input.channel);
+        const boot =
+          input.grant.kind === "mcp"
+            ? await db.execute<{ personal_account_id: unknown }>(
+                sql`WITH authorized AS MATERIALIZED (
+                      SELECT public.bootstrap_mcp_tool_call(
+                        ${input.grant.authorization.authorizationId},
+                        ${input.grant.authorization.oauthSubject},
+                        ${input.grant.authorization.clientId ?? null}
+                      ) AS personal_account_id
+                    )
+                    SELECT authorized.personal_account_id,
+                           set_config(
+                             'public.personal_account_id',
+                             authorized.personal_account_id::text,
+                             false
+                           ) AS configured_account_id
+                    FROM authorized
+                    WHERE authorized.personal_account_id IS NOT NULL`,
+              )
+            : await (async () => {
+                const apiKey =
+                  input.grant.kind === "api" ? input.grant.apiKey : null;
+                if (apiKey === null)
+                  return [] as Array<{ personal_account_id: unknown }>;
+                await db.execute(
+                  sql`SELECT set_config(
+                        'public.personal_account_id',
+                        ${apiKey.personalAccountId},
+                        true
+                      )`,
+                );
+                return db.execute<{ personal_account_id: unknown }>(
+                  sql`SELECT account.id AS personal_account_id
+                      FROM public.personal_accounts AS account
+                      INNER JOIN public.api_keys AS keys
+                        ON keys.personal_account_id = account.id
+                       AND keys.id = ${principal.grantId}
+                      WHERE account.id = ${apiKey.personalAccountId}
+                        AND account.state = 'active'`,
+                );
+              })();
+        const accountId = boot[0]?.personal_account_id;
+        if (typeof accountId !== "string") {
+          await db.execute(sql`ROLLBACK`);
+          return "authorization_denied";
+        }
+        const authorized = await db.execute(
+          input.grant.kind === "mcp"
+            ? sql`SELECT 1
+                  FROM public.mcp_authorizations AS auth
+                  INNER JOIN public.mcp_authorization_connections AS selected
+                    ON selected.personal_account_id = auth.personal_account_id
+                   AND selected.mcp_authorization_id = auth.id
+                  INNER JOIN public.whatsapp_connections AS conn
+                    ON conn.personal_account_id = selected.personal_account_id
+                   AND conn.id = selected.whatsapp_connection_id
+                  WHERE auth.id = ${principal.grantId}
+                    AND public.bootstrap_active_mcp_tool_call(
+                      ${input.grant.authorization.authorizationId},
+                      ${input.grant.authorization.oauthSubject},
+                      ${input.grant.authorization.clientId ?? null},
+                      ${input.observedAt}
+                    ) = auth.personal_account_id
+                    AND ${"messages:send"} = ANY(auth.scopes)
+                    AND conn.public_id = ${input.connectionPublicId}`
+            : sql`SELECT 1
+                  FROM public.api_keys AS keys
+                  INNER JOIN public.api_key_connections AS selected
+                    ON selected.personal_account_id = keys.personal_account_id
+                   AND selected.api_key_id = keys.id
+                  INNER JOIN public.whatsapp_connections AS conn
+                    ON conn.personal_account_id = selected.personal_account_id
+                   AND conn.id = selected.whatsapp_connection_id
+                  WHERE keys.id = ${principal.grantId}
+                    AND keys.personal_account_id = ${accountId}
+                    AND keys.state = 'active'
+                    AND (keys.expires_at IS NULL OR keys.expires_at > ${input.observedAt})
+                    AND ${"messages:send"} = ANY(keys.permissions)
+                    AND conn.public_id = ${input.connectionPublicId}`,
+        );
+        if (authorized.length > 0) {
+          await db.execute(sql`ROLLBACK`);
+          return "authorized";
+        }
+        await db.insert(activityLogsInApp).values({
+          id: input.auditLogId,
+          personalAccountId: accountId,
+          channel: principal.channel,
+          mcpAuthorizationId: principal.mcpAuthorizationId,
+          apiKeyId: principal.apiKeyId,
+          apiKeyPublicId: principal.apiKeyPublicId,
+          apiKeyName: principal.apiKeyName,
+          toolName: input.operationName,
+          startedAt: input.observedAt.toISOString(),
+          completedAt: input.observedAt.toISOString(),
+          outcome: "authorization_denied",
+          errorCode: "authorization_denied",
+          resultCount: null,
+          latencyMs: 0,
+          quotaReserved: false,
+          expiresAt: sql`${input.observedAt}::timestamptz + interval '90 days'`,
+          connectionPublicId: input.connectionPublicId,
+        });
+        await db.execute(sql`COMMIT`);
+        return "authorization_denied";
+      } catch (error) {
+        await db.execute(sql`ROLLBACK`);
+        throw error;
+      }
+    }),
+  commit: ((
+    input: CommitSendInput,
+    encrypt: (material: SendEncryptionMaterial) => Promise<CommitSendContent>,
+  ): Promise<InternalCommitSendResult> =>
+    provider.withConnection(async (connection) => {
+      if (
+        input.attachment !== undefined &&
+        (!Number.isSafeInteger(input.attachment.plaintextSizeBytes) ||
+          input.attachment.plaintextSizeBytes < 1 ||
+          input.attachment.plaintextSizeBytes > 16_777_216 ||
+          !/^[a-f0-9]{64}$/.test(input.attachment.sha256))
+      ) {
+        throw new Error("invalid Send Operation attachment");
+      }
       const db = makeDatabase(connection);
       let transactionCommitted = false;
       await db.execute(sql`BEGIN`);
@@ -267,7 +431,7 @@ export const makePgAtomicSendRepository = (
             apiKeyId: principal.apiKeyId,
             apiKeyPublicId: principal.apiKeyPublicId,
             apiKeyName: principal.apiKeyName,
-            toolName: "send_text_message",
+            toolName: input.operationName,
             startedAt: input.observedAt.toISOString(),
             completedAt: input.observedAt.toISOString(),
             outcome,
@@ -657,7 +821,30 @@ export const makePgAtomicSendRepository = (
             personalAccountId: accountId,
           },
         };
+        if (input.attachment !== undefined) {
+          const account = await db
+            .select({
+              available: sql<number>`${personalAccountsInApp.storedMediaLimitBytes} - ${personalAccountsInApp.storedMediaUsedBytes}`,
+            })
+            .from(personalAccountsInApp)
+            .where(eq(personalAccountsInApp.id, accountId));
+          const available = Number(account[0]?.available);
+          if (!Number.isSafeInteger(available))
+            throw new Error("invalid Stored Media quota");
+          if (available < input.attachment.plaintextSizeBytes) {
+            await finishAudit("execution_error", "stored_media_quota_exceeded");
+            return { outcome: "stored_media_quota_exceeded" as const };
+          }
+        }
         const pending = await encrypt(encryptionMaterial);
+        if (
+          (input.attachment === undefined) !==
+            (pending.attachment === undefined) ||
+          (pending.attachment !== undefined &&
+            pending.attachment.objectKey.length === 0)
+        ) {
+          throw new Error("invalid Send Operation attachment object");
+        }
         const observedAt = input.observedAt.toISOString();
         await db.execute(
           sql`WITH inserted_audit AS (
@@ -671,7 +858,7 @@ export const makePgAtomicSendRepository = (
                   ${input.auditLogId}, ${accountId}, ${principal.channel},
                   ${principal.mcpAuthorizationId}, ${principal.apiKeyId},
                   ${principal.apiKeyPublicId}, ${principal.apiKeyName},
-                  'send_text_message', ${observedAt}, NULL, 'started', NULL,
+                   ${input.operationName}, ${observedAt}, NULL, 'started', NULL,
                   NULL, NULL, true,
                   ${input.observedAt}::timestamptz + interval '90 days',
                   ${input.connectionPublicId}, ${input.sendPublicId}
@@ -736,6 +923,35 @@ export const makePgAtomicSendRepository = (
                      ${principal.apiKeyId}, ${observedAt}
               FROM inserted_pending`,
         );
+        if (
+          input.attachment !== undefined &&
+          pending.attachment !== undefined
+        ) {
+          await db.insert(sendOperationObjectsInApp).values({
+            sendOperationId: input.sendId,
+            personalAccountId: accountId,
+            whatsappConnectionId: connectionId,
+            state: "ready",
+            objectKey: pending.attachment.objectKey,
+            plaintextSizeBytes: input.attachment.plaintextSizeBytes,
+            sha256: input.attachment.sha256,
+            createdAt: observedAt,
+          });
+          const reserved = await db
+            .update(personalAccountsInApp)
+            .set({
+              storedMediaUsedBytes: sql`${personalAccountsInApp.storedMediaUsedBytes} + ${input.attachment.plaintextSizeBytes}`,
+            })
+            .where(
+              and(
+                eq(personalAccountsInApp.id, accountId),
+                sql`${personalAccountsInApp.storedMediaUsedBytes} + ${input.attachment.plaintextSizeBytes} <= ${personalAccountsInApp.storedMediaLimitBytes}`,
+              ),
+            )
+            .returning({ id: personalAccountsInApp.id });
+          if (reserved.length !== 1)
+            throw new Error("Stored Media quota reservation failed");
+        }
         await db.execute(sql`COMMIT`);
         transactionCommitted = true;
         const recipientRow = recipient[0];
@@ -798,6 +1014,31 @@ export const makePgAtomicSendRepository = (
         };
       } catch (error) {
         if (!transactionCommitted) await db.execute(sql`ROLLBACK`);
+        throw error;
+      }
+    })) as AtomicSendRepository["commit"],
+  enqueueStoredMediaObjectDeletion: (input) =>
+    provider.withConnection(async (connection) => {
+      const db = makeDatabase(connection);
+      await db.execute(sql`BEGIN`);
+      try {
+        await db.execute(
+          sql`SELECT set_config(
+                'public.personal_account_id',
+                ${input.personalAccountId},
+                true
+              )`,
+        );
+        await db.execute(
+          sql`INSERT INTO public.stored_media_object_deletions(
+                personal_account_id, object_key, requested_at
+              ) VALUES (
+                ${input.personalAccountId}, ${input.objectKey}, ${input.requestedAt}
+              ) ON CONFLICT DO NOTHING`,
+        );
+        await db.execute(sql`COMMIT`);
+      } catch (error) {
+        await db.execute(sql`ROLLBACK`);
         throw error;
       }
     }),

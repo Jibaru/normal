@@ -1446,7 +1446,11 @@ const mcpPermissionForOperation = (
   if (operation === "list_contacts" || operation === "list_groups") {
     return "directory:read";
   }
-  if (operation === "send_text_message" || operation === "get_send_status") {
+  if (
+    operation === "send_text_message" ||
+    operation === "send_pdf_file" ||
+    operation === "get_send_status"
+  ) {
     return "messages:send";
   }
   return "messages:read";
@@ -1942,6 +1946,7 @@ const atomicSendLayer = (environment: ApiEnvironment) =>
     SendTextMessage,
     Effect.gen(function* () {
       const encryption = yield* EnvelopeEncryptionService;
+      const storedMediaContainer = yield* StoredMediaContainerService;
       const safeTelemetry = yield* SafeTelemetry;
       const connectionString = environment.HYPERDRIVE?.connectionString;
       const fingerprintSecret = environment.SEND_FINGERPRINT_HMAC_SECRET;
@@ -1968,6 +1973,14 @@ const atomicSendLayer = (environment: ApiEnvironment) =>
         importSendFingerprintKey(fingerprintSecret),
       );
       return makeAtomicSendTextMessageService({
+        deleteStoredMediaObject: async (objectKey) => {
+          if (!hasMethods(environment.STORED_MEDIA, ["delete"])) {
+            throw new MissingCloudflareBinding({ binding: "STORED_MEDIA" });
+          }
+          await (environment.STORED_MEDIA as Pick<R2Bucket, "delete">).delete(
+            objectKey,
+          );
+        },
         encryption,
         fingerprintKey,
         hourRequestLimit: requestHourLimit,
@@ -1986,24 +1999,45 @@ const atomicSendLayer = (environment: ApiEnvironment) =>
         ),
         sendDailyLimit,
         sendPerMinuteLimit,
+        storedMediaContainer,
         telemetry: (event) => {
-          const providerEvent = event as {
-            attemptCount: 0 | 1;
-            durationMs: number;
-            operationClass: "text-send";
-            outcome:
-              | "ambiguous"
-              | "definitive_failure"
-              | "identity_evidence"
-              | "provider_acknowledgement";
-            responseBytes: number | null;
-          };
+          const providerEvent = event as
+            | {
+                durationMs: number;
+                operationClass: "pdf-send";
+                outcome:
+                  | "ambiguous"
+                  | "definitive_failure"
+                  | "identity_evidence"
+                  | "provider_acknowledgement";
+                responseBytes: number | null;
+                sendAttemptCount: 0 | 1;
+                uploadAttemptCount: 0 | 1;
+                uploadBytes: number;
+              }
+            | {
+                attemptCount: 0 | 1;
+                durationMs: number;
+                operationClass: "text-send";
+                outcome:
+                  | "ambiguous"
+                  | "definitive_failure"
+                  | "identity_evidence"
+                  | "provider_acknowledgement";
+                responseBytes: number | null;
+              };
           Effect.runFork(
-            safeTelemetry.emit({
-              ...providerEvent,
-              event: "provider.text_send.completed",
-              service: "api",
-            }),
+            providerEvent.operationClass === "pdf-send"
+              ? safeTelemetry.emit({
+                  ...providerEvent,
+                  event: "provider.pdf_send.completed",
+                  service: "api",
+                })
+              : safeTelemetry.emit({
+                  ...providerEvent,
+                  event: "provider.text_send.completed",
+                  service: "api",
+                }),
           );
         },
       });
@@ -2439,7 +2473,15 @@ export const createProductionHandler = (environment: ApiEnvironment) => {
   const connectionSetupPersistenceLayers =
     makeConnectionSetupPersistenceLayers(environment);
   const sendLayer = atomicSendLayer(environment).pipe(
-    Layer.provide(Layer.merge(encryptionLayer(environment), telemetryLayer)),
+    Layer.provide(
+      Layer.mergeAll(
+        encryptionLayer(environment),
+        telemetryLayer,
+        storedMediaContainerLayer(environment).pipe(
+          Layer.provide(encryptionLayer(environment)),
+        ),
+      ),
+    ),
   );
   const layer = Layer.mergeAll(
     configLayer(environment),

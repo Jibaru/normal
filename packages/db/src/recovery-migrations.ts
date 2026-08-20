@@ -25,6 +25,7 @@ import migration0023 from "../drizzle/0023_record_recovery_source_points.sql";
 import migration0024 from "../drizzle/0024_rotate_recovery_verifier_password.sql";
 import migration0025 from "../drizzle/0025_reject_content_free_stored_messages.sql";
 import migration0026 from "../drizzle/0026_allow_direct_send_destinations.sql";
+import migration0027 from "../drizzle/0027_add_send_operation_objects.sql";
 import { type QueryConnection, withPgQueryConnection } from "./database";
 import { restrictedMigrationOwnerConnectionString } from "./restricted-runtime-config";
 
@@ -56,6 +57,7 @@ const migrations = [
   [1787191200000, migration0024],
   [1787242636000, migration0025],
   [1787250000000, migration0026],
+  [1787253600000, migration0027],
 ] as const;
 export const recoveryMigrationCreatedAts: ReadonlyArray<number> =
   migrations.map(([createdAt]) => createdAt);

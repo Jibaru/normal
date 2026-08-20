@@ -24,7 +24,7 @@ This document defines the public launch contract for the Normal MCP server. Prov
 | `connections:read` | `list_connections` |
 | `directory:read` | `list_contacts`, `list_groups` |
 | `messages:read` | `list_chats`, `read_messages`, `search_messages`, Stored Media resources |
-| `messages:send` | `send_text_message`, `get_send_status` |
+| `messages:send` | `send_text_message`, `send_pdf_file`, `get_send_status` |
 
 Every tool is omitted from discovery when its scope is absent and rechecks the scope in its handler.
 
@@ -385,7 +385,7 @@ The tool advertises:
 
 The Anthropic extension requests mandatory person-facing confirmation in supporting Claude clients; other approved MCP Clients are responsible for equivalent Client Confirmation. Every invocation requires Client Confirmation, including an exact idempotent replay and a retry after an unbound preflight rejection. `retryable: true` describes whether a later invocation could succeed and never authorizes an automatic outbound tool invocation. Standard annotations remain untrusted hints, and neither mechanism is a server-verifiable security boundary. The tool has no `confirmed` input and performs no server-side elicitation.
 
-`send_text_message` and `get_send_status` use the same normalized `status` enum:
+`send_text_message`, `send_pdf_file`, and `get_send_status` use the same normalized `status` enum:
 
 | Status | Meaning |
 | --- | --- |
@@ -426,6 +426,14 @@ Exact outbound text is retained in active application state as encrypted Pending
 A direct provider response can update its causally bound Send Operation without a provider message identifier, but it can create an outbound Stored Message only when it carries trusted stable message identity plus content or still-retained Pending Send Content. Independently delivered evidence can associate with an operation only through the same connection and an exact stable provider message identifier that the adapter has verified is shared by both payload types. The encrypted identifier and its connection- and namespace-scoped keyed equality index remain with the operation; recipient, text, timestamp proximity, status order, and apparent candidate uniqueness are never sufficient.
 
 An authenticated outbound upsert creates or updates a Stored Message only when it carries its own trusted stable provider message identifier. Without shared identity it remains independent of any Send Operation. A stronger content-bearing upsert or edit overrides Pending Send Content. If identity-only `sent`, `delivered`, or `read` evidence arrives after pending content was removed, including after a corrected `failed`, it updates only the Send Operation; no readable Stored Message is created until a content-bearing identity-bearing upsert arrives before the Message Retention Policy deadline. Text is never reconstructed from the request fingerprint. `processing`, `accepted`, unresolved `unknown`, and failures before qualifying evidence remain operation-only, while a later failure does not remove a message already established by stronger evidence. Disconnection prevents new sends but does not block convergence of items already queued for ingestion or authenticated, exactly correlated late evidence for retained operations.
+
+## `send_pdf_file`
+
+Requires `messages:send` and the same Client Confirmation, destination, idempotency, durable-attempt, status, and no-automatic-retry rules as `send_text_message`. It accepts exactly one `recipient_id`, `phone`, or `username`, and exactly one PDF source: `pdf_url` or standard padded `pdf_base64`.
+
+`file_name` is required, contains 5-255 characters, has no path separator or control character, and ends in `.pdf` case-insensitively. Decoded or downloaded content must be 8 through `16,777,216` bytes and begin with `%PDF-x.y`, where `x` is 1-9 and `y` is 0-9. URL sources must use HTTPS without credentials or a custom port. The server validates every hostname to global addresses, rejects IP/private/reserved targets, follows at most three manually validated HTTPS redirects, and bounds the complete download by time and actual bytes.
+
+Before the provider attempt boundary the server encrypts a durable copy in Stored Media storage and attaches its verified size and SHA-256 to the Send Operation. The request fingerprint binds the destination, exact PDF SHA-256, and exact filename, never the source URL. The single deferred provider attempt uses the same verified in-memory bytes and returns the standard Send Operation receipt. URLs, filenames, and bytes are never logged.
 
 ## `get_send_status`
 

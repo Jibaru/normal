@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   check,
   foreignKey,
   index,
@@ -265,6 +266,66 @@ export const pendingSendContentsInApp = publicSchema.table(
       "pending_send_contents_ciphertext_check",
       sql`octet_length(ciphertext) > 16`,
     ),
+  ],
+);
+
+export const sendOperationObjectsInApp = publicSchema.table(
+  "send_operation_objects",
+  {
+    sendOperationId: uuid("send_operation_id").primaryKey().notNull(),
+    personalAccountId: uuid("personal_account_id").notNull(),
+    whatsappConnectionId: uuid("whatsapp_connection_id").notNull(),
+    state: text().notNull(),
+    objectKey: text("object_key").notNull(),
+    plaintextSizeBytes: bigint("plaintext_size_bytes", {
+      mode: "number",
+    }).notNull(),
+    sha256: text().notNull(),
+    createdAt: timestamp("created_at", {
+      withTimezone: true,
+      mode: "string",
+    })
+      .default(sql`transaction_timestamp()`)
+      .notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.sendOperationId, table.personalAccountId],
+      foreignColumns: [
+        sendOperationsInApp.id,
+        sendOperationsInApp.personalAccountId,
+      ],
+      name: "send_operation_objects_send_operation_fkey",
+    }),
+    foreignKey({
+      columns: [table.personalAccountId, table.whatsappConnectionId],
+      foreignColumns: [
+        whatsappConnectionsInApp.personalAccountId,
+        whatsappConnectionsInApp.id,
+      ],
+      name: "send_operation_objects_connection_fkey",
+    }),
+    unique("send_operation_objects_object_key_key").on(table.objectKey),
+    pgPolicy("send_operation_objects_tenant", {
+      as: "permissive",
+      for: "all",
+      to: ["public"],
+      using: sql`personal_account_id = nullif(current_setting('public.personal_account_id', true), '')::uuid`,
+      withCheck: sql`personal_account_id = nullif(current_setting('public.personal_account_id', true), '')::uuid`,
+    }),
+    check(
+      "send_operation_objects_state_check",
+      sql`state IN ('ready', 'purging')`,
+    ),
+    check(
+      "send_operation_objects_size_check",
+      sql`plaintext_size_bytes > 0 AND plaintext_size_bytes <= 16777216`,
+    ),
+    check(
+      "send_operation_objects_sha256_check",
+      sql`sha256 ~ '^[a-f0-9]{64}$'`,
+    ),
+    check("send_operation_objects_object_key_check", sql`object_key <> ''`),
   ],
 );
 

@@ -218,6 +218,7 @@ describe("Send Operation grant identities", () => {
       readonly directRecipientType?: "phone" | "username";
       readonly fingerprint: string;
       readonly idempotencyKey: string;
+      readonly operationName?: "send_pdf_file" | "send_text_message";
       readonly recipientPublicId?: string | null;
       readonly sendId: string;
       readonly sendPublicId: string;
@@ -229,6 +230,7 @@ describe("Send Operation grant identities", () => {
     hourRequestLimit: 100,
     minuteRequestLimit: 100,
     observedAt,
+    operationName: "send_text_message" as const,
     pendingExpiresAt: new Date("2026-08-22T12:00:00.000Z"),
     recipientPublicId: contactPublicId,
     sendDailyLimit: 100,
@@ -295,6 +297,61 @@ describe("Send Operation grant identities", () => {
       mcp_authorization_id: null,
       tool_name: "send_text_message",
     });
+  });
+
+  test("preflights send authorization without quota and commit rechecks selection", async () => {
+    await expect(
+      sends.preflight?.({
+        auditLogId: "51000000-0000-4000-8000-000000000093",
+        channel: "api",
+        connectionPublicId,
+        grant: apiGrantA,
+        observedAt,
+        operationName: "send_pdf_file",
+      }),
+    ).resolves.toBe("authorized");
+    await database.query(
+      "DELETE FROM public.api_key_connections WHERE api_key_id = $1",
+      [apiKeyIdA],
+    );
+    await expect(
+      sends.preflight?.({
+        auditLogId: "51000000-0000-4000-8000-000000000094",
+        channel: "api",
+        connectionPublicId,
+        grant: apiGrantA,
+        observedAt,
+        operationName: "send_pdf_file",
+      }),
+    ).resolves.toBe("authorization_denied");
+    await expect(
+      sends.commit(
+        commitInput(apiGrantA, {
+          auditLogId: "51000000-0000-4000-8000-000000000095",
+          fingerprint: `sf1_${"P".repeat(43)}`,
+          idempotencyKey: "123456789012345678995",
+          operationName: "send_pdf_file",
+          sendId: "60000000-0000-4000-8000-000000000095",
+          sendPublicId: "snd_123456789012345678995",
+        }),
+        encrypt,
+      ),
+    ).resolves.toEqual({ outcome: "authorization_denied" });
+
+    const state = await database.query<{
+      audit_count: number;
+      quota_count: number;
+      send_count: number;
+    }>(
+      `SELECT
+         (SELECT count(*)::integer FROM public.tool_call_logs
+          WHERE tool_name = 'send_pdf_file' AND quota_reserved = false) AS audit_count,
+         (SELECT count(*)::integer FROM public.send_quota_reservations) AS quota_count,
+         (SELECT count(*)::integer FROM public.send_operations) AS send_count`,
+    );
+    expect(state.rows).toEqual([
+      { audit_count: 2, quota_count: 0, send_count: 0 },
+    ]);
   });
 
   test("stores no direct address and fails closed once a recipient exclusion exists", async () => {

@@ -91,6 +91,7 @@ import {
   validateMessageSearchQuery,
   verifyMessageSearchCandidate,
 } from "./message-search-privacy";
+import { decodePdfBase64, downloadPdf } from "./pdf-source";
 import {
   SafeTelemetry,
   type SafeTelemetry as SafeTelemetryService,
@@ -110,7 +111,8 @@ const SEND_OPERATIONS_PATH =
 const SEND_STATUS_PATH =
   /^\/v1\/connections\/(con_[A-Za-z0-9_-]{21})\/send-operations\/(snd_[A-Za-z0-9_-]{21})$/u;
 const READ_STORED_MEDIA = "read_stored_media" as const;
-const MAX_SEND_BODY_BYTES = 32_768;
+const MAX_SEND_BODY_BYTES = 22_373_720;
+const MAX_SEARCH_BODY_BYTES = 32_768;
 const SEND_OPERATION = "send_text_message" as const;
 const GET_SEND_STATUS = "get_send_status" as const;
 const decodeIdempotencyKey = Schema.decodeUnknownSync(IdempotencyKey);
@@ -447,6 +449,7 @@ const emitCompletion = (
     | "read_stored_media"
     | "search_messages"
     | "send_text_message"
+    | "send_pdf_file"
     | "get_send_status",
   outcome:
     | "audit_unavailable"
@@ -3186,15 +3189,49 @@ const parseIdempotencyKey = (request: Request): string | null => {
   }
 };
 
+const readBoundedRequestText = async (
+  request: Request,
+  maximumBytes: number,
+): Promise<string | null> => {
+  const declared = request.headers.get("content-length");
+  if (
+    declared !== null &&
+    (!/^\d+$/u.test(declared) || Number(declared) > maximumBytes)
+  ) {
+    return null;
+  }
+  if (request.body === null) return null;
+  const reader = request.body.getReader();
+  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
+  let text = "";
+  let size = 0;
+  try {
+    for (;;) {
+      const item = await reader.read();
+      if (item.done) break;
+      size += item.value.byteLength;
+      if (size > maximumBytes) {
+        await reader.cancel().catch(() => undefined);
+        return null;
+      }
+      text += decoder.decode(item.value, { stream: true });
+    }
+    text += decoder.decode();
+    return text;
+  } catch {
+    return null;
+  } finally {
+    reader.releaseLock();
+  }
+};
+
 const parseSearchBody = async (request: Request) => {
   const contentType = request.headers.get("content-type") ?? "";
   if (!contentType.toLowerCase().startsWith("application/json")) {
     return null;
   }
-  const raw = await request.text();
-  if (new TextEncoder().encode(raw).byteLength > MAX_SEND_BODY_BYTES) {
-    return null;
-  }
+  const raw = await readBoundedRequestText(request, MAX_SEARCH_BODY_BYTES);
+  if (raw === null) return null;
   try {
     return decodeRestSearchMessagesRequest(JSON.parse(raw) as unknown);
   } catch {
@@ -3207,10 +3244,8 @@ const parseSendBody = async (request: Request) => {
   if (!contentType.toLowerCase().startsWith("application/json")) {
     return null;
   }
-  const raw = await request.text();
-  if (new TextEncoder().encode(raw).byteLength > MAX_SEND_BODY_BYTES) {
-    return null;
-  }
+  const raw = await readBoundedRequestText(request, MAX_SEND_BODY_BYTES);
+  if (raw === null) return null;
   try {
     return decodeRestCreateSendOperation(JSON.parse(raw) as unknown);
   } catch {
@@ -3379,38 +3414,80 @@ const createSendOperation = (
       if (idempotencyKey === null || body === null) {
         return problemResponse("invalid_request", 400);
       }
+      const operation = "text" in body ? SEND_OPERATION : "send_pdf_file";
       const send = yield* SendTextMessage;
+      const sendGrant = apiSendGrant({
+        grantId: grant.grantId,
+        name: grant.name,
+        permissions: grant.permissions,
+        personalAccountId: grant.personalAccountId,
+        publicId: grant.id,
+      });
+      if (!("text" in body)) {
+        const preflight =
+          send.preflight === undefined
+            ? ({ outcome: "audit_unavailable" } as const)
+            : yield* send.preflight({
+                channel: "api",
+                connectionId,
+                grant: sendGrant,
+                operationName: "send_pdf_file",
+              });
+        if (preflight.outcome === "authorization_denied") {
+          yield* emitCompletion(operation, "authorization_denied");
+          return grant.permissions.includes("messages:send")
+            ? problemResponse("not_found", 404)
+            : problemResponse("insufficient_permission", 403);
+        }
+        if (preflight.outcome === "audit_unavailable") {
+          yield* emitCompletion(operation, "audit_unavailable");
+          return problemResponse("unavailable", 503);
+        }
+      }
+      const pdf =
+        "text" in body
+          ? undefined
+          : yield* Effect.tryPromise({
+              try: () =>
+                "pdf_base64" in body
+                  ? Promise.resolve(decodePdfBase64(body.pdf_base64))
+                  : downloadPdf(body.pdf_url),
+              catch: () => problemResponse("invalid_request", 400),
+            });
+      const content =
+        "text" in body
+          ? ({ text: body.text } as const)
+          : pdf === undefined
+            ? null
+            : ({
+                pdf: { bytes: pdf, fileName: body.file_name },
+              } as const);
+      if (content === null) return problemResponse("invalid_request", 400);
       const result = yield* send.send(
         {
           channel: "api",
           connectionId,
-          grant: apiSendGrant({
-            grantId: grant.grantId,
-            name: grant.name,
-            permissions: grant.permissions,
-            personalAccountId: grant.personalAccountId,
-            publicId: grant.id,
-          }),
+          grant: sendGrant,
           idempotencyKey,
           ...(body && "recipient_id" in body
             ? { recipientId: body.recipient_id }
             : "phone" in body
               ? { phone: body.phone }
               : { username: body.username }),
-          text: body.text,
+          ...content,
         },
         deferProviderAttempt,
       );
       if (result.outcome === "receipt") {
         const receipt = decodeRestSendOperation(result.receipt);
-        yield* emitCompletion(SEND_OPERATION, "success", 1);
+        yield* emitCompletion(operation, "success", 1);
         return noStoreJsonResponse(
           receipt,
           receipt.idempotent_replay ? 200 : 201,
         );
       }
       if (result.outcome === "rate_limited") {
-        yield* emitCompletion(SEND_OPERATION, "rate_limited");
+        yield* emitCompletion(operation, "rate_limited");
         return problemResponse("rate_limited", 429, {
           retry_after_seconds: result.retryAfterSeconds,
           retryable: true,
@@ -3419,27 +3496,27 @@ const createSendOperation = (
         });
       }
       if (result.outcome === "authorization_denied") {
-        yield* emitCompletion(SEND_OPERATION, "authorization_denied");
+        yield* emitCompletion(operation, "authorization_denied");
         return grant.permissions.includes("messages:send")
           ? problemResponse("not_found", 404)
           : problemResponse("insufficient_permission", 403);
       }
       if (result.outcome === "recipient_not_found") {
-        yield* emitCompletion(SEND_OPERATION, "execution_error");
+        yield* emitCompletion(operation, "execution_error");
         return problemResponse("not_found", 404);
       }
       if (result.outcome === "idempotency_conflict") {
-        yield* emitCompletion(SEND_OPERATION, "execution_error");
+        yield* emitCompletion(operation, "execution_error");
         return problemResponse("idempotency_conflict", 409);
       }
       if (result.outcome === "connection_unavailable") {
-        yield* emitCompletion(SEND_OPERATION, "execution_error");
+        yield* emitCompletion(operation, "execution_error");
         return problemResponse("connection_unavailable", 409, {
           retryable: true,
         });
       }
       yield* emitCompletion(
-        SEND_OPERATION,
+        operation,
         result.outcome === "audit_unavailable"
           ? "audit_unavailable"
           : "unavailable",

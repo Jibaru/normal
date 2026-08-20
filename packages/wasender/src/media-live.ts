@@ -3,6 +3,7 @@ export type {
   WasenderMediaTelemetryEvent,
 } from "./media";
 export {
+  isPublicIpAddress,
   makeWasenderMediaRetrievalLayer,
   WasenderMediaConfigurationError,
   wasenderMediaDecryptEndpoint,

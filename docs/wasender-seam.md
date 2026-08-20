@@ -140,6 +140,7 @@ policy. The other capabilities use their named policy directly.
 | --- | --- | --- | --- |
 | Safe JSON read | At most three jittered 10-second attempts within 25 seconds | Safe to repeat; retries network failures, 408, 429, and 5xx | 1 MiB |
 | Text send | One 15-second attempt | Acceptance may be unknown; reconcile only through exact identity-bearing evidence | 1 MiB |
+| PDF send | One bounded upload, then one 15-second send attempt | Upload failure before send is definitive; send acceptance may be unknown and is never retried | 1 MiB per JSON response |
 | Lifecycle write | One 15-second attempt before reconciliation | Reconcile provider state before any repeat | 1 MiB |
 | Media metadata | One 30-second attempt | Safe to repeat, but no implicit retry schedule | 1 MiB |
 | Guarded media download | One 60-second attempt | Discard partial bytes; a later attempt restarts at byte zero | Caller bound, at most 100,000,000 bytes |

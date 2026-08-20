@@ -69,7 +69,7 @@ const isResolvedUsernameRecipient = (value: unknown): boolean =>
     value,
   );
 
-interface TextSendRuntime {
+export interface OutboundSendRuntime {
   readonly clearTimeout: (handle: unknown) => void;
   readonly fetch: (
     input: Request | string | URL,
@@ -79,7 +79,7 @@ interface TextSendRuntime {
   readonly setTimeout: (callback: () => void, milliseconds: number) => unknown;
 }
 
-interface BoundedBody {
+export interface BoundedBody {
   readonly bytes: number;
   readonly text: string | null;
 }
@@ -87,7 +87,7 @@ interface BoundedBody {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const isProtectedString = (value: string): boolean =>
+export const isProtectedString = (value: string): boolean =>
   value.length > 0 &&
   value.length <= 4_096 &&
   !Array.from(value).some((character) => {
@@ -95,7 +95,9 @@ const isProtectedString = (value: string): boolean =>
     return codePoint !== undefined && (codePoint <= 31 || codePoint === 127);
   });
 
-const readBoundedBody = async (response: Response): Promise<BoundedBody> => {
+export const readBoundedBody = async (
+  response: Response,
+): Promise<BoundedBody> => {
   if (response.body === null) {
     return { bytes: 0, text: "" };
   }
@@ -223,7 +225,7 @@ const definitiveFailure = (
   retryAfterMs: null,
 });
 
-const classifyResponse = async (
+export const classifySendResponse = async (
   response: Response,
   body: BoundedBody,
   providerRecipient: string,
@@ -313,7 +315,7 @@ const classifyResponse = async (
     : { outcome: "ambiguous", reason: "invalid_response" };
 };
 
-const productionRuntime: TextSendRuntime = {
+export const productionOutboundSendRuntime: OutboundSendRuntime = {
   clearTimeout: (handle) =>
     globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>),
   fetch: (input, init) => globalThis.fetch(input, init),
@@ -349,7 +351,7 @@ export const makeWasenderRecipientRoute = async (
  */
 export const makeWasenderTextSendingWithRuntime = (
   options: WasenderTextSendingOptions,
-  runtime: TextSendRuntime,
+  runtime: OutboundSendRuntime,
 ): TextSending => {
   const authority = Redacted.value(options.authority);
   const identityKey = new Uint8Array(Redacted.value(options.identityKey));
@@ -415,7 +417,7 @@ export const makeWasenderTextSendingWithRuntime = (
                 });
                 const body = await readBoundedBody(response);
                 responseBytes = body.bytes;
-                result = await classifyResponse(
+                result = await classifySendResponse(
                   response,
                   body,
                   providerRecipient,
@@ -456,7 +458,7 @@ export const makeWasenderTextSendingWithRuntime = (
 export const makeWasenderTextSending = (
   options: WasenderTextSendingOptions,
 ): TextSending =>
-  makeWasenderTextSendingWithRuntime(options, productionRuntime);
+  makeWasenderTextSendingWithRuntime(options, productionOutboundSendRuntime);
 
 export const makeWasenderTextSendingLayer = (
   options: WasenderTextSendingOptions,

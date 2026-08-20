@@ -320,6 +320,7 @@ export interface RestOperationCompletedEvent {
     | "read_stored_media"
     | "search_messages"
     | "send_text_message"
+    | "send_pdf_file"
     | "get_send_status";
   readonly outcome:
     | "audit_unavailable"
@@ -361,6 +362,7 @@ export interface McpToolCallCompletedEvent {
     | "list_groups"
     | "get_send_status"
     | "send_text_message"
+    | "send_pdf_file"
     | "list_chats"
     | "read_messages"
     | "search_messages";
@@ -419,6 +421,22 @@ export interface ProviderTextSendCompletedEvent {
     | "provider_acknowledgement";
   readonly responseBytes: number | null;
   readonly service: "api";
+}
+
+export interface ProviderPdfSendCompletedEvent {
+  readonly durationMs: number;
+  readonly event: "provider.pdf_send.completed";
+  readonly operationClass: "pdf-send";
+  readonly outcome:
+    | "ambiguous"
+    | "definitive_failure"
+    | "identity_evidence"
+    | "provider_acknowledgement";
+  readonly responseBytes: number | null;
+  readonly sendAttemptCount: 0 | 1;
+  readonly service: "api";
+  readonly uploadAttemptCount: 0 | 1;
+  readonly uploadBytes: number;
 }
 
 export interface SendDispatchLeaseSweepCompletedEvent {
@@ -509,6 +527,7 @@ export type SafeTelemetryEvent =
   | PersonalAccountDeletionDeadlineRiskEvent
   | ProviderDirectoryCompletedEvent
   | ProviderTextSendCompletedEvent
+  | ProviderPdfSendCompletedEvent
   | RecipientExclusionCleanupCompletedEvent
   | RecipientExclusionListCompletedEvent
   | RecipientExclusionRecoveryCompletedEvent

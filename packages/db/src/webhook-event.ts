@@ -1036,12 +1036,14 @@ export const makeWebhookEventRepository = (
         const changedAt = input.evidence.occurredAt ?? input.receivedAt;
         const correlated = await db.execute<Record<string, unknown>>(
           sql`select operations.id,operations.recipient_type,operations.recipient_public_id,
-             pending.key_version,pending.nonce,pending.ciphertext,
+              objects.object_key as attachment_object_key,
+              pending.key_version,pending.nonce,pending.ciphertext,
              case operations.recipient_type when 'contact' then contacts.provider_identity_index
                else groups.provider_locator end as recipient_locator
            from public.send_operations operations
-           left join public.pending_send_contents pending on pending.send_operation_id=operations.id
-             and pending.expires_at>${input.receivedAt}
+            left join public.pending_send_contents pending on pending.send_operation_id=operations.id
+              and pending.expires_at>${input.receivedAt}
+            left join public.send_operation_objects objects on objects.send_operation_id=operations.id
            left join public.directory_contacts contacts on operations.recipient_type='contact'
              AND contacts.personal_account_id=operations.personal_account_id
              AND contacts.whatsapp_connection_id=operations.whatsapp_connection_id
@@ -1094,6 +1096,7 @@ export const makeWebhookEventRepository = (
           operation !== undefined &&
           materialize !== undefined &&
           ["sent", "delivered", "read"].includes(input.status) &&
+          operation.attachment_object_key == null &&
           operation.ciphertext != null &&
           typeof operation.recipient_locator === "string" &&
           typeof operation.recipient_public_id === "string"

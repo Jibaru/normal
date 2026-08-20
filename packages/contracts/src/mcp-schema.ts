@@ -144,6 +144,9 @@ export const SendTextMessageOutputContract = makePublicObjectContract({
 export type SendTextMessageOutput =
   typeof SendTextMessageOutputContract.schema.Type;
 
+export const SendPdfFileOutputContract = SendTextMessageOutputContract;
+export type SendPdfFileOutput = SendTextMessageOutput;
+
 export const GetSendStatusOutputContract = makePublicObjectContract({
   send_id: SendId,
   status: SendStatus,

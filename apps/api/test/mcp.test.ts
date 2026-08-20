@@ -165,6 +165,7 @@ const makeHarness = (
     readonly mediaContainerFailure?: StoredMediaContainerFailure;
     readonly mediaDecryptFails?: boolean;
     readonly sendResult?: SendTextMessageResult;
+    readonly sendPreflightDenied?: boolean;
     readonly sendStatusNotFound?: boolean;
     readonly tombstone?: boolean;
     readonly mediaRead?: "not_found" | "ready";
@@ -270,7 +271,16 @@ const makeHarness = (
       write: () => Effect.die("not used"),
     }),
     Layer.succeed(SendTextMessage, {
+      preflight: () => {
+        observations.push("send-preflight");
+        return Effect.succeed({
+          outcome: overrides.sendPreflightDenied
+            ? ("authorization_denied" as const)
+            : ("authorized" as const),
+        });
+      },
       send: (input) => {
+        observations.push("send");
         sendGrantKinds.push(input.grant.kind);
         sendDestinations.push({
           ...(input.phone === undefined ? {} : { phone: input.phone }),
@@ -928,6 +938,17 @@ describe("stateless MCP list_connections boundary", () => {
             text: "known recipient",
           },
           name: "send_text_message",
+          scope: "messages:send",
+        },
+        {
+          arguments: {
+            connection_id: "con_123456789012345678901",
+            file_name: "report.pdf",
+            idempotency_key: "123456789012345678901",
+            pdf_base64: "JVBERi0xLjcKJSVFT0YK",
+            recipient_id: "ctc_123456789012345678901",
+          },
+          name: "send_pdf_file",
           scope: "messages:send",
         },
         {
@@ -2580,6 +2601,16 @@ describe("atomic send_text_message MCP boundary", () => {
         _meta: { "anthropic/requiresUserInteraction": true },
       }),
       expect.objectContaining({
+        name: "send_pdf_file",
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+        },
+        _meta: { "anthropic/requiresUserInteraction": true },
+      }),
+      expect.objectContaining({
         name: "get_send_status",
         annotations: { readOnlyHint: true },
       }),
@@ -2645,6 +2676,69 @@ describe("atomic send_text_message MCP boundary", () => {
         },
       },
     });
+  });
+
+  test("invokes send_pdf_file with verified bytes after authorization preflight", async () => {
+    const harness = makeHarness({ scopes: ["messages:send"] });
+    const response = await harness.handler(
+      jsonRpcRequest("tools/call", {
+        name: "send_pdf_file",
+        arguments: {
+          connection_id: "con_123456789012345678901",
+          file_name: "report.pdf",
+          idempotency_key: "123456789012345678901",
+          pdf_base64: "JVBERi0xLjcKJSVFT0YK",
+          recipient_id: "ctc_123456789012345678901",
+        },
+      }),
+      {},
+      executionContext,
+      authorization,
+    );
+
+    expect(await response.json()).toMatchObject({
+      result: { structuredContent: { send_id: "snd_123456789012345678901" } },
+    });
+    expect(harness.observations.indexOf("send-preflight")).toBeLessThan(
+      harness.observations.indexOf("send"),
+    );
+  });
+
+  test("does not resolve or fetch a PDF URL before send authorization", async () => {
+    const harness = makeHarness({
+      scopes: ["messages:send"],
+      sendPreflightDenied: true,
+    });
+    const originalFetch = globalThis.fetch;
+    let fetchCalls = 0;
+    globalThis.fetch = (async () => {
+      fetchCalls += 1;
+      throw new Error("unexpected fetch");
+    }) as unknown as typeof fetch;
+    try {
+      const response = await harness.handler(
+        jsonRpcRequest("tools/call", {
+          name: "send_pdf_file",
+          arguments: {
+            connection_id: "con_123456789012345678901",
+            file_name: "report.pdf",
+            idempotency_key: "123456789012345678901",
+            pdf_url: "https://files.example.test/report.pdf",
+            recipient_id: "ctc_123456789012345678901",
+          },
+        }),
+        {},
+        executionContext,
+        authorization,
+      );
+      expect(await response.json()).toMatchObject({
+        result: { isError: true },
+      });
+      expect(fetchCalls).toBe(0);
+      expect(harness.observations).not.toContain("send");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   test.each([

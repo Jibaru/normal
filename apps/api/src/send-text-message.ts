@@ -5,10 +5,13 @@ import {
 import type { SendTextMessageOutput } from "@whatsapp-mcp/contracts/mcp-schema";
 import type {
   AtomicSendRepository,
+  CommitSendInput,
+  CommitSendResult,
   SendEncryptionMaterial,
   SendGrantIdentity,
 } from "@whatsapp-mcp/db/send";
 import {
+  makeWasenderPdfSending,
   makeWasenderRecipientRoute,
   makeWasenderTextSending,
   type RecipientLocator,
@@ -21,6 +24,7 @@ import type {
   EnvelopeEncryption,
   VersionedCiphertext,
 } from "./encryption/envelope";
+import type { StoredMediaContainer } from "./encryption/stored-media-container";
 import type { SendTextMessageResult, SendTextMessageService } from "./mcp";
 import {
   importMessageSearchIndexKey,
@@ -80,14 +84,14 @@ const fingerprint = async (
     connectionId: string;
     destinationIdentity: string;
     grant: SendGrantIdentity;
-    text: string;
+    contentIdentity: string;
   },
 ): Promise<string> => {
   const parts = [
     fingerprintSubject(input.grant),
     input.connectionId,
     input.destinationIdentity,
-    input.text,
+    input.contentIdentity,
   ].map((value) => encoder.encode(value));
   const size = parts.reduce((sum, value) => sum + 4 + value.byteLength, 0);
   const framed = new Uint8Array(size);
@@ -121,6 +125,9 @@ const receipt = (
 });
 
 export interface AtomicSendServiceOptions {
+  readonly deleteStoredMediaObject?:
+    | ((objectKey: string) => Promise<void>)
+    | undefined;
   readonly encryption: EnvelopeEncryption;
   readonly fingerprintKey: CryptoKey;
   readonly hourRequestLimit: number;
@@ -135,6 +142,7 @@ export interface AtomicSendServiceOptions {
   readonly nextSend: () => { readonly id: string; readonly publicId: string };
   readonly now: () => Date;
   readonly repository: AtomicSendRepository;
+  readonly storedMediaContainer?: StoredMediaContainer;
   readonly sendDailyLimit: number;
   readonly sendPerMinuteLimit: number;
   readonly telemetry: (event: unknown) => void;
@@ -143,6 +151,25 @@ export interface AtomicSendServiceOptions {
 export const makeAtomicSendTextMessageService = (
   options: AtomicSendServiceOptions,
 ): SendTextMessageService => ({
+  preflight: (input) =>
+    Effect.tryPromise(() => {
+      if (options.repository.preflight === undefined) {
+        throw new Error("send authorization preflight unavailable");
+      }
+      return options.repository.preflight({
+        auditLogId: options.nextAuditLogId(),
+        channel: input.channel,
+        connectionPublicId: input.connectionId,
+        grant: input.grant,
+        observedAt: options.now(),
+        operationName: input.operationName,
+      });
+    }).pipe(
+      Effect.map((outcome) => ({ outcome })),
+      Effect.catchAll(() =>
+        Effect.succeed({ outcome: "audit_unavailable" as const }),
+      ),
+    ),
   send: (input, deferProviderAttempt) =>
     Effect.tryPromise(async (): Promise<SendTextMessageResult> => {
       const destinations = [
@@ -162,6 +189,15 @@ export const makeAtomicSendTextMessageService = (
       const observedAt = options.now();
       const send = options.nextSend();
       const grant = input.grant;
+      const pdf = input.pdf;
+      const text = "text" in input ? input.text : undefined;
+      const pdfHash =
+        pdf === undefined
+          ? undefined
+          : Array.from(
+              new Uint8Array(await crypto.subtle.digest("SHA-256", pdf.bytes)),
+              (byte) => byte.toString(16).padStart(2, "0"),
+            ).join("");
       const requestFingerprint = await fingerprint(options.fingerprintKey, {
         connectionId: input.connectionId,
         destinationIdentity:
@@ -169,57 +205,132 @@ export const makeAtomicSendTextMessageService = (
             ? destination.value
             : `${destination.kind}:${destination.value}`,
         grant,
-        text: input.text,
+        contentIdentity:
+          pdf === undefined
+            ? (text ?? "")
+            : `pdf\u0000${pdf.fileName}\u0000${pdfHash}`,
       });
-      const committed = await options.repository.commit(
-        {
-          auditLogId: options.nextAuditLogId(),
-          channel: input.channel,
-          connectionPublicId: input.connectionId,
-          fingerprint: requestFingerprint,
-          grant,
-          hourRequestLimit: options.hourRequestLimit,
-          idempotencyKey: input.idempotencyKey,
-          minuteRequestLimit: options.minuteRequestLimit,
-          observedAt,
-          pendingExpiresAt: new Date(observedAt.valueOf() + 7 * 86_400_000),
-          ...(destination.kind === "recipient"
-            ? { recipientPublicId: destination.value }
-            : {
-                directRecipientType: destination.kind,
-                recipientPublicId: null,
+      const objectKey = pdf === undefined ? undefined : crypto.randomUUID();
+      let writtenAccountId: string | undefined;
+      let committed: CommitSendResult<
+        CommitSendInput & { readonly attachment: CommitSendInput["attachment"] }
+      >;
+      try {
+        committed = await options.repository.commit(
+          {
+            attachment:
+              pdf === undefined
+                ? undefined
+                : {
+                    plaintextSizeBytes: pdf.bytes.byteLength,
+                    sha256: pdfHash ?? "",
+                  },
+            auditLogId: options.nextAuditLogId(),
+            channel: input.channel,
+            connectionPublicId: input.connectionId,
+            fingerprint: requestFingerprint,
+            grant,
+            hourRequestLimit: options.hourRequestLimit,
+            idempotencyKey: input.idempotencyKey,
+            minuteRequestLimit: options.minuteRequestLimit,
+            observedAt,
+            operationName:
+              pdf === undefined ? "send_text_message" : "send_pdf_file",
+            pendingExpiresAt: new Date(observedAt.valueOf() + 7 * 86_400_000),
+            ...(destination.kind === "recipient"
+              ? { recipientPublicId: destination.value }
+              : {
+                  directRecipientType: destination.kind,
+                  recipientPublicId: null,
+                }),
+            sendDailyLimit: options.sendDailyLimit,
+            sendId: send.id,
+            sendPublicId: send.publicId,
+            sendPerMinuteLimit: options.sendPerMinuteLimit,
+          },
+          async (material) => {
+            if (pdf !== undefined) {
+              if (
+                options.storedMediaContainer === undefined ||
+                options.deleteStoredMediaObject === undefined ||
+                objectKey === undefined
+              ) {
+                throw new Error("Stored Media unavailable");
+              }
+              const written = await Effect.runPromise(
+                options.storedMediaContainer.write({
+                  ...keys(material),
+                  context: {
+                    connectionId: material.connectionKey.connectionId,
+                    mediaObjectId: send.id,
+                    personalAccountId: material.accountKey.personalAccountId,
+                  },
+                  objectKey,
+                  plaintext: new ReadableStream<Uint8Array>({
+                    start(controller) {
+                      controller.enqueue(pdf.bytes);
+                      controller.close();
+                    },
+                  }),
+                }),
+              );
+              writtenAccountId = material.accountKey.personalAccountId;
+              if (written.plaintextBytes !== pdf.bytes.byteLength) {
+                throw new Error("Stored Media size mismatch");
+              }
+            }
+            const protectedContent = await Effect.runPromise(
+              options.encryption.encrypt({
+                ...keys(material),
+                context: {
+                  accountId: material.accountKey.personalAccountId,
+                  connectionId: material.connectionKey.connectionId,
+                  entity: "send-operation",
+                  fieldOrObjectPurpose: "pending-send-content",
+                  recordId: send.id,
+                },
+                plaintext: encoder.encode(
+                  pdf === undefined
+                    ? (text ?? "")
+                    : JSON.stringify({ fileName: pdf.fileName, type: "pdf" }),
+                ),
               }),
-          sendDailyLimit: options.sendDailyLimit,
-          sendId: send.id,
-          sendPublicId: send.publicId,
-          sendPerMinuteLimit: options.sendPerMinuteLimit,
-        },
-        async (material) => {
-          const protectedContent = await Effect.runPromise(
-            options.encryption.encrypt({
-              ...keys(material),
-              context: {
-                accountId: material.accountKey.personalAccountId,
-                connectionId: material.connectionKey.connectionId,
-                entity: "send-operation",
-                fieldOrObjectPurpose: "pending-send-content",
-                recordId: send.id,
-              },
-              plaintext: encoder.encode(input.text),
-            }),
-          );
-          return {
-            ciphertext: decodeBase64(protectedContent.ciphertext),
-            keyVersion: protectedContent.keyVersion,
-            nonce: decodeBase64(protectedContent.nonce),
-          };
-        },
-      );
+            );
+            return {
+              ...(objectKey === undefined ? {} : { attachment: { objectKey } }),
+              ciphertext: decodeBase64(protectedContent.ciphertext),
+              keyVersion: protectedContent.keyVersion,
+              nonce: decodeBase64(protectedContent.nonce),
+            };
+          },
+        );
+      } catch (error) {
+        if (objectKey !== undefined && writtenAccountId !== undefined) {
+          try {
+            await options.deleteStoredMediaObject?.(objectKey);
+          } catch {
+            if (
+              options.repository.enqueueStoredMediaObjectDeletion === undefined
+            ) {
+              throw new Error("Stored Media deletion queue unavailable");
+            }
+            await options.repository.enqueueStoredMediaObjectDeletion({
+              objectKey,
+              personalAccountId: writtenAccountId,
+              requestedAt: options.now(),
+            });
+          }
+        }
+        throw error;
+      }
       if (committed.outcome === "replay")
         return {
           outcome: "receipt",
           receipt: receipt(committed.receipt, true),
         };
+      if (committed.outcome === "stored_media_quota_exceeded") {
+        return { outcome: "service_unavailable" };
+      }
       if (committed.outcome !== "created") return committed;
       const provider = committed.provider;
       const opened = keys(provider);
@@ -321,17 +432,26 @@ export const makeAtomicSendTextMessageService = (
                       );
               }
               const locator = "send-recipient" as RecipientLocator;
-              const adapter = makeWasenderTextSending({
+              const adapterOptions = {
                 authority: Redacted.make(authority) as never,
                 identityKey: Redacted.make(
                   identityBytes,
                 ) as WasenderIdentityProtectionKey,
-                resolveRecipient: (candidate) =>
+                resolveRecipient: (candidate: RecipientLocator) =>
                   candidate === locator ? resolvedRecipient : null,
                 telemetry: { emit: options.telemetry },
-              });
+              };
               const result = await Effect.runPromise(
-                adapter.sendText({ recipient: locator, text: input.text }),
+                pdf === undefined
+                  ? makeWasenderTextSending(adapterOptions).sendText({
+                      recipient: locator,
+                      text: text ?? "",
+                    })
+                  : makeWasenderPdfSending(adapterOptions).sendPdf({
+                      bytes: pdf.bytes,
+                      fileName: pdf.fileName,
+                      recipient: locator,
+                    }),
               );
               status =
                 result.outcome === "ambiguous"
@@ -355,6 +475,7 @@ export const makeAtomicSendTextMessageService = (
               sendId: send.id,
               status,
               ...(messageIdentity !== undefined &&
+              pdf === undefined &&
               (provider.recipientType === "contact" ||
                 provider.recipientType === "group") &&
               (status === "sent" || status === "delivered" || status === "read")
@@ -388,14 +509,14 @@ export const makeAtomicSendTextMessageService = (
                           messageSearchIndexesForText(
                             messageSearchKey,
                             provider.connectionKey.connectionId,
-                            input.text,
+                            text ?? "",
                           ),
                         );
                       } finally {
                         messageSearchKeyBytes.fill(0);
                       }
                       const plaintext = encoder.encode(
-                        JSON.stringify({ mediaSource: null, text: input.text }),
+                        JSON.stringify({ mediaSource: null, text: text ?? "" }),
                       );
                       const protectedContent = await Effect.runPromise(
                         Effect.acquireUseRelease(

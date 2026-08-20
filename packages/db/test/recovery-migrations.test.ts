@@ -32,9 +32,9 @@ describe("recovery migrations", () => {
       },
     };
 
-    await expect(applyRecoveryMigrationsWithClient(client)).resolves.toBe(6);
-    expect(queries.filter(({ text }) => text === "BEGIN")).toHaveLength(6);
-    expect(queries.filter(({ text }) => text === "COMMIT")).toHaveLength(6);
+    await expect(applyRecoveryMigrationsWithClient(client)).resolves.toBe(7);
+    expect(queries.filter(({ text }) => text === "BEGIN")).toHaveLength(7);
+    expect(queries.filter(({ text }) => text === "COMMIT")).toHaveLength(7);
     expect(queries.filter(({ text }) => text === "ROLLBACK")).toHaveLength(0);
     expect(
       queries
@@ -42,7 +42,7 @@ describe("recovery migrations", () => {
         .map(({ values }) => values?.[1]),
     ).toEqual([
       1787126400000, 1787130000000, 1787166960000, 1787191200000, 1787242636000,
-      1787250000000,
+      1787250000000, 1787253600000,
     ]);
   });
 

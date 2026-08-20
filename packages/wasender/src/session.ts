@@ -33,6 +33,28 @@ export type DirectorySessionAuthority =
 export type WasenderRecipientRoute =
   ProtectedAdapterValue<"WasenderRecipientRoute">;
 
+declare const verifiedPdfBytes: unique symbol;
+
+/** Raw PDF bytes that passed the adapter's bounded structural preflight. */
+export type VerifiedPdfBytes = Uint8Array & {
+  readonly [verifiedPdfBytes]: "VerifiedPdfBytes";
+};
+
+export const maximumOutboundPdfBytes = 16_777_216;
+
+export const makeVerifiedPdfBytes = (bytes: Uint8Array): VerifiedPdfBytes => {
+  if (bytes.byteLength < 8 || bytes.byteLength > maximumOutboundPdfBytes) {
+    throw new RangeError(
+      `PDF bytes must contain 8 through ${maximumOutboundPdfBytes} bytes`,
+    );
+  }
+  const signature = String.fromCharCode(...bytes.subarray(0, 8));
+  if (!/^%PDF-[1-9]\.[0-9]$/u.test(signature)) {
+    throw new TypeError("PDF bytes must begin with a PDF version signature");
+  }
+  return bytes.slice() as VerifiedPdfBytes;
+};
+
 declare const wasenderIdentityProtectionKey: unique symbol;
 
 /**
@@ -172,6 +194,48 @@ export interface WasenderTextSendingOptions {
   readonly telemetry: TextSendTelemetry;
 }
 
+export type PdfSendResult =
+  | TextSendResult
+  | {
+      readonly outcome: "definitive_failure";
+      readonly reason: "upload_failed";
+      readonly retryAfterMs: BoundedRetryAfterMs | null;
+    };
+
+/** Uploads one verified PDF and performs at most one document-send attempt. */
+export interface PdfSending {
+  readonly sendPdf: (request: {
+    readonly bytes: VerifiedPdfBytes;
+    readonly fileName: string;
+    readonly recipient: RecipientLocator;
+  }) => Effect.Effect<PdfSendResult>;
+}
+
+export const PdfSending = Context.GenericTag<PdfSending>(
+  "@whatsapp-mcp/wasender/PdfSending",
+);
+
+export interface PdfSendTelemetryEvent {
+  readonly durationMs: number;
+  readonly operationClass: "pdf-send";
+  readonly outcome: PdfSendResult["outcome"];
+  readonly responseBytes: number | null;
+  readonly sendAttemptCount: 0 | 1;
+  readonly uploadAttemptCount: 0 | 1;
+  readonly uploadBytes: number;
+}
+
+export interface WasenderPdfSendingOptions {
+  readonly authority: SessionAuthority;
+  readonly identityKey: WasenderIdentityProtectionKey;
+  readonly resolveRecipient: (
+    recipient: RecipientLocator,
+  ) => WasenderRecipientRoute | null;
+  readonly telemetry: {
+    readonly emit: (event: PdfSendTelemetryEvent) => void;
+  };
+}
+
 declare const mediaDownloadByteLimit: unique symbol;
 
 export type MediaDownloadByteLimit = number & {
@@ -282,6 +346,10 @@ export {
   type WasenderDirectoryTelemetryEvent,
   type WasenderSessionDirectoryConfig,
 } from "./directory";
+export {
+  makeWasenderPdfSending,
+  makeWasenderPdfSendingLayer,
+} from "./pdf-send";
 export {
   makeWasenderRecipientRoute,
   makeWasenderTextSending,

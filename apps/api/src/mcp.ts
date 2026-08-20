@@ -28,6 +28,7 @@ import {
   ReadMessagesOutputContract,
   type SearchMessagesOutput,
   SearchMessagesOutputContract,
+  SendPdfFileOutputContract,
   type SendTextMessageOutput,
   SendTextMessageOutputContract,
 } from "@whatsapp-mcp/contracts/mcp-schema";
@@ -55,6 +56,7 @@ import {
   type SendGrantIdentity,
 } from "@whatsapp-mcp/db/mcp-tool";
 import { normalizeWhatsAppConnectionName } from "@whatsapp-mcp/domain/whatsapp-connection";
+import type { VerifiedPdfBytes } from "@whatsapp-mcp/wasender/session";
 import { createMcpHandler } from "agents/mcp/server";
 import { Context, Data, Effect, type Layer, Option } from "effect";
 import { z } from "zod";
@@ -88,6 +90,7 @@ import {
   validateMessageSearchQuery,
   verifyMessageSearchCandidate,
 } from "./message-search-privacy";
+import { decodePdfBase64, downloadPdf } from "./pdf-source";
 import {
   type McpToolCallCompletedEvent,
   SafeTelemetry,
@@ -329,6 +332,10 @@ export type SendTextMessageResult =
       readonly retryAfterSeconds: number;
     };
 
+export type SendPreflightResult =
+  | { readonly outcome: "authorized" }
+  | { readonly outcome: "authorization_denied" | "audit_unavailable" };
+
 type SendDestination =
   | {
       readonly phone: string;
@@ -347,14 +354,28 @@ type SendDestination =
     };
 
 export interface SendTextMessageService {
+  readonly preflight?: (input: {
+    readonly channel: "api" | "mcp";
+    readonly connectionId: string;
+    readonly grant: SendGrantIdentity;
+    readonly operationName: "send_pdf_file" | "send_text_message";
+  }) => Effect.Effect<SendPreflightResult, never>;
   readonly send: (
     input: SendDestination & {
       readonly channel: "api" | "mcp";
       readonly connectionId: string;
       readonly grant: SendGrantIdentity;
       readonly idempotencyKey: string;
-      readonly text: string;
-    },
+    } & (
+        | { readonly text: string; readonly pdf?: never }
+        | {
+            readonly pdf: {
+              readonly bytes: VerifiedPdfBytes;
+              readonly fileName: string;
+            };
+            readonly text?: never;
+          }
+      ),
     deferProviderAttempt?: (attempt: Promise<void>) => void,
   ) => Effect.Effect<SendTextMessageResult, never>;
 }
@@ -601,6 +622,8 @@ const listContactsDescription =
   "Find active contacts in one selected WhatsApp Connection. When the User names a person, call this tool with its search input; do not use search_messages to locate a person. contact_id can be passed to send_text_message. conversation_id can be passed to read_messages when messages:read is granted and retained activity exists; otherwise it is null.";
 const sendTextMessageDescription =
   "Send exact text once after Client Confirmation. Supply exactly one destination: recipient_id returned by a Directory or message tool, an E.164 phone beginning with +, or a WhatsApp username beginning with @. Generate a fresh idempotency_key of exactly 21 characters matching [A-Za-z0-9_-]{21}; reuse that exact key only to retry the same connection, destination, and text.";
+const sendPdfFileDescription =
+  "Send one verified PDF after Client Confirmation. Supply exactly one destination and exactly one source: pdf_url or pdf_base64. file_name must be a safe name ending in .pdf. The decoded or downloaded PDF may not exceed 16 MiB. Generate a fresh 21-character idempotency_key and reuse it only for the same connection, destination, exact PDF bytes, and filename.";
 const searchMessagesDescription =
   "Search exact normalized words in retained Stored Message text and captions within one selected WhatsApp Connection. Results are newest first, not relevance ranked.";
 const ListGroupsInput = z
@@ -737,6 +760,55 @@ const SendTextMessageInput = z.union([
     })
     .strict(),
 ]);
+const PdfFileName = z
+  .string()
+  .min(5)
+  .max(255)
+  .refine(
+    (value) =>
+      value.toLowerCase().endsWith(".pdf") &&
+      !/[\\/]/u.test(value) &&
+      !Array.from(value).some((character) => {
+        const point = character.codePointAt(0);
+        return point !== undefined && (point <= 31 || point === 127);
+      }),
+    "file_name must be a safe PDF filename",
+  );
+const SendPdfCommon = {
+  connection_id: z.string().regex(/^con_[A-Za-z0-9_-]{21}$/u),
+  file_name: PdfFileName,
+  idempotency_key: z.string().regex(/^[A-Za-z0-9_-]{21}$/u),
+} as const;
+const PdfUrl = z
+  .url()
+  .max(4_096)
+  .refine((value) => {
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" &&
+      url.username === "" &&
+      url.password === "" &&
+      url.port === ""
+    );
+  });
+const PdfBase64 = z
+  .string()
+  .min(12)
+  .max(22_369_624)
+  .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u);
+const PdfDestinations = [
+  { recipient_id: z.string().regex(/^(?:ctc|grp)_[A-Za-z0-9_-]{21}$/u) },
+  { phone: z.string().regex(/^\+[1-9]\d{1,14}$/u) },
+  { username: z.string().regex(/^@[A-Za-z0-9._-]{1,64}$/u) },
+] as const;
+const SendPdfFileInput = z.union(
+  PdfDestinations.flatMap((destination) => [
+    z.object({ ...SendPdfCommon, ...destination, pdf_url: PdfUrl }).strict(),
+    z
+      .object({ ...SendPdfCommon, ...destination, pdf_base64: PdfBase64 })
+      .strict(),
+  ]) as unknown as readonly [z.ZodObject, z.ZodObject, ...z.ZodObject[]],
+);
 const SendTextMessageOutputSchema = z
   .object({
     send_id: z.string().regex(/^snd_[A-Za-z0-9_-]{21}$/u),
@@ -871,6 +943,9 @@ const buildListContactsResult = makeSuccessResultBuilder(
 const buildSendTextMessageResult = makeSuccessResultBuilder(
   SendTextMessageOutputContract,
 );
+const buildSendPdfFileResult = makeSuccessResultBuilder(
+  SendPdfFileOutputContract,
+);
 const buildGetSendStatusResult = makeSuccessResultBuilder(
   GetSendStatusOutputContract,
 );
@@ -901,6 +976,13 @@ const serviceUnavailable = () =>
     error_code: "service_unavailable",
     message: "The service is temporarily unavailable.",
     retryable: true,
+  });
+
+const invalidRequest = () =>
+  makeExecutionErrorResult({
+    error_code: "invalid_request",
+    message: "The PDF source is invalid or unavailable.",
+    retryable: false,
   });
 
 const invalidCursor = () =>
@@ -1209,6 +1291,98 @@ const sendTextMessage = (
       return serviceUnavailable();
     }
     yield* emitToolCompletion("send_text_message", "execution_error");
+    return sendError(result.outcome);
+  }).pipe(Effect.catchAll(() => Effect.succeed(auditUnavailable())));
+
+const sendPdfFile = (
+  authorization: McpAccessGrant,
+  input: {
+    readonly connection_id: string;
+    readonly file_name: string;
+    readonly idempotency_key: string;
+    readonly pdf_base64?: string;
+    readonly pdf_url?: string;
+    readonly phone?: string;
+    readonly recipient_id?: string;
+    readonly username?: string;
+  },
+  deferProviderAttempt?: (attempt: Promise<void>) => void,
+) =>
+  Effect.gen(function* () {
+    const service = yield* SendTextMessage;
+    const grant = isMcpApiKeyGrant(authorization)
+      ? apiSendGrant({
+          grantId: authorization.apiKey.grantId,
+          name: authorization.apiKey.name,
+          permissions: authorization.apiKey.permissions,
+          personalAccountId: authorization.apiKey.personalAccountId,
+          publicId: authorization.apiKey.id,
+        })
+      : mcpSendGrant(authorization);
+    const preflight =
+      service.preflight === undefined
+        ? ({ outcome: "audit_unavailable" } as const)
+        : yield* service.preflight({
+            channel: "mcp",
+            connectionId: input.connection_id,
+            grant,
+            operationName: "send_pdf_file",
+          });
+    if (preflight.outcome === "authorization_denied") {
+      yield* emitToolCompletion("send_pdf_file", "authorization_denied");
+      return authorizationDenied();
+    }
+    if (preflight.outcome === "audit_unavailable") {
+      yield* emitToolCompletion("send_pdf_file", "audit_unavailable");
+      return auditUnavailable();
+    }
+    const loaded = yield* Effect.tryPromise({
+      try: () =>
+        input.pdf_base64 === undefined
+          ? downloadPdf(input.pdf_url ?? "")
+          : Promise.resolve(decodePdfBase64(input.pdf_base64)),
+      catch: () => undefined,
+    }).pipe(Effect.either);
+    if (loaded._tag === "Left") {
+      yield* emitToolCompletion("send_pdf_file", "execution_error");
+      return invalidRequest();
+    }
+    const result = yield* service.send(
+      {
+        channel: "mcp",
+        connectionId: input.connection_id,
+        grant,
+        idempotencyKey: input.idempotency_key,
+        ...(input.recipient_id !== undefined
+          ? { recipientId: input.recipient_id }
+          : input.phone !== undefined
+            ? { phone: input.phone }
+            : { username: input.username ?? "" }),
+        pdf: { bytes: loaded.right, fileName: input.file_name },
+      },
+      deferProviderAttempt,
+    );
+    if (result.outcome === "receipt") {
+      yield* emitToolCompletion("send_pdf_file", "success", 1);
+      return buildSendPdfFileResult(result.receipt);
+    }
+    if (result.outcome === "rate_limited") {
+      yield* emitToolCompletion("send_pdf_file", "rate_limited");
+      return rateLimited(result.retryAfterSeconds, result.resetsAt);
+    }
+    if (result.outcome === "authorization_denied") {
+      yield* emitToolCompletion("send_pdf_file", "authorization_denied");
+      return authorizationDenied();
+    }
+    if (result.outcome === "audit_unavailable") {
+      yield* emitToolCompletion("send_pdf_file", "audit_unavailable");
+      return auditUnavailable();
+    }
+    if (result.outcome === "service_unavailable") {
+      yield* emitToolCompletion("send_pdf_file", "service_unavailable");
+      return serviceUnavailable();
+    }
+    yield* emitToolCompletion("send_pdf_file", "execution_error");
     return sendError(result.outcome);
   }).pipe(Effect.catchAll(() => Effect.succeed(auditUnavailable())));
 
@@ -3524,6 +3698,37 @@ export const createMcpRequestHandler =
         },
       );
       server.registerTool(
+        "send_pdf_file",
+        {
+          annotations: {
+            readOnlyHint: false,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: true,
+          },
+          description: sendPdfFileDescription,
+          inputSchema: SendPdfFileInput,
+          outputSchema: SendTextMessageOutputSchema,
+          title: "Send WhatsApp PDF File",
+          _meta: { "anthropic/requiresUserInteraction": true },
+        },
+        async (input) => {
+          const operation = Effect.runPromise(
+            sendPdfFile(
+              authorization,
+              input as Parameters<typeof sendPdfFile>[1],
+              (attempt) => context.waitUntil(attempt),
+            ).pipe(Effect.provide(options.layer)),
+          );
+          context.waitUntil(operation.then(() => undefined));
+          const result = await operation;
+          return {
+            ...result,
+            content: result.content.map((block) => ({ ...block })),
+          } as CallToolResult;
+        },
+      );
+      server.registerTool(
         "get_send_status",
         {
           annotations: { readOnlyHint: true },
@@ -3751,6 +3956,24 @@ export const createMcpRequestHandler =
               target: "draft-2020-12",
             }),
             title: "Send WhatsApp Text Message",
+            _meta: { "anthropic/requiresUserInteraction": true },
+          });
+          tools.push({
+            annotations: {
+              readOnlyHint: false,
+              destructiveHint: false,
+              idempotentHint: true,
+              openWorldHint: true,
+            },
+            description: sendPdfFileDescription,
+            inputSchema: z.toJSONSchema(SendPdfFileInput, {
+              target: "draft-2020-12",
+            }),
+            name: "send_pdf_file",
+            outputSchema: z.toJSONSchema(SendTextMessageOutputSchema, {
+              target: "draft-2020-12",
+            }),
+            title: "Send WhatsApp PDF File",
             _meta: { "anthropic/requiresUserInteraction": true },
           });
           tools.push({

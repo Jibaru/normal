@@ -61,6 +61,44 @@ export const SendUsername = Schema.String.pipe(
 );
 export type SendUsername = typeof SendUsername.Type;
 
+export const SendPdfFileName = Schema.String.pipe(
+  Schema.minLength(5),
+  Schema.maxLength(255),
+  Schema.filter(
+    (value) =>
+      value.toLowerCase().endsWith(".pdf") &&
+      !/[\\/]/u.test(value) &&
+      !Array.from(value).some((character) => {
+        const point = character.codePointAt(0);
+        return point !== undefined && (point <= 31 || point === 127);
+      }),
+  ),
+);
+export const SendPdfUrl = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.maxLength(4_096),
+  Schema.filter((value) => {
+    try {
+      const url = new URL(value);
+      return (
+        url.protocol === "https:" &&
+        url.username === "" &&
+        url.password === "" &&
+        url.port === ""
+      );
+    } catch {
+      return false;
+    }
+  }),
+);
+export const SendPdfBase64 = Schema.String.pipe(
+  Schema.minLength(12),
+  Schema.maxLength(22_369_624),
+  Schema.pattern(
+    /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/,
+  ),
+);
+
 export const RestConnectionState = Schema.Literal(
   "connected",
   "connecting",
@@ -429,6 +467,36 @@ export const RestCreateSendOperationContract = makePublicContract(
     }),
     Schema.Struct({ phone: SendPhone, text: SendText }),
     Schema.Struct({ username: SendUsername, text: SendText }),
+    Schema.Struct({
+      recipient_id: Schema.Union(ContactId, GroupId),
+      file_name: SendPdfFileName,
+      pdf_url: SendPdfUrl,
+    }),
+    Schema.Struct({
+      recipient_id: Schema.Union(ContactId, GroupId),
+      file_name: SendPdfFileName,
+      pdf_base64: SendPdfBase64,
+    }),
+    Schema.Struct({
+      phone: SendPhone,
+      file_name: SendPdfFileName,
+      pdf_url: SendPdfUrl,
+    }),
+    Schema.Struct({
+      phone: SendPhone,
+      file_name: SendPdfFileName,
+      pdf_base64: SendPdfBase64,
+    }),
+    Schema.Struct({
+      username: SendUsername,
+      file_name: SendPdfFileName,
+      pdf_url: SendPdfUrl,
+    }),
+    Schema.Struct({
+      username: SendUsername,
+      file_name: SendPdfFileName,
+      pdf_base64: SendPdfBase64,
+    }),
   ),
 );
 export type RestCreateSendOperation =

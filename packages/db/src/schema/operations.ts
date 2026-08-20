@@ -286,6 +286,7 @@ export const restoreObjectDeletionsInAppPrivate = publicSchema.table(
     bucket: text().notNull(),
     objectKey: text("object_key").notNull(),
     personalAccountId: uuid("personal_account_id"),
+    retainedBytes: bigint("retained_bytes", { mode: "number" }),
   },
   (table) => [
     primaryKey({
@@ -299,6 +300,10 @@ export const restoreObjectDeletionsInAppPrivate = publicSchema.table(
     check(
       "restore_object_deletions_object_key_check",
       sql`object_key <> ''::text`,
+    ),
+    check(
+      "restore_object_deletions_retained_bytes_check",
+      sql`retained_bytes > 0`,
     ),
   ],
 );

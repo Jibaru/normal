@@ -675,6 +675,32 @@ describe("REST contracts", () => {
         text: "hello",
       }) as unknown,
     ).toEqual({ username: "@jane_doe", text: "hello" });
+    const pdf = {
+      file_name: "report.pdf",
+      pdf_base64: "JVBERi0xLjcKJSVFT0YK",
+      recipient_id: "ctc_xxxxxxxxxxxxxxxxxxxxx",
+    } as const;
+    expect(decodeRestCreateSendOperation(pdf) as unknown).toEqual(pdf);
+    expect(
+      decodeRestCreateSendOperation({
+        file_name: "report.PDF",
+        pdf_url: "https://files.example.com/report.pdf",
+        username: "@jane_doe",
+      }) as unknown,
+    ).toEqual({
+      file_name: "report.PDF",
+      pdf_url: "https://files.example.com/report.pdf",
+      username: "@jane_doe",
+    });
+    expect(() =>
+      decodeRestCreateSendOperation({
+        ...pdf,
+        pdf_url: "https://files.example.com/report.pdf",
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeRestCreateSendOperation({ ...pdf, file_name: "../report.pdf" }),
+    ).toThrow();
     expect(() =>
       decodeRestCreateSendOperation({
         ...created,

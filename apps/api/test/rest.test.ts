@@ -184,6 +184,7 @@ const makeHarness = (options?: {
       encode: () => Effect.succeed("rest-cursor"),
     }),
     Layer.succeed(SendTextMessage, {
+      preflight: () => Effect.succeed({ outcome: "authorized" as const }),
       send:
         options?.send ??
         (() =>
@@ -2446,6 +2447,39 @@ describe("REST Send Operations", () => {
       undefined,
     );
     expect(send.mock.calls[0]?.[0].recipientId).toBeUndefined();
+  });
+
+  test("accepts a verified PDF variant without echoing its content", async () => {
+    const send = vi.fn<SendTextMessageService["send"]>(() =>
+      Effect.succeed({ outcome: "receipt", receipt }),
+    );
+    const response = await makeHarness({
+      permissions: ["messages:send"],
+      send,
+    }).handler(
+      request(sendPath, {
+        body: {
+          file_name: "report.pdf",
+          pdf_base64: "JVBERi0xLjcKJSVFT0YK",
+          recipient_id: "ctc_123456789012345678901",
+        },
+        idempotencyKey,
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pdf: {
+          bytes: new TextEncoder().encode("%PDF-1.7\n%%EOF\n"),
+          fileName: "report.pdf",
+        },
+        recipientId: "ctc_123456789012345678901",
+      }),
+      undefined,
+    );
+    expect(JSON.stringify(await response.json())).not.toContain("report.pdf");
   });
 
   test("replays an exact Send Operation and rejects changed or unaccepted payloads", async () => {

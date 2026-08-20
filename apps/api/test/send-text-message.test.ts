@@ -5,6 +5,7 @@ import {
   type SendEncryptionMaterial,
   type SendProviderMaterial,
 } from "@whatsapp-mcp/db/send";
+import { makeVerifiedPdfBytes } from "@whatsapp-mcp/wasender/session";
 import { Effect } from "effect";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
@@ -609,6 +610,129 @@ describe("atomic send workflow", () => {
     });
     expect(providerAttempt).not.toHaveBeenCalled();
     expect(repository.recordProviderOutcome).not.toHaveBeenCalled();
+  });
+
+  test("deletes a written PDF object after commit failure and durably queues a failed delete", async () => {
+    const enqueueStoredMediaObjectDeletion = vi.fn(async () => undefined);
+    let commitFails = true;
+    const repository: AtomicSendRepository = {
+      commit: async (_request, encrypt) => {
+        await encrypt(material);
+        if (commitFails) throw new Error("transaction commit failed");
+        return {
+          outcome: "created",
+          provider: {
+            ...material,
+            authority: protectedValue(storedAuthority),
+            identityKey: protectedValue("x".repeat(32)),
+            messageSearchKey: protectedValue("s".repeat(32)),
+            recipient: protectedValue(recipientRoute),
+            recipientRecordId: `di1_${"B".repeat(43)}`,
+            recipientType: "contact",
+          },
+          receipt: {
+            createdAt: new Date("2026-08-03T12:00:00.000Z"),
+            publicId: "snd_123456789012345678947",
+            status: "processing",
+            statusChangedAt: new Date("2026-08-03T12:00:00.000Z"),
+          },
+        };
+      },
+      enqueueStoredMediaObjectDeletion,
+      expireLeases: vi.fn(),
+      recordProviderOutcome: vi.fn(async ({ status }) => ({
+        createdAt: new Date("2026-08-03T12:00:00.000Z"),
+        publicId: "snd_123456789012345678947",
+        status,
+        statusChangedAt: new Date("2026-08-03T12:00:01.000Z"),
+      })),
+    };
+    const deleteStoredMediaObject = vi.fn(async () => {
+      throw new Error("R2 delete failed");
+    });
+    const service = makeAtomicSendTextMessageService({
+      deleteStoredMediaObject,
+      encryption: {
+        createConnectionKey: () => Effect.die("unused"),
+        createPersonalAccountKey: () => Effect.die("unused"),
+        decrypt: () => Effect.die("unused"),
+        decryptMany: () => Effect.die("unused"),
+        encrypt: () =>
+          Effect.succeed({
+            ciphertext: btoa("encrypted-pending-content"),
+            keyVersion: 1,
+            nonce: btoa(String.fromCharCode(...new Uint8Array(12))),
+            version: 1,
+          }),
+      },
+      fingerprintKey: await importSendFingerprintKey("47".repeat(32)),
+      hourRequestLimit: 600,
+      minuteRequestLimit: 60,
+      nextAuditLogId: () => "50000000-0000-4000-8000-000000000047",
+      nextSend: () => ({
+        id: "60000000-0000-4000-8000-000000000047",
+        publicId: "snd_123456789012345678947",
+      }),
+      now: () => new Date("2026-08-03T12:00:01.000Z"),
+      repository,
+      sendDailyLimit: 200,
+      sendPerMinuteLimit: 10,
+      storedMediaContainer: {
+        read: () => Effect.die("unused"),
+        write: () =>
+          Effect.succeed({
+            chunkCount: 1,
+            containerVersion: 1,
+            keyVersion: 1,
+            plaintextBytes: 15,
+          }),
+      },
+      telemetry: () => undefined,
+    });
+    const { text: _text, ...destination } = input;
+
+    await expect(
+      Effect.runPromise(
+        service.send({
+          ...destination,
+          pdf: {
+            bytes: makeVerifiedPdfBytes(
+              new TextEncoder().encode("%PDF-1.7\n%%EOF\n"),
+            ),
+            fileName: "report.pdf",
+          },
+        }),
+      ),
+    ).resolves.toEqual({ outcome: "service_unavailable" });
+    expect(deleteStoredMediaObject).toHaveBeenCalledTimes(1);
+    expect(enqueueStoredMediaObjectDeletion).toHaveBeenCalledWith({
+      objectKey: expect.any(String),
+      personalAccountId: material.accountKey.personalAccountId,
+      requestedAt: new Date("2026-08-03T12:00:01.000Z"),
+    });
+
+    commitFails = false;
+    await expect(
+      Effect.runPromise(
+        service.send(
+          {
+            ...destination,
+            pdf: {
+              bytes: makeVerifiedPdfBytes(
+                new TextEncoder().encode("%PDF-1.7\n%%EOF\n"),
+              ),
+              fileName: "report.pdf",
+            },
+          },
+          () => undefined,
+        ),
+      ),
+    ).resolves.toMatchObject({
+      outcome: "receipt",
+      receipt: { status: "processing" },
+    });
+    expect(deleteStoredMediaObject).toHaveBeenCalledTimes(1);
+    expect(enqueueStoredMediaObjectDeletion).toHaveBeenCalledTimes(1);
   });
 
   test("distinguishes a crash before the durable boundary from one after it", async () => {

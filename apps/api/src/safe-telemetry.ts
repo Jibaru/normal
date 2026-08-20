@@ -107,6 +107,16 @@ export const safeTelemetryFieldsByEvent = {
     "outcome",
     "responseBytes",
   ],
+  "provider.pdf_send.completed": [
+    ...common,
+    "durationMs",
+    "operationClass",
+    "outcome",
+    "responseBytes",
+    "sendAttemptCount",
+    "uploadAttemptCount",
+    "uploadBytes",
+  ],
   "recipient_exclusion.cleanup.completed": [
     ...common,
     "outcome",

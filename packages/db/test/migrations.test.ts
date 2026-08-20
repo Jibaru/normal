@@ -50,7 +50,7 @@ describe("production migrations", () => {
         (SELECT count(*)::int FROM public.schema_migrations) AS legacy,
         (SELECT count(*)::int FROM public.drizzle_migrations) AS standard
     `);
-    expect(ledgers.rows).toEqual([{ legacy: 40, standard: 27 }]);
+    expect(ledgers.rows).toEqual([{ legacy: 40, standard: 28 }]);
   });
 
   test("clears only retention limitations superseded by a complete Directory snapshot", async () => {
@@ -1446,6 +1446,102 @@ describe("production migrations", () => {
     expect(protectedState.rows).toEqual([
       { account_count: 0, audit_columns: 7, object_deletion_count: 0 },
     ]);
+  });
+
+  test("moves purging send objects to restore deletion without double quota release", async () => {
+    await runMigrations(database);
+    await seedTenants(database);
+    const authorizationId = "40000000-0000-4000-8000-000000000127";
+    const auditLogId = "50000000-0000-4000-8000-000000000127";
+    const sendId = "60000000-0000-4000-8000-000000000127";
+    const objectKey = "send-operations/restored-purging-object";
+    const replayedAt = new Date("2026-08-20T12:00:00.000Z");
+    await database.query(
+      `INSERT INTO public.mcp_authorizations (
+         id, personal_account_id, oauth_subject, client_id, client_class, scopes,
+         reverified_at, authorized_at, absolute_expires_at
+       ) VALUES ($1,$2,$3,'restore-test','approved',ARRAY['messages:send'],$4,$4,$4::timestamptz + interval '90 days')`,
+      [authorizationId, accountA, "R".repeat(43), replayedAt],
+    );
+    await database.query(
+      `INSERT INTO public.tool_call_logs (
+         id, personal_account_id, mcp_authorization_id, tool_name, started_at,
+         outcome, quota_reserved, expires_at
+       ) VALUES ($1,$2,$3,'send_pdf_file',$4,'started',true,$4::timestamptz + interval '90 days')`,
+      [auditLogId, accountA, authorizationId, replayedAt],
+    );
+    await database.query(
+      `INSERT INTO public.send_operations (
+         id, public_id, personal_account_id, mcp_authorization_id,
+         tool_call_log_id, whatsapp_connection_id, recipient_type,
+         recipient_public_id, status, created_at, status_changed_at,
+         attempt_claimed_at, lease_expires_at, expires_at
+       ) VALUES ($1,'snd_000000000000000000127',$2,$3,$4,$5,'contact',
+         'ctc_000000000000000000127','processing',$6,$6,$6,
+         $6::timestamptz + interval '30 seconds',
+         $6::timestamptz + interval '90 days')`,
+      [sendId, accountA, authorizationId, auditLogId, connectionA, replayedAt],
+    );
+    await database.query(
+      `INSERT INTO public.send_operation_objects (
+         send_operation_id, personal_account_id, whatsapp_connection_id,
+         state, object_key, plaintext_size_bytes, sha256, created_at
+       ) VALUES ($1,$2,$3,'purging',$4,15,$5,$6)`,
+      [sendId, accountA, connectionA, objectKey, "a".repeat(64), replayedAt],
+    );
+    await database.query(
+      "UPDATE public.personal_accounts SET stored_media_used_bytes = 15 WHERE id = $1",
+      [accountA],
+    );
+    await database.query(
+      `INSERT INTO public.stored_media_object_deletions(
+         personal_account_id, object_key, requested_at
+       ) VALUES ($1,$2,$3)`,
+      [accountA, objectKey, replayedAt],
+    );
+
+    await database.exec("SET ROLE whatsapp_restore_runtime");
+    try {
+      await database.query(
+        `SELECT public.replay_restore_deletion(
+          'whatsapp_connection', $1, $2, $3
+        )`,
+        [connectionA, "b".repeat(64), replayedAt],
+      );
+    } finally {
+      await database.exec("RESET ROLE");
+    }
+    const moved = await database.query<{
+      retained_bytes: number;
+      stored_intents: number;
+    }>(
+      `SELECT retained_bytes::integer,
+         (SELECT count(*)::integer FROM public.stored_media_object_deletions) AS stored_intents
+       FROM public.restore_object_deletions
+       WHERE bucket = 'stored_media' AND object_key = $1`,
+      [objectKey],
+    );
+    expect(moved.rows).toEqual([{ retained_bytes: 15, stored_intents: 0 }]);
+
+    await database.exec("SET ROLE whatsapp_restore_runtime");
+    try {
+      await database.query(
+        "SELECT public.finish_restore_object_deletion('stored_media', $1)",
+        [objectKey],
+      );
+      await database.query(
+        "SELECT public.finish_restore_object_deletion('stored_media', $1)",
+        [objectKey],
+      );
+    } finally {
+      await database.exec("RESET ROLE");
+    }
+
+    const quota = await database.query<{ stored_media_used_bytes: number }>(
+      "SELECT stored_media_used_bytes::integer FROM public.personal_accounts WHERE id = $1",
+      [accountA],
+    );
+    expect(quota.rows).toEqual([{ stored_media_used_bytes: 0 }]);
   });
 });
 

@@ -72,6 +72,10 @@ _Avoid_: Retryable send
 The exact outbound text retained temporarily in active application state while a Send Operation awaits evidence that can make it a Stored Message. It can supply Stored Message content while retained, is discarded immediately after a definitive pre-send failure, and otherwise expires at the earliest of seven days after operation creation, its Message Retention Policy deadline, or Connection or Personal Account Deletion; replay protection after discard retains no readable text.
 _Avoid_: Stored Message, 90-day send history
 
+**Pending Send File**:
+An encrypted, verified outbound PDF retained in Stored Media storage while its Send Operation awaits provider and message evidence. It is limited to 16 MiB, counts against the Personal Account's Stored Media quota, is discarded after a definitive pre-send failure, and otherwise expires with Pending Send Content at the earliest of seven days after operation creation, its Message Retention Policy deadline, or Connection or Personal Account Deletion. Its source URL, when one was supplied, is never retained; replay protection retains only a non-reversible fingerprint over the exact bytes and filename.
+_Avoid_: Stored Media, public upload, 90-day send history
+
 **Send Status**:
 The platform's best known state of a Send Operation: processing locally, accepted by the provider, sent onward but not known delivered, delivered, read, failed according to current evidence, or unknown because provider acceptance is ambiguous. Send Status converges by evidence strength rather than event arrival order; accepted and sent do not mean delivered, and provider-specific status names are not Send Statuses.
 _Avoid_: Provider status, guaranteed delivery
