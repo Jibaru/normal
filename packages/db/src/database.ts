@@ -34,6 +34,24 @@ export const makeQueryConnection = (client: PgClient): QueryConnection => ({
   },
 });
 
+export const postgresErrorCode = (error: unknown): string => {
+  let current = error;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (typeof current !== "object" || current === null) break;
+    const candidate = current as {
+      readonly cause?: unknown;
+      readonly code?: unknown;
+    };
+    if (
+      typeof candidate.code === "string" &&
+      /^[0-9A-Z]{5}$/.test(candidate.code)
+    )
+      return candidate.code;
+    current = candidate.cause;
+  }
+  return "unknown";
+};
+
 export const withPgQueryConnection = async <Value>(
   connectionString: string,
   use: (connection: QueryConnection) => Promise<Value>,
