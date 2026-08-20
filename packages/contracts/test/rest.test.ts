@@ -585,6 +585,10 @@ describe("REST contracts", () => {
     expect(serialized).not.toContain("whatsapp-media://");
     expect(serialized).not.toContain("text_truncated");
     expect(serialized).toContain('"Idempotency-Key"');
+    expect(serialized).toContain('"summary": "PDF from an HTTPS URL"');
+    expect(serialized).toContain(
+      '"summary": "PDF from standard padded Base64"',
+    );
     expect(serialized).toContain('"type": "http"');
     expect(serialized).toContain('"scheme": "bearer"');
     expect(serialized).toContain("con_xxxxxxxxxxxxxxxxxxxxx");

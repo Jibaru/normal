@@ -368,6 +368,18 @@ const createSendOperationExample = {
   text: "Hello from a server-side automation.",
 };
 
+const createPdfUrlSendOperationExample = {
+  recipient_id: "ctc_xxxxxxxxxxxxxxxxxxxxx",
+  file_name: "report.pdf",
+  pdf_url: "https://files.example.com/report.pdf",
+};
+
+const createPdfBase64SendOperationExample = {
+  recipient_id: "ctc_xxxxxxxxxxxxxxxxxxxxx",
+  file_name: "report.pdf",
+  pdf_base64: "JVBERi0xLjcKJSVFT0YK",
+};
+
 const apiKeySummaryExample = {
   connection_ids: ["con_xxxxxxxxxxxxxxxxxxxxx"],
   created_at: "2026-08-14T12:00:00.000Z",
@@ -1321,7 +1333,20 @@ export const generateOpenApiDocument = (): Record<string, unknown> => ({
         requestBody: {
           content: {
             "application/json": {
-              example: createSendOperationExample,
+              examples: {
+                text: {
+                  summary: "Text message",
+                  value: createSendOperationExample,
+                },
+                pdfUrl: {
+                  summary: "PDF from an HTTPS URL",
+                  value: createPdfUrlSendOperationExample,
+                },
+                pdfBase64: {
+                  summary: "PDF from standard padded Base64",
+                  value: createPdfBase64SendOperationExample,
+                },
+              },
               schema: { $ref: "#/components/schemas/CreateSendOperation" },
             },
           },

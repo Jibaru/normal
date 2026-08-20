@@ -1377,9 +1377,30 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "example": {
-                "recipient_id": "ctc_xxxxxxxxxxxxxxxxxxxxx",
-                "text": "Hello from a server-side automation."
+              "examples": {
+                "text": {
+                  "summary": "Text message",
+                  "value": {
+                    "recipient_id": "ctc_xxxxxxxxxxxxxxxxxxxxx",
+                    "text": "Hello from a server-side automation."
+                  }
+                },
+                "pdfUrl": {
+                  "summary": "PDF from an HTTPS URL",
+                  "value": {
+                    "recipient_id": "ctc_xxxxxxxxxxxxxxxxxxxxx",
+                    "file_name": "report.pdf",
+                    "pdf_url": "https://files.example.com/report.pdf"
+                  }
+                },
+                "pdfBase64": {
+                  "summary": "PDF from standard padded Base64",
+                  "value": {
+                    "recipient_id": "ctc_xxxxxxxxxxxxxxxxxxxxx",
+                    "file_name": "report.pdf",
+                    "pdf_base64": "JVBERi0xLjcKJSVFT0YK"
+                  }
+                }
               },
               "schema": {
                 "$ref": "#/components/schemas/CreateSendOperation"
