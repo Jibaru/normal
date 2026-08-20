@@ -5,7 +5,7 @@ import type { OperationsControlEnvironment } from "../src/environment";
 const asOf = "2026-08-19T12:00:00.000Z";
 const body = {
   version: 1,
-  window: "30d",
+  window: "7d",
   as_of: asOf,
   operation: `recovery_operation_${"a".repeat(32)}`,
   recovery_branch_id: "br-availability-test",
@@ -21,7 +21,7 @@ const page = {
       last_checked: new Date().toISOString().replace("Z", "000Z"),
       services: { whatsapp_servers: "up" },
     },
-    uptime: { "30d": 99.8 },
+    uptime: { "7d": 99.8 },
     scheduledOutages: [
       {
         affected_services: ["WhatsApp Server"],
@@ -41,42 +41,42 @@ const environment = {
 
 describe("production availability authority", () => {
   test("binds live first-party, dependency, and sampled-key evidence to the exact request", async () => {
-    const fetcher = vi.fn(async (input: string | URL | Request) => {
-      const url = String(input);
-      if (url.includes("cloudflare.com")) {
-        return Response.json({
-          data: {
-            viewer: {
-              zones: [
-                {
-                  httpRequests1hGroups: [
-                    {
-                      dimensions: { clientRequestHTTPHost: "api.normal.fast" },
-                      sum: { requests: 10_000 },
-                      ratio: { status5xx: 0.001 },
-                    },
-                    {
-                      dimensions: { clientRequestHTTPHost: "api.normal.fast" },
-                      sum: { requests: 10_000 },
-                      ratio: { status5xx: 0.003 },
-                    },
-                    {
-                      dimensions: { clientRequestHTTPHost: "normal.fast" },
-                      sum: { requests: 50_000 },
-                      ratio: { status5xx: 0.5 },
-                    },
-                  ],
-                },
-              ],
+    const fetcher = vi.fn(
+      async (input: string | URL | Request, _init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("cloudflare.com")) {
+          const request = JSON.parse(String(_init?.body)) as {
+            variables: { filter: { datetime_geq: string } };
+          };
+          return Response.json({
+            data: {
+              viewer: {
+                zones: [
+                  {
+                    httpRequestsAdaptiveGroups: [
+                      {
+                        count: 100,
+                        ratio: {
+                          status5xx:
+                            request.variables.filter.datetime_geq ===
+                            "2026-08-12T12:00:00.000Z"
+                              ? 0.014
+                              : 0,
+                        },
+                      },
+                    ],
+                  },
+                ],
+              },
             },
-          },
-        });
-      }
-      return new Response(
-        `<div data-page="${JSON.stringify(page).replaceAll('"', "&quot;")}"></div>`,
-        { headers: { "content-type": "text/html" } },
-      );
-    });
+          });
+        }
+        return new Response(
+          `<div data-page="${JSON.stringify(page).replaceAll('"', "&quot;")}"></div>`,
+          { headers: { "content-type": "text/html" } },
+        );
+      },
+    );
     const response = await handleAvailability(
       new Request("https://operations.normal.fast/v1/availability", {
         method: "POST",
@@ -87,18 +87,35 @@ describe("production availability authority", () => {
     );
     await expect(response.json()).resolves.toEqual({
       ...body,
-      window_started_at: "2026-07-20T12:00:00.000Z",
+      window_started_at: "2026-08-12T12:00:00.000Z",
       window_completed_at: asOf,
       first_party_percent: 99.8,
       wasender_percent: 99.8,
       whatsapp_percent: 99.8,
       sampled_keys_usable: true,
     });
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledTimes(8);
     expect(fetcher).toHaveBeenCalledWith(
       "https://wasenderapi.com/status",
       expect.objectContaining({ redirect: "manual" }),
     );
+    const analyticsFilters = fetcher.mock.calls
+      .filter(([input]) => String(input).includes("cloudflare.com"))
+      .map(([, init]) => JSON.parse(String(init?.body)).variables.filter)
+      .sort((left, right) =>
+        left.datetime_geq.localeCompare(right.datetime_geq),
+      );
+    expect(analyticsFilters).toHaveLength(7);
+    expect(analyticsFilters[0]).toEqual({
+      clientRequestHTTPHost: "api.normal.fast",
+      datetime_geq: "2026-08-12T12:00:00.000Z",
+      datetime_lt: "2026-08-13T12:00:00.000Z",
+    });
+    expect(analyticsFilters[6]).toEqual({
+      clientRequestHTTPHost: "api.normal.fast",
+      datetime_geq: "2026-08-18T12:00:00.000Z",
+      datetime_lt: asOf,
+    });
   });
 
   test("rejects extended requests before external access", async () => {
