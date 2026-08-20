@@ -8,11 +8,11 @@ import {
   makeDeletionMarkerStore,
 } from "@whatsapp-mcp/api/deletion/marker";
 import type { RecipientJournalBucket } from "@whatsapp-mcp/api/recipient/journal";
-import { makePgRestoreRepository } from "@whatsapp-mcp/db/restore";
 import {
   applyRecoveryMigrations,
   recoveryMigrationRequiresVerifierProvisioning,
 } from "@whatsapp-mcp/db/recovery-migrations";
+import { makePgRestoreRepository } from "@whatsapp-mcp/db/restore";
 import { restrictedRestoreRuntimeConnectionString } from "@whatsapp-mcp/db/restricted-runtime-config";
 import { createNeonRecoveryClient } from "@whatsapp-mcp/neon-recovery/client";
 import { replayRestore } from "@whatsapp-mcp/restore-coordinator/replay";
