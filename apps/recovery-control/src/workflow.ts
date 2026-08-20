@@ -124,7 +124,7 @@ export class ProductionRecoveryWorkflow extends WorkflowEntrypoint<
         try {
           const migrationUri = await client.getDirectMigrationUri(branch);
           if (await recoveryMigrationRequiresVerifierHardening(migrationUri)) {
-            await client.resetRecoveryVerifierPassword(branch);
+            await client.ensureRecoveryVerifierPassword(branch);
             await hardenRecoveryVerifierRole(
               await client.getDirectRecoveryVerifierUri(branch),
             );

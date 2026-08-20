@@ -367,15 +367,20 @@ describe("Neon recovery control-plane client", () => {
 
   test("uses the verifier role explicitly on a guarded recovery branch", async () => {
     const requests: string[] = [];
+    const verifierRole = {
+      branch_id: branchId,
+      name: "whatsapp_recovery_verifier",
+      created_at: time,
+      updated_at: time,
+    };
     const responses = [
+      json({ branch: branch(), annotation: annotation() }),
+      json({ roles: [verifierRole] }),
       json({ branch: branch(), annotation: annotation() }),
       json({
         role: {
-          branch_id: branchId,
-          name: "whatsapp_recovery_verifier",
+          ...verifierRole,
           password: "verifier-secret",
-          created_at: time,
-          updated_at: time,
         },
         operations: [],
       }),
@@ -391,14 +396,53 @@ describe("Neon recovery control-plane client", () => {
       },
     });
 
-    await client.resetRecoveryVerifierPassword(expected);
+    await client.ensureRecoveryVerifierPassword(expected);
     await expect(
       client.getDirectRecoveryVerifierUri(expected),
     ).resolves.toContain("postgresql://whatsapp_recovery_verifier:");
-    expect(requests[1]).toEndWith(
+    expect(requests[3]).toEndWith(
       `/branches/${branchId}/roles/whatsapp_recovery_verifier/reset_password`,
     );
-    expect(requests[3]).toContain("role_name=whatsapp_recovery_verifier");
+    expect(requests[5]).toContain("role_name=whatsapp_recovery_verifier");
+  });
+
+  test("creates a missing managed verifier role before hardening", async () => {
+    const requests: Array<{ body: string | undefined; method: string }> = [];
+    const responses = [
+      json({ branch: branch(), annotation: annotation() }),
+      json({ roles: [] }),
+      json({
+        role: {
+          branch_id: branchId,
+          name: "whatsapp_recovery_verifier",
+          password: "verifier-secret",
+          created_at: time,
+          updated_at: time,
+        },
+        operations: [],
+      }),
+    ];
+    const client = createNeonRecoveryClient(config(), {
+      fetch: async (_input, init) => {
+        requests.push({
+          body: typeof init?.body === "string" ? init.body : undefined,
+          method: String(init?.method),
+        });
+        return responses.shift() ?? json({}, 500);
+      },
+    });
+
+    await expect(
+      client.ensureRecoveryVerifierPassword(expected),
+    ).resolves.toBeUndefined();
+    expect(requests.map(({ method }) => method)).toEqual([
+      "GET",
+      "GET",
+      "POST",
+    ]);
+    expect(JSON.parse(requests[2]?.body ?? "null")).toEqual({
+      role: { name: "whatsapp_recovery_verifier" },
+    });
   });
 
   test("uses the explicitly configured recovery verifier role", async () => {

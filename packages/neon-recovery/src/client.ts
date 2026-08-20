@@ -240,6 +240,9 @@ const roleOperationsResponseSchema = z
     operations: operationsSchema,
   })
   .passthrough();
+const rolesResponseSchema = z
+  .object({ roles: z.array(roleSchema) })
+  .passthrough();
 const connectionUriResponseSchema = z
   .object({ uri: z.string().min(1) })
   .passthrough();
@@ -817,8 +820,52 @@ export const createNeonRecoveryClient = (
   const getDirectMigrationUri = (branch: RecoveryBranch) =>
     getDirectUri(branch, MIGRATION_OWNER_ROLE);
 
-  const resetRecoveryVerifierPassword = (branch: RecoveryBranch) =>
-    resetRolePassword(branch, "whatsapp_recovery_verifier");
+  const ensureRecoveryVerifierPassword = async (branch: RecoveryBranch) => {
+    const verified = await getGuardedBranch(branch);
+    const list = async () => {
+      const result = await request(
+        `/projects/${config.projectId}/branches/${verified.id}/roles`,
+        { method: "GET" },
+        rolesResponseSchema,
+        [],
+      );
+      return (result.value as z.infer<typeof rolesResponseSchema>).roles.filter(
+        (role) => role.name === "whatsapp_recovery_verifier",
+      );
+    };
+    const existing = await list();
+    if (existing.length > 1)
+      throw new NeonRecoveryError("Multiple recovery verifier roles exist");
+    if (existing.length === 1) {
+      await resetRolePassword(branch, "whatsapp_recovery_verifier");
+      return;
+    }
+    let created: Awaited<ReturnType<typeof request>>;
+    try {
+      created = await request(
+        `/projects/${config.projectId}/branches/${verified.id}/roles`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            role: { name: "whatsapp_recovery_verifier" },
+          }),
+        },
+        roleOperationsResponseSchema,
+        [],
+      );
+    } catch (error) {
+      if ((await list()).length !== 1) throw error;
+      await resetRolePassword(branch, "whatsapp_recovery_verifier");
+      return;
+    }
+    const value = created.value as z.infer<typeof roleOperationsResponseSchema>;
+    if (
+      value.role.branch_id !== verified.id ||
+      value.role.name !== "whatsapp_recovery_verifier"
+    )
+      throw new NeonRecoveryError("Neon created a different recovery role");
+    await waitForOperations(value.operations);
+  };
 
   const getDirectRecoveryVerifierUri = (branch: RecoveryBranch) =>
     getDirectUri(branch, "whatsapp_recovery_verifier");
@@ -1018,9 +1065,9 @@ export const createNeonRecoveryClient = (
   return {
     findGuardedPitrBranch,
     reconcilePitrBranch,
+    ensureRecoveryVerifierPassword,
     getDirectRecoveryVerifierUri,
     resetMigrationOwnerPassword,
-    resetRecoveryVerifierPassword,
     resetRestoreRuntimePassword,
     getDirectMigrationUri,
     getDirectRestoreUri,
