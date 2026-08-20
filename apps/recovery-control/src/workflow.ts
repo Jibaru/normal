@@ -9,7 +9,10 @@ import {
 } from "@whatsapp-mcp/api/deletion/marker";
 import type { RecipientJournalBucket } from "@whatsapp-mcp/api/recipient/journal";
 import { makePgRestoreRepository } from "@whatsapp-mcp/db/restore";
-import { applyRecoveryMigrations } from "@whatsapp-mcp/db/recovery-migrations";
+import {
+  applyRecoveryMigrations,
+  recoveryMigrationRequiresVerifierProvisioning,
+} from "@whatsapp-mcp/db/recovery-migrations";
 import { restrictedRestoreRuntimeConnectionString } from "@whatsapp-mcp/db/restricted-runtime-config";
 import { createNeonRecoveryClient } from "@whatsapp-mcp/neon-recovery/client";
 import { replayRestore } from "@whatsapp-mcp/restore-coordinator/replay";
@@ -118,9 +121,10 @@ export class ProductionRecoveryWorkflow extends WorkflowEntrypoint<
         const client = neonClient(this.env);
         await client.resetMigrationOwnerPassword(branch);
         try {
-          return await applyRecoveryMigrations(
-            await client.getDirectMigrationUri(branch),
-          );
+          const migrationUri = await client.getDirectMigrationUri(branch);
+          if (await recoveryMigrationRequiresVerifierProvisioning(migrationUri))
+            await client.deleteGuardedRecoveryVerifierRole(branch);
+          return await applyRecoveryMigrations(migrationUri);
         } finally {
           await client.resetMigrationOwnerPassword(branch);
         }

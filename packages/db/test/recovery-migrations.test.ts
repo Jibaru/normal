@@ -3,6 +3,7 @@ import type { QueryConnection } from "../src/database";
 import {
   applyRecoveryMigrationsWithClient,
   recoveryMigrationCreatedAts,
+  recoveryMigrationRequiresVerifierProvisioningWithClient,
 } from "../src/recovery-migrations";
 
 describe("recovery migrations", () => {
@@ -32,19 +33,32 @@ describe("recovery migrations", () => {
     };
 
     await expect(applyRecoveryMigrationsWithClient(client)).resolves.toBe(3);
-    expect(queries.filter(({ text }) => text === "BEGIN")).toHaveLength(4);
-    expect(queries.filter(({ text }) => text === "COMMIT")).toHaveLength(4);
+    expect(queries.filter(({ text }) => text === "BEGIN")).toHaveLength(3);
+    expect(queries.filter(({ text }) => text === "COMMIT")).toHaveLength(3);
     expect(queries.filter(({ text }) => text === "ROLLBACK")).toHaveLength(0);
-    expect(
-      queries.some(({ text }) =>
-        text.includes("ALTER ROLE whatsapp_recovery_verifier"),
-      ),
-    ).toBe(true);
     expect(
       queries
         .filter(({ text }) => text.startsWith("INSERT INTO public"))
         .map(({ values }) => values?.[1]),
     ).toEqual([1787126400000, 1787130000000, 1787166960000]);
+  });
+
+  test("requires verifier provisioning only before its migration", async () => {
+    const client = (createdAt: number): QueryConnection => ({
+      query: async <Row extends Record<string, unknown>>() => ({
+        rows: [{ created_at: String(createdAt) }] as unknown as Array<Row>,
+      }),
+    });
+    await expect(
+      recoveryMigrationRequiresVerifierProvisioningWithClient(
+        client(1787122800000),
+      ),
+    ).resolves.toBe(true);
+    await expect(
+      recoveryMigrationRequiresVerifierProvisioningWithClient(
+        client(1787126400000),
+      ),
+    ).resolves.toBe(false);
   });
 
   test("rolls back a failed migration without advancing the ledger", async () => {
@@ -56,12 +70,7 @@ describe("recovery migrations", () => {
           return {
             rows: [{ created_at: "1787122800000" }] as unknown as Array<Row>,
           };
-        if (
-          text !== "BEGIN" &&
-          text !== "COMMIT" &&
-          text !== "ROLLBACK" &&
-          text.includes("ALTER ROLE whatsapp_recovery_verifier") === false
-        )
+        if (text !== "BEGIN" && text !== "ROLLBACK")
           throw new Error("migration statement failed");
         return { rows: [] };
       },

@@ -240,6 +240,9 @@ const roleOperationsResponseSchema = z
     operations: operationsSchema,
   })
   .passthrough();
+const rolesResponseSchema = z
+  .object({ roles: z.array(roleSchema) })
+  .passthrough();
 const connectionUriResponseSchema = z
   .object({ uri: z.string().min(1) })
   .passthrough();
@@ -817,6 +820,48 @@ export const createNeonRecoveryClient = (
   const getDirectMigrationUri = (branch: RecoveryBranch) =>
     getDirectUri(branch, MIGRATION_OWNER_ROLE);
 
+  const deleteGuardedRecoveryVerifierRole = async (branch: RecoveryBranch) => {
+    const verified = await getGuardedBranch(branch);
+    const list = async () => {
+      const result = await request(
+        `/projects/${config.projectId}/branches/${verified.id}/roles`,
+        { method: "GET" },
+        rolesResponseSchema,
+        [],
+      );
+      return (result.value as z.infer<typeof rolesResponseSchema>).roles.filter(
+        (role) => role.name === "whatsapp_recovery_verifier",
+      );
+    };
+    if ((await list()).length === 0) return "absent" as const;
+    let deleted: Awaited<ReturnType<typeof request>>;
+    try {
+      deleted = await request(
+        `/projects/${config.projectId}/branches/${verified.id}/roles/whatsapp_recovery_verifier`,
+        { method: "DELETE" },
+        roleOperationsResponseSchema,
+        [204],
+      );
+    } catch (error) {
+      if ((await list()).length === 0) return "deleted" as const;
+      throw error;
+    }
+    if (deleted.status !== 204) {
+      const value = deleted.value as z.infer<
+        typeof roleOperationsResponseSchema
+      >;
+      if (
+        value.role.branch_id !== verified.id ||
+        value.role.name !== "whatsapp_recovery_verifier"
+      )
+        throw new NeonRecoveryError("Neon deleted a different recovery role");
+      await waitForOperations(value.operations);
+    }
+    if ((await list()).length !== 0)
+      throw new NeonRecoveryError("Neon recovery verifier role remained");
+    return "deleted" as const;
+  };
+
   const rotateGuardedEndpoint = async (branch: RecoveryBranch) => {
     const verified = await getGuardedBranch(branch);
     const list = async () => {
@@ -1012,6 +1057,7 @@ export const createNeonRecoveryClient = (
   return {
     findGuardedPitrBranch,
     reconcilePitrBranch,
+    deleteGuardedRecoveryVerifierRole,
     resetMigrationOwnerPassword,
     resetRestoreRuntimePassword,
     getDirectMigrationUri,

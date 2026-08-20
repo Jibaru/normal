@@ -50,63 +50,46 @@ const migrations = [
   [1787130000000, migration0022],
   [1787166960000, migration0023],
 ] as const;
+const RECOVERY_VERIFIER_MIGRATION_CREATED_AT = 1787126400000;
 
 export const recoveryMigrationCreatedAts: ReadonlyArray<number> =
   migrations.map(([createdAt]) => createdAt);
 
-const toHex = (value: ArrayBuffer) =>
-  [...new Uint8Array(value)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-
-const hardenRecoveryVerifierRole = `
-DO $roles$
-DECLARE
-  granted_role name;
-BEGIN
-  IF EXISTS (
-    SELECT 1 FROM pg_catalog.pg_roles
-    WHERE rolname = 'whatsapp_recovery_verifier'
-  ) THEN
-    ALTER ROLE whatsapp_recovery_verifier
-      NOSUPERUSER NOREPLICATION NOBYPASSRLS
-      NOCREATEDB NOCREATEROLE NOINHERIT LOGIN;
-    FOR granted_role IN
-      SELECT parent.rolname
-      FROM pg_catalog.pg_auth_members AS memberships
-      JOIN pg_catalog.pg_roles AS parent
-        ON parent.oid = memberships.roleid
-      JOIN pg_catalog.pg_roles AS member
-        ON member.oid = memberships.member
-      WHERE member.rolname = 'whatsapp_recovery_verifier'
-    LOOP
-      EXECUTE format(
-        'REVOKE %I FROM whatsapp_recovery_verifier',
-        granted_role
-      );
-    END LOOP;
-  END IF;
-END
-$roles$`;
-
-export const applyRecoveryMigrationsWithClient = async (
-  client: QueryConnection,
-) => {
+const readLastAppliedMigration = async (client: QueryConnection) => {
   const ledger = await client.query<{ created_at: string }>(
     "SELECT created_at FROM public.drizzle_migrations ORDER BY created_at DESC LIMIT 1",
   );
   const lastApplied = Number(ledger.rows[0]?.created_at ?? 0);
   if (!Number.isFinite(lastApplied) || lastApplied < 0)
     throw new Error("Recovery migration ledger is invalid");
+  return lastApplied;
+};
 
-  await client.query("BEGIN");
-  try {
-    await client.query(hardenRecoveryVerifierRole);
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  }
+export const recoveryMigrationRequiresVerifierProvisioningWithClient = async (
+  client: QueryConnection,
+) =>
+  (await readLastAppliedMigration(client)) <
+  RECOVERY_VERIFIER_MIGRATION_CREATED_AT;
+
+export const recoveryMigrationRequiresVerifierProvisioning = (
+  connectionString: string,
+) =>
+  withPgQueryConnection(
+    connectionString,
+    recoveryMigrationRequiresVerifierProvisioningWithClient,
+    30_000,
+    10_000,
+  );
+
+const toHex = (value: ArrayBuffer) =>
+  [...new Uint8Array(value)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+
+export const applyRecoveryMigrationsWithClient = async (
+  client: QueryConnection,
+) => {
+  const lastApplied = await readLastAppliedMigration(client);
 
   let applied = 0;
   for (const [createdAt, source] of migrations) {

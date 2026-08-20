@@ -365,6 +365,41 @@ describe("Neon recovery control-plane client", () => {
     expect(requests[3]).toContain("role_name=whatsapp_migration_owner");
   });
 
+  test("deletes only the verifier role on the guarded recovery branch", async () => {
+    const requests: Array<{ method: string; url: string }> = [];
+    const verifierRole = {
+      branch_id: branchId,
+      name: "whatsapp_recovery_verifier",
+      created_at: time,
+      updated_at: time,
+    };
+    const responses = [
+      json({ branch: branch(), annotation: annotation() }),
+      json({ roles: [verifierRole] }),
+      json({ role: verifierRole, operations: [] }),
+      json({ roles: [] }),
+    ];
+    const client = createNeonRecoveryClient(config(), {
+      fetch: async (input, init) => {
+        requests.push({ method: String(init?.method), url: String(input) });
+        return responses.shift() ?? json({}, 500);
+      },
+    });
+
+    await expect(
+      client.deleteGuardedRecoveryVerifierRole(expected),
+    ).resolves.toBe("deleted");
+    expect(requests.map(({ method }) => method)).toEqual([
+      "GET",
+      "GET",
+      "DELETE",
+      "GET",
+    ]);
+    expect(requests[2]?.url).toEndWith(
+      `/branches/${branchId}/roles/whatsapp_recovery_verifier`,
+    );
+  });
+
   test("uses the explicitly configured recovery verifier role", async () => {
     const requests: string[] = [];
     const client = createNeonRecoveryClient(
