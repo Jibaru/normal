@@ -1,6 +1,6 @@
 import type { OperationsFetch } from "./cloudflare";
 
-const statusUrl = "https://www.wasenderapi.com/status";
+const statusUrl = "https://wasenderapi.com/status";
 const windowMilliseconds = 30 * 86_400_000;
 const timestamp = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/u;
 

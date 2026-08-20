@@ -48,7 +48,12 @@ export const handleRequest = async (
       { status: "failed" },
       503,
       error instanceof AvailabilityError
-        ? { "x-operations-availability-stage": error.stage }
+        ? {
+            "x-operations-availability-stage": error.stage,
+            ...(error.reason
+              ? { "x-operations-availability-reason": error.reason }
+              : {}),
+          }
         : undefined,
     );
   }

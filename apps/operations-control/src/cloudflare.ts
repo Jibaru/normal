@@ -7,24 +7,35 @@ export type OperationsFetch = (
 ) => Promise<Response>;
 
 const endpoint = "https://api.cloudflare.com/client/v4/graphql";
+
+export type CloudflareAnalyticsFailure =
+  | "auth"
+  | "graphql"
+  | "http"
+  | "response";
+
+export class CloudflareAnalyticsError extends Error {
+  constructor(readonly failure: CloudflareAnalyticsFailure) {
+    super("Cloudflare analytics query failed");
+  }
+}
 const firstPartyQuery = `
   query FirstPartyAvailability(
     $zoneTag: string!
     $start: Time!
     $end: Time!
-    $host: string!
   ) {
     viewer {
       zones(filter: { zoneTag: $zoneTag }) {
-        httpRequestsAdaptiveGroups(
+        httpRequests1hGroups(
           filter: {
             datetime_geq: $start
             datetime_leq: $end
-            clientRequestHTTPHost: $host
           }
-          limit: 1
+          limit: 5000
         ) {
-          count
+          dimensions { clientRequestHTTPHost }
+          sum { requests }
           ratio { status5xx }
         }
       }
@@ -74,17 +85,18 @@ const query = async (
     },
     body: JSON.stringify(body),
   });
-  if (
-    !response.ok ||
-    !response.headers.get("content-type")?.startsWith("application/json")
-  )
-    throw new Error("Cloudflare analytics query failed");
+  if (!response.ok)
+    throw new CloudflareAnalyticsError(
+      response.status === 401 || response.status === 403 ? "auth" : "http",
+    );
+  if (!response.headers.get("content-type")?.startsWith("application/json"))
+    throw new CloudflareAnalyticsError("response");
   const candidate = (await response.json()) as {
     readonly data?: unknown;
     readonly errors?: unknown;
   };
   if (Array.isArray(candidate.errors) && candidate.errors.length > 0)
-    throw new Error("Cloudflare analytics query failed");
+    throw new CloudflareAnalyticsError("graphql");
   return candidate.data;
 };
 
@@ -92,11 +104,11 @@ const zone = (value: unknown): Record<string, unknown> => {
   const zones = (value as { viewer?: { zones?: unknown } } | null)?.viewer
     ?.zones;
   if (!Array.isArray(zones) || zones.length !== 1) {
-    throw new Error("Cloudflare analytics response is invalid");
+    throw new CloudflareAnalyticsError("response");
   }
   const result = zones[0];
   if (typeof result !== "object" || result === null || Array.isArray(result))
-    throw new Error("Cloudflare analytics response is invalid");
+    throw new CloudflareAnalyticsError("response");
   return result as Record<string, unknown>;
 };
 
@@ -113,33 +125,47 @@ export const queryFirstPartyAvailability = async (
         query: firstPartyQuery,
         variables: {
           end: input.completedAt,
-          host: api.hostname,
           start: input.startedAt,
           zoneTag: required(env.CLOUDFLARE_ZONE_ID, "Cloudflare zone"),
         },
       },
       fetcher,
     ),
-  ).httpRequestsAdaptiveGroups;
-  if (!Array.isArray(result) || result.length !== 1)
-    throw new Error("First-party availability is unavailable");
-  const aggregate = result[0] as {
-    readonly count?: unknown;
-    readonly ratio?: { readonly status5xx?: unknown };
-  };
-  const count = aggregate.count;
-  const ratio = aggregate.ratio?.status5xx;
-  if (
-    typeof count !== "number" ||
-    !Number.isFinite(count) ||
-    count <= 0 ||
-    typeof ratio !== "number" ||
-    !Number.isFinite(ratio) ||
-    ratio < 0 ||
-    ratio > 1
-  )
-    throw new Error("First-party availability is unavailable");
-  return Math.round((100 - ratio * 100) * 1_000_000) / 1_000_000;
+  );
+  const groups = result.httpRequests1hGroups;
+  if (!Array.isArray(groups) || groups.length === 0 || groups.length > 5000)
+    throw new CloudflareAnalyticsError("response");
+  let total = 0;
+  let failed = 0;
+  for (const group of groups) {
+    if (typeof group !== "object" || group === null || Array.isArray(group))
+      throw new CloudflareAnalyticsError("response");
+    const candidate = group as {
+      readonly dimensions?: { readonly clientRequestHTTPHost?: unknown };
+      readonly ratio?: { readonly status5xx?: unknown };
+      readonly sum?: { readonly requests?: unknown };
+    };
+    const hostname = candidate.dimensions?.clientRequestHTTPHost;
+    const requests = candidate.sum?.requests;
+    const ratio = candidate.ratio?.status5xx;
+    if (
+      typeof hostname !== "string" ||
+      typeof requests !== "number" ||
+      !Number.isFinite(requests) ||
+      requests < 0 ||
+      typeof ratio !== "number" ||
+      !Number.isFinite(ratio) ||
+      ratio < 0 ||
+      ratio > 1
+    )
+      throw new CloudflareAnalyticsError("response");
+    if (hostname !== api.hostname) continue;
+    total += requests;
+    failed += requests * ratio;
+  }
+  if (!Number.isFinite(total) || total <= 0 || !Number.isFinite(failed))
+    throw new CloudflareAnalyticsError("response");
+  return Math.round((100 - (failed / total) * 100) * 1_000_000) / 1_000_000;
 };
 
 export type PagerDelivery = "delivered" | "failed" | "pending";

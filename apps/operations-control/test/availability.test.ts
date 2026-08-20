@@ -49,8 +49,22 @@ describe("production availability authority", () => {
             viewer: {
               zones: [
                 {
-                  httpRequestsAdaptiveGroups: [
-                    { count: 20_000, ratio: { status5xx: 0.002 } },
+                  httpRequests1hGroups: [
+                    {
+                      dimensions: { clientRequestHTTPHost: "api.normal.fast" },
+                      sum: { requests: 10_000 },
+                      ratio: { status5xx: 0.001 },
+                    },
+                    {
+                      dimensions: { clientRequestHTTPHost: "api.normal.fast" },
+                      sum: { requests: 10_000 },
+                      ratio: { status5xx: 0.003 },
+                    },
+                    {
+                      dimensions: { clientRequestHTTPHost: "normal.fast" },
+                      sum: { requests: 50_000 },
+                      ratio: { status5xx: 0.5 },
+                    },
                   ],
                 },
               ],
@@ -81,6 +95,10 @@ describe("production availability authority", () => {
       sampled_keys_usable: true,
     });
     expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledWith(
+      "https://wasenderapi.com/status",
+      expect.objectContaining({ redirect: "manual" }),
+    );
   });
 
   test("rejects extended requests before external access", async () => {
@@ -116,5 +134,25 @@ describe("production availability authority", () => {
         { fetch: fetcher, keys: async () => true },
       ),
     ).rejects.toEqual(new AvailabilityError("first_party"));
+  });
+
+  test("reports an allowlisted Cloudflare authentication failure", async () => {
+    const response = await handleAvailability(
+      new Request("https://operations.normal.fast/v1/availability", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+      environment,
+      {
+        fetch: async (input) =>
+          String(input).includes("cloudflare.com")
+            ? Response.json({}, { status: 403 })
+            : new Response(
+                `<div data-page="${JSON.stringify(page).replaceAll('"', "&quot;")}"></div>`,
+              ),
+        keys: async () => true,
+      },
+    ).catch((error: unknown) => error);
+    expect(response).toEqual(new AvailabilityError("first_party", "auth"));
   });
 });

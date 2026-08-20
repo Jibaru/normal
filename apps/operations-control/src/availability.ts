@@ -1,4 +1,6 @@
 import {
+  CloudflareAnalyticsError,
+  type CloudflareAnalyticsFailure,
   type OperationsFetch,
   queryFirstPartyAvailability,
 } from "./cloudflare";
@@ -21,7 +23,10 @@ const keys = [
 export type AvailabilityStage = "dependency" | "first_party" | "sampled_keys";
 
 export class AvailabilityError extends Error {
-  constructor(readonly stage: AvailabilityStage) {
+  constructor(
+    readonly stage: AvailabilityStage,
+    readonly reason?: CloudflareAnalyticsFailure,
+  ) {
     super("Availability evidence is unavailable");
   }
 }
@@ -32,8 +37,11 @@ const withStage = async <Value>(
 ) => {
   try {
     return await operation;
-  } catch {
-    throw new AvailabilityError(stage);
+  } catch (error) {
+    throw new AvailabilityError(
+      stage,
+      error instanceof CloudflareAnalyticsError ? error.failure : undefined,
+    );
   }
 };
 
