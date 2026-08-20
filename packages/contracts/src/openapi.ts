@@ -118,12 +118,12 @@ export const restRouteRegistry = [
   },
   {
     description:
-      "Create or exactly replay one text Send Operation using exactly one destination: a known active `ctc_` contact, a joined `grp_` group, an E.164 `phone`, or a WhatsApp `username`. Requires `Idempotency-Key`. Conversation identifiers, provider JIDs, channel identifiers, and self-attested confirmation flags are not accepted. Direct addresses are not persisted or returned and fail closed while a Recipient Exclusion is active on the Connection. Exact replay returns the existing operation without resending. Failed and unknown post-boundary outcomes remain Send Operation resources.",
+      "Create or exactly replay one Send Operation using exactly one destination: a known active `ctc_` contact, a joined `grp_` group, an E.164 `phone`, or a WhatsApp `username`. Supply exact `text`, or supply `file_name` with exactly one PDF source: `pdf_url` or standard padded `pdf_base64`. PDFs may not exceed 16 MiB. Requires `Idempotency-Key`. Conversation identifiers, provider JIDs, channel identifiers, and self-attested confirmation flags are not accepted. Direct addresses are not persisted or returned and fail closed while a Recipient Exclusion is active on the Connection. PDF source and provider upload URLs are not retained or returned. Exact replay returns the existing operation without resending. Failed and unknown post-boundary outcomes remain Send Operation resources.",
     method: "POST",
     operationId: "createSendOperation",
     path: "/v1/connections/{connection_id}/send-operations",
     permission: "messages:send",
-    summary: "Create or replay a text Send Operation",
+    summary: "Create or replay a Send Operation",
     tags: ["Send Operations"],
   },
   {
@@ -467,7 +467,7 @@ export const generateOpenApiDocument = (): Record<string, unknown> => ({
     },
     {
       description:
-        "Idempotent text Send Operations created by the calling API Key. Creating a Send Operation is the caller's explicit action; Client Confirmation is MCP-specific and is not a REST field.",
+        "Idempotent text and PDF Send Operations created by the calling API Key. Creating a Send Operation is the caller's explicit action; Client Confirmation is MCP-specific and is not a REST field.",
       name: "Send Operations",
     },
   ],

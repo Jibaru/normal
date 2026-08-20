@@ -15,7 +15,7 @@ This document defines the public launch contract for the Normal MCP server. Prov
 - Timestamps are UTC RFC 3339 strings.
 - Unknown optional values are returned as `null`, not omitted.
 - No tool parameter is mirrored into an HTTP header with `x-mcp-header`.
-- A WhatsApp Recipient Exclusion is enforced beneath every grant and never changes the grant itself. While one applies, the recipient is absent from `list_contacts`, `list_groups`, and `list_chats`; `read_messages` and Stored Media resources reject a retained WhatsApp Conversation handle or media URI as not found; and `send_text_message` returns `recipient_not_found` before quota reservation or provider access. No tool discloses that an exclusion is the reason, and no MCP tool can read or change one.
+- A WhatsApp Recipient Exclusion is enforced beneath every grant and never changes the grant itself. While one applies, the recipient is absent from `list_contacts`, `list_groups`, and `list_chats`; `read_messages` and Stored Media resources reject a retained WhatsApp Conversation handle or media URI as not found; and `send_text_message` and `send_pdf_file` return `recipient_not_found` before quota reservation or provider access. No tool discloses that an exclusion is the reason, and no MCP tool can read or change one.
 
 ## Scope Map
 
@@ -235,7 +235,7 @@ Without `older_cursor`, the tool selects the newest page. Records inside every p
 
 Field rules:
 
-- `conversation_id` echoes the authorized WhatsApp Conversation read by this result. `recipient_id` is its current `ctc_` or `grp_` WhatsApp Recipient handle and can be passed directly to `send_text_message`; `kind` is `direct` or `group`.
+- `conversation_id` echoes the authorized WhatsApp Conversation read by this result. `recipient_id` is its current `ctc_` or `grp_` WhatsApp Recipient handle and can be passed directly to `send_text_message` or `send_pdf_file`; `kind` is `direct` or `group`.
 - `direction` is `inbound` or `outbound`.
 - `sender.kind` is `self`, `contact`, or `group_participant`; its display name and phone suffix are nullable.
 - `content_type` is `text`, `image`, `audio`, `video`, `document`, `sticker`, or `unknown`. Active Stored Messages always have supported text or media content; `unknown` represents a Deleted Message Tombstone whose original content type is unavailable.

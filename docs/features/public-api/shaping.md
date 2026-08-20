@@ -117,7 +117,7 @@ All request objects are closed, fields use `snake_case`, timestamps use RFC 3339
 | GET | `/v1/connections/{connection_id}/conversations` | `messages:read` | Page WhatsApp Conversations by Conversation Activity. |
 | GET | `/v1/connections/{connection_id}/conversations/{conversation_id}/messages` | `messages:read` | Page complete retained Stored Message content, history boundary, and intersecting Ingestion Gaps. |
 | POST | `/v1/connections/{connection_id}/messages/search` | `messages:read` | Search exact normalized words from a privacy-safe JSON body. |
-| POST | `/v1/connections/{connection_id}/send-operations` | `messages:send` | Create or replay one idempotent text Send Operation for exactly one handle, E.164 phone, or WhatsApp username destination. |
+| POST | `/v1/connections/{connection_id}/send-operations` | `messages:send` | Create or replay one idempotent text or PDF Send Operation for exactly one handle, E.164 phone, or WhatsApp username destination. PDFs accept an HTTPS URL or standard padded Base64. |
 | GET | `/v1/connections/{connection_id}/send-operations/{send_operation_id}` | `messages:send` | Read the originating API Key's local Send Status. |
 | GET | `/v1/connections/{connection_id}/messages/{message_id}/media/{media_id}` | `messages:read` | Read eligible binary Stored Media with private no-store headers. |
 
