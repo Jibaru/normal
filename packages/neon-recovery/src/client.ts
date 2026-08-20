@@ -820,7 +820,7 @@ export const createNeonRecoveryClient = (
   const getDirectMigrationUri = (branch: RecoveryBranch) =>
     getDirectUri(branch, MIGRATION_OWNER_ROLE);
 
-  const ensureRecoveryVerifierPassword = async (branch: RecoveryBranch) => {
+  const reprovisionRecoveryVerifierRole = async (branch: RecoveryBranch) => {
     const verified = await getGuardedBranch(branch);
     const list = async () => {
       const result = await request(
@@ -837,8 +837,31 @@ export const createNeonRecoveryClient = (
     if (existing.length > 1)
       throw new NeonRecoveryError("Multiple recovery verifier roles exist");
     if (existing.length === 1) {
-      await resetRolePassword(branch, "whatsapp_recovery_verifier");
-      return;
+      let deleted: Awaited<ReturnType<typeof request>>;
+      try {
+        deleted = await request(
+          `/projects/${config.projectId}/branches/${verified.id}/roles/whatsapp_recovery_verifier`,
+          { method: "DELETE" },
+          roleOperationsResponseSchema,
+          [204],
+        );
+      } catch (error) {
+        if ((await list()).length !== 0) throw error;
+        deleted = { status: 204 };
+      }
+      if (deleted.status !== 204) {
+        const value = deleted.value as z.infer<
+          typeof roleOperationsResponseSchema
+        >;
+        if (
+          value.role.branch_id !== verified.id ||
+          value.role.name !== "whatsapp_recovery_verifier"
+        )
+          throw new NeonRecoveryError("Neon deleted a different recovery role");
+        await waitForOperations(value.operations);
+      }
+      if ((await list()).length !== 0)
+        throw new NeonRecoveryError("Neon recovery verifier role remained");
     }
     let created: Awaited<ReturnType<typeof request>>;
     try {
@@ -1065,8 +1088,8 @@ export const createNeonRecoveryClient = (
   return {
     findGuardedPitrBranch,
     reconcilePitrBranch,
-    ensureRecoveryVerifierPassword,
     getDirectRecoveryVerifierUri,
+    reprovisionRecoveryVerifierRole,
     resetMigrationOwnerPassword,
     resetRestoreRuntimePassword,
     getDirectMigrationUri,
