@@ -46,10 +46,7 @@ const toHex = (value: ArrayBuffer | Uint8Array) =>
 
 const recoveryClient = (
   env: RecoveryVerifierEnvironment,
-  runtimeRole:
-    | "whatsapp_api_runtime"
-    | "whatsapp_restore_runtime"
-    | "whatsapp_recovery_verifier" = "whatsapp_recovery_verifier",
+  runtimeRole: "whatsapp_api_runtime" | "whatsapp_restore_runtime",
 ) =>
   createNeonRecoveryClient({
     apiKey: required(env.NEON_RECOVERY_API_KEY, "Neon recovery API key"),

@@ -7,18 +7,18 @@ DECLARE
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_catalog.pg_roles
-    WHERE rolname = 'whatsapp_recovery_verifier'
+    WHERE rolname = 'whatsapp_recovery_auditor'
   ) THEN
-    CREATE ROLE whatsapp_recovery_verifier LOGIN;
+    CREATE ROLE whatsapp_recovery_auditor LOGIN;
   END IF;
   IF EXISTS (
     SELECT 1 FROM pg_catalog.pg_roles
-    WHERE rolname = 'whatsapp_recovery_verifier'
+    WHERE rolname = 'whatsapp_recovery_auditor'
       AND (rolsuper OR rolreplication OR rolbypassrls)
   ) THEN
     RAISE EXCEPTION 'recovery verifier role has prohibited privileged attributes';
   END IF;
-  ALTER ROLE whatsapp_recovery_verifier
+  ALTER ROLE whatsapp_recovery_auditor
     NOREPLICATION NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT LOGIN;
   FOR granted_role IN
     SELECT parent.rolname
@@ -27,10 +27,10 @@ BEGIN
       ON parent.oid = memberships.roleid
     JOIN pg_catalog.pg_roles AS member
       ON member.oid = memberships.member
-    WHERE member.rolname = 'whatsapp_recovery_verifier'
+    WHERE member.rolname = 'whatsapp_recovery_auditor'
   LOOP
     EXECUTE format(
-      'REVOKE %I FROM whatsapp_recovery_verifier',
+      'REVOKE %I FROM whatsapp_recovery_auditor',
       granted_role
     );
   END LOOP;
@@ -39,17 +39,17 @@ $role$;
 --> statement-breakpoint
 
 REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public
-  FROM whatsapp_recovery_verifier;
+  FROM whatsapp_recovery_auditor;
 --> statement-breakpoint
 
 REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public
-  FROM whatsapp_recovery_verifier;
+  FROM whatsapp_recovery_auditor;
 --> statement-breakpoint
 
-GRANT USAGE ON SCHEMA public TO whatsapp_recovery_verifier;
+GRANT USAGE ON SCHEMA public TO whatsapp_recovery_auditor;
 --> statement-breakpoint
 
-GRANT SELECT ON public.drizzle_migrations TO whatsapp_recovery_verifier;
+GRANT SELECT ON public.drizzle_migrations TO whatsapp_recovery_auditor;
 --> statement-breakpoint
 
 CREATE FUNCTION public.verify_recovery_branch(
@@ -186,4 +186,4 @@ REVOKE ALL ON FUNCTION public.verify_recovery_branch(text,timestamptz)
 --> statement-breakpoint
 
 GRANT EXECUTE ON FUNCTION public.verify_recovery_branch(text,timestamptz)
-  TO whatsapp_recovery_verifier;
+  TO whatsapp_recovery_auditor;

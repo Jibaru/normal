@@ -62,7 +62,7 @@ export const restrictedRecoveryVerifierConnectionString = (
 ): string =>
   restrictedRuntimeConnectionString(
     value,
-    "whatsapp_recovery_verifier",
+    "whatsapp_recovery_auditor",
     "database URL is not the direct restricted TLS recovery verifier",
     true,
   );
@@ -86,7 +86,7 @@ export const recoveryVerifierConnectionString = (
   );
   if (!/^[a-f0-9]{64}$/.test(password))
     throw new Error("recovery verifier password is invalid");
-  parsed.username = "whatsapp_recovery_verifier";
+  parsed.username = "whatsapp_recovery_auditor";
   parsed.password = password;
   return restrictedRecoveryVerifierConnectionString(parsed.toString());
 };

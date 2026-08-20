@@ -365,43 +365,6 @@ describe("Neon recovery control-plane client", () => {
     expect(requests[3]).toContain("role_name=whatsapp_migration_owner");
   });
 
-  test("uses the explicitly configured recovery verifier role", async () => {
-    const requests: string[] = [];
-    const client = createNeonRecoveryClient(
-      { ...config(), runtimeRole: "whatsapp_recovery_verifier" },
-      {
-        fetch: async (input) => {
-          requests.push(String(input));
-          if (requests.length === 1 || requests.length === 3)
-            return json({ branch: branch(), annotation: annotation() });
-          if (requests.length === 2)
-            return json({
-              role: {
-                branch_id: branchId,
-                name: "whatsapp_recovery_verifier",
-                password: "verifier-secret",
-                created_at: time,
-                updated_at: time,
-              },
-              operations: [],
-            });
-          return json({
-            uri: "postgresql://whatsapp_recovery_verifier:verifier-secret@ep-recovery.us-east-1.aws.neon.tech/normal?sslmode=require",
-          });
-        },
-      },
-    );
-
-    await client.resetRestoreRuntimePassword(expected);
-    await expect(client.getDirectRestoreUri(expected)).resolves.toContain(
-      "postgresql://whatsapp_recovery_verifier:",
-    );
-    expect(requests[1]).toEndWith(
-      `/branches/${branchId}/roles/whatsapp_recovery_verifier/reset_password`,
-    );
-    expect(requests[3]).toContain("role_name=whatsapp_recovery_verifier");
-  });
-
   test("reconciles the exact child before retrying an ambiguous role reset", async () => {
     const methods: string[] = [];
     const responses: Array<Response | Error> = [

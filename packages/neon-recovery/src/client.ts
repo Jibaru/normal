@@ -3,11 +3,7 @@ import { z } from "zod";
 const API_ORIGIN = "https://console.neon.tech/api/v2";
 const RESTORE_ROLE = "whatsapp_restore_runtime";
 const MIGRATION_OWNER_ROLE = "whatsapp_migration_owner";
-const runtimeRoleSchema = z.enum([
-  RESTORE_ROLE,
-  "whatsapp_api_runtime",
-  "whatsapp_recovery_verifier",
-]);
+const runtimeRoleSchema = z.enum([RESTORE_ROLE, "whatsapp_api_runtime"]);
 const RECOVERY_ANNOTATION_KEY = "production-recovery";
 const RECOVERY_ANNOTATION_VALUE = "true";
 const HISTORY_WINDOW_MS = 7 * 86_400_000;

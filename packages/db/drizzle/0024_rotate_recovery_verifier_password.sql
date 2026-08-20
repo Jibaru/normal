@@ -9,7 +9,7 @@ BEGIN
   END IF;
   BEGIN
     EXECUTE format(
-      'ALTER ROLE whatsapp_recovery_verifier PASSWORD %L',
+      'ALTER ROLE whatsapp_recovery_auditor PASSWORD %L',
       requested_password
     );
   EXCEPTION WHEN OTHERS THEN

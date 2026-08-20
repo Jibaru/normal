@@ -28,7 +28,7 @@ describe("recovery verifier database boundary", () => {
       SELECT rolsuper, rolinherit, rolcreaterole, rolcreatedb,
         rolcanlogin, rolreplication, rolbypassrls
       FROM pg_catalog.pg_roles
-      WHERE rolname = 'whatsapp_recovery_verifier'
+      WHERE rolname = 'whatsapp_recovery_auditor'
     `);
     expect(role.rows).toEqual([
       {
@@ -42,7 +42,7 @@ describe("recovery verifier database boundary", () => {
       },
     ]);
 
-    await database.exec("SET ROLE whatsapp_recovery_verifier");
+    await database.exec("SET ROLE whatsapp_recovery_auditor");
     try {
       await expect(
         database.query("SELECT id FROM public.personal_accounts"),
@@ -62,7 +62,7 @@ describe("recovery verifier database boundary", () => {
     );
     await database.exec("RESET ROLE");
 
-    await database.exec("SET ROLE whatsapp_recovery_verifier");
+    await database.exec("SET ROLE whatsapp_recovery_auditor");
     const recovered = await database.query<{ source_point_at: string }>(
       "SELECT public.read_recovery_source_point() AS source_point_at",
     );
@@ -82,7 +82,7 @@ describe("recovery verifier database boundary", () => {
       branchId,
       observedAt,
     ]);
-    await database.exec("SET ROLE whatsapp_recovery_verifier");
+    await database.exec("SET ROLE whatsapp_recovery_auditor");
     try {
       await expect(
         database.query(
@@ -100,7 +100,7 @@ describe("recovery verifier database boundary", () => {
       "SELECT * FROM public.begin_restore_replay($1, $2, true)",
       [branchId, "2026-08-18T11:00:00.000Z"],
     );
-    await database.exec("SET ROLE whatsapp_recovery_verifier");
+    await database.exec("SET ROLE whatsapp_recovery_auditor");
     await expect(
       database.query("SELECT * FROM public.verify_recovery_branch($1, $2)", [
         branchId,
@@ -127,7 +127,7 @@ describe("recovery verifier database boundary", () => {
         )
       ).rows,
     ).toEqual([{ ready: false }]);
-    await database.exec("SET ROLE whatsapp_recovery_verifier");
+    await database.exec("SET ROLE whatsapp_recovery_auditor");
     const after = await database.query<Record<string, boolean>>(
       "SELECT * FROM public.verify_recovery_branch($1, $2)",
       [branchId, observedAt],
@@ -186,7 +186,7 @@ describe("recovery verifier database boundary", () => {
       ["b".repeat(64), "2026-08-18T11:31:00.000Z"],
     );
 
-    await database.exec("SET ROLE whatsapp_recovery_verifier");
+    await database.exec("SET ROLE whatsapp_recovery_auditor");
     const prepared = await database.query<{ prepared: boolean }>(
       "SELECT public.prepare_recovery_rls_probe($1, $2, $3) AS prepared",
       [branchId, firstAccountId, secondAccountId],
@@ -219,7 +219,7 @@ describe("recovery verifier database boundary", () => {
       "INSERT INTO public.personal_accounts (id, state) VALUES ($1, 'active')",
       [unrelatedAccountId],
     );
-    await database.exec("SET ROLE whatsapp_recovery_verifier");
+    await database.exec("SET ROLE whatsapp_recovery_auditor");
     await expect(
       database.query("SELECT public.complete_recovery_rls_probe($1, $2, $3)", [
         branchId,
@@ -262,7 +262,7 @@ describe("recovery verifier database boundary", () => {
       mediaFailureCode: "object_missing",
     });
     await database.exec("RESET ROLE");
-    await database.exec("SET ROLE whatsapp_recovery_verifier");
+    await database.exec("SET ROLE whatsapp_recovery_auditor");
     expect(
       (
         await database.query<{ verified: boolean }>(
@@ -294,13 +294,13 @@ describe("recovery verifier database boundary", () => {
     ).toEqual([{ prepared: false }]);
     await database.exec("RESET ROLE");
 
-    await database.exec("SET ROLE whatsapp_recovery_verifier");
+    await database.exec("SET ROLE whatsapp_recovery_auditor");
     await database.query(
       "SELECT public.complete_recovery_rls_probe($1, $2, $3)",
       [branchId, firstAccountId, secondAccountId],
     );
     await database.exec("RESET ROLE");
-    await database.exec("SET ROLE whatsapp_recovery_verifier");
+    await database.exec("SET ROLE whatsapp_recovery_auditor");
     await database.query(
       "SELECT public.complete_recovery_drill_verification($1, $2)",
       [branchId, observedAt],
@@ -367,7 +367,7 @@ describe("recovery verifier database boundary", () => {
       [accountId, connectionId, `di1_${"A".repeat(43)}`, observedAt],
     );
 
-    await database.exec("SET ROLE whatsapp_recovery_verifier");
+    await database.exec("SET ROLE whatsapp_recovery_auditor");
     const result = await database.query<Record<string, boolean>>(
       "SELECT * FROM public.verify_recovery_branch($1, $2)",
       [branchId, observedAt],
