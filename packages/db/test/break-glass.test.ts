@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { PGlite } from "@electric-sql/pglite";
-import { runMigrations } from "../src/migrations";
+import type { PGlite } from "@electric-sql/pglite";
+import { createMigratedDatabase } from "./support/migrated-database";
 
 const accountA = "10000000-0000-4000-8000-000000000001";
 const accountB = "10000000-0000-4000-8000-000000000002";
@@ -10,15 +10,7 @@ describe("two-person break-glass authority", () => {
   let database: PGlite;
 
   beforeEach(async () => {
-    database = new PGlite();
-    await database.exec(`
-      CREATE ROLE neon_superuser NOLOGIN BYPASSRLS;
-      CREATE ROLE whatsapp_api_runtime LOGIN;
-      CREATE ROLE whatsapp_webhook_runtime LOGIN;
-      GRANT neon_superuser TO whatsapp_api_runtime;
-      GRANT neon_superuser TO whatsapp_webhook_runtime;
-    `);
-    await runMigrations(database);
+    database = await createMigratedDatabase();
     await database.query(
       `INSERT INTO public.personal_accounts (id, state) VALUES ($1, 'active'), ($2, 'active')`,
       [accountA, accountB],

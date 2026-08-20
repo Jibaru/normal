@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { PGlite } from "@electric-sql/pglite";
-import { runMigrations } from "../src/migrations";
+import type { PGlite } from "@electric-sql/pglite";
 import { makeRecipientExclusionRepository } from "../src/recipient-exclusion";
 import { makeStoredMediaRepository } from "../src/stored-media";
+import { createMigratedDatabase } from "./support/migrated-database";
 
 const clerkUserId = "user_exclusion70";
 const accountId = "10000000-0000-4000-8000-000000000070";
@@ -59,15 +59,7 @@ describe("WhatsApp Recipient Exclusion persistence", () => {
   };
 
   beforeEach(async () => {
-    database = new PGlite();
-    await database.exec(`
-      CREATE ROLE neon_superuser NOLOGIN BYPASSRLS;
-      CREATE ROLE whatsapp_api_runtime LOGIN;
-      CREATE ROLE whatsapp_webhook_runtime LOGIN;
-      GRANT neon_superuser TO whatsapp_api_runtime;
-      GRANT neon_superuser TO whatsapp_webhook_runtime;
-    `);
-    await runMigrations(database);
+    database = await createMigratedDatabase();
     await database.query(
       `SELECT * FROM public.admit_personal_account_for_clerk(
         $1,$2,1,'arn:aws:kms:us-east-1:111122223333:key/content',decode('0102','hex'),3

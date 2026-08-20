@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { PGlite } from "@electric-sql/pglite";
+import type { PGlite } from "@electric-sql/pglite";
 import { makeMcpToolRepository } from "../src/mcp-tool";
-import { runMigrations } from "../src/migrations";
+import { createMigratedDatabase } from "./support/migrated-database";
 
 const branchId = "br-weekly-recovery";
 const observedAt = "2026-08-18T12:00:00.000Z";
@@ -10,15 +10,7 @@ describe("recovery verifier database boundary", () => {
   let database: PGlite;
 
   beforeEach(async () => {
-    database = new PGlite();
-    await database.exec(`
-      CREATE ROLE neon_superuser NOLOGIN BYPASSRLS;
-      CREATE ROLE whatsapp_api_runtime LOGIN;
-      CREATE ROLE whatsapp_webhook_runtime LOGIN;
-      GRANT neon_superuser TO whatsapp_api_runtime;
-      GRANT neon_superuser TO whatsapp_webhook_runtime;
-    `);
-    await runMigrations(database);
+    database = await createMigratedDatabase();
   });
 
   afterEach(async () => database.close());

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { PGlite } from "@electric-sql/pglite";
+import type { PGlite } from "@electric-sql/pglite";
 import {
   type ConnectionHealthConnectionProvider,
   makeConnectionHealthRepository,
@@ -8,7 +8,6 @@ import {
   type ConnectionSetupConnectionProvider,
   makeConnectionSetupRepository,
 } from "../src/connection-setup";
-import { runMigrations } from "../src/migrations";
 import {
   makePersonalAccountRepository,
   type PersonalAccountConnectionProvider,
@@ -17,6 +16,7 @@ import {
   makeWhatsAppConnectionRepository,
   type WhatsAppConnectionConnectionProvider,
 } from "../src/whatsapp-connection";
+import { createMigratedDatabase } from "./support/migrated-database";
 
 const accountId = "10000000-0000-4000-8000-000000000036";
 const setupId = "cst_000000000000000000036";
@@ -32,15 +32,7 @@ describe("connection health and Ingestion Gap repository", () => {
     WhatsAppConnectionConnectionProvider;
 
   beforeEach(async () => {
-    database = new PGlite();
-    await database.exec(`
-      CREATE ROLE neon_superuser NOLOGIN BYPASSRLS;
-      CREATE ROLE whatsapp_api_runtime LOGIN;
-      CREATE ROLE whatsapp_webhook_runtime LOGIN;
-      GRANT neon_superuser TO whatsapp_api_runtime;
-      GRANT neon_superuser TO whatsapp_webhook_runtime;
-    `);
-    await runMigrations(database);
+    database = await createMigratedDatabase();
     provider = {
       withConnection: async (use) => {
         await database.exec("SET ROLE whatsapp_api_runtime");

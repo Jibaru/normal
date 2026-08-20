@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { PGlite } from "@electric-sql/pglite";
+import type { PGlite } from "@electric-sql/pglite";
 import { makeApiKeyRepository } from "../src/api-key";
-import { runMigrations } from "../src/migrations";
 import {
   makePersonalAccountRepository,
   type PersonalAccountConnectionProvider,
 } from "../src/personal-account";
+import { createMigratedDatabase } from "./support/migrated-database";
 
 const accountId = "10000000-0000-4000-8000-000000000010";
 const apiKeyPublicId = "apk_aaaaaaaaaaaaaaaaaaaaa";
@@ -53,15 +53,7 @@ describe("Personal Account repository", () => {
   let provider: PersonalAccountConnectionProvider;
 
   beforeEach(async () => {
-    database = new PGlite();
-    await database.exec(`
-      CREATE ROLE neon_superuser NOLOGIN BYPASSRLS;
-      CREATE ROLE whatsapp_api_runtime LOGIN;
-      CREATE ROLE whatsapp_webhook_runtime LOGIN;
-      GRANT neon_superuser TO whatsapp_api_runtime;
-      GRANT neon_superuser TO whatsapp_webhook_runtime;
-    `);
-    await runMigrations(database);
+    database = await createMigratedDatabase();
     provider = {
       withConnection: async (use) => {
         await database.exec("SET ROLE whatsapp_api_runtime");

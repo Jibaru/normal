@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { PGlite } from "@electric-sql/pglite";
+import type { PGlite } from "@electric-sql/pglite";
 import { makeApiKeyRepository } from "../src/api-key";
 import { makeMcpAuthorizationRepository } from "../src/mcp-authorization";
 import {
@@ -9,13 +9,13 @@ import {
   makeMcpToolRepository,
   mcpSendGrant,
 } from "../src/mcp-tool";
-import { runMigrations } from "../src/migrations";
 import type { PersonalAccountConnectionProvider } from "../src/personal-account";
 import {
   type AtomicSendRepository,
   makePgAtomicSendRepository,
 } from "../src/send";
 import { makeWhatsAppConnectionRepository } from "../src/whatsapp-connection";
+import { createMigratedDatabase } from "./support/migrated-database";
 
 const accountId = "10000000-0000-4000-8000-000000000087";
 const authorizationId = "40000000-0000-4000-8000-000000000087";
@@ -42,15 +42,7 @@ describe("Send Operation grant identities", () => {
   let sends: AtomicSendRepository;
 
   beforeEach(async () => {
-    database = new PGlite();
-    await database.exec(`
-      CREATE ROLE neon_superuser NOLOGIN BYPASSRLS;
-      CREATE ROLE whatsapp_api_runtime LOGIN;
-      CREATE ROLE whatsapp_webhook_runtime LOGIN;
-      GRANT neon_superuser TO whatsapp_api_runtime;
-      GRANT neon_superuser TO whatsapp_webhook_runtime;
-    `);
-    await runMigrations(database);
+    database = await createMigratedDatabase();
     await database.query(
       `SELECT * FROM public.admit_personal_account_for_clerk(
         $1, $2, 1, $3, decode('0102', 'hex'), 6
