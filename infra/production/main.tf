@@ -3,7 +3,6 @@ locals {
   api_runtime_role           = "whatsapp_api_runtime"
   webhook_runtime_role       = "whatsapp_webhook_runtime"
   restore_runtime_role       = "whatsapp_restore_runtime"
-  recovery_verifier_role     = "whatsapp_recovery_verifier"
   break_glass_requester_role = "whatsapp_break_glass_requester"
   break_glass_approver_role  = "whatsapp_break_glass_approver"
   break_glass_runtime_role   = "whatsapp_break_glass_runtime"
@@ -33,7 +32,6 @@ resource "random_password" "database_roles" {
     local.api_runtime_role,
     local.webhook_runtime_role,
     local.restore_runtime_role,
-    local.recovery_verifier_role,
     local.break_glass_runtime_role,
   ])
   length  = 48
@@ -68,18 +66,6 @@ resource "postgresql_role" "restore_runtime" {
   name                      = local.restore_runtime_role
   login                     = true
   password                  = random_password.database_roles[local.restore_runtime_role].result
-  encrypted_password        = true
-  inherit                   = false
-  create_database           = false
-  create_role               = false
-  replication               = false
-  bypass_row_level_security = false
-}
-
-resource "postgresql_role" "recovery_verifier" {
-  name                      = local.recovery_verifier_role
-  login                     = true
-  password                  = random_password.database_roles[local.recovery_verifier_role].result
   encrypted_password        = true
   inherit                   = false
   create_database           = false

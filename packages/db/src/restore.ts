@@ -1,6 +1,8 @@
 import { sql } from "drizzle-orm";
 import {
   makeDatabase,
+  postgresErrorCode,
+  postgresTextArray,
   type QueryConnection,
   withPgQueryConnection,
 } from "./database";
@@ -157,12 +159,19 @@ export const makePgRestoreRepository = (
   recordUnresolvedRecipientPrefixes: (prefixes, observedAt) =>
     withClient(connectionString, async (client) => {
       const db = makeDatabase(client);
-      const result = await db.execute<{ recorded: number }>(sql`
-        SELECT public.record_unresolved_recipient_transition_prefixes(
-          ${[...prefixes]}::text[], ${observedAt}
-        ) AS recorded
-      `);
-      return Number(result[0]?.recorded ?? 0);
+      try {
+        const result = await db.execute<{ recorded: number }>(sql`
+          SELECT public.record_unresolved_recipient_transition_prefixes(
+            ${postgresTextArray(prefixes)}, ${observedAt}
+          ) AS recorded
+        `);
+        return Number(result[0]?.recorded ?? 0);
+      } catch (error) {
+        throw new Error(
+          `Recipient transition prefix recording failed with PostgreSQL code ${postgresErrorCode(error)}`,
+          { cause: error },
+        );
+      }
     }),
   purgeExcludedRecipientHistory: (observedAt, limit) =>
     withClient(connectionString, async (client) => {

@@ -16,13 +16,32 @@ import {
   makePgRecoveryVerifierRepository,
   verifyRecoveryRlsIsolation,
 } from "@whatsapp-mcp/db/recovery-verifier";
+import { recoveryVerifierConnectionString } from "@whatsapp-mcp/db/restricted-runtime-config";
 import { digestApiKeyCredential } from "@whatsapp-mcp/domain/api-key-hmac";
 import { createNeonRecoveryClient } from "@whatsapp-mcp/neon-recovery/client";
-import { queryAvailability } from "./availability";
+import { ObservabilityError, queryAvailability } from "./availability";
 import { required } from "./config";
 import type { RecoveryVerifierEnvironment } from "./environment";
 
 const encoder = new TextEncoder();
+export type RecoveryVerificationStage =
+  | "availability"
+  | "availability_dependency"
+  | "availability_first_party"
+  | "availability_sampled_keys"
+  | "branch"
+  | "completion"
+  | "database_verification"
+  | "endpoint_rotation"
+  | "hmac_rotation"
+  | "input"
+  | "objectives"
+  | "quarterly_game_day"
+  | "rls_prepare"
+  | "rls_verification"
+  | "verifier_access"
+  | "verifier_password"
+  | "verifier_uri";
 const toHex = (value: ArrayBuffer | Uint8Array) =>
   [...new Uint8Array(value)]
     .map((byte) => byte.toString(16).padStart(2, "0"))
@@ -30,9 +49,7 @@ const toHex = (value: ArrayBuffer | Uint8Array) =>
 
 const recoveryClient = (
   env: RecoveryVerifierEnvironment,
-  runtimeRole:
-    | "whatsapp_api_runtime"
-    | "whatsapp_recovery_verifier" = "whatsapp_recovery_verifier",
+  runtimeRole: "whatsapp_api_runtime" | "whatsapp_restore_runtime",
 ) =>
   createNeonRecoveryClient({
     apiKey: required(env.NEON_RECOVERY_API_KEY, "Neon recovery API key"),
@@ -126,30 +143,48 @@ export const verifyIsolatedApiKeyHmacRotation = async () => {
 export const verifyRecovery = async (
   env: RecoveryVerifierEnvironment,
   candidate: unknown,
+  reportStage: (stage: RecoveryVerificationStage) => void = () => undefined,
 ) => {
+  reportStage("input");
   if (env.DEPLOYMENT_ENVIRONMENT !== "production")
     throw new Error("Production recovery verification is unavailable");
   const input = decodeRecoveryVerificationRequest(candidate);
   if ((await expectedReplayDigest(input)) !== input.replay_digest)
     throw new Error("Recovery replay digest does not match");
-  const client = recoveryClient(env);
+  reportStage("branch");
+  const client = recoveryClient(env, "whatsapp_restore_runtime");
   const branch = await client.findGuardedPitrBranch({
     name: `${env.RECOVERY_BRANCH_PREFIX}${input.operation}`,
     parentTimestamp: input.source_point_at,
   });
   if (branch === "absent" || branch.id !== input.recovery_branch_id)
     throw new Error("Guarded recovery branch is unavailable");
+  reportStage("verifier_password");
+  const verifierPassword = required(
+    env.RECOVERY_VERIFIER_DATABASE_PASSWORD,
+    "Recovery verifier database password",
+  );
+  reportStage("verifier_uri");
   await client.resetRestoreRuntimePassword(branch);
-  const firstUri = await client.getDirectRestoreUri(branch);
+  const firstUri = recoveryVerifierConnectionString(
+    await client.getDirectRestoreUri(branch),
+    verifierPassword,
+  );
+  reportStage("verifier_access");
   await checkRestrictedDatabaseAccess(firstUri);
+  reportStage("database_verification");
   let repository = makePgRecoveryVerifierRepository(firstUri);
   let activeUri = firstUri;
   let database = await repository.verify(branch.id, new Date().toISOString());
 
   let endpointRotation = true;
   if (input.drill === "quarterly_game_day") {
+    reportStage("endpoint_rotation");
     await client.rotateGuardedEndpoint(branch);
-    const replacementUri = await client.getDirectRestoreUri(branch);
+    const replacementUri = recoveryVerifierConnectionString(
+      await client.getDirectRestoreUri(branch),
+      verifierPassword,
+    );
     try {
       await repository.verify(branch.id, new Date().toISOString());
       endpointRotation = false;
@@ -166,6 +201,7 @@ export const verifyRecovery = async (
 
   let quarterly: ReturnType<typeof decodeQuarterlyRecoveryChecks> | undefined;
   if (input.drill === "quarterly_game_day") {
+    reportStage("quarterly_game_day");
     const execution = {
       version: 1,
       operation: input.operation,
@@ -207,6 +243,7 @@ export const verifyRecovery = async (
     probeAuthorizationId,
     probeAuditLogId,
   ] = probeIds;
+  reportStage("rls_prepare");
   const probeRequired = await repository.prepareRlsProbe(
     branch.id,
     firstProbeAccountId,
@@ -215,6 +252,7 @@ export const verifyRecovery = async (
   let rlsIsolated = !probeRequired;
   let mediaLossStateTransitioned = !probeRequired;
   if (probeRequired) {
+    reportStage("rls_verification");
     try {
       const apiRuntimeClient = recoveryClient(env, "whatsapp_api_runtime");
       await apiRuntimeClient.resetRestoreRuntimePassword(branch);
@@ -265,8 +303,18 @@ export const verifyRecovery = async (
   }
   database = { ...database, rlsOk: database.rlsOk && rlsIsolated };
 
-  const availability = await queryAvailability(env, input);
+  reportStage("availability");
+  let availability: Awaited<ReturnType<typeof queryAvailability>>;
+  try {
+    availability = await queryAvailability(env, input);
+  } catch (error) {
+    if (error instanceof ObservabilityError && error.stage)
+      reportStage(`availability_${error.stage}`);
+    throw error;
+  }
+  reportStage("hmac_rotation");
   const hmac = await verifyIsolatedApiKeyHmacRotation();
+  reportStage("objectives");
   const achievedRpoSeconds = Math.abs(
     (Date.parse(input.source_point_at) - Date.parse(database.sourcePointAt)) /
       1_000,
@@ -340,6 +388,7 @@ export const verifyRecovery = async (
     },
     checks,
   });
+  reportStage("completion");
   await repository.complete(branch.id, new Date().toISOString());
   return result;
 };

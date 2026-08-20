@@ -6,3 +6,4 @@ DELETION_MARKER_HMAC_SECRET=replace-with-64-hex-characters
 RECIPIENT_TRANSITION_HMAC_SECRET=replace-with-64-hex-characters
 RECOVERY_EVIDENCE_URL=https://recovery-evidence.example.test/verify
 RECOVERY_EVIDENCE_TOKEN=replace-with-random-token
+RECOVERY_VERIFIER_DATABASE_PASSWORD=replace-with-64-hex-characters

@@ -350,7 +350,7 @@ export const executeGameDay = async (env: Env, candidate: unknown) => {
     safeHttpsUrl(env.PAGER_WEBHOOK_URL, "Pager webhook URL"),
     {
       method: "POST",
-      redirect: "error",
+      redirect: "manual",
       signal: AbortSignal.timeout(30_000),
       headers: {
         authorization: `Bearer ${required(
@@ -436,7 +436,7 @@ export const verifyGameDay = async (env: Env, candidate: unknown) => {
   for (let attempt = 0; attempt < 60; attempt += 1) {
     const response = await fetch(receiptUrl, {
       method: "POST",
-      redirect: "error",
+      redirect: "manual",
       signal: AbortSignal.timeout(30_000),
       headers: {
         accept: "application/json",

@@ -45,4 +45,4 @@ GRANT EXECUTE ON FUNCTION public.record_recovery_source_point()
   TO whatsapp_api_runtime;
 --> statement-breakpoint
 GRANT EXECUTE ON FUNCTION public.read_recovery_source_point()
-  TO whatsapp_recovery_verifier;
+  TO whatsapp_recovery_auditor;

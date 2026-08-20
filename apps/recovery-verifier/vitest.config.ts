@@ -8,6 +8,7 @@ export default defineConfig({
         bindings: {
           DEPLOYMENT_ENVIRONMENT: "production",
           RECOVERY_EVIDENCE_TOKEN: "a".repeat(32),
+          RECOVERY_VERIFIER_DATABASE_PASSWORD: "b".repeat(64),
         },
         serviceBindings: {
           RECOVERY_GAME_DAY: () =>

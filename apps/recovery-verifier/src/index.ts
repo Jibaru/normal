@@ -1,12 +1,12 @@
 import { decodeRecoveryVerificationRequest } from "@whatsapp-mcp/contracts/recovery";
 import { required, verifyToken } from "./config";
 import type { RecoveryVerifierEnvironment } from "./environment";
-import { verifyRecovery } from "./verify";
+import { type RecoveryVerificationStage, verifyRecovery } from "./verify";
 
-const json = (body: unknown, status = 200) =>
+const json = (body: unknown, status = 200, headers?: HeadersInit) =>
   Response.json(body, {
     status,
-    headers: { "cache-control": "no-store" },
+    headers: { "cache-control": "no-store", ...headers },
   });
 
 const authorized = async (
@@ -38,6 +38,7 @@ export const handleRequest = async (
   env: RecoveryVerifierEnvironment,
 ) => {
   if (!(await authorized(request, env))) return json({ status: "failed" }, 401);
+  let stage: RecoveryVerificationStage | "request" = "request";
   try {
     const url = new URL(request.url);
     if (
@@ -51,9 +52,15 @@ export const handleRequest = async (
     const input = await readRequest(request);
     if (request.headers.get("idempotency-key") !== input.operation)
       throw new Error("Recovery verification identity mismatch");
-    return json(await verifyRecovery(env, input));
+    return json(
+      await verifyRecovery(env, input, (reported) => {
+        stage = reported;
+      }),
+    );
   } catch {
-    return json({ status: "failed" }, 503);
+    return json({ status: "failed" }, 503, {
+      "x-recovery-verification-stage": stage,
+    });
   }
 };
 

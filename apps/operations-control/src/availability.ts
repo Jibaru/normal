@@ -1,4 +1,6 @@
 import {
+  CloudflareAnalyticsError,
+  type CloudflareAnalyticsFailure,
   type OperationsFetch,
   queryFirstPartyAvailability,
 } from "./cloudflare";
@@ -17,6 +19,31 @@ const keys = [
   "verification_nonce",
   "replay_digest",
 ] as const;
+
+export type AvailabilityStage = "dependency" | "first_party" | "sampled_keys";
+
+export class AvailabilityError extends Error {
+  constructor(
+    readonly stage: AvailabilityStage,
+    readonly reason?: CloudflareAnalyticsFailure,
+  ) {
+    super("Availability evidence is unavailable");
+  }
+}
+
+const withStage = async <Value>(
+  stage: AvailabilityStage,
+  operation: Promise<Value>,
+) => {
+  try {
+    return await operation;
+  } catch (error) {
+    throw new AvailabilityError(
+      stage,
+      error instanceof CloudflareAnalyticsError ? error.failure : undefined,
+    );
+  }
+};
 
 export const handleAvailability = async (
   request: Request,
@@ -50,9 +77,18 @@ export const handleAvailability = async (
   const fetcher = dependencies.fetch ?? fetch;
   const [firstPartyPercent, dependenciesResult, sampledKeysUsable] =
     await Promise.all([
-      queryFirstPartyAvailability(env, { completedAt, startedAt }, fetcher),
-      queryDependencyAvailability(completedAt, fetcher),
-      dependencies.keys?.() ?? verifySampledKeys(env, fetcher),
+      withStage(
+        "first_party",
+        queryFirstPartyAvailability(env, { completedAt, startedAt }, fetcher),
+      ),
+      withStage(
+        "dependency",
+        queryDependencyAvailability(completedAt, fetcher),
+      ),
+      withStage(
+        "sampled_keys",
+        dependencies.keys?.() ?? verifySampledKeys(env, fetcher),
+      ),
     ]);
   return safeJson({
     version: 1,

@@ -641,13 +641,14 @@ resource "cloudflare_worker_version" "recovery_verifier" {
   bindings = [
     { name = "DEPLOYMENT_ENVIRONMENT", text = var.deployment_environment, type = "plain_text" },
     { name = "RECOVERY_BRANCH_PREFIX", text = "recovery/${var.deployment_environment}-", type = "plain_text" },
-    { name = "RECOVERY_DATABASE_NAME", text = "neondb", type = "plain_text" },
+    { name = "RECOVERY_DATABASE_NAME", text = "whatsapp_mcp", type = "plain_text" },
     { name = "NEON_PARENT_BRANCH_ID", type = "inherit" },
     { name = "NEON_PROJECT_ID", type = "inherit" },
     { name = "NEON_RECOVERY_API_KEY", type = "inherit" },
     { name = "OBSERVABILITY_QUERY_TOKEN", type = "inherit" },
     { name = "OBSERVABILITY_QUERY_URL", type = "inherit" },
     { name = "RECOVERY_EVIDENCE_TOKEN", type = "inherit" },
+    { name = "RECOVERY_VERIFIER_DATABASE_PASSWORD", type = "inherit" },
     { name = "RECOVERY_GAME_DAY", service = cloudflare_worker.recovery_game_day.name, type = "service" }
   ]
   depends_on = [cloudflare_workers_deployment.recovery_game_day]
@@ -700,6 +701,8 @@ resource "cloudflare_workflow" "production_recovery" {
   depends_on = [cloudflare_workers_deployment.recovery_control]
 }
 
+# Wrangler owns the Durable Object migration history. OpenTofu reconciles the
+# deployed Worker version without replaying an already applied migration tag.
 resource "cloudflare_worker_version" "recovery_control" {
   account_id          = var.cloudflare_account_id
   worker_id           = cloudflare_worker.recovery_control.id
@@ -711,14 +714,10 @@ resource "cloudflare_worker_version" "recovery_control" {
     content_file = local.recovery_control_bundle_path
     content_type = "application/javascript+module"
   }]
-  migrations = {
-    new_tag            = "v1"
-    new_sqlite_classes = ["RecoveryGate"]
-  }
   bindings = [
     { name = "DEPLOYMENT_ENVIRONMENT", text = var.deployment_environment, type = "plain_text" },
     { name = "RECOVERY_BRANCH_PREFIX", text = "recovery/${var.deployment_environment}-", type = "plain_text" },
-    { name = "RECOVERY_DATABASE_NAME", text = "neondb", type = "plain_text" },
+    { name = "RECOVERY_DATABASE_NAME", text = "whatsapp_mcp", type = "plain_text" },
     { name = "DELETION_MARKER_HMAC_SECRET", type = "inherit" },
     { name = "NEON_RECOVERY_API_KEY", type = "inherit" },
     { name = "NEON_PARENT_BRANCH_ID", type = "inherit" },
@@ -726,6 +725,7 @@ resource "cloudflare_worker_version" "recovery_control" {
     { name = "RECIPIENT_TRANSITION_HMAC_SECRET", type = "inherit" },
     { name = "RECOVERY_CONTROL_TOKEN", type = "inherit" },
     { name = "RECOVERY_EVIDENCE_TOKEN", type = "inherit" },
+    { name = "RECOVERY_VERIFIER_DATABASE_PASSWORD", type = "inherit" },
     { name = "DELETION_MARKERS", bucket_name = cloudflare_r2_bucket.deletion_markers.name, type = "r2_bucket" },
     { name = "RECIPIENT_TRANSITIONS", bucket_name = cloudflare_r2_bucket.recipient_transitions.name, type = "r2_bucket" },
     { name = "RECOVERY_GATE", class_name = "RecoveryGate", script_name = cloudflare_worker.recovery_control.name, type = "durable_object_namespace" },

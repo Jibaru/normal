@@ -1,6 +1,6 @@
 import type { OperationsFetch } from "./cloudflare";
 
-const statusUrl = "https://www.wasenderapi.com/status";
+const statusUrl = "https://wasenderapi.com/status";
 const windowMilliseconds = 30 * 86_400_000;
 const timestamp = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/u;
 
@@ -39,7 +39,7 @@ export const queryDependencyAvailability = async (
 ) => {
   const response = await fetcher(statusUrl, {
     headers: { accept: "text/html" },
-    redirect: "error",
+    redirect: "manual",
     signal: AbortSignal.timeout(15_000),
   });
   if (!response.ok) throw new Error("Wasender status is unavailable");

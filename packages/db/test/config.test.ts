@@ -3,8 +3,10 @@ import { ConfigProvider, Effect, Redacted } from "effect";
 import {
   databaseConfig,
   migrationConfig,
+  recoveryVerifierConnectionString,
   restrictedApiRuntimeConnectionString,
   restrictedDeletionRuntimeConnectionString,
+  restrictedMigrationOwnerConnectionString,
   restrictedRecoveryVerifierConnectionString,
   restrictedRestoreRuntimeConnectionString,
 } from "../src/config";
@@ -25,15 +27,35 @@ describe("restrictedRestoreRuntimeConnectionString", () => {
 describe("restrictedRecoveryVerifierConnectionString", () => {
   test("accepts only the verifier role over direct TLS to Neon", () => {
     const value =
-      "postgresql://whatsapp_recovery_verifier:secret@ep-example.neon.tech/database?sslmode=require";
+      "postgresql://whatsapp_recovery_auditor:secret@ep-example.neon.tech/database?sslmode=require";
     expect(restrictedRecoveryVerifierConnectionString(value)).toBe(value);
     expect(() =>
       restrictedRecoveryVerifierConnectionString(
-        "postgresql://whatsapp_recovery_verifier:secret@ep-example-pooler.neon.tech/database?sslmode=require",
+        "postgresql://whatsapp_recovery_auditor:secret@ep-example-pooler.neon.tech/database?sslmode=require",
       ),
     ).toThrow(
       "database URL is not the direct restricted TLS recovery verifier",
     );
+  });
+});
+
+describe("recovery verifier credential configuration", () => {
+  test("derives only a direct verifier URL from a restricted restore URL", () => {
+    const password = "a".repeat(64);
+    const restore =
+      "postgresql://whatsapp_restore_runtime:secret@ep-example.neon.tech/database?sslmode=require";
+    expect(recoveryVerifierConnectionString(restore, password)).toBe(
+      `postgresql://whatsapp_recovery_auditor:${password}@ep-example.neon.tech/database?sslmode=require`,
+    );
+    expect(() => recoveryVerifierConnectionString(restore, "weak")).toThrow(
+      "recovery verifier password is invalid",
+    );
+  });
+
+  test("accepts only the direct migration owner URL", () => {
+    const owner =
+      "postgresql://whatsapp_migration_owner:secret@ep-example.neon.tech/database?sslmode=require";
+    expect(restrictedMigrationOwnerConnectionString(owner)).toBe(owner);
   });
 });
 

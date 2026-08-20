@@ -43,6 +43,7 @@ export const recoveryWorkers = [
       "OBSERVABILITY_QUERY_TOKEN",
       "OBSERVABILITY_QUERY_URL",
       "RECOVERY_EVIDENCE_TOKEN",
+      "RECOVERY_VERIFIER_DATABASE_PASSWORD",
     ],
   },
   {
@@ -55,6 +56,7 @@ export const recoveryWorkers = [
       "RECIPIENT_TRANSITION_HMAC_SECRET",
       "RECOVERY_CONTROL_TOKEN",
       "RECOVERY_EVIDENCE_TOKEN",
+      "RECOVERY_VERIFIER_DATABASE_PASSWORD",
     ],
   },
 ] as const satisfies readonly RecoveryWorker[];

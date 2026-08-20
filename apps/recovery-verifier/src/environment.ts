@@ -12,5 +12,6 @@ export interface RecoveryVerifierEnvironment {
   readonly RECOVERY_BRANCH_PREFIX: string;
   readonly RECOVERY_DATABASE_NAME: string;
   readonly RECOVERY_EVIDENCE_TOKEN: string;
+  readonly RECOVERY_VERIFIER_DATABASE_PASSWORD: string;
   readonly RECOVERY_GAME_DAY: RecoveryServiceFetcher;
 }

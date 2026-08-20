@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { queryAvailability } from "../src/availability";
+import { ObservabilityError, queryAvailability } from "../src/availability";
 import type { RecoveryVerifierEnvironment } from "../src/environment";
 
 const asOf = "2026-08-18T12:00:00.000Z";
@@ -85,6 +85,21 @@ describe("recovery availability evidence", () => {
     );
     await expect(queryAvailability(env, input, fetcher)).rejects.toThrow(
       "invalid evidence",
+    );
+  });
+
+  test("retains only a fixed failed authority stage", async () => {
+    const fetcher = vi.fn(async () =>
+      Response.json(
+        { status: "failed" },
+        {
+          status: 503,
+          headers: { "x-operations-availability-stage": "sampled_keys" },
+        },
+      ),
+    );
+    await expect(queryAvailability(env, input, fetcher)).rejects.toEqual(
+      new ObservabilityError("sampled_keys"),
     );
   });
 });

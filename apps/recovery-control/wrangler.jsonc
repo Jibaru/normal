@@ -6,6 +6,7 @@
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "workers_dev": false,
   "preview_urls": false,
+  "rules": [{ "type": "Text", "globs": ["**/*.sql"], "fallthrough": true }],
   "vars": {
     "DEPLOYMENT_ENVIRONMENT": "production",
     "RECOVERY_BRANCH_PREFIX": "recovery/production-",
@@ -19,7 +20,8 @@
       "NEON_PROJECT_ID",
       "RECIPIENT_TRANSITION_HMAC_SECRET",
       "RECOVERY_CONTROL_TOKEN",
-      "RECOVERY_EVIDENCE_TOKEN"
+      "RECOVERY_EVIDENCE_TOKEN",
+      "RECOVERY_VERIFIER_DATABASE_PASSWORD"
     ]
   },
   "durable_objects": {
@@ -67,7 +69,8 @@
           "NEON_PROJECT_ID",
           "RECIPIENT_TRANSITION_HMAC_SECRET",
           "RECOVERY_CONTROL_TOKEN",
-          "RECOVERY_EVIDENCE_TOKEN"
+          "RECOVERY_EVIDENCE_TOKEN",
+          "RECOVERY_VERIFIER_DATABASE_PASSWORD"
         ]
       },
       "durable_objects": {
@@ -113,7 +116,8 @@
           "NEON_PROJECT_ID",
           "RECIPIENT_TRANSITION_HMAC_SECRET",
           "RECOVERY_CONTROL_TOKEN",
-          "RECOVERY_EVIDENCE_TOKEN"
+          "RECOVERY_EVIDENCE_TOKEN",
+          "RECOVERY_VERIFIER_DATABASE_PASSWORD"
         ]
       },
       "durable_objects": {
@@ -149,7 +153,7 @@
       "vars": {
         "DEPLOYMENT_ENVIRONMENT": "production",
         "RECOVERY_BRANCH_PREFIX": "recovery/production-",
-        "RECOVERY_DATABASE_NAME": "neondb"
+        "RECOVERY_DATABASE_NAME": "whatsapp_mcp"
       },
       "secrets": {
         "required": [
@@ -159,7 +163,8 @@
           "NEON_PROJECT_ID",
           "RECIPIENT_TRANSITION_HMAC_SECRET",
           "RECOVERY_CONTROL_TOKEN",
-          "RECOVERY_EVIDENCE_TOKEN"
+          "RECOVERY_EVIDENCE_TOKEN",
+          "RECOVERY_VERIFIER_DATABASE_PASSWORD"
         ]
       },
       "durable_objects": {

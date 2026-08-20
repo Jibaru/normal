@@ -17,7 +17,7 @@ export const verifySampledKeys = async (
   )}`;
   const started = await fetcher(`${origin}/_internal/deployment-smoke`, {
     method: "POST",
-    redirect: "error",
+    redirect: "manual",
     signal: AbortSignal.timeout(30_000),
     headers: { authorization },
   });
@@ -35,7 +35,7 @@ export const verifySampledKeys = async (
     const response = await fetcher(
       `${origin}/_internal/deployment-smoke?id=${startedBody.canary_id}`,
       {
-        redirect: "error",
+        redirect: "manual",
         signal: AbortSignal.timeout(10_000),
         headers: { authorization },
       },

@@ -8,6 +8,10 @@ import {
   makeDeletionMarkerStore,
 } from "@whatsapp-mcp/api/deletion/marker";
 import type { RecipientJournalBucket } from "@whatsapp-mcp/api/recipient/journal";
+import {
+  applyRecoveryMigrations,
+  rotateRecoveryVerifierPassword,
+} from "@whatsapp-mcp/db/recovery-migrations";
 import { makePgRestoreRepository } from "@whatsapp-mcp/db/restore";
 import { restrictedRestoreRuntimeConnectionString } from "@whatsapp-mcp/db/restricted-runtime-config";
 import { createNeonRecoveryClient } from "@whatsapp-mcp/neon-recovery/client";
@@ -110,6 +114,29 @@ export class ProductionRecoveryWorkflow extends WorkflowEntrypoint<
       new Date().toISOString(),
     );
 
+    await step.do(
+      "forward migrate guarded PITR branch",
+      stepConfig,
+      async () => {
+        const client = neonClient(this.env);
+        await client.resetMigrationOwnerPassword(branch);
+        try {
+          const migrationUri = await client.getDirectMigrationUri(branch);
+          const applied = await applyRecoveryMigrations(migrationUri);
+          await rotateRecoveryVerifierPassword(
+            migrationUri,
+            required(
+              this.env.RECOVERY_VERIFIER_DATABASE_PASSWORD,
+              "Recovery verifier database password",
+            ),
+          );
+          return applied;
+        } finally {
+          await client.resetMigrationOwnerPassword(branch);
+        }
+      },
+    );
+
     const replay = await step.do(
       "replay restore-external authorities",
       nonRetryableStepConfig,
@@ -194,7 +221,7 @@ export class ProductionRecoveryWorkflow extends WorkflowEntrypoint<
           "https://recovery-verifier.internal/verify",
           {
             method: "POST",
-            redirect: "error",
+            redirect: "manual",
             signal: AbortSignal.timeout(300_000),
             headers: {
               accept: "application/json",
@@ -225,8 +252,14 @@ export class ProductionRecoveryWorkflow extends WorkflowEntrypoint<
             .get("content-type")
             ?.toLowerCase()
             .startsWith("application/json")
-        )
-          throw new Error("Recovery evidence verification failed");
+        ) {
+          const stage = response.headers.get("x-recovery-verification-stage");
+          throw new Error(
+            stage !== null && /^[a-z_]+$/.test(stage)
+              ? `Recovery evidence verification failed at ${stage}`
+              : "Recovery evidence verification failed",
+          );
+        }
         const parsed = decodeRecoveryVerificationResponse(
           await readBoundedJson(response),
         );

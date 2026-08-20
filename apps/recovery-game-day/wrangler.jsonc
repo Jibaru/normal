@@ -40,7 +40,13 @@
       }
     ],
     "consumers": [
-      { "queue": "whatsapp-mcp-recovery-game-day-replay", "max_batch_size": 1 }
+      {
+        "queue": "whatsapp-mcp-recovery-game-day-replay",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 3,
+        "retry_delay": 60
+      }
     ]
   },
   "observability": { "enabled": true },
@@ -83,7 +89,10 @@
         "consumers": [
           {
             "queue": "whatsapp-mcp-recovery-game-day-replay-development",
-            "max_batch_size": 1
+            "max_batch_size": 1,
+            "max_batch_timeout": 1,
+            "max_retries": 3,
+            "retry_delay": 60
           }
         ]
       }
@@ -126,7 +135,10 @@
         "consumers": [
           {
             "queue": "whatsapp-mcp-recovery-game-day-replay-preview",
-            "max_batch_size": 1
+            "max_batch_size": 1,
+            "max_batch_timeout": 1,
+            "max_retries": 3,
+            "retry_delay": 60
           }
         ]
       }
@@ -170,7 +182,10 @@
         "consumers": [
           {
             "queue": "whatsapp-mcp-recovery-game-day-replay",
-            "max_batch_size": 1
+            "max_batch_size": 1,
+            "max_batch_timeout": 1,
+            "max_retries": 3,
+            "retry_delay": 60
           }
         ]
       }

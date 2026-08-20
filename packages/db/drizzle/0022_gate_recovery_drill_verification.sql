@@ -195,7 +195,7 @@ BEGIN
       USING MESSAGE = 'recovery verifier branch mismatch';
   END IF;
   RETURN QUERY SELECT
-    COALESCE((SELECT max(migrations.created_at) = 1787166960000
+    COALESCE((SELECT max(migrations.created_at) = 1787191200000
       FROM public.drizzle_migrations AS migrations), false),
     NOT EXISTS (
       SELECT 1 FROM pg_catalog.pg_roles AS roles
@@ -625,26 +625,26 @@ GRANT EXECUTE ON FUNCTION public.begin_restore_replay(text,timestamptz,boolean)
 --> statement-breakpoint
 
 GRANT EXECUTE ON FUNCTION public.complete_recovery_drill_verification(text,timestamptz)
-  TO whatsapp_recovery_verifier;
+  TO whatsapp_recovery_auditor;
 --> statement-breakpoint
 
 GRANT EXECUTE ON FUNCTION public.verify_recovery_branch(text,timestamptz)
-  TO whatsapp_recovery_verifier;
+  TO whatsapp_recovery_auditor;
 --> statement-breakpoint
 
 GRANT EXECUTE ON FUNCTION public.prepare_recovery_rls_probe(text,uuid,uuid)
-  TO whatsapp_recovery_verifier;
+  TO whatsapp_recovery_auditor;
 --> statement-breakpoint
 
 GRANT EXECUTE ON FUNCTION public.complete_recovery_rls_probe(text,uuid,uuid)
-  TO whatsapp_recovery_verifier;
+  TO whatsapp_recovery_auditor;
 --> statement-breakpoint
 
 GRANT EXECUTE ON FUNCTION
   public.prepare_recovery_media_loss_probe(text,uuid,uuid,uuid,uuid,uuid,uuid,uuid),
   public.verify_recovery_media_loss_probe(text,uuid,uuid,uuid)
-  TO whatsapp_recovery_verifier;
+  TO whatsapp_recovery_auditor;
 --> statement-breakpoint
 
 GRANT EXECUTE ON FUNCTION public.is_restore_ready(text)
-  TO whatsapp_recovery_verifier;
+  TO whatsapp_recovery_auditor;

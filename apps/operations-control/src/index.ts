@@ -1,4 +1,4 @@
-import { handleAvailability } from "./availability";
+import { AvailabilityError, handleAvailability } from "./availability";
 import { required, safeJson, verifyToken } from "./config";
 import type { OperationsControlEnvironment } from "./environment";
 import { handleAlert, handleReceipt } from "./pager";
@@ -43,8 +43,19 @@ export const handleRequest = async (
       return await handleAvailability(request, env);
     if (url.pathname === "/v1/alerts") return await handleAlert(request, env);
     return await handleReceipt(request, env);
-  } catch {
-    return safeJson({ status: "failed" }, 503);
+  } catch (error) {
+    return safeJson(
+      { status: "failed" },
+      503,
+      error instanceof AvailabilityError
+        ? {
+            "x-operations-availability-stage": error.stage,
+            ...(error.reason
+              ? { "x-operations-availability-reason": error.reason }
+              : {}),
+          }
+        : undefined,
+    );
   }
 };
 

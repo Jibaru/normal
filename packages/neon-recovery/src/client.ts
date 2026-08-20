@@ -2,14 +2,12 @@ import { z } from "zod";
 
 const API_ORIGIN = "https://console.neon.tech/api/v2";
 const RESTORE_ROLE = "whatsapp_restore_runtime";
-const runtimeRoleSchema = z.enum([
-  RESTORE_ROLE,
-  "whatsapp_api_runtime",
-  "whatsapp_recovery_verifier",
-]);
+const MIGRATION_OWNER_ROLE = "whatsapp_migration_owner";
+const runtimeRoleSchema = z.enum([RESTORE_ROLE, "whatsapp_api_runtime"]);
 const RECOVERY_ANNOTATION_KEY = "production-recovery";
 const RECOVERY_ANNOTATION_VALUE = "true";
 const HISTORY_WINDOW_MS = 7 * 86_400_000;
+const MAX_PITR_SOURCE_SKEW_MS = 5 * 60_000;
 const branchIdSchema = z.string().regex(/^br-[a-z0-9-]{1,57}$/u);
 const projectIdSchema = z.string().regex(/^[a-z0-9-]{1,60}$/u);
 const canonicalTimestampSchema = z.string().refine((value) => {
@@ -309,32 +307,64 @@ export class NeonRecoveryError extends Error {
   }
 }
 
+const branchIdentityMismatches = (
+  branch: z.infer<typeof branchSchema>,
+  expected: Omit<RecoveryBranch, "id"> & { readonly id?: string },
+  projectId: string,
+) => {
+  const sourceDelta =
+    branch.parent_timestamp === undefined
+      ? undefined
+      : Date.parse(branch.parent_timestamp) -
+        Date.parse(expected.parentTimestamp);
+  const checks = {
+    project: branch.project_id === projectId,
+    parent_identity: branch.id !== expected.parentId,
+    identity: expected.id === undefined || branch.id === expected.id,
+    name: branch.name === expected.name,
+    parent: branch.parent_id === expected.parentId,
+    parent_timestamp:
+      sourceDelta === undefined ||
+      (sourceDelta <= 0 && sourceDelta >= -MAX_PITR_SOURCE_SKEW_MS),
+    default: branch.default === false,
+    primary: branch.primary !== true,
+    protected: branch.protected === false,
+    init_source: branch.init_source === "parent-data",
+  } as const;
+  return Object.entries(checks)
+    .filter(([, matches]) => !matches)
+    .map(([field]) => field);
+};
+
 const exactBranch = (
   branch: z.infer<typeof branchSchema>,
   expected: Omit<RecoveryBranch, "id"> & { readonly id?: string },
   projectId: string,
+) => branchIdentityMismatches(branch, expected, projectId).length === 0;
+
+const branchIdentityMismatchSummary = (
+  branch: z.infer<typeof branchSchema>,
+  expected: Omit<RecoveryBranch, "id"> & { readonly id?: string },
+  projectId: string,
 ) =>
-  branch.project_id === projectId &&
-  branch.id !== expected.parentId &&
-  (expected.id === undefined || branch.id === expected.id) &&
-  branch.name === expected.name &&
-  branch.parent_id === expected.parentId &&
-  branch.parent_timestamp !== undefined &&
-  new Date(branch.parent_timestamp).toISOString() ===
-    expected.parentTimestamp &&
-  branch.default === false &&
-  branch.primary !== true &&
-  branch.protected === false &&
-  branch.init_source === "parent-data";
+  branchIdentityMismatches(branch, expected, projectId)
+    .map((field) => {
+      if (field !== "parent_timestamp" || branch.parent_timestamp === undefined)
+        return field;
+      return `${field}:${Date.parse(branch.parent_timestamp) - Date.parse(expected.parentTimestamp)}ms`;
+    })
+    .join(", ");
 
 const exactRecoveryAnnotation = (
   annotation: z.infer<typeof annotationSchema> | undefined,
   branchId: string,
+  expected: Omit<RecoveryBranch, "id">,
 ) =>
   annotation?.object.type === "console/branch" &&
   annotation.object.id === branchId &&
   Object.keys(annotation.value).length === 1 &&
-  annotation.value[RECOVERY_ANNOTATION_KEY] === RECOVERY_ANNOTATION_VALUE;
+  annotation.value[RECOVERY_ANNOTATION_KEY] ===
+    `${RECOVERY_ANNOTATION_VALUE}:${expected.parentId}:${expected.parentTimestamp}`;
 
 export const createNeonRecoveryClient = (
   input: NeonRecoveryConfig,
@@ -359,7 +389,7 @@ export const createNeonRecoveryClient = (
     try {
       response = await fetchImplementation(url(path), {
         ...init,
-        redirect: "error",
+        redirect: "manual",
         signal: init.signal ?? AbortSignal.timeout(config.polling.timeoutMs),
         headers: {
           accept: "application/json",
@@ -510,9 +540,9 @@ export const createNeonRecoveryClient = (
     for (let attempt = 1; ; attempt += 1) {
       if (!exactBranch(branch, expected, config.projectId))
         throw new NeonRecoveryError(
-          "Existing Neon branch does not match the requested PITR source",
+          `Existing Neon branch does not match the requested PITR source (${branchIdentityMismatchSummary(branch, expected, config.projectId)})`,
         );
-      if (!exactRecoveryAnnotation(branchAnnotation, branch.id))
+      if (!exactRecoveryAnnotation(branchAnnotation, branch.id, expected))
         throw new NeonRecoveryError(
           "Neon recovery branch annotation guard failed",
         );
@@ -610,7 +640,7 @@ export const createNeonRecoveryClient = (
             },
             endpoints: [{ type: "read_write" }],
             annotation_value: {
-              [RECOVERY_ANNOTATION_KEY]: RECOVERY_ANNOTATION_VALUE,
+              [RECOVERY_ANNOTATION_KEY]: `${RECOVERY_ANNOTATION_VALUE}:${expected.parentId}:${expected.parentTimestamp}`,
             },
           }),
         },
@@ -656,7 +686,7 @@ export const createNeonRecoveryClient = (
         config.projectId,
       ) ||
       branch.current_state !== "ready" ||
-      !exactRecoveryAnnotation(annotation, branch.id)
+      !exactRecoveryAnnotation(annotation, branch.id, expected)
     )
       throw new NeonRecoveryError(
         "Neon did not reconcile the exact PITR branch",
@@ -696,19 +726,20 @@ export const createNeonRecoveryClient = (
     };
     if (
       !exactBranch(match.branch, expected, config.projectId) ||
-      !exactRecoveryAnnotation(match.annotation, match.branch.id)
+      !exactRecoveryAnnotation(match.annotation, match.branch.id, expected)
     )
       throw new NeonRecoveryError("Neon recovery branch cleanup guard failed");
     return expected;
   };
 
-  const resetRestoreRuntimePassword = async (
+  const resetRolePassword = async (
     branch: RecoveryBranch,
+    role: z.infer<typeof runtimeRoleSchema> | typeof MIGRATION_OWNER_ROLE,
   ): Promise<void> => {
     const verified = await getGuardedBranch(branch);
     const resetPassword = () =>
       request(
-        `/projects/${config.projectId}/branches/${verified.id}/roles/${config.runtimeRole}/reset_password`,
+        `/projects/${config.projectId}/branches/${verified.id}/roles/${role}/reset_password`,
         { method: "POST" },
         roleOperationsResponseSchema,
         [],
@@ -723,22 +754,20 @@ export const createNeonRecoveryClient = (
       result = await resetPassword();
     }
     const value = result.value as z.infer<typeof roleOperationsResponseSchema>;
-    if (
-      value.role.branch_id !== verified.id ||
-      value.role.name !== config.runtimeRole
-    )
+    if (value.role.branch_id !== verified.id || value.role.name !== role)
       throw new NeonRecoveryError("Neon reset a different role credential");
     await waitForOperations(value.operations);
   };
 
-  const getDirectRestoreUri = async (
+  const getDirectUri = async (
     branch: RecoveryBranch,
+    role: z.infer<typeof runtimeRoleSchema> | typeof MIGRATION_OWNER_ROLE,
   ): Promise<string> => {
     const verified = await getGuardedBranch(branch);
     const query = new URLSearchParams({
       branch_id: verified.id,
       database_name: config.databaseName,
-      role_name: config.runtimeRole,
+      role_name: role,
       pooled: "false",
     });
     const result = await request(
@@ -759,7 +788,7 @@ export const createNeonRecoveryClient = (
     }
     if (
       !["postgres:", "postgresql:"].includes(parsed.protocol) ||
-      decodeURIComponent(parsed.username) !== config.runtimeRole ||
+      decodeURIComponent(parsed.username) !== role ||
       parsed.password.length === 0 ||
       decodeURIComponent(parsed.pathname.slice(1)) !== config.databaseName ||
       !parsed.hostname.endsWith(".neon.tech") ||
@@ -771,6 +800,18 @@ export const createNeonRecoveryClient = (
       );
     return uri;
   };
+
+  const resetRestoreRuntimePassword = (branch: RecoveryBranch) =>
+    resetRolePassword(branch, config.runtimeRole);
+
+  const getDirectRestoreUri = (branch: RecoveryBranch) =>
+    getDirectUri(branch, config.runtimeRole);
+
+  const resetMigrationOwnerPassword = (branch: RecoveryBranch) =>
+    resetRolePassword(branch, MIGRATION_OWNER_ROLE);
+
+  const getDirectMigrationUri = (branch: RecoveryBranch) =>
+    getDirectUri(branch, MIGRATION_OWNER_ROLE);
 
   const rotateGuardedEndpoint = async (branch: RecoveryBranch) => {
     const verified = await getGuardedBranch(branch);
@@ -872,7 +913,7 @@ export const createNeonRecoveryClient = (
     const branch = value.branch;
     if (
       !exactBranch(branch, expected, config.projectId) ||
-      !exactRecoveryAnnotation(value.annotation, branch.id)
+      !exactRecoveryAnnotation(value.annotation, branch.id, expected)
     )
       throw new NeonRecoveryError("Neon child branch identity guard failed");
     return branch;
@@ -893,7 +934,7 @@ export const createNeonRecoveryClient = (
     const branch = currentValue.branch;
     if (
       !exactBranch(branch, expected, config.projectId) ||
-      !exactRecoveryAnnotation(currentValue.annotation, branch.id)
+      !exactRecoveryAnnotation(currentValue.annotation, branch.id, expected)
     )
       throw new NeonRecoveryError("Neon child branch deletion guard failed");
     let deleted: {
@@ -918,7 +959,7 @@ export const createNeonRecoveryClient = (
       const stateValue = state.value as z.infer<typeof branchResponseSchema>;
       if (
         !exactBranch(stateValue.branch, expected, config.projectId) ||
-        !exactRecoveryAnnotation(stateValue.annotation, expected.id)
+        !exactRecoveryAnnotation(stateValue.annotation, expected.id, expected)
       )
         throw new NeonRecoveryError(
           "Neon child branch deletion reconciliation guard failed",
@@ -967,7 +1008,9 @@ export const createNeonRecoveryClient = (
   return {
     findGuardedPitrBranch,
     reconcilePitrBranch,
+    resetMigrationOwnerPassword,
     resetRestoreRuntimePassword,
+    getDirectMigrationUri,
     getDirectRestoreUri,
     rotateGuardedEndpoint,
     deleteGuardedBranch,

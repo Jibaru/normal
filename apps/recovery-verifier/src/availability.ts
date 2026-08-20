@@ -14,6 +14,14 @@ export type AvailabilityFetch = (
   init?: RequestInit,
 ) => Promise<Response>;
 
+export type ObservabilityStage = "dependency" | "first_party" | "sampled_keys";
+
+export class ObservabilityError extends Error {
+  constructor(readonly stage?: ObservabilityStage) {
+    super("Observability query failed");
+  }
+}
+
 const percentage = (value: unknown): value is number =>
   typeof value === "number" &&
   Number.isFinite(value) &&
@@ -29,7 +37,7 @@ export const queryAvailability = async (
     safeHttpsUrl(env.OBSERVABILITY_QUERY_URL, "Observability query URL"),
     {
       method: "POST",
-      redirect: "error",
+      redirect: "manual",
       signal: AbortSignal.timeout(60_000),
       headers: {
         accept: "application/json",
@@ -54,8 +62,16 @@ export const queryAvailability = async (
   if (
     !response.ok ||
     !response.headers.get("content-type")?.startsWith("application/json")
-  )
-    throw new Error("Observability query failed");
+  ) {
+    const stage = response.headers.get("x-operations-availability-stage");
+    throw new ObservabilityError(
+      stage === "dependency" ||
+        stage === "first_party" ||
+        stage === "sampled_keys"
+        ? stage
+        : undefined,
+    );
+  }
   const candidate = (await response.json()) as Record<string, unknown>;
   if (
     typeof candidate !== "object" ||

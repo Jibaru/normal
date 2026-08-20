@@ -50,10 +50,10 @@ export const canonicalTimestamp = (value: unknown): value is string =>
   Number.isFinite(Date.parse(value)) &&
   new Date(value).toISOString() === value;
 
-export const safeJson = (body: unknown, status = 200) =>
+export const safeJson = (body: unknown, status = 200, headers?: HeadersInit) =>
   Response.json(body, {
     status,
-    headers: { "cache-control": "no-store" },
+    headers: { "cache-control": "no-store", ...headers },
   });
 
 export const readJson = async (request: Request): Promise<unknown> => {
