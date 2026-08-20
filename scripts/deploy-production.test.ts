@@ -72,6 +72,7 @@ describe("production deployment order", () => {
       "PAGER_WEBHOOK_TOKEN",
       "QUARTERLY_RECEIPT_SECRET",
       "RECOVERY_EVIDENCE_TOKEN",
+      "RECOVERY_VERIFIER_DATABASE_PASSWORD",
     ]) {
       expect(bootstrap).toContain(name);
       expect(workflow).toContain(name);

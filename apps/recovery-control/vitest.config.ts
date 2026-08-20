@@ -7,6 +7,7 @@ export default defineConfig({
       miniflare: {
         bindings: {
           RECOVERY_CONTROL_TOKEN: "a".repeat(32),
+          RECOVERY_VERIFIER_DATABASE_PASSWORD: "b".repeat(64),
         },
         serviceBindings: {
           RECOVERY_VERIFIER: () =>

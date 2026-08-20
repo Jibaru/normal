@@ -14,6 +14,7 @@ interface __BaseEnv_Env {
 	RECIPIENT_TRANSITION_HMAC_SECRET: string;
 	RECOVERY_CONTROL_TOKEN: string;
 	RECOVERY_EVIDENCE_TOKEN: string;
+	RECOVERY_VERIFIER_DATABASE_PASSWORD: string;
 	RECOVERY_GATE: DurableObjectNamespace<import("./src/index").RecoveryGate>;
 	RECOVERY_VERIFIER: Fetcher /* whatsapp-mcp-recovery-verifier */;
 	RECOVERY_WORKFLOW: Workflow<Parameters<import("./src/index").ProductionRecoveryWorkflow['run']>[0]['payload']>;
@@ -30,7 +31,7 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "DEPLOYMENT_ENVIRONMENT" | "RECOVERY_BRANCH_PREFIX" | "RECOVERY_DATABASE_NAME" | "DELETION_MARKER_HMAC_SECRET" | "NEON_RECOVERY_API_KEY" | "NEON_PARENT_BRANCH_ID" | "NEON_PROJECT_ID" | "RECIPIENT_TRANSITION_HMAC_SECRET" | "RECOVERY_CONTROL_TOKEN" | "RECOVERY_EVIDENCE_TOKEN">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "DEPLOYMENT_ENVIRONMENT" | "RECOVERY_BRANCH_PREFIX" | "RECOVERY_DATABASE_NAME" | "DELETION_MARKER_HMAC_SECRET" | "NEON_RECOVERY_API_KEY" | "NEON_PARENT_BRANCH_ID" | "NEON_PROJECT_ID" | "RECIPIENT_TRANSITION_HMAC_SECRET" | "RECOVERY_CONTROL_TOKEN" | "RECOVERY_EVIDENCE_TOKEN" | "RECOVERY_VERIFIER_DATABASE_PASSWORD">> {}
 }
 
 // Begin runtime types

@@ -226,7 +226,8 @@ and parent branch, independent control token, and separate evidence authority
 are available. Bulk upload exactly `NEON_RECOVERY_API_KEY`, `NEON_PROJECT_ID`,
 `NEON_PARENT_BRANCH_ID`, `RECOVERY_CONTROL_TOKEN`,
 `RECOVERY_EVIDENCE_TOKEN`, `DELETION_MARKER_HMAC_SECRET`, and
-`RECIPIENT_TRANSITION_HMAC_SECRET` to the recovery-control Worker. It receives
+`RECIPIENT_TRANSITION_HMAC_SECRET`, and
+`RECOVERY_VERIFIER_DATABASE_PASSWORD` to the recovery-control Worker. It receives
 only the locked marker and transition R2 bindings, its serialization Durable
 Object, its Workflow, and the private recovery-verifier service binding. Never add `MIGRATION_DATABASE_URL`, Stored Media,
 Webhook Ingress, API/Clerk/provider credentials, KMS, KV, Queue, Hyperdrive, or
@@ -236,10 +237,16 @@ to the same `RECOVERY_CONTROL_TOKEN`. Missing verifier/monitoring authority must
 leave drills failing closed.
 
 Populate recovery verifier with the same exact project/parent recovery identity,
-the shared evidence token, and read-only observability query credentials. It has
+the shared evidence token, the dedicated recovery verifier database password,
+and read-only observability query credentials. It has
 no public route, database URL, R2, KV, Queue, KMS, provider, or serving API
-binding. Its guarded Neon client may reset only the verifier and API runtime
-logins on the exact disposable child: the verifier creates two synthetic
+binding. Recovery control forward migrates the disposable branch and rotates the
+SQL-created verifier role to the dedicated password through an owner-only
+parameterized function. The verifier obtains a direct restore-runtime endpoint,
+replaces its credentials in memory with the restricted verifier identity, and
+validates the resulting direct TLS URL before connecting. Its guarded Neon client
+may reset only managed restore and API runtime logins on the exact disposable
+child. The verifier creates two synthetic
 Personal Accounts, proves real no-context and cross-account API-role RLS
 isolation, removes both probes, and never emits either identifier. During a
 quarterly drill it also creates one synthetic Stored Media row under the first

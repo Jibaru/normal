@@ -66,3 +66,27 @@ export const restrictedRecoveryVerifierConnectionString = (
     "database URL is not the direct restricted TLS recovery verifier",
     true,
   );
+
+export const restrictedMigrationOwnerConnectionString = (
+  value: string,
+): string =>
+  restrictedRuntimeConnectionString(
+    value,
+    "whatsapp_migration_owner",
+    "database URL is not the direct TLS migration owner",
+    true,
+  );
+
+export const recoveryVerifierConnectionString = (
+  restoreConnectionString: string,
+  password: string,
+): string => {
+  const parsed = new URL(
+    restrictedRestoreRuntimeConnectionString(restoreConnectionString),
+  );
+  if (!/^[a-f0-9]{64}$/.test(password))
+    throw new Error("recovery verifier password is invalid");
+  parsed.username = "whatsapp_recovery_verifier";
+  parsed.password = password;
+  return restrictedRecoveryVerifierConnectionString(parsed.toString());
+};

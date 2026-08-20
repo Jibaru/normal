@@ -20,7 +20,8 @@
       "NEON_PROJECT_ID",
       "RECIPIENT_TRANSITION_HMAC_SECRET",
       "RECOVERY_CONTROL_TOKEN",
-      "RECOVERY_EVIDENCE_TOKEN"
+      "RECOVERY_EVIDENCE_TOKEN",
+      "RECOVERY_VERIFIER_DATABASE_PASSWORD"
     ]
   },
   "durable_objects": {
@@ -68,7 +69,8 @@
           "NEON_PROJECT_ID",
           "RECIPIENT_TRANSITION_HMAC_SECRET",
           "RECOVERY_CONTROL_TOKEN",
-          "RECOVERY_EVIDENCE_TOKEN"
+          "RECOVERY_EVIDENCE_TOKEN",
+          "RECOVERY_VERIFIER_DATABASE_PASSWORD"
         ]
       },
       "durable_objects": {
@@ -114,7 +116,8 @@
           "NEON_PROJECT_ID",
           "RECIPIENT_TRANSITION_HMAC_SECRET",
           "RECOVERY_CONTROL_TOKEN",
-          "RECOVERY_EVIDENCE_TOKEN"
+          "RECOVERY_EVIDENCE_TOKEN",
+          "RECOVERY_VERIFIER_DATABASE_PASSWORD"
         ]
       },
       "durable_objects": {
@@ -160,7 +163,8 @@
           "NEON_PROJECT_ID",
           "RECIPIENT_TRANSITION_HMAC_SECRET",
           "RECOVERY_CONTROL_TOKEN",
-          "RECOVERY_EVIDENCE_TOKEN"
+          "RECOVERY_EVIDENCE_TOKEN",
+          "RECOVERY_VERIFIER_DATABASE_PASSWORD"
         ]
       },
       "durable_objects": {

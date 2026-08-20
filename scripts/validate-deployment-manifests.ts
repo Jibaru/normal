@@ -180,6 +180,7 @@ for (const deployable of deployables) {
       "RECIPIENT_TRANSITION_HMAC_SECRET",
       "RECOVERY_CONTROL_TOKEN",
       "RECOVERY_EVIDENCE_TOKEN",
+      "RECOVERY_VERIFIER_DATABASE_PASSWORD",
     ].sort();
     for (const [name, configuration] of configurations) {
       if (!hasSameStrings(requiredSecrets(configuration), required)) {
@@ -258,6 +259,7 @@ for (const deployable of deployables) {
       "OBSERVABILITY_QUERY_TOKEN",
       "OBSERVABILITY_QUERY_URL",
       "RECOVERY_EVIDENCE_TOKEN",
+      "RECOVERY_VERIFIER_DATABASE_PASSWORD",
     ].sort();
     for (const [name, configuration] of manifestConfigurations(manifest)) {
       if (!hasSameStrings(requiredSecrets(configuration), required))

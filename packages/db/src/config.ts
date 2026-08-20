@@ -1,8 +1,10 @@
 import { Config, Redacted } from "effect";
 
 export {
+  recoveryVerifierConnectionString,
   restrictedApiRuntimeConnectionString,
   restrictedDeletionRuntimeConnectionString,
+  restrictedMigrationOwnerConnectionString,
   restrictedRecoveryVerifierConnectionString,
   restrictedRestoreRuntimeConnectionString,
 } from "./restricted-runtime-config";

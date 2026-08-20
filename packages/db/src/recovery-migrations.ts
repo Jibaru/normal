@@ -22,8 +22,9 @@ import migration0020 from "../drizzle/0020_persist_onboarding_security_completio
 import migration0021 from "../drizzle/0021_add_recovery_verifier.sql";
 import migration0022 from "../drizzle/0022_gate_recovery_drill_verification.sql";
 import migration0023 from "../drizzle/0023_record_recovery_source_points.sql";
+import migration0024 from "../drizzle/0024_rotate_recovery_verifier_password.sql";
 import { type QueryConnection, withPgQueryConnection } from "./database";
-import { restrictedRecoveryVerifierConnectionString } from "./restricted-runtime-config";
+import { restrictedMigrationOwnerConnectionString } from "./restricted-runtime-config";
 
 const migrations = [
   [1785787776687, migration0000],
@@ -50,9 +51,8 @@ const migrations = [
   [1787126400000, migration0021],
   [1787130000000, migration0022],
   [1787166960000, migration0023],
+  [1787191200000, migration0024],
 ] as const;
-const RECOVERY_VERIFIER_MIGRATION_CREATED_AT = 1787126400000;
-
 export const recoveryMigrationCreatedAts: ReadonlyArray<number> =
   migrations.map(([createdAt]) => createdAt);
 
@@ -66,92 +66,28 @@ const readLastAppliedMigration = async (client: QueryConnection) => {
   return lastApplied;
 };
 
-export const recoveryMigrationRequiresVerifierHardeningWithClient = async (
+export const rotateRecoveryVerifierPasswordWithClient = async (
   client: QueryConnection,
-) =>
-  (await readLastAppliedMigration(client)) <
-  RECOVERY_VERIFIER_MIGRATION_CREATED_AT;
-
-export const recoveryMigrationRequiresVerifierHardening = (
-  connectionString: string,
-) =>
-  withPgQueryConnection(
-    connectionString,
-    recoveryMigrationRequiresVerifierHardeningWithClient,
-    30_000,
-    10_000,
-  );
-
-const hardenRecoveryVerifierRoleSql = `
-DO $role$
-DECLARE
-  granted_role name;
-BEGIN
-  IF session_user <> 'whatsapp_recovery_verifier' THEN
-    RAISE EXCEPTION 'recovery verifier hardening role mismatch';
-  END IF;
-  IF EXISTS (
-    SELECT 1 FROM pg_catalog.pg_roles
-    WHERE rolname = session_user AND rolsuper
-  ) THEN
-    RAISE EXCEPTION 'recovery verifier has prohibited superuser authority';
-  END IF;
-  FOR granted_role IN
-    SELECT parent.rolname
-    FROM pg_catalog.pg_auth_members AS memberships
-    JOIN pg_catalog.pg_roles AS parent
-      ON parent.oid = memberships.roleid
-    JOIN pg_catalog.pg_roles AS member
-      ON member.oid = memberships.member
-    WHERE member.rolname = session_user
-  LOOP
-    EXECUTE format('REVOKE %I FROM whatsapp_recovery_verifier', granted_role);
-  END LOOP;
-  ALTER ROLE whatsapp_recovery_verifier
-    NOREPLICATION NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT LOGIN;
-END
-$role$`;
-
-export const hardenRecoveryVerifierRoleWithClient = async (
-  client: QueryConnection,
+  password: string,
 ) => {
-  await client.query("BEGIN");
+  if (!/^[a-f0-9]{64}$/.test(password))
+    throw new Error("Recovery verifier password is invalid");
   try {
-    const eligibility = await client.query<{ eligible: boolean }>(
-      `SELECT current_user = 'whatsapp_recovery_verifier'
-        AND pg_catalog.pg_has_role(current_user, 'neon_superuser', 'MEMBER')
-        AS eligible`,
-    );
-    if (eligibility.rows[0]?.eligible !== true)
-      throw new Error("Recovery verifier hardening authority is unavailable");
-    await client.query("SET LOCAL ROLE neon_superuser");
-    await client.query(hardenRecoveryVerifierRoleSql);
-    await client.query("RESET ROLE");
-    const verification = await client.query<{ hardened: boolean }>(
-      `SELECT current_user = 'whatsapp_recovery_verifier'
-        AND NOT rolsuper AND NOT rolreplication AND NOT rolbypassrls
-        AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolinherit
-        AND rolcanlogin
-        AND NOT EXISTS (
-          SELECT 1 FROM pg_catalog.pg_auth_members AS memberships
-          WHERE memberships.member = roles.oid
-        ) AS hardened
-      FROM pg_catalog.pg_roles AS roles
-      WHERE rolname = current_user`,
-    );
-    if (verification.rows[0]?.hardened !== true)
-      throw new Error("Recovery verifier hardening failed");
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
+    await client.query("SELECT public.rotate_recovery_verifier_password($1)", [
+      password,
+    ]);
+  } catch {
+    throw new Error("Recovery verifier password rotation failed");
   }
 };
 
-export const hardenRecoveryVerifierRole = (connectionString: string) =>
+export const rotateRecoveryVerifierPassword = (
+  connectionString: string,
+  password: string,
+) =>
   withPgQueryConnection(
-    restrictedRecoveryVerifierConnectionString(connectionString),
-    hardenRecoveryVerifierRoleWithClient,
+    restrictedMigrationOwnerConnectionString(connectionString),
+    (client) => rotateRecoveryVerifierPasswordWithClient(client, password),
     30_000,
     10_000,
   );

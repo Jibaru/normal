@@ -648,6 +648,7 @@ resource "cloudflare_worker_version" "recovery_verifier" {
     { name = "OBSERVABILITY_QUERY_TOKEN", type = "inherit" },
     { name = "OBSERVABILITY_QUERY_URL", type = "inherit" },
     { name = "RECOVERY_EVIDENCE_TOKEN", type = "inherit" },
+    { name = "RECOVERY_VERIFIER_DATABASE_PASSWORD", type = "inherit" },
     { name = "RECOVERY_GAME_DAY", service = cloudflare_worker.recovery_game_day.name, type = "service" }
   ]
   depends_on = [cloudflare_workers_deployment.recovery_game_day]
@@ -724,6 +725,7 @@ resource "cloudflare_worker_version" "recovery_control" {
     { name = "RECIPIENT_TRANSITION_HMAC_SECRET", type = "inherit" },
     { name = "RECOVERY_CONTROL_TOKEN", type = "inherit" },
     { name = "RECOVERY_EVIDENCE_TOKEN", type = "inherit" },
+    { name = "RECOVERY_VERIFIER_DATABASE_PASSWORD", type = "inherit" },
     { name = "DELETION_MARKERS", bucket_name = cloudflare_r2_bucket.deletion_markers.name, type = "r2_bucket" },
     { name = "RECIPIENT_TRANSITIONS", bucket_name = cloudflare_r2_bucket.recipient_transitions.name, type = "r2_bucket" },
     { name = "RECOVERY_GATE", class_name = "RecoveryGate", script_name = cloudflare_worker.recovery_control.name, type = "durable_object_namespace" },

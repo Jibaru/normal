@@ -18,7 +18,8 @@
       "NEON_RECOVERY_API_KEY",
       "OBSERVABILITY_QUERY_TOKEN",
       "OBSERVABILITY_QUERY_URL",
-      "RECOVERY_EVIDENCE_TOKEN"
+      "RECOVERY_EVIDENCE_TOKEN",
+      "RECOVERY_VERIFIER_DATABASE_PASSWORD"
     ]
   },
   "services": [
@@ -43,7 +44,8 @@
           "NEON_RECOVERY_API_KEY",
           "OBSERVABILITY_QUERY_TOKEN",
           "OBSERVABILITY_QUERY_URL",
-          "RECOVERY_EVIDENCE_TOKEN"
+          "RECOVERY_EVIDENCE_TOKEN",
+          "RECOVERY_VERIFIER_DATABASE_PASSWORD"
         ]
       },
       "services": [
@@ -67,7 +69,8 @@
           "NEON_RECOVERY_API_KEY",
           "OBSERVABILITY_QUERY_TOKEN",
           "OBSERVABILITY_QUERY_URL",
-          "RECOVERY_EVIDENCE_TOKEN"
+          "RECOVERY_EVIDENCE_TOKEN",
+          "RECOVERY_VERIFIER_DATABASE_PASSWORD"
         ]
       },
       "services": [
@@ -91,7 +94,8 @@
           "NEON_RECOVERY_API_KEY",
           "OBSERVABILITY_QUERY_TOKEN",
           "OBSERVABILITY_QUERY_URL",
-          "RECOVERY_EVIDENCE_TOKEN"
+          "RECOVERY_EVIDENCE_TOKEN",
+          "RECOVERY_VERIFIER_DATABASE_PASSWORD"
         ]
       },
       "services": [

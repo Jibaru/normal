@@ -2,9 +2,8 @@ import { describe, expect, test } from "bun:test";
 import type { QueryConnection } from "../src/database";
 import {
   applyRecoveryMigrationsWithClient,
-  hardenRecoveryVerifierRoleWithClient,
   recoveryMigrationCreatedAts,
-  recoveryMigrationRequiresVerifierHardeningWithClient,
+  rotateRecoveryVerifierPasswordWithClient,
 } from "../src/recovery-migrations";
 
 describe("recovery migrations", () => {
@@ -33,57 +32,38 @@ describe("recovery migrations", () => {
       },
     };
 
-    await expect(applyRecoveryMigrationsWithClient(client)).resolves.toBe(3);
-    expect(queries.filter(({ text }) => text === "BEGIN")).toHaveLength(3);
-    expect(queries.filter(({ text }) => text === "COMMIT")).toHaveLength(3);
+    await expect(applyRecoveryMigrationsWithClient(client)).resolves.toBe(4);
+    expect(queries.filter(({ text }) => text === "BEGIN")).toHaveLength(4);
+    expect(queries.filter(({ text }) => text === "COMMIT")).toHaveLength(4);
     expect(queries.filter(({ text }) => text === "ROLLBACK")).toHaveLength(0);
     expect(
       queries
         .filter(({ text }) => text.startsWith("INSERT INTO public"))
         .map(({ values }) => values?.[1]),
-    ).toEqual([1787126400000, 1787130000000, 1787166960000]);
+    ).toEqual([1787126400000, 1787130000000, 1787166960000, 1787191200000]);
   });
 
-  test("requires verifier hardening only before its migration", async () => {
-    const client = (createdAt: number): QueryConnection => ({
-      query: async <Row extends Record<string, unknown>>() => ({
-        rows: [{ created_at: String(createdAt) }] as unknown as Array<Row>,
-      }),
-    });
-    await expect(
-      recoveryMigrationRequiresVerifierHardeningWithClient(
-        client(1787122800000),
-      ),
-    ).resolves.toBe(true);
-    await expect(
-      recoveryMigrationRequiresVerifierHardeningWithClient(
-        client(1787126400000),
-      ),
-    ).resolves.toBe(false);
-  });
-
-  test("hardens the verifier role atomically before its migration", async () => {
-    const queries: string[] = [];
+  test("rotates the verifier password only as a bound parameter", async () => {
+    const queries: Array<{ text: string; values?: Array<unknown> }> = [];
     const client: QueryConnection = {
-      query: async <Row extends Record<string, unknown>>(text: string) => {
-        queries.push(text);
-        if (text.includes("AS eligible"))
-          return { rows: [{ eligible: true }] as unknown as Array<Row> };
-        if (text.includes("AS hardened"))
-          return { rows: [{ hardened: true }] as unknown as Array<Row> };
+      query: async <Row extends Record<string, unknown>>(
+        text: string,
+        values?: Array<unknown>,
+      ) => {
+        queries.push(values === undefined ? { text } : { text, values });
         return { rows: [] as Array<Row> };
       },
     };
+    const password = "a".repeat(64);
 
-    await hardenRecoveryVerifierRoleWithClient(client);
+    await rotateRecoveryVerifierPasswordWithClient(client, password);
 
-    expect(queries[0]).toBe("BEGIN");
-    expect(queries[1]).toContain("pg_has_role");
-    expect(queries[2]).toBe("SET LOCAL ROLE neon_superuser");
-    expect(queries[3]).toContain("REVOKE %I FROM whatsapp_recovery_verifier");
-    expect(queries[3]).toContain("NOREPLICATION NOBYPASSRLS");
-    expect(queries[4]).toBe("RESET ROLE");
-    expect(queries.at(-1)).toBe("COMMIT");
+    expect(queries).toEqual([
+      {
+        text: "SELECT public.rotate_recovery_verifier_password($1)",
+        values: [password],
+      },
+    ]);
   });
 
   test("rolls back a failed migration without advancing the ledger", async () => {

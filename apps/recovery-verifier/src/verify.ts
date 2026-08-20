@@ -16,6 +16,7 @@ import {
   makePgRecoveryVerifierRepository,
   verifyRecoveryRlsIsolation,
 } from "@whatsapp-mcp/db/recovery-verifier";
+import { recoveryVerifierConnectionString } from "@whatsapp-mcp/db/restricted-runtime-config";
 import { digestApiKeyCredential } from "@whatsapp-mcp/domain/api-key-hmac";
 import { createNeonRecoveryClient } from "@whatsapp-mcp/neon-recovery/client";
 import { queryAvailability } from "./availability";
@@ -47,6 +48,7 @@ const recoveryClient = (
   env: RecoveryVerifierEnvironment,
   runtimeRole:
     | "whatsapp_api_runtime"
+    | "whatsapp_restore_runtime"
     | "whatsapp_recovery_verifier" = "whatsapp_recovery_verifier",
 ) =>
   createNeonRecoveryClient({
@@ -150,7 +152,7 @@ export const verifyRecovery = async (
   if ((await expectedReplayDigest(input)) !== input.replay_digest)
     throw new Error("Recovery replay digest does not match");
   reportStage("branch");
-  const client = recoveryClient(env);
+  const client = recoveryClient(env, "whatsapp_restore_runtime");
   const branch = await client.findGuardedPitrBranch({
     name: `${env.RECOVERY_BRANCH_PREFIX}${input.operation}`,
     parentTimestamp: input.source_point_at,
@@ -158,9 +160,16 @@ export const verifyRecovery = async (
   if (branch === "absent" || branch.id !== input.recovery_branch_id)
     throw new Error("Guarded recovery branch is unavailable");
   reportStage("verifier_password");
-  await client.resetRestoreRuntimePassword(branch);
+  const verifierPassword = required(
+    env.RECOVERY_VERIFIER_DATABASE_PASSWORD,
+    "Recovery verifier database password",
+  );
   reportStage("verifier_uri");
-  const firstUri = await client.getDirectRestoreUri(branch);
+  await client.resetRestoreRuntimePassword(branch);
+  const firstUri = recoveryVerifierConnectionString(
+    await client.getDirectRestoreUri(branch),
+    verifierPassword,
+  );
   reportStage("verifier_access");
   await checkRestrictedDatabaseAccess(firstUri);
   reportStage("database_verification");
@@ -172,7 +181,10 @@ export const verifyRecovery = async (
   if (input.drill === "quarterly_game_day") {
     reportStage("endpoint_rotation");
     await client.rotateGuardedEndpoint(branch);
-    const replacementUri = await client.getDirectRestoreUri(branch);
+    const replacementUri = recoveryVerifierConnectionString(
+      await client.getDirectRestoreUri(branch),
+      verifierPassword,
+    );
     try {
       await repository.verify(branch.id, new Date().toISOString());
       endpointRotation = false;

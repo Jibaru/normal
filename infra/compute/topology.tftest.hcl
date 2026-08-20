@@ -68,6 +68,7 @@ run "development_topology" {
       "inherit:RECIPIENT_TRANSITION_HMAC_SECRET",
       "inherit:RECOVERY_CONTROL_TOKEN",
       "inherit:RECOVERY_EVIDENCE_TOKEN",
+      "inherit:RECOVERY_VERIFIER_DATABASE_PASSWORD",
       "r2_bucket:DELETION_MARKERS",
       "r2_bucket:RECIPIENT_TRANSITIONS",
       "service:RECOVERY_VERIFIER",
@@ -75,6 +76,26 @@ run "development_topology" {
       "workflow:RECOVERY_WORKFLOW",
     ])
     error_message = "Recovery control must have only guarded Neon, replay evidence, serialization, and Workflow authority."
+  }
+
+  assert {
+    condition = toset([
+      for binding in cloudflare_worker_version.recovery_verifier.bindings :
+      "${binding.type}:${binding.name}"
+      ]) == toset([
+      "plain_text:DEPLOYMENT_ENVIRONMENT",
+      "plain_text:RECOVERY_BRANCH_PREFIX",
+      "plain_text:RECOVERY_DATABASE_NAME",
+      "inherit:NEON_PARENT_BRANCH_ID",
+      "inherit:NEON_PROJECT_ID",
+      "inherit:NEON_RECOVERY_API_KEY",
+      "inherit:OBSERVABILITY_QUERY_TOKEN",
+      "inherit:OBSERVABILITY_QUERY_URL",
+      "inherit:RECOVERY_EVIDENCE_TOKEN",
+      "inherit:RECOVERY_VERIFIER_DATABASE_PASSWORD",
+      "service:RECOVERY_GAME_DAY",
+    ])
+    error_message = "Recovery verifier must have only guarded Neon, observability, evidence, and game-day authority."
   }
 
   assert {

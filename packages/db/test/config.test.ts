@@ -3,8 +3,10 @@ import { ConfigProvider, Effect, Redacted } from "effect";
 import {
   databaseConfig,
   migrationConfig,
+  recoveryVerifierConnectionString,
   restrictedApiRuntimeConnectionString,
   restrictedDeletionRuntimeConnectionString,
+  restrictedMigrationOwnerConnectionString,
   restrictedRecoveryVerifierConnectionString,
   restrictedRestoreRuntimeConnectionString,
 } from "../src/config";
@@ -34,6 +36,26 @@ describe("restrictedRecoveryVerifierConnectionString", () => {
     ).toThrow(
       "database URL is not the direct restricted TLS recovery verifier",
     );
+  });
+});
+
+describe("recovery verifier credential configuration", () => {
+  test("derives only a direct verifier URL from a restricted restore URL", () => {
+    const password = "a".repeat(64);
+    const restore =
+      "postgresql://whatsapp_restore_runtime:secret@ep-example.neon.tech/database?sslmode=require";
+    expect(recoveryVerifierConnectionString(restore, password)).toBe(
+      `postgresql://whatsapp_recovery_verifier:${password}@ep-example.neon.tech/database?sslmode=require`,
+    );
+    expect(() => recoveryVerifierConnectionString(restore, "weak")).toThrow(
+      "recovery verifier password is invalid",
+    );
+  });
+
+  test("accepts only the direct migration owner URL", () => {
+    const owner =
+      "postgresql://whatsapp_migration_owner:secret@ep-example.neon.tech/database?sslmode=require";
+    expect(restrictedMigrationOwnerConnectionString(owner)).toBe(owner);
   });
 });
 
