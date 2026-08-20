@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   makeDatabase,
   postgresErrorCode,
+  postgresTextArray,
   type QueryConnection,
   withPgQueryConnection,
 } from "./database";
@@ -161,7 +162,7 @@ export const makePgRestoreRepository = (
       try {
         const result = await db.execute<{ recorded: number }>(sql`
           SELECT public.record_unresolved_recipient_transition_prefixes(
-            ${[...prefixes]}::text[], ${observedAt}
+            ${postgresTextArray(prefixes)}, ${observedAt}
           ) AS recorded
         `);
         return Number(result[0]?.recorded ?? 0);

@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { drizzle, type PgRemoteDatabase } from "drizzle-orm/pg-proxy";
 import type { Client as PgClient } from "pg";
 import * as schema from "./schema";
@@ -51,6 +52,12 @@ export const postgresErrorCode = (error: unknown): string => {
   }
   return "unknown";
 };
+
+export const postgresTextArray = (values: ReadonlyArray<string>) =>
+  sql`ARRAY[${sql.join(
+    values.map((value) => sql`${value}`),
+    sql`, `,
+  )}]::text[]`;
 
 export const withPgQueryConnection = async <Value>(
   connectionString: string,
