@@ -77,6 +77,9 @@ describe("recovery verifier boundary", () => {
       }),
     );
     expect(response.status).toBe(503);
+    expect(response.headers.get("x-recovery-verification-stage")).toBe(
+      "request",
+    );
     expect(await response.json()).toEqual({ status: "failed" });
     expect(response.headers.get("cache-control")).toBe("no-store");
   });

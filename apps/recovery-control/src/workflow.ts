@@ -246,8 +246,14 @@ export class ProductionRecoveryWorkflow extends WorkflowEntrypoint<
             .get("content-type")
             ?.toLowerCase()
             .startsWith("application/json")
-        )
-          throw new Error("Recovery evidence verification failed");
+        ) {
+          const stage = response.headers.get("x-recovery-verification-stage");
+          throw new Error(
+            stage !== null && /^[a-z_]+$/.test(stage)
+              ? `Recovery evidence verification failed at ${stage}`
+              : "Recovery evidence verification failed",
+          );
+        }
         const parsed = decodeRecoveryVerificationResponse(
           await readBoundedJson(response),
         );
