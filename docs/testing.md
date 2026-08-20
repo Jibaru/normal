@@ -119,6 +119,10 @@ The Worker runtime suite proves:
 - authenticated R2-to-Queue Webhook Event normalization, permanent sibling
   quarantine, deduplication, evidence-ordered connection-state projection, and
   visibility through the signed-in WhatsApp Connection inventory;
+- rejection of content-free provider message items before Message Store
+  projection, plus migration cleanup that preserves Deleted Message Tombstones,
+  removes empty WhatsApp Conversations, and recalculates retained Conversation
+  Activity;
 - five-minute safe-read connection and webhook reconciliation with
   evidence-based Ingestion Gap opening, recovery closure, and stale-snapshot
   suppression;

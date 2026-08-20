@@ -176,6 +176,13 @@
       "when": 1787191200000,
       "tag": "0024_rotate_recovery_verifier_password",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1787242636000,
+      "tag": "0025_reject_content_free_stored_messages",
+      "breakpoints": true
     }
   ]
 }

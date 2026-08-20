@@ -255,6 +255,49 @@ describe("Wasender webhook normalization", () => {
     ]);
   });
 
+  test("does not turn content-free provider items into Stored Messages", async () => {
+    const normalizer = await makeNormalizer();
+    const delivery = await normalize(normalizer, {
+      event: "messages.upsert",
+      data: {
+        messages: [
+          {
+            key: {
+              id: "missing-content",
+              fromMe: false,
+              remoteJid: "15550101@s.whatsapp.net",
+            },
+          },
+          {
+            key: {
+              id: "provider-control-item",
+              fromMe: false,
+              remoteJid: "120363000000@g.us",
+            },
+            message: {
+              senderKeyDistributionMessage: {
+                groupId: "provider-control-group",
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    expect(delivery.items).toEqual([
+      {
+        classification: "unsupported_item_kind",
+        itemIndex: 0,
+        kind: "unsupported",
+      },
+      {
+        classification: "unsupported_item_kind",
+        itemIndex: 1,
+        kind: "unsupported",
+      },
+    ]);
+  });
+
   test("normalizes edits, deletions, and receipt or send evidence", async () => {
     const normalizer = await makeNormalizer();
     const deliveries = await Promise.all(

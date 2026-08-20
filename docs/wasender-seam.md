@@ -78,6 +78,9 @@ delivery to continue independently. Every supported item carries an opaque
 stable or semantic-fallback identity for downstream deduplication. Provider
 version tokens remain opaque; ingestion asks the normalization capability to
 compare them instead of learning provider version syntax or ordering rules.
+Message upserts without readable text or one of the supported media shapes are
+unsupported provider items: they are quarantined by the ordinary ingestion path
+and never create a Stored Message or WhatsApp Conversation.
 
 ## Webhook normalization
 

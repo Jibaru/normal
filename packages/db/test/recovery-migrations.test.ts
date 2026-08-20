@@ -32,15 +32,17 @@ describe("recovery migrations", () => {
       },
     };
 
-    await expect(applyRecoveryMigrationsWithClient(client)).resolves.toBe(4);
-    expect(queries.filter(({ text }) => text === "BEGIN")).toHaveLength(4);
-    expect(queries.filter(({ text }) => text === "COMMIT")).toHaveLength(4);
+    await expect(applyRecoveryMigrationsWithClient(client)).resolves.toBe(5);
+    expect(queries.filter(({ text }) => text === "BEGIN")).toHaveLength(5);
+    expect(queries.filter(({ text }) => text === "COMMIT")).toHaveLength(5);
     expect(queries.filter(({ text }) => text === "ROLLBACK")).toHaveLength(0);
     expect(
       queries
         .filter(({ text }) => text.startsWith("INSERT INTO public"))
         .map(({ values }) => values?.[1]),
-    ).toEqual([1787126400000, 1787130000000, 1787166960000, 1787191200000]);
+    ).toEqual([
+      1787126400000, 1787130000000, 1787166960000, 1787191200000, 1787242636000,
+    ]);
   });
 
   test("rotates the verifier password only as a bound parameter", async () => {

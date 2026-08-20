@@ -238,7 +238,7 @@ Field rules:
 - `conversation_id` echoes the authorized WhatsApp Conversation read by this result. `recipient_id` is its current `ctc_` or `grp_` WhatsApp Recipient handle and can be passed directly to `send_text_message`; `kind` is `direct` or `group`.
 - `direction` is `inbound` or `outbound`.
 - `sender.kind` is `self`, `contact`, or `group_participant`; its display name and phone suffix are nullable.
-- `content_type` is `text`, `image`, `audio`, `video`, `document`, `sticker`, or `unknown`.
+- `content_type` is `text`, `image`, `audio`, `video`, `document`, `sticker`, or `unknown`. Active Stored Messages always have supported text or media content; `unknown` represents a Deleted Message Tombstone whose original content type is unavailable.
 - `text` is the latest verified text or caption and is nullable. Prior edit ciphertext is not retained or returned.
 - `text_truncated` is always present. `text_total_utf8_bytes` is the full latest plaintext byte count when text exists and is null otherwise.
 - `edited_at` is nullable. `deleted: true` always has `text: null`, `media: null`, and no recoverable prior content.

@@ -543,6 +543,9 @@ const normalizeMessage = async (
   if (content === null) {
     return malformed(itemIndex);
   }
+  if (content.type === "unknown") {
+    return unsupported(itemIndex);
+  }
   const sender = senderRaw === null ? null : await makeContact(key, senderRaw);
   const senderName = senderDisplayName(record);
   const senderPhone = senderRaw === null ? null : senderPhoneNumber(senderRaw);

@@ -50,7 +50,7 @@ describe("production migrations", () => {
         (SELECT count(*)::int FROM public.schema_migrations) AS legacy,
         (SELECT count(*)::int FROM public.drizzle_migrations) AS standard
     `);
-    expect(ledgers.rows).toEqual([{ legacy: 40, standard: 25 }]);
+    expect(ledgers.rows).toEqual([{ legacy: 40, standard: 26 }]);
   });
 
   test("clears only retention limitations superseded by a complete Directory snapshot", async () => {
@@ -246,6 +246,175 @@ describe("production migrations", () => {
         { message_search_index_version: null, message_search_tokens: null },
       ],
     });
+  });
+
+  test("removes content-free Stored Messages without removing tombstones", async () => {
+    await runMigrations(database);
+    await seedTenants(database);
+    const retainedConversation = "40000000-0000-4000-8000-000000000101";
+    const phantomConversation = "40000000-0000-4000-8000-000000000102";
+    const tombstoneConversation = "40000000-0000-4000-8000-000000000103";
+
+    await database.exec(`
+      ALTER TABLE public.stored_messages
+        DROP CONSTRAINT stored_messages_content_type_check;
+      ALTER TABLE public.stored_messages
+        ADD CONSTRAINT stored_messages_content_type_check
+        CHECK (
+          content_type = ANY (
+            ARRAY[
+              'audio'::text,
+              'document'::text,
+              'image'::text,
+              'sticker'::text,
+              'text'::text,
+              'unknown'::text,
+              'video'::text
+            ]
+          )
+        );
+    `);
+    await database.query(
+      `INSERT INTO public.whatsapp_conversations
+        (id, personal_account_id, whatsapp_connection_id, public_id, kind,
+         recipient_locator, recipient_public_id, last_activity_at,
+         last_activity_direction)
+       VALUES
+        ($1, $2, $3, 'cvs_000000000000000000101', 'group', $4,
+         'grp_000000000000000000101', '2026-08-20T12:10:00.000Z', 'inbound'),
+        ($5, $2, $3, 'cvs_000000000000000000102', 'group', $6,
+         'grp_000000000000000000102', '2026-08-20T12:20:00.000Z', 'inbound'),
+        ($7, $2, $3, 'cvs_000000000000000000103', 'group', $8,
+         'grp_000000000000000000103', '2026-08-20T12:30:00.000Z', 'outbound')`,
+      [
+        retainedConversation,
+        accountA,
+        connectionA,
+        `wi1_${"G".repeat(43)}`,
+        phantomConversation,
+        `wi1_${"H".repeat(43)}`,
+        tombstoneConversation,
+        `wi1_${"I".repeat(43)}`,
+      ],
+    );
+    await database.query(
+      `INSERT INTO public.stored_messages
+        (id, personal_account_id, whatsapp_connection_id, conversation_id,
+         public_id, message_identity, direction, sent_at, content_type,
+         content_ciphertext_version, content_key_version, content_nonce,
+         content_ciphertext, received_at)
+       VALUES
+        ('50000000-0000-4000-8000-000000000101', $1, $2, $3,
+         'msg_000000000000000000101', $4, 'outbound',
+         '2026-08-20T12:00:00.000Z', 'text', 1, 1,
+         decode(repeat('01', 12), 'hex'), decode(repeat('02', 32), 'hex'),
+         '2026-08-20T12:00:01.000Z'),
+        ('50000000-0000-4000-8000-000000000102', $1, $2, $3,
+         'msg_000000000000000000102', $5, 'inbound',
+         '2026-08-20T12:10:00.000Z', 'unknown', 1, 1,
+         decode(repeat('03', 12), 'hex'), decode(repeat('04', 32), 'hex'),
+         '2026-08-20T12:10:01.000Z'),
+        ('50000000-0000-4000-8000-000000000103', $1, $2, $6,
+         'msg_000000000000000000103', $7, 'inbound',
+         '2026-08-20T12:20:00.000Z', 'unknown', 1, 1,
+         decode(repeat('05', 12), 'hex'), decode(repeat('06', 32), 'hex'),
+         '2026-08-20T12:20:01.000Z')`,
+      [
+        accountA,
+        connectionA,
+        retainedConversation,
+        `wi1_${"J".repeat(43)}`,
+        `wi1_${"K".repeat(43)}`,
+        phantomConversation,
+        `wi1_${"L".repeat(43)}`,
+      ],
+    );
+    await database.query(
+      `INSERT INTO public.stored_messages
+        (id, personal_account_id, whatsapp_connection_id, conversation_id,
+         public_id, message_identity, direction, sent_at, received_at,
+         deleted_at)
+       VALUES
+        ('50000000-0000-4000-8000-000000000104', $1, $2, $3,
+         'msg_000000000000000000104', $4, 'outbound',
+         '2026-08-20T12:30:00.000Z', '2026-08-20T12:30:01.000Z',
+         '2026-08-20T12:31:00.000Z')`,
+      [accountA, connectionA, tombstoneConversation, `wi1_${"M".repeat(43)}`],
+    );
+
+    const cleanupMigration = await Bun.file(
+      new URL(
+        "../drizzle/0025_reject_content_free_stored_messages.sql",
+        import.meta.url,
+      ),
+    ).text();
+    await database.exec(cleanupMigration);
+
+    const messages = await database.query<{
+      content_type: string | null;
+      deleted: boolean;
+      public_id: string;
+    }>(
+      `SELECT public_id, content_type, deleted_at IS NOT NULL AS deleted
+       FROM public.stored_messages
+       WHERE personal_account_id = $1
+         AND whatsapp_connection_id = $2
+       ORDER BY public_id`,
+      [accountA, connectionA],
+    );
+    expect(messages.rows).toEqual([
+      {
+        content_type: "text",
+        deleted: false,
+        public_id: "msg_000000000000000000101",
+      },
+      {
+        content_type: null,
+        deleted: true,
+        public_id: "msg_000000000000000000104",
+      },
+    ]);
+
+    const conversations = await database.query<{
+      last_activity_at: Date;
+      last_activity_direction: string;
+      public_id: string;
+    }>(
+      `SELECT public_id, last_activity_at, last_activity_direction
+       FROM public.whatsapp_conversations
+       WHERE personal_account_id = $1
+         AND whatsapp_connection_id = $2
+       ORDER BY public_id`,
+      [accountA, connectionA],
+    );
+    expect(conversations.rows).toEqual([
+      {
+        last_activity_at: new Date("2026-08-20T12:00:00.000Z"),
+        last_activity_direction: "outbound",
+        public_id: "cvs_000000000000000000101",
+      },
+      {
+        last_activity_at: new Date("2026-08-20T12:30:00.000Z"),
+        last_activity_direction: "outbound",
+        public_id: "cvs_000000000000000000103",
+      },
+    ]);
+
+    await expect(
+      database.query(
+        `INSERT INTO public.stored_messages
+          (id, personal_account_id, whatsapp_connection_id, conversation_id,
+           public_id, message_identity, direction, sent_at, content_type,
+           content_ciphertext_version, content_key_version, content_nonce,
+           content_ciphertext, received_at)
+         VALUES
+          ('50000000-0000-4000-8000-000000000105', $1, $2, $3,
+           'msg_000000000000000000105', $4, 'inbound', now(), 'unknown',
+           1, 1, decode(repeat('07', 12), 'hex'),
+           decode(repeat('08', 32), 'hex'), now())`,
+        [accountA, connectionA, retainedConversation, `wi1_${"N".repeat(43)}`],
+      ),
+    ).rejects.toThrow();
   });
 
   test("exposes only the schema version needed by restricted readiness", async () => {

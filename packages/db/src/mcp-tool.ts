@@ -1018,15 +1018,9 @@ const mapStoredMessageRow = (
     (message.kind !== "direct" && message.kind !== "group") ||
     (!deleted &&
       (typeof message.content_type !== "string" ||
-        ![
-          "audio",
-          "document",
-          "image",
-          "sticker",
-          "text",
-          "unknown",
-          "video",
-        ].includes(message.content_type))) ||
+        !["audio", "document", "image", "sticker", "text", "video"].includes(
+          message.content_type,
+        ))) ||
     (!deleted && message.content_ciphertext_version !== 1) ||
     (!deleted &&
       (ciphertext === null || nonce === null || keyVersion === null)) ||

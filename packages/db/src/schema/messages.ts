@@ -215,7 +215,7 @@ export const storedMessagesInApp = publicSchema.table(
     ),
     check(
       "stored_messages_content_type_check",
-      sql`content_type = ANY (ARRAY['audio'::text, 'document'::text, 'image'::text, 'sticker'::text, 'text'::text, 'unknown'::text, 'video'::text])`,
+      sql`content_type = ANY (ARRAY['audio'::text, 'document'::text, 'image'::text, 'sticker'::text, 'text'::text, 'video'::text])`,
     ),
     check(
       "stored_messages_content_ciphertext_version_check",
