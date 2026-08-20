@@ -23,6 +23,7 @@ import migration0021 from "../drizzle/0021_add_recovery_verifier.sql";
 import migration0022 from "../drizzle/0022_gate_recovery_drill_verification.sql";
 import migration0023 from "../drizzle/0023_record_recovery_source_points.sql";
 import { type QueryConnection, withPgQueryConnection } from "./database";
+import { restrictedRecoveryVerifierConnectionString } from "./restricted-runtime-config";
 
 const migrations = [
   [1785787776687, migration0000],
@@ -65,18 +66,83 @@ const readLastAppliedMigration = async (client: QueryConnection) => {
   return lastApplied;
 };
 
-export const recoveryMigrationRequiresVerifierProvisioningWithClient = async (
+export const recoveryMigrationRequiresVerifierHardeningWithClient = async (
   client: QueryConnection,
 ) =>
   (await readLastAppliedMigration(client)) <
   RECOVERY_VERIFIER_MIGRATION_CREATED_AT;
 
-export const recoveryMigrationRequiresVerifierProvisioning = (
+export const recoveryMigrationRequiresVerifierHardening = (
   connectionString: string,
 ) =>
   withPgQueryConnection(
     connectionString,
-    recoveryMigrationRequiresVerifierProvisioningWithClient,
+    recoveryMigrationRequiresVerifierHardeningWithClient,
+    30_000,
+    10_000,
+  );
+
+const hardenRecoveryVerifierRoleSql = `
+DO $role$
+DECLARE
+  granted_role name;
+BEGIN
+  IF current_user <> 'whatsapp_recovery_verifier' THEN
+    RAISE EXCEPTION 'recovery verifier hardening role mismatch';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_catalog.pg_roles
+    WHERE rolname = current_user AND rolsuper
+  ) THEN
+    RAISE EXCEPTION 'recovery verifier has prohibited superuser authority';
+  END IF;
+  FOR granted_role IN
+    SELECT parent.rolname
+    FROM pg_catalog.pg_auth_members AS memberships
+    JOIN pg_catalog.pg_roles AS parent
+      ON parent.oid = memberships.roleid
+    JOIN pg_catalog.pg_roles AS member
+      ON member.oid = memberships.member
+    WHERE member.rolname = current_user
+  LOOP
+    EXECUTE format('REVOKE %I FROM whatsapp_recovery_verifier', granted_role);
+  END LOOP;
+  ALTER ROLE whatsapp_recovery_verifier
+    NOREPLICATION NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT LOGIN;
+  IF EXISTS (
+    SELECT 1 FROM pg_catalog.pg_roles
+    WHERE rolname = current_user
+      AND (rolsuper OR rolreplication OR rolbypassrls OR rolcreatedb
+        OR rolcreaterole OR rolinherit OR NOT rolcanlogin)
+  ) OR EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_auth_members AS memberships
+    JOIN pg_catalog.pg_roles AS member
+      ON member.oid = memberships.member
+    WHERE member.rolname = current_user
+  ) THEN
+    RAISE EXCEPTION 'recovery verifier hardening failed';
+  END IF;
+END
+$role$`;
+
+export const hardenRecoveryVerifierRoleWithClient = async (
+  client: QueryConnection,
+) => {
+  await client.query("BEGIN");
+  try {
+    await client.query(hardenRecoveryVerifierRoleSql);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
+};
+
+export const hardenRecoveryVerifierRole = (connectionString: string) =>
+  withPgQueryConnection(
+    restrictedRecoveryVerifierConnectionString(connectionString),
+    hardenRecoveryVerifierRoleWithClient,
     30_000,
     10_000,
   );

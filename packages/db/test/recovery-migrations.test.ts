@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test";
 import type { QueryConnection } from "../src/database";
 import {
   applyRecoveryMigrationsWithClient,
+  hardenRecoveryVerifierRoleWithClient,
   recoveryMigrationCreatedAts,
-  recoveryMigrationRequiresVerifierProvisioningWithClient,
+  recoveryMigrationRequiresVerifierHardeningWithClient,
 } from "../src/recovery-migrations";
 
 describe("recovery migrations", () => {
@@ -43,22 +44,42 @@ describe("recovery migrations", () => {
     ).toEqual([1787126400000, 1787130000000, 1787166960000]);
   });
 
-  test("requires verifier provisioning only before its migration", async () => {
+  test("requires verifier hardening only before its migration", async () => {
     const client = (createdAt: number): QueryConnection => ({
       query: async <Row extends Record<string, unknown>>() => ({
         rows: [{ created_at: String(createdAt) }] as unknown as Array<Row>,
       }),
     });
     await expect(
-      recoveryMigrationRequiresVerifierProvisioningWithClient(
+      recoveryMigrationRequiresVerifierHardeningWithClient(
         client(1787122800000),
       ),
     ).resolves.toBe(true);
     await expect(
-      recoveryMigrationRequiresVerifierProvisioningWithClient(
+      recoveryMigrationRequiresVerifierHardeningWithClient(
         client(1787126400000),
       ),
     ).resolves.toBe(false);
+  });
+
+  test("hardens the verifier role atomically before its migration", async () => {
+    const queries: string[] = [];
+    const client: QueryConnection = {
+      query: async <Row extends Record<string, unknown>>(text: string) => {
+        queries.push(text);
+        return { rows: [] as Array<Row> };
+      },
+    };
+
+    await hardenRecoveryVerifierRoleWithClient(client);
+
+    expect(queries[0]).toBe("BEGIN");
+    expect(queries[1]).toContain(
+      "current_user <> 'whatsapp_recovery_verifier'",
+    );
+    expect(queries[1]).toContain("REVOKE %I FROM whatsapp_recovery_verifier");
+    expect(queries[1]).toContain("NOREPLICATION NOBYPASSRLS");
+    expect(queries.at(-1)).toBe("COMMIT");
   });
 
   test("rolls back a failed migration without advancing the ledger", async () => {

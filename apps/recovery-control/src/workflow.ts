@@ -10,7 +10,8 @@ import {
 import type { RecipientJournalBucket } from "@whatsapp-mcp/api/recipient/journal";
 import {
   applyRecoveryMigrations,
-  recoveryMigrationRequiresVerifierProvisioning,
+  hardenRecoveryVerifierRole,
+  recoveryMigrationRequiresVerifierHardening,
 } from "@whatsapp-mcp/db/recovery-migrations";
 import { makePgRestoreRepository } from "@whatsapp-mcp/db/restore";
 import { restrictedRestoreRuntimeConnectionString } from "@whatsapp-mcp/db/restricted-runtime-config";
@@ -122,8 +123,12 @@ export class ProductionRecoveryWorkflow extends WorkflowEntrypoint<
         await client.resetMigrationOwnerPassword(branch);
         try {
           const migrationUri = await client.getDirectMigrationUri(branch);
-          if (await recoveryMigrationRequiresVerifierProvisioning(migrationUri))
-            await client.deleteGuardedRecoveryVerifierRole(branch);
+          if (await recoveryMigrationRequiresVerifierHardening(migrationUri)) {
+            await client.resetRecoveryVerifierPassword(branch);
+            await hardenRecoveryVerifierRole(
+              await client.getDirectRecoveryVerifierUri(branch),
+            );
+          }
           return await applyRecoveryMigrations(migrationUri);
         } finally {
           await client.resetMigrationOwnerPassword(branch);

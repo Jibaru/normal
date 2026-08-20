@@ -365,39 +365,40 @@ describe("Neon recovery control-plane client", () => {
     expect(requests[3]).toContain("role_name=whatsapp_migration_owner");
   });
 
-  test("deletes only the verifier role on the guarded recovery branch", async () => {
-    const requests: Array<{ method: string; url: string }> = [];
-    const verifierRole = {
-      branch_id: branchId,
-      name: "whatsapp_recovery_verifier",
-      created_at: time,
-      updated_at: time,
-    };
+  test("uses the verifier role explicitly on a guarded recovery branch", async () => {
+    const requests: string[] = [];
     const responses = [
       json({ branch: branch(), annotation: annotation() }),
-      json({ roles: [verifierRole] }),
-      json({ role: verifierRole, operations: [] }),
-      json({ roles: [] }),
+      json({
+        role: {
+          branch_id: branchId,
+          name: "whatsapp_recovery_verifier",
+          password: "verifier-secret",
+          created_at: time,
+          updated_at: time,
+        },
+        operations: [],
+      }),
+      json({ branch: branch(), annotation: annotation() }),
+      json({
+        uri: "postgresql://whatsapp_recovery_verifier:verifier-secret@ep-recovery.us-east-1.aws.neon.tech/normal?sslmode=require",
+      }),
     ];
     const client = createNeonRecoveryClient(config(), {
-      fetch: async (input, init) => {
-        requests.push({ method: String(init?.method), url: String(input) });
+      fetch: async (input) => {
+        requests.push(String(input));
         return responses.shift() ?? json({}, 500);
       },
     });
 
+    await client.resetRecoveryVerifierPassword(expected);
     await expect(
-      client.deleteGuardedRecoveryVerifierRole(expected),
-    ).resolves.toBe("deleted");
-    expect(requests.map(({ method }) => method)).toEqual([
-      "GET",
-      "GET",
-      "DELETE",
-      "GET",
-    ]);
-    expect(requests[2]?.url).toEndWith(
-      `/branches/${branchId}/roles/whatsapp_recovery_verifier`,
+      client.getDirectRecoveryVerifierUri(expected),
+    ).resolves.toContain("postgresql://whatsapp_recovery_verifier:");
+    expect(requests[1]).toEndWith(
+      `/branches/${branchId}/roles/whatsapp_recovery_verifier/reset_password`,
     );
+    expect(requests[3]).toContain("role_name=whatsapp_recovery_verifier");
   });
 
   test("uses the explicitly configured recovery verifier role", async () => {
