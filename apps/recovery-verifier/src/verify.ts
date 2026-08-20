@@ -19,13 +19,16 @@ import {
 import { recoveryVerifierConnectionString } from "@whatsapp-mcp/db/restricted-runtime-config";
 import { digestApiKeyCredential } from "@whatsapp-mcp/domain/api-key-hmac";
 import { createNeonRecoveryClient } from "@whatsapp-mcp/neon-recovery/client";
-import { queryAvailability } from "./availability";
+import { ObservabilityError, queryAvailability } from "./availability";
 import { required } from "./config";
 import type { RecoveryVerifierEnvironment } from "./environment";
 
 const encoder = new TextEncoder();
 export type RecoveryVerificationStage =
   | "availability"
+  | "availability_dependency"
+  | "availability_first_party"
+  | "availability_sampled_keys"
   | "branch"
   | "completion"
   | "database_verification"
@@ -301,7 +304,14 @@ export const verifyRecovery = async (
   database = { ...database, rlsOk: database.rlsOk && rlsIsolated };
 
   reportStage("availability");
-  const availability = await queryAvailability(env, input);
+  let availability: Awaited<ReturnType<typeof queryAvailability>>;
+  try {
+    availability = await queryAvailability(env, input);
+  } catch (error) {
+    if (error instanceof ObservabilityError && error.stage)
+      reportStage(`availability_${error.stage}`);
+    throw error;
+  }
   reportStage("hmac_rotation");
   const hmac = await verifyIsolatedApiKeyHmacRotation();
   reportStage("objectives");

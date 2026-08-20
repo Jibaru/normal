@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { handleAvailability } from "../src/availability";
+import { AvailabilityError, handleAvailability } from "../src/availability";
 import type { OperationsControlEnvironment } from "../src/environment";
 
 const asOf = "2026-08-19T12:00:00.000Z";
@@ -96,5 +96,25 @@ describe("production availability authority", () => {
       ),
     ).rejects.toThrow("invalid");
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  test("reports only the failed availability authority", async () => {
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      if (String(input).includes("cloudflare.com"))
+        throw new Error("sensitive upstream detail");
+      return new Response(
+        `<div data-page="${JSON.stringify(page).replaceAll('"', "&quot;")}"></div>`,
+      );
+    });
+    await expect(
+      handleAvailability(
+        new Request("https://operations.normal.fast/v1/availability", {
+          method: "POST",
+          body: JSON.stringify(body),
+        }),
+        environment,
+        { fetch: fetcher, keys: async () => true },
+      ),
+    ).rejects.toEqual(new AvailabilityError("first_party"));
   });
 });

@@ -18,6 +18,25 @@ const keys = [
   "replay_digest",
 ] as const;
 
+export type AvailabilityStage = "dependency" | "first_party" | "sampled_keys";
+
+export class AvailabilityError extends Error {
+  constructor(readonly stage: AvailabilityStage) {
+    super("Availability evidence is unavailable");
+  }
+}
+
+const withStage = async <Value>(
+  stage: AvailabilityStage,
+  operation: Promise<Value>,
+) => {
+  try {
+    return await operation;
+  } catch {
+    throw new AvailabilityError(stage);
+  }
+};
+
 export const handleAvailability = async (
   request: Request,
   env: OperationsControlEnvironment,
@@ -50,9 +69,18 @@ export const handleAvailability = async (
   const fetcher = dependencies.fetch ?? fetch;
   const [firstPartyPercent, dependenciesResult, sampledKeysUsable] =
     await Promise.all([
-      queryFirstPartyAvailability(env, { completedAt, startedAt }, fetcher),
-      queryDependencyAvailability(completedAt, fetcher),
-      dependencies.keys?.() ?? verifySampledKeys(env, fetcher),
+      withStage(
+        "first_party",
+        queryFirstPartyAvailability(env, { completedAt, startedAt }, fetcher),
+      ),
+      withStage(
+        "dependency",
+        queryDependencyAvailability(completedAt, fetcher),
+      ),
+      withStage(
+        "sampled_keys",
+        dependencies.keys?.() ?? verifySampledKeys(env, fetcher),
+      ),
     ]);
   return safeJson({
     version: 1,
