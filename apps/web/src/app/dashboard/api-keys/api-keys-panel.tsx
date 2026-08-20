@@ -13,6 +13,13 @@ import {
   FieldSet,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const PERMISSIONS = [
   { id: "connections:read", label: "Connection metadata" },
@@ -42,6 +49,14 @@ interface SelectableConnection {
   readonly numberSuffix: string;
   readonly state: string;
 }
+
+interface RevealedApiKey {
+  readonly connectionIds: ReadonlyArray<string>;
+  readonly credential: string;
+  readonly permissions: ReadonlyArray<string>;
+}
+
+const SEND_PHONE_PATTERN = /^\+[1-9][0-9]{1,14}$/u;
 
 const displayTime = (value: string): string =>
   new Intl.DateTimeFormat("en", {
@@ -134,7 +149,8 @@ export function ApiKeysPanel({
   readonly clerkJwtTemplate: string;
   readonly connectionsEndpoint: string;
 }) {
-  const mcpEndpoint = `${new URL(apiKeysEndpoint).origin}/mcp`;
+  const apiOrigin = new URL(apiKeysEndpoint).origin;
+  const mcpEndpoint = `${apiOrigin}/mcp`;
   const { getToken, isLoaded } = useAuth();
   const [keys, setKeys] = useState<ReadonlyArray<ApiKeySummary>>([]);
   const [connections, setConnections] = useState<
@@ -149,9 +165,13 @@ export function ApiKeysPanel({
     ReadonlyArray<string>
   >([]);
   const [expiresAt, setExpiresAt] = useState("");
-  const [revealed, setRevealed] = useState<string | null>(null);
+  const [revealed, setRevealed] = useState<RevealedApiKey | null>(null);
   const [creating, setCreating] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [curlCopied, setCurlCopied] = useState(false);
+  const [curlConnectionId, setCurlConnectionId] = useState("");
+  const [includeApiKey, setIncludeApiKey] = useState(false);
+  const [recipientPhone, setRecipientPhone] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
 
   const load = useCallback(
@@ -261,7 +281,15 @@ export function ApiKeysPanel({
         setState("unavailable");
         return;
       }
-      setRevealed(body.credential);
+      setRevealed({
+        connectionIds: selectedConnections,
+        credential: body.credential,
+        permissions,
+      });
+      setCurlConnectionId(selectedConnections[0] ?? "");
+      setCurlCopied(false);
+      setIncludeApiKey(false);
+      setRecipientPhone("");
       setName("");
       setPermissions([]);
       setSelectedConnections([]);
@@ -296,8 +324,33 @@ export function ApiKeysPanel({
 
   const copyCredential = async () => {
     if (revealed === null) return;
-    await navigator.clipboard.writeText(revealed);
+    await navigator.clipboard.writeText(revealed.credential);
     setCopied(true);
+  };
+
+  const curlCommand =
+    revealed === null || curlConnectionId === ""
+      ? ""
+      : `curl --request POST \\
+  '${apiOrigin}/v1/connections/${curlConnectionId}/send-operations' \\
+  --header "Authorization: Bearer ${includeApiKey ? revealed.credential : "$NORMAL_API_KEY"}" \\
+  --header 'Content-Type: application/json' \\
+  --header "Idempotency-Key: $(openssl rand -base64 32 | tr -dc 'A-Za-z0-9_-' | head -c 21)" \\
+  --data '${JSON.stringify(
+    {
+      phone: SEND_PHONE_PATTERN.test(recipientPhone)
+        ? recipientPhone
+        : "<RECIPIENT_PHONE>",
+      text: "Hello from Normal API",
+    },
+    null,
+    2,
+  )}'`;
+
+  const copyCurl = async () => {
+    if (!SEND_PHONE_PATTERN.test(recipientPhone) || curlCommand === "") return;
+    await navigator.clipboard.writeText(curlCommand);
+    setCurlCopied(true);
   };
 
   const canCreate =
@@ -344,7 +397,9 @@ export function ApiKeysPanel({
               className="flex flex-col gap-3 rounded-xl bg-card p-5 ring-1 ring-foreground/10"
             >
               <p className="text-sm font-medium">Copy this API Key now</p>
-              <p className="font-mono text-sm break-all">{revealed}</p>
+              <p className="font-mono text-sm break-all">
+                {revealed.credential}
+              </p>
               <div className="flex flex-wrap gap-2">
                 <Button onClick={() => void copyCredential()} type="button">
                   {copied ? "Copied" : "Copy API Key"}
@@ -353,6 +408,7 @@ export function ApiKeysPanel({
                   onClick={() => {
                     setRevealed(null);
                     setCopied(false);
+                    setCurlCopied(false);
                   }}
                   type="button"
                   variant="outline"
@@ -360,6 +416,95 @@ export function ApiKeysPanel({
                   I have copied this API Key
                 </Button>
               </div>
+              {revealed.permissions.includes("messages:send") ? (
+                <div className="mt-2 flex flex-col gap-4 border-t pt-5">
+                  <div>
+                    <p className="text-sm font-medium">
+                      Send your first message
+                    </p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Enter a recipient, then copy and run this command in your
+                      terminal.
+                    </p>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <Field>
+                      <FieldLabel htmlFor="curl-connection">
+                        WhatsApp Connection
+                      </FieldLabel>
+                      <Select
+                        onValueChange={(value) => {
+                          setCurlConnectionId(value ?? "");
+                          setCurlCopied(false);
+                        }}
+                        value={curlConnectionId}
+                      >
+                        <SelectTrigger className="w-full" id="curl-connection">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {revealed.connectionIds.map((connectionId) => {
+                            const connection = connections.find(
+                              (item) => item.id === connectionId,
+                            );
+                            return (
+                              <SelectItem
+                                key={connectionId}
+                                value={connectionId}
+                              >
+                                {connection?.displayName ?? connectionId}
+                              </SelectItem>
+                            );
+                          })}
+                        </SelectContent>
+                      </Select>
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="curl-recipient-phone">
+                        Recipient phone
+                      </FieldLabel>
+                      <Input
+                        aria-invalid={
+                          recipientPhone !== "" &&
+                          !SEND_PHONE_PATTERN.test(recipientPhone)
+                        }
+                        id="curl-recipient-phone"
+                        onChange={(event) => {
+                          setRecipientPhone(event.target.value);
+                          setCurlCopied(false);
+                        }}
+                        placeholder="+12025550199"
+                        type="tel"
+                        value={recipientPhone}
+                      />
+                    </Field>
+                  </div>
+                  <FieldLabel>
+                    <Field orientation="horizontal">
+                      <Checkbox
+                        checked={includeApiKey}
+                        onCheckedChange={(checked) => {
+                          setIncludeApiKey(checked === true);
+                          setCurlCopied(false);
+                        }}
+                      />
+                      Include API Key in command
+                    </Field>
+                  </FieldLabel>
+                  <section aria-label="Send message curl command">
+                    <pre className="overflow-x-auto rounded-lg bg-muted p-4 text-xs">
+                      <code>{curlCommand}</code>
+                    </pre>
+                  </section>
+                  <Button
+                    disabled={!SEND_PHONE_PATTERN.test(recipientPhone)}
+                    onClick={() => void copyCurl()}
+                    type="button"
+                  >
+                    {curlCopied ? "Copied cURL" : "Copy cURL"}
+                  </Button>
+                </div>
+              ) : null}
             </section>
           ) : null}
 

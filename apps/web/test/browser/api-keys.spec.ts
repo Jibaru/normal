@@ -7,6 +7,7 @@ const connectionId = "con_123456789012345678901";
 const disconnectedId = "con_123456789012345678902";
 
 test("creates, lists, and revokes an API Key across the browser-to-API boundary", async ({
+  context,
   page,
   request,
 }) => {
@@ -100,6 +101,9 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
     onTokenRequest: (options) => tokenRequests.push(options),
     signedIn: true,
   });
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], {
+    origin: webOrigin,
+  });
   await page.goto("/dashboard/api-keys");
 
   const panel = page.getByRole("region", { name: "API Keys" });
@@ -116,6 +120,7 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
 
   await panel.getByLabel("Name").fill("CI");
   await panel.getByRole("checkbox", { name: "Connection metadata" }).check();
+  await panel.getByRole("checkbox", { name: "Send messages" }).check();
   await panel
     .getByRole("checkbox", {
       name: "Personal WhatsApp, ending in 3456",
@@ -133,6 +138,22 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
   expect(createRequests).toBe(1);
   expect(tokenRequests).toContainEqual({ skipCache: true });
   await expect(panel).not.toContainText("temporarily unavailable");
+
+  const curlCommand = reveal.getByLabel("Send message curl command");
+  await reveal.getByLabel("Recipient phone").fill("+12025550199");
+  await expect(curlCommand).toContainText(
+    `/v1/connections/${connectionId}/send-operations`,
+  );
+  await expect(curlCommand).toContainText("Bearer $NORMAL_API_KEY");
+  await expect(curlCommand).toContainText('"text": "Hello from Normal API"');
+  await reveal
+    .getByRole("checkbox", { name: "Include API Key in command" })
+    .check();
+  await expect(curlCommand).toContainText(`Bearer ${plaintext}`);
+  await reveal.getByRole("button", { name: "Copy cURL" }).click();
+  await expect(
+    reveal.getByRole("button", { name: "Copied cURL" }),
+  ).toBeVisible();
 
   const listed = await request.get(
     `http://127.0.0.1:${apiPort}/v1/connections`,
