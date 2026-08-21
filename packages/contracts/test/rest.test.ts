@@ -653,6 +653,15 @@ describe("REST contracts", () => {
   });
 
   test("accepts exactly one supported Send Operation destination", () => {
+    const schema = RestCreateSendOperationContract.jsonSchema as {
+      readonly anyOf: ReadonlyArray<{ readonly title?: string }>;
+    };
+    expect(schema.anyOf.map((variant) => variant.title)).toEqual([
+      "Text message",
+      "PDF from URL",
+      "PDF file (Base64)",
+    ]);
+
     const created = {
       recipient_id: "ctc_xxxxxxxxxxxxxxxxxxxxx",
       text: " exact\ne\u0301 ",

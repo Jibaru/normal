@@ -30,6 +30,28 @@ test("loads the Scalar reference on a mobile viewport", async ({ page }) => {
   await assertReference(page, { height: 812, width: 375 });
 });
 
+test("shows text and PDF Send Operation request schemas", async ({ page }) => {
+  const response = await page.goto(
+    "/#tag/send-operations/POST/v1/connections/{connection_id}/send-operations",
+  );
+  expect(response?.ok()).toBe(true);
+
+  const schemaSelector = page
+    .getByRole("button", { name: "Any of Text message" })
+    .first();
+  await expect(schemaSelector).toBeVisible();
+  await schemaSelector.click();
+  await expect(
+    page.getByRole("option", { name: "Text message" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("option", { name: "PDF from URL" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("option", { name: "PDF file (Base64)" }),
+  ).toBeVisible();
+});
+
 test("serves the self-hosted Scalar bundle with immutable caching", async ({
   request,
 }) => {

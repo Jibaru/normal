@@ -2212,268 +2212,283 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "anyOf": [
           {
-            "type": "object",
-            "required": [
-              "recipient_id",
-              "text"
-            ],
-            "properties": {
-              "recipient_id": {
-                "anyOf": [
-                  {
-                    "type": "string",
-                    "description": "a string matching the pattern ^ctc_[A-Za-z0-9_-]{21}(?![\\s\\S])$",
-                    "pattern": "^ctc_[A-Za-z0-9_-]{21}(?![\\s\\S])$"
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "recipient_id",
+                  "text"
+                ],
+                "properties": {
+                  "recipient_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "description": "a string matching the pattern ^ctc_[A-Za-z0-9_-]{21}(?![\\s\\S])$",
+                        "pattern": "^ctc_[A-Za-z0-9_-]{21}(?![\\s\\S])$"
+                      },
+                      {
+                        "type": "string",
+                        "description": "a string matching the pattern ^grp_[A-Za-z0-9_-]{21}(?![\\s\\S])$",
+                        "pattern": "^grp_[A-Za-z0-9_-]{21}(?![\\s\\S])$"
+                      }
+                    ]
                   },
-                  {
-                    "type": "string",
-                    "description": "a string matching the pattern ^grp_[A-Za-z0-9_-]{21}(?![\\s\\S])$",
-                    "pattern": "^grp_[A-Za-z0-9_-]{21}(?![\\s\\S])$"
+                  "text": {
+                    "type": "string"
                   }
-                ]
+                },
+                "additionalProperties": false
               },
-              "text": {
-                "type": "string"
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "required": [
-              "phone",
-              "text"
-            ],
-            "properties": {
-              "phone": {
-                "type": "string",
-                "description": "a string matching the pattern ^\\+[1-9][0-9]{1,14}$",
-                "pattern": "^\\+[1-9][0-9]{1,14}$"
-              },
-              "text": {
-                "type": "string"
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "required": [
-              "username",
-              "text"
-            ],
-            "properties": {
-              "username": {
-                "type": "string",
-                "description": "a string matching the pattern ^@[A-Za-z0-9._-]{1,64}$",
-                "pattern": "^@[A-Za-z0-9._-]{1,64}$"
-              },
-              "text": {
-                "type": "string"
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "required": [
-              "recipient_id",
-              "file_name",
-              "pdf_url"
-            ],
-            "properties": {
-              "recipient_id": {
-                "anyOf": [
-                  {
+              {
+                "type": "object",
+                "required": [
+                  "phone",
+                  "text"
+                ],
+                "properties": {
+                  "phone": {
                     "type": "string",
-                    "description": "a string matching the pattern ^ctc_[A-Za-z0-9_-]{21}(?![\\s\\S])$",
-                    "pattern": "^ctc_[A-Za-z0-9_-]{21}(?![\\s\\S])$"
+                    "description": "a string matching the pattern ^\\+[1-9][0-9]{1,14}$",
+                    "pattern": "^\\+[1-9][0-9]{1,14}$"
                   },
-                  {
-                    "type": "string",
-                    "description": "a string matching the pattern ^grp_[A-Za-z0-9_-]{21}(?![\\s\\S])$",
-                    "pattern": "^grp_[A-Za-z0-9_-]{21}(?![\\s\\S])$"
+                  "text": {
+                    "type": "string"
                   }
-                ]
+                },
+                "additionalProperties": false
               },
-              "file_name": {
-                "type": "string",
-                "description": "a string at most 255 character(s) long",
-                "title": "maxLength(255)",
-                "minLength": 5,
-                "maxLength": 255
-              },
-              "pdf_url": {
-                "type": "string",
-                "description": "a string at most 4096 character(s) long",
-                "title": "maxLength(4096)",
-                "minLength": 1,
-                "maxLength": 4096
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "required": [
-              "recipient_id",
-              "file_name",
-              "pdf_base64"
-            ],
-            "properties": {
-              "recipient_id": {
-                "anyOf": [
-                  {
+              {
+                "type": "object",
+                "required": [
+                  "username",
+                  "text"
+                ],
+                "properties": {
+                  "username": {
                     "type": "string",
-                    "description": "a string matching the pattern ^ctc_[A-Za-z0-9_-]{21}(?![\\s\\S])$",
-                    "pattern": "^ctc_[A-Za-z0-9_-]{21}(?![\\s\\S])$"
+                    "description": "a string matching the pattern ^@[A-Za-z0-9._-]{1,64}$",
+                    "pattern": "^@[A-Za-z0-9._-]{1,64}$"
                   },
-                  {
-                    "type": "string",
-                    "description": "a string matching the pattern ^grp_[A-Za-z0-9_-]{21}(?![\\s\\S])$",
-                    "pattern": "^grp_[A-Za-z0-9_-]{21}(?![\\s\\S])$"
+                  "text": {
+                    "type": "string"
                   }
-                ]
-              },
-              "file_name": {
-                "type": "string",
-                "description": "a string at most 255 character(s) long",
-                "title": "maxLength(255)",
-                "minLength": 5,
-                "maxLength": 255
-              },
-              "pdf_base64": {
-                "type": "string",
-                "description": "a string matching the pattern ^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
-                "title": "maxLength(22369624)",
-                "minLength": 12,
-                "maxLength": 22369624,
-                "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+                },
+                "additionalProperties": false
               }
-            },
-            "additionalProperties": false
+            ],
+            "title": "Text message"
           },
           {
-            "type": "object",
-            "required": [
-              "phone",
-              "file_name",
-              "pdf_url"
-            ],
-            "properties": {
-              "phone": {
-                "type": "string",
-                "description": "a string matching the pattern ^\\+[1-9][0-9]{1,14}$",
-                "pattern": "^\\+[1-9][0-9]{1,14}$"
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "recipient_id",
+                  "file_name",
+                  "pdf_url"
+                ],
+                "properties": {
+                  "recipient_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "description": "a string matching the pattern ^ctc_[A-Za-z0-9_-]{21}(?![\\s\\S])$",
+                        "pattern": "^ctc_[A-Za-z0-9_-]{21}(?![\\s\\S])$"
+                      },
+                      {
+                        "type": "string",
+                        "description": "a string matching the pattern ^grp_[A-Za-z0-9_-]{21}(?![\\s\\S])$",
+                        "pattern": "^grp_[A-Za-z0-9_-]{21}(?![\\s\\S])$"
+                      }
+                    ]
+                  },
+                  "file_name": {
+                    "type": "string",
+                    "description": "a string at most 255 character(s) long",
+                    "title": "maxLength(255)",
+                    "minLength": 5,
+                    "maxLength": 255
+                  },
+                  "pdf_url": {
+                    "type": "string",
+                    "description": "a string at most 4096 character(s) long",
+                    "title": "maxLength(4096)",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  }
+                },
+                "additionalProperties": false
               },
-              "file_name": {
-                "type": "string",
-                "description": "a string at most 255 character(s) long",
-                "title": "maxLength(255)",
-                "minLength": 5,
-                "maxLength": 255
+              {
+                "type": "object",
+                "required": [
+                  "phone",
+                  "file_name",
+                  "pdf_url"
+                ],
+                "properties": {
+                  "phone": {
+                    "type": "string",
+                    "description": "a string matching the pattern ^\\+[1-9][0-9]{1,14}$",
+                    "pattern": "^\\+[1-9][0-9]{1,14}$"
+                  },
+                  "file_name": {
+                    "type": "string",
+                    "description": "a string at most 255 character(s) long",
+                    "title": "maxLength(255)",
+                    "minLength": 5,
+                    "maxLength": 255
+                  },
+                  "pdf_url": {
+                    "type": "string",
+                    "description": "a string at most 4096 character(s) long",
+                    "title": "maxLength(4096)",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  }
+                },
+                "additionalProperties": false
               },
-              "pdf_url": {
-                "type": "string",
-                "description": "a string at most 4096 character(s) long",
-                "title": "maxLength(4096)",
-                "minLength": 1,
-                "maxLength": 4096
+              {
+                "type": "object",
+                "required": [
+                  "username",
+                  "file_name",
+                  "pdf_url"
+                ],
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "description": "a string matching the pattern ^@[A-Za-z0-9._-]{1,64}$",
+                    "pattern": "^@[A-Za-z0-9._-]{1,64}$"
+                  },
+                  "file_name": {
+                    "type": "string",
+                    "description": "a string at most 255 character(s) long",
+                    "title": "maxLength(255)",
+                    "minLength": 5,
+                    "maxLength": 255
+                  },
+                  "pdf_url": {
+                    "type": "string",
+                    "description": "a string at most 4096 character(s) long",
+                    "title": "maxLength(4096)",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  }
+                },
+                "additionalProperties": false
               }
-            },
-            "additionalProperties": false
+            ],
+            "title": "PDF from URL"
           },
           {
-            "type": "object",
-            "required": [
-              "phone",
-              "file_name",
-              "pdf_base64"
-            ],
-            "properties": {
-              "phone": {
-                "type": "string",
-                "description": "a string matching the pattern ^\\+[1-9][0-9]{1,14}$",
-                "pattern": "^\\+[1-9][0-9]{1,14}$"
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "recipient_id",
+                  "file_name",
+                  "pdf_base64"
+                ],
+                "properties": {
+                  "recipient_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "description": "a string matching the pattern ^ctc_[A-Za-z0-9_-]{21}(?![\\s\\S])$",
+                        "pattern": "^ctc_[A-Za-z0-9_-]{21}(?![\\s\\S])$"
+                      },
+                      {
+                        "type": "string",
+                        "description": "a string matching the pattern ^grp_[A-Za-z0-9_-]{21}(?![\\s\\S])$",
+                        "pattern": "^grp_[A-Za-z0-9_-]{21}(?![\\s\\S])$"
+                      }
+                    ]
+                  },
+                  "file_name": {
+                    "type": "string",
+                    "description": "a string at most 255 character(s) long",
+                    "title": "maxLength(255)",
+                    "minLength": 5,
+                    "maxLength": 255
+                  },
+                  "pdf_base64": {
+                    "type": "string",
+                    "description": "a string matching the pattern ^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
+                    "title": "maxLength(22369624)",
+                    "minLength": 12,
+                    "maxLength": 22369624,
+                    "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+                  }
+                },
+                "additionalProperties": false
               },
-              "file_name": {
-                "type": "string",
-                "description": "a string at most 255 character(s) long",
-                "title": "maxLength(255)",
-                "minLength": 5,
-                "maxLength": 255
+              {
+                "type": "object",
+                "required": [
+                  "phone",
+                  "file_name",
+                  "pdf_base64"
+                ],
+                "properties": {
+                  "phone": {
+                    "type": "string",
+                    "description": "a string matching the pattern ^\\+[1-9][0-9]{1,14}$",
+                    "pattern": "^\\+[1-9][0-9]{1,14}$"
+                  },
+                  "file_name": {
+                    "type": "string",
+                    "description": "a string at most 255 character(s) long",
+                    "title": "maxLength(255)",
+                    "minLength": 5,
+                    "maxLength": 255
+                  },
+                  "pdf_base64": {
+                    "type": "string",
+                    "description": "a string matching the pattern ^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
+                    "title": "maxLength(22369624)",
+                    "minLength": 12,
+                    "maxLength": 22369624,
+                    "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+                  }
+                },
+                "additionalProperties": false
               },
-              "pdf_base64": {
-                "type": "string",
-                "description": "a string matching the pattern ^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
-                "title": "maxLength(22369624)",
-                "minLength": 12,
-                "maxLength": 22369624,
-                "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+              {
+                "type": "object",
+                "required": [
+                  "username",
+                  "file_name",
+                  "pdf_base64"
+                ],
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "description": "a string matching the pattern ^@[A-Za-z0-9._-]{1,64}$",
+                    "pattern": "^@[A-Za-z0-9._-]{1,64}$"
+                  },
+                  "file_name": {
+                    "type": "string",
+                    "description": "a string at most 255 character(s) long",
+                    "title": "maxLength(255)",
+                    "minLength": 5,
+                    "maxLength": 255
+                  },
+                  "pdf_base64": {
+                    "type": "string",
+                    "description": "a string matching the pattern ^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
+                    "title": "maxLength(22369624)",
+                    "minLength": 12,
+                    "maxLength": 22369624,
+                    "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+                  }
+                },
+                "additionalProperties": false
               }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "required": [
-              "username",
-              "file_name",
-              "pdf_url"
             ],
-            "properties": {
-              "username": {
-                "type": "string",
-                "description": "a string matching the pattern ^@[A-Za-z0-9._-]{1,64}$",
-                "pattern": "^@[A-Za-z0-9._-]{1,64}$"
-              },
-              "file_name": {
-                "type": "string",
-                "description": "a string at most 255 character(s) long",
-                "title": "maxLength(255)",
-                "minLength": 5,
-                "maxLength": 255
-              },
-              "pdf_url": {
-                "type": "string",
-                "description": "a string at most 4096 character(s) long",
-                "title": "maxLength(4096)",
-                "minLength": 1,
-                "maxLength": 4096
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
-            "required": [
-              "username",
-              "file_name",
-              "pdf_base64"
-            ],
-            "properties": {
-              "username": {
-                "type": "string",
-                "description": "a string matching the pattern ^@[A-Za-z0-9._-]{1,64}$",
-                "pattern": "^@[A-Za-z0-9._-]{1,64}$"
-              },
-              "file_name": {
-                "type": "string",
-                "description": "a string at most 255 character(s) long",
-                "title": "maxLength(255)",
-                "minLength": 5,
-                "maxLength": 255
-              },
-              "pdf_base64": {
-                "type": "string",
-                "description": "a string matching the pattern ^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
-                "title": "maxLength(22369624)",
-                "minLength": 12,
-                "maxLength": 22369624,
-                "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
-              }
-            },
-            "additionalProperties": false
+            "title": "PDF file (Base64)"
           }
         ]
       },

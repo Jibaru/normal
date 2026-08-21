@@ -459,44 +459,32 @@ export type ProblemDetails = typeof ProblemDetailsContract.schema.Type;
 export const problemType = (code: ProblemCode): ProblemDetails["type"] =>
   `https://docs.normal.fast/problems/${code}` as ProblemDetails["type"];
 
+const RestSendDestination = Schema.Union(
+  Schema.Struct({ recipient_id: Schema.Union(ContactId, GroupId) }),
+  Schema.Struct({ phone: SendPhone }),
+  Schema.Struct({ username: SendUsername }),
+);
+
 export const RestCreateSendOperationContract = makePublicContract(
   Schema.Union(
-    Schema.Struct({
-      recipient_id: Schema.Union(ContactId, GroupId),
-      text: SendText,
-    }),
-    Schema.Struct({ phone: SendPhone, text: SendText }),
-    Schema.Struct({ username: SendUsername, text: SendText }),
-    Schema.Struct({
-      recipient_id: Schema.Union(ContactId, GroupId),
-      file_name: SendPdfFileName,
-      pdf_url: SendPdfUrl,
-    }),
-    Schema.Struct({
-      recipient_id: Schema.Union(ContactId, GroupId),
-      file_name: SendPdfFileName,
-      pdf_base64: SendPdfBase64,
-    }),
-    Schema.Struct({
-      phone: SendPhone,
-      file_name: SendPdfFileName,
-      pdf_url: SendPdfUrl,
-    }),
-    Schema.Struct({
-      phone: SendPhone,
-      file_name: SendPdfFileName,
-      pdf_base64: SendPdfBase64,
-    }),
-    Schema.Struct({
-      username: SendUsername,
-      file_name: SendPdfFileName,
-      pdf_url: SendPdfUrl,
-    }),
-    Schema.Struct({
-      username: SendUsername,
-      file_name: SendPdfFileName,
-      pdf_base64: SendPdfBase64,
-    }),
+    Schema.extend(
+      RestSendDestination,
+      Schema.Struct({ text: SendText }),
+    ).annotations({ title: "Text message" }),
+    Schema.extend(
+      RestSendDestination,
+      Schema.Struct({
+        file_name: SendPdfFileName,
+        pdf_url: SendPdfUrl,
+      }),
+    ).annotations({ title: "PDF from URL" }),
+    Schema.extend(
+      RestSendDestination,
+      Schema.Struct({
+        file_name: SendPdfFileName,
+        pdf_base64: SendPdfBase64,
+      }),
+    ).annotations({ title: "PDF file (Base64)" }),
   ),
 );
 export type RestCreateSendOperation =
