@@ -1,5 +1,7 @@
 # Use keyed exact-word indexes for Stored Message search
 
+Previously numbered 0028. That number is reserved for the WhatsApp Recipient Exclusion journal ADR.
+
 ## Decision
 
 Search the latest retained Stored Message text and media captions with a versioned, keyed exact-word blind index. Each WhatsApp Connection owns a dedicated random 256-bit message-search key wrapped through the existing Personal Account and WhatsApp Connection KMS hierarchy. This key is not reused for Directory indexes, webhook identity, provider references, cursors, send fingerprints, deletion markers, or any other purpose.
