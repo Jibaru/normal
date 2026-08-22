@@ -11,6 +11,10 @@ import {
   makeIdempotencyKey,
 } from "@whatsapp-mcp/contracts/handles";
 import { Schema } from "effect";
+import {
+  type AccountInsights,
+  decodeAccountInsights,
+} from "@/app/account-insights";
 import { authorizedJson } from "./http";
 
 export interface ApiKeyRecord {
@@ -600,6 +604,16 @@ export const fetchMcpAuthorizations = async (
   const { body, ok } = await authorizedJson({ token, url: endpoint });
   const decoded = decodeMcpAuthorizations(body);
   if (!ok || decoded === null) throw new Error("authorizations unavailable");
+  return decoded;
+};
+
+export const fetchAccountInsights = async (
+  endpoint: string,
+  token: string,
+): Promise<AccountInsights> => {
+  const { body, ok } = await authorizedJson({ token, url: endpoint });
+  const decoded = decodeAccountInsights(body);
+  if (!ok || decoded === null) throw new Error("account insights unavailable");
   return decoded;
 };
 

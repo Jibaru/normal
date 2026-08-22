@@ -68,6 +68,7 @@ import {
   type ActivityLog,
   applyAuthorizationRevocation,
   decodeSafeWhatsAppConnection,
+  fetchAccountInsights,
   fetchActivityLogPage,
   fetchConnectionsWithPolicies,
   fetchMcpAuthorizations,
@@ -79,6 +80,7 @@ import {
   type SafeWhatsAppConnection,
 } from "@/lib/query/resources";
 import { captureProductAnalyticsEvent } from "../effect/product-analytics";
+import { AccountOverview } from "./account-overview";
 import {
   nextConnectionSetupPollDelayMs,
   observationMetricDurationMs,
@@ -105,6 +107,7 @@ interface PublicBoundaryJourneyProps {
   readonly personalAccountEndpoint: string;
   readonly personalAccountDeletionEndpoint: string;
   readonly activityLogsEndpoint: string;
+  readonly accountInsightsEndpoint: string;
   readonly view?: PersonalAccountView;
 }
 
@@ -174,6 +177,7 @@ export function PublicBoundaryJourney({
   personalAccountEndpoint,
   personalAccountDeletionEndpoint,
   activityLogsEndpoint,
+  accountInsightsEndpoint,
   view = "overview",
 }: PublicBoundaryJourneyProps) {
   const { getToken: getClerkToken, isLoaded, isSignedIn } = useAuth();
@@ -300,6 +304,15 @@ export function PublicBoundaryJourney({
     },
     queryKey: queryKeys.authorizations(),
   });
+  const insightsQuery = useQuery({
+    enabled: state === "ok" && isLoaded && isSignedIn === true,
+    queryFn: async () => {
+      const token = await getToken();
+      if (token === null) throw new Error("signed out");
+      return fetchAccountInsights(accountInsightsEndpoint, token);
+    },
+    queryKey: queryKeys.accountInsights(),
+  });
   const activityLogsQuery = useInfiniteQuery({
     enabled: state === "ok" && isLoaded && isSignedIn === true,
     getNextPageParam: (page: { readonly nextCursor: string | null }) =>
@@ -355,6 +368,7 @@ export function PublicBoundaryJourney({
 
   const connections = connectionsQuery.data ?? [];
   const authorizations = authorizationsQuery.data ?? [];
+  const insights = insightsQuery.data ?? null;
   const activityLogs = flattenActivityLogs(activityLogsQuery.data?.pages);
   const activityLogCursor =
     activityLogsQuery.data?.pages.at(-1)?.nextCursor ?? null;
@@ -366,6 +380,11 @@ export function PublicBoundaryJourney({
   const activityLogState: AuthorizationState = activityLogsQuery.isPending
     ? "loading"
     : activityLogsQuery.isError && activityLogsQuery.data === undefined
+      ? "unavailable"
+      : "ok";
+  const insightsState: AuthorizationState = insightsQuery.isPending
+    ? "loading"
+    : insightsQuery.isError && insightsQuery.data === undefined
       ? "unavailable"
       : "ok";
   const activityLogPageState = activityLogsQuery.isFetchingNextPage
@@ -767,6 +786,9 @@ export function PublicBoundaryJourney({
       );
       queryClient.setQueryData(queryKeys.connectionWorkspace(), withPolicies);
       queryClient.setQueryData(queryKeys.connections(), withPolicies);
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.accountInsights(),
+      });
       return withPolicies;
     } catch {
       return null;
@@ -1238,6 +1260,9 @@ export function PublicBoundaryJourney({
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.connections() }),
         queryClient.invalidateQueries({ queryKey: queryKeys.authorizations() }),
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.accountInsights(),
+        }),
         queryClient.invalidateQueries({ queryKey: queryKeys.activityLogs() }),
         queryClient.invalidateQueries({
           queryKey: queryKeys.onboardingProfile(),
@@ -1270,6 +1295,14 @@ export function PublicBoundaryJourney({
     captureProductAnalyticsEvent({
       event: "feature_used",
       feature: "activity_logs_viewed",
+    });
+  }, [view]);
+
+  useEffect(() => {
+    if (view !== "overview") return;
+    captureProductAnalyticsEvent({
+      event: "feature_used",
+      feature: "account_insights_viewed",
     });
   }, [view]);
 
@@ -1561,6 +1594,14 @@ export function PublicBoundaryJourney({
       ) ? (
         <>
           {view === "overview" ? (
+            <AccountOverview
+              authorizations={authorizations}
+              connections={connections}
+              insights={insights}
+              insightsState={insightsState}
+            />
+          ) : null}
+          {view === "authorizations" ? (
             <McpConnectionGuides serverUrl={mcpServerUrl} />
           ) : null}
           {view === "authorizations" ? (

@@ -1,4 +1,5 @@
 export const queryKeys = {
+  accountInsights: () => ["account-insights"] as const,
   activityLogs: () => ["activity-logs"] as const,
   apiKeys: () => ["api-keys"] as const,
   authorizations: () => ["mcp-authorizations"] as const,
