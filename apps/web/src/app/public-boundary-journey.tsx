@@ -108,6 +108,7 @@ interface PublicBoundaryJourneyProps {
   readonly personalAccountDeletionEndpoint: string;
   readonly activityLogsEndpoint: string;
   readonly accountInsightsEndpoint: string;
+  readonly onFirstConnectionOnboardingChange?: (required: boolean) => void;
   readonly view?: PersonalAccountView;
 }
 
@@ -116,7 +117,8 @@ export type PersonalAccountView =
   | "connections"
   | "authorizations"
   | "activity"
-  | "settings";
+  | "settings"
+  | "onboarding";
 
 type JourneyState = "idle" | "loading" | "signed_out" | "unavailable" | "ok";
 
@@ -178,6 +180,7 @@ export function PublicBoundaryJourney({
   personalAccountDeletionEndpoint,
   activityLogsEndpoint,
   accountInsightsEndpoint,
+  onFirstConnectionOnboardingChange,
   view = "overview",
 }: PublicBoundaryJourneyProps) {
   const { getToken: getClerkToken, isLoaded, isSignedIn } = useAuth();
@@ -1299,6 +1302,15 @@ export function PublicBoundaryJourney({
   }, [view]);
 
   useEffect(() => {
+    if (!dashboardReady) return;
+    onFirstConnectionOnboardingChange?.(showFirstConnectionOnboarding);
+  }, [
+    dashboardReady,
+    onFirstConnectionOnboardingChange,
+    showFirstConnectionOnboarding,
+  ]);
+
+  useEffect(() => {
     if (view !== "overview") return;
     captureProductAnalyticsEvent({
       event: "feature_used",
@@ -1557,7 +1569,9 @@ export function PublicBoundaryJourney({
       ) : null}
       {dashboardReady &&
       showFirstConnectionOnboarding &&
-      (view === "overview" || view === "connections") ? (
+      (view === "onboarding" ||
+        view === "overview" ||
+        view === "connections") ? (
         <FirstConnectionOnboarding
           connectedConnection={connections[0] ?? null}
           getToken={getToken}
@@ -1590,7 +1604,7 @@ export function PublicBoundaryJourney({
       {dashboardReady &&
       !(
         showFirstConnectionOnboarding &&
-        (view === "overview" || view === "connections")
+        (view === "onboarding" || view === "overview" || view === "connections")
       ) ? (
         <>
           {view === "overview" ? (
