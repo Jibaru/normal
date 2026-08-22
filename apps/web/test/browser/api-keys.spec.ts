@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { installClerkBrowser } from "../support/clerk-browser";
+import { expectSuccessToast } from "../support/toasts";
 
 const apiPort = process.env.PLAYWRIGHT_API_PORT ?? "8787";
 const webOrigin = `http://127.0.0.1:${process.env.PLAYWRIGHT_WEB_PORT ?? "3000"}`;
@@ -135,6 +136,7 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
     .check();
   await createDialog.getByRole("button", { name: "Create API Key" }).click();
   await expect(createDialog).toBeHidden();
+  await expectSuccessToast(page, "API Key created");
 
   const reveal = panel.getByLabel("New API Key credential");
   await expect(reveal).toBeVisible();
