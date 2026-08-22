@@ -1,8 +1,10 @@
 ---
-shaping: true
+status: implemented
 ---
 
 # Public API - Frame
+
+Implemented. The public REST API, API Key management, Activity Log, and static Scalar app at `docs.normal.fast` shipped. Treat this frame as the accepted contract, not an open shaping document.
 
 ## Source
 

@@ -1,8 +1,10 @@
 ---
-shaping: true
+status: implemented
 ---
 
 # Public API - Implementation Slices
+
+Implemented. Slices V1 through V6 and the public API release gate shipped. Treat this as the accepted delivery record, not an open plan.
 
 ## Slice Summary
 
@@ -105,7 +107,7 @@ This tracer slice establishes every security boundary before broadening the reso
 
 ## Required Documentation Ripple
 
-Implementation must update the affected documents in the same slices:
+These documents were updated with the slices and remain the current contract:
 
 - `CONTEXT.md`: API Key and Activity Log terminology is already introduced during shaping; keep implementation and UI aligned.
 - `docs/architecture.md`: add the server-side API caller, API Key path, and static docs deployment without changing the sole data-plane boundary.

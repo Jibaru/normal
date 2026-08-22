@@ -1,19 +1,21 @@
 # Provider-neutral WhatsApp seam
 
 `@whatsapp-mcp/wasender` is the internal replacement seam around the sole
-private-beta provider. It exports no catch-all barrel and has five independent
+private-beta provider. It exports no catch-all barrel and has six independent
 Effect capabilities:
 
 - `SessionLifecycle` is account-authority lifecycle control.
 - `SessionDirectory` is read-only, per-session Directory authority.
 - `TextSending` performs one per-session text-send attempt.
+- `PdfSending` uploads one verified PDF and performs at most one document-send
+  attempt.
 - `MediaRetrieval` reads per-session metadata and guarded Effect streams.
 - `WebhookNormalization` turns one authenticated delivery into independently
   processable provider-neutral items.
 
-Production implementations are supplied by issues 12 through 16. The text-send
-implementation is available through `makeWasenderTextSendingLayer`; it fixes
-the provider endpoint and platform transport in production. The real Directory
+The text-send implementation is available through `makeWasenderTextSendingLayer`
+and the PDF implementation through `makeWasenderPdfSendingLayer`; both fix the
+provider endpoint and platform transport in production. The real Directory
 implementation is exported as
 `makeWasenderSessionDirectory` from `@whatsapp-mcp/wasender/session`. The other
 production implementations are exposed through their capability-specific

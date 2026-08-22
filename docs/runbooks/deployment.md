@@ -117,6 +117,7 @@ bun run validate:infra
 bun run test
 bun run build
 bun run manifests:validate
+bun run observability:validate
 bun run infra:validate
 ```
 
