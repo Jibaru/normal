@@ -13,6 +13,17 @@ import {
   FieldLegend,
   FieldSet,
 } from "@/components/ui/field";
+import {
+  FormOverlay,
+  FormOverlayBody,
+  FormOverlayClose,
+  FormOverlayContent,
+  FormOverlayDescription,
+  FormOverlayFooter,
+  FormOverlayHeader,
+  FormOverlayTitle,
+  FormOverlayTrigger,
+} from "@/components/ui/form-overlay";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -21,6 +32,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Spinner } from "@/components/ui/spinner";
 import { queryKeys } from "@/lib/query/keys";
 import {
   type ApiKeyRecord,
@@ -89,6 +101,7 @@ export function ApiKeysPanel({
   const [includeApiKey, setIncludeApiKey] = useState(false);
   const [recipientPhone, setRecipientPhone] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
   const readAccessToken = async () => {
     if (!isLoaded) return null;
@@ -201,6 +214,7 @@ export function ApiKeysPanel({
       setPermissions([]);
       setSelectedConnections([]);
       setExpiresAt("");
+      setCreateDialogOpen(false);
     } catch {
       setCreateError("API Key creation was cancelled or failed. Try again.");
     }
@@ -410,110 +424,155 @@ export function ApiKeysPanel({
             </section>
           ) : null}
 
-          <form
-            className="flex flex-col gap-5 rounded-xl bg-card p-5 ring-1 ring-foreground/10"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void create();
-            }}
-          >
-            <FieldSet>
-              <FieldLegend>Create an API Key</FieldLegend>
-              <FieldGroup>
-                <Field>
-                  <FieldLabel htmlFor="api-key-name">Name</FieldLabel>
-                  <Input
-                    id="api-key-name"
-                    maxLength={64}
-                    onChange={(event) => setName(event.target.value)}
-                    value={name}
-                  />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="api-key-expiry">
-                    Expires (optional)
-                  </FieldLabel>
-                  <Input
-                    id="api-key-expiry"
-                    onChange={(event) => setExpiresAt(event.target.value)}
-                    type="datetime-local"
-                    value={expiresAt}
-                  />
-                </Field>
-              </FieldGroup>
-            </FieldSet>
-            <FieldSet>
-              <FieldLegend>Permissions</FieldLegend>
-              <FieldGroup>
-                {PERMISSIONS.map((permission) => (
-                  <FieldLabel key={permission.id}>
-                    <Field orientation="horizontal">
-                      <Checkbox
-                        checked={permissions.includes(permission.id)}
-                        onCheckedChange={(checked) =>
-                          setPermissions(
-                            toggle(
-                              permissions,
-                              permission.id,
-                              checked === true,
-                            ),
-                          )
-                        }
-                      />
-                      {permission.label}
-                    </Field>
-                  </FieldLabel>
-                ))}
-              </FieldGroup>
-            </FieldSet>
-            <FieldSet>
-              <FieldLegend>WhatsApp Connections</FieldLegend>
-              <FieldGroup>
-                {connections.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    Connect a WhatsApp account before creating an API Key.
-                  </p>
-                ) : (
-                  connections.map((connection) => (
-                    <FieldLabel
-                      aria-label={`${connection.displayName}, ending in ${connection.numberSuffix}`}
-                      key={connection.id}
-                    >
-                      <Field orientation="horizontal">
-                        <Checkbox
-                          checked={selectedConnections.includes(connection.id)}
-                          onCheckedChange={(checked) =>
-                            setSelectedConnections(
-                              toggle(
-                                selectedConnections,
-                                connection.id,
-                                checked === true,
-                              ),
-                            )
-                          }
-                        />
-                        <span>{connection.displayName}</span>
-                        <span className="font-mono text-sm text-muted-foreground">
-                          ending in {connection.numberSuffix}
-                          {connection.state === "disconnected"
-                            ? " · disconnected"
-                            : ""}
-                        </span>
-                      </Field>
-                    </FieldLabel>
-                  ))
-                )}
-              </FieldGroup>
-            </FieldSet>
-            <Button disabled={!canCreate} type="submit">
-              Create API Key
-            </Button>
-            {createError === null ? null : (
-              <p aria-live="polite" className="text-sm text-muted-foreground">
-                {createError}
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-xl font-semibold tracking-tight">
+                Your API Keys
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                Revoke a key to end access through REST and compatible MCP
+                Clients.
               </p>
-            )}
-          </form>
+            </div>
+            <FormOverlay
+              onOpenChange={(open) => {
+                setCreateDialogOpen(open);
+                if (open) {
+                  setCreateError(null);
+                }
+              }}
+              open={createDialogOpen}
+            >
+              <FormOverlayTrigger render={<Button />}>
+                Create API Key
+              </FormOverlayTrigger>
+              <FormOverlayContent>
+                <FormOverlayHeader>
+                  <FormOverlayTitle>Create an API Key</FormOverlayTitle>
+                  <FormOverlayDescription>
+                    Choose a unique name, permissions, and the WhatsApp
+                    Connections this credential may use. The plaintext is shown
+                    once.
+                  </FormOverlayDescription>
+                </FormOverlayHeader>
+                <form
+                  className="contents"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void create();
+                  }}
+                >
+                  <FormOverlayBody className="flex flex-col gap-5">
+                    <Field>
+                      <FieldLabel htmlFor="api-key-name">Name</FieldLabel>
+                      <Input
+                        id="api-key-name"
+                        maxLength={64}
+                        onChange={(event) => setName(event.target.value)}
+                        value={name}
+                      />
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="api-key-expiry">
+                        Expires (optional)
+                      </FieldLabel>
+                      <Input
+                        id="api-key-expiry"
+                        onChange={(event) => setExpiresAt(event.target.value)}
+                        type="datetime-local"
+                        value={expiresAt}
+                      />
+                    </Field>
+                    <FieldSet>
+                      <FieldLegend>Permissions</FieldLegend>
+                      <FieldGroup>
+                        {PERMISSIONS.map((permission) => (
+                          <FieldLabel key={permission.id}>
+                            <Field orientation="horizontal">
+                              <Checkbox
+                                checked={permissions.includes(permission.id)}
+                                onCheckedChange={(checked) =>
+                                  setPermissions(
+                                    toggle(
+                                      permissions,
+                                      permission.id,
+                                      checked === true,
+                                    ),
+                                  )
+                                }
+                              />
+                              {permission.label}
+                            </Field>
+                          </FieldLabel>
+                        ))}
+                      </FieldGroup>
+                    </FieldSet>
+                    <FieldSet>
+                      <FieldLegend>WhatsApp Connections</FieldLegend>
+                      <FieldGroup>
+                        {connections.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">
+                            Connect a WhatsApp account before creating an API
+                            Key.
+                          </p>
+                        ) : (
+                          connections.map((connection) => (
+                            <FieldLabel
+                              aria-label={`${connection.displayName}, ending in ${connection.numberSuffix}`}
+                              key={connection.id}
+                            >
+                              <Field orientation="horizontal">
+                                <Checkbox
+                                  checked={selectedConnections.includes(
+                                    connection.id,
+                                  )}
+                                  onCheckedChange={(checked) =>
+                                    setSelectedConnections(
+                                      toggle(
+                                        selectedConnections,
+                                        connection.id,
+                                        checked === true,
+                                      ),
+                                    )
+                                  }
+                                />
+                                <span>{connection.displayName}</span>
+                                <span className="font-mono text-sm text-muted-foreground">
+                                  ending in {connection.numberSuffix}
+                                  {connection.state === "disconnected"
+                                    ? " · disconnected"
+                                    : ""}
+                                </span>
+                              </Field>
+                            </FieldLabel>
+                          ))
+                        )}
+                      </FieldGroup>
+                    </FieldSet>
+                    {createError === null ? null : (
+                      <p
+                        aria-live="polite"
+                        className="text-sm text-muted-foreground"
+                      >
+                        {createError}
+                      </p>
+                    )}
+                  </FormOverlayBody>
+                  <FormOverlayFooter>
+                    <FormOverlayClose render={<Button variant="outline" />}>
+                      Cancel
+                    </FormOverlayClose>
+                    <Button disabled={!canCreate} type="submit">
+                      {creating.isPending ? (
+                        <Spinner data-icon="inline-start" />
+                      ) : null}
+                      Create API Key
+                    </Button>
+                  </FormOverlayFooter>
+                </form>
+              </FormOverlayContent>
+            </FormOverlay>
+          </div>
 
           {keys.length === 0 ? (
             <p>No API Keys yet.</p>

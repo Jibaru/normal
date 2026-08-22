@@ -25,17 +25,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Dialog,
-  DialogBody,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
@@ -43,6 +32,17 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import {
+  FormOverlay,
+  FormOverlayBody,
+  FormOverlayClose,
+  FormOverlayContent,
+  FormOverlayDescription,
+  FormOverlayFooter,
+  FormOverlayHeader,
+  FormOverlayTitle,
+  FormOverlayTrigger,
+} from "@/components/ui/form-overlay";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -2089,7 +2089,7 @@ export function PublicBoundaryJourney({
                 Connection health, message history, and reconnect controls.
               </p>
             </div>
-            <Dialog
+            <FormOverlay
               onOpenChange={(open) => {
                 const durableActiveSetup =
                   setupId !== null &&
@@ -2111,21 +2111,20 @@ export function PublicBoundaryJourney({
               }}
               open={setupDialogOpen}
             >
-              <DialogTrigger render={<Button />}>
+              <FormOverlayTrigger render={<Button />}>
                 Register WhatsApp Number
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>New WhatsApp Connection</DialogTitle>
-                  <DialogDescription>
+              </FormOverlayTrigger>
+              <FormOverlayContent>
+                <FormOverlayHeader>
+                  <FormOverlayTitle>New WhatsApp Connection</FormOverlayTitle>
+                  <FormOverlayDescription>
                     Enter the number you want to connect. You will scan a QR
                     code in WhatsApp next.
-                  </DialogDescription>
-                </DialogHeader>
+                  </FormOverlayDescription>
+                </FormOverlayHeader>
                 <ConnectionSetupForm
                   connectionName={connectionName}
                   idPrefix="additional-connection"
-                  layout="dialog"
                   onCancelSetup={cancelSetup}
                   onConnectionNameChange={updateConnectionName}
                   onResetSetup={clearSetupDraft}
@@ -2137,8 +2136,8 @@ export function PublicBoundaryJourney({
                   setupState={setupState}
                   whatsappNumber={whatsappNumber}
                 />
-              </DialogContent>
-            </Dialog>
+              </FormOverlayContent>
+            </FormOverlay>
           </div>
           {connectionDeletionStatus.length > 0 ? (
             <p aria-live="polite" className="text-sm text-muted-foreground">
@@ -2262,21 +2261,23 @@ export function PublicBoundaryJourney({
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
-                  <Dialog
+                  <FormOverlay
                     onOpenChange={(open) => {
                       if (!open) setConfigurationConnectionId(null);
                     }}
                     open={configurationConnectionId === connection.id}
                   >
-                    <DialogContent>
-                      <DialogHeader>
-                        <DialogTitle>Configure WhatsApp Connection</DialogTitle>
-                        <DialogDescription>
+                    <FormOverlayContent>
+                      <FormOverlayHeader>
+                        <FormOverlayTitle>
+                          Configure WhatsApp Connection
+                        </FormOverlayTitle>
+                        <FormOverlayDescription>
                           Rename this WhatsApp Connection or choose how long to
                           keep its message history.
-                        </DialogDescription>
-                      </DialogHeader>
-                      <DialogBody className="flex flex-col gap-6">
+                        </FormOverlayDescription>
+                      </FormOverlayHeader>
+                      <FormOverlayBody className="flex flex-col gap-6">
                         <Field>
                           <FieldLabel htmlFor={`name-${connection.id}`}>
                             Name
@@ -2409,8 +2410,8 @@ export function PublicBoundaryJourney({
                               `Current policy: ${connection.retentionDays === null ? "retain until Connection Deletion" : `${connection.retentionDays} days`}.`}
                           </p>
                         </FieldGroup>
-                      </DialogBody>
-                      <DialogFooter>
+                      </FormOverlayBody>
+                      <FormOverlayFooter>
                         <Button
                           disabled={(() => {
                             const name =
@@ -2455,25 +2456,27 @@ export function PublicBoundaryJourney({
                           ) : null}
                           Save changes
                         </Button>
-                      </DialogFooter>
-                    </DialogContent>
-                  </Dialog>
-                  <Dialog
+                      </FormOverlayFooter>
+                    </FormOverlayContent>
+                  </FormOverlay>
+                  <FormOverlay
                     onOpenChange={(open) => {
                       if (!open) setReconnectConnectionId(null);
                     }}
                     open={reconnectConnectionId === connection.id}
                   >
-                    <DialogContent>
-                      <DialogHeader>
-                        <DialogTitle>Reconnect WhatsApp Connection</DialogTitle>
-                        <DialogDescription>
+                    <FormOverlayContent>
+                      <FormOverlayHeader>
+                        <FormOverlayTitle>
+                          Reconnect WhatsApp Connection
+                        </FormOverlayTitle>
+                        <FormOverlayDescription>
                           Restore the WhatsApp Connection ending{" "}
                           {connection.numberSuffix}. You may need to scan a new
                           QR code in WhatsApp.
-                        </DialogDescription>
-                      </DialogHeader>
-                      <DialogBody className="flex flex-col gap-5">
+                        </FormOverlayDescription>
+                      </FormOverlayHeader>
+                      <FormOverlayBody className="flex flex-col gap-5">
                         <p className="rounded-lg bg-muted px-3 py-2.5 text-sm leading-5 text-muted-foreground">
                           New side effects remain blocked until this WhatsApp
                           Connection recovers. Retained history remains
@@ -2498,11 +2501,11 @@ export function PublicBoundaryJourney({
                             src={reconnectQr.url}
                           />
                         ) : null}
-                      </DialogBody>
-                      <DialogFooter>
-                        <DialogClose render={<Button variant="outline" />}>
+                      </FormOverlayBody>
+                      <FormOverlayFooter>
+                        <FormOverlayClose render={<Button variant="outline" />}>
                           Cancel
-                        </DialogClose>
+                        </FormOverlayClose>
                         <Button
                           aria-label={`Reconnect WhatsApp Connection ending ${connection.numberSuffix}`}
                           disabled={connectionLifecycleAction !== null}
@@ -2516,9 +2519,9 @@ export function PublicBoundaryJourney({
                           ) : null}
                           Reconnect
                         </Button>
-                      </DialogFooter>
-                    </DialogContent>
-                  </Dialog>
+                      </FormOverlayFooter>
+                    </FormOverlayContent>
+                  </FormOverlay>
                 </li>
               ))}
             </ul>
