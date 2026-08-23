@@ -6,21 +6,6 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { useState } from "react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Spinner } from "@/components/ui/spinner";
 import { queryKeys } from "@/lib/query/keys";
 import {
   applyRecipientExclusion,
@@ -38,9 +23,7 @@ export interface RecipientConnection {
   readonly numberSuffix: string;
 }
 
-const recipientLabel = (recipient: Recipient) =>
-  recipient.displayName ??
-  (recipient.kind === "contact" ? "Unnamed contact" : "Unnamed group");
+const recipientLabel = (recipient: Recipient) => recipient.displayName ?? "";
 
 export function RecipientExclusions({
   connections,
@@ -118,6 +101,15 @@ export function RecipientExclusions({
   });
 
   const page = flattenRecipientPages(recipientsQuery.data?.pages);
+  const knownRecipients = (page?.recipients ?? []).filter((recipient) =>
+    Boolean(recipient.displayName?.trim()),
+  );
+  const trackedRecipients = knownRecipients.filter(
+    (recipient) => !recipient.excluded,
+  );
+  const excludedRecipients = knownRecipients.filter(
+    (recipient) => recipient.excluded,
+  );
   const listUnavailable =
     recipientsQuery.isError && recipientsQuery.data === undefined;
   const listLoading = recipientsQuery.isFetching;
@@ -155,75 +147,61 @@ export function RecipientExclusions({
   }
 
   return (
-    <div className="flex w-full flex-col gap-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-        <Field className="sm:w-64">
-          <FieldLabel htmlFor="recipient-connection">
-            WhatsApp Connection
-          </FieldLabel>
-          <Select
-            items={connections.map((connection) => ({
-              label:
-                connection.displayName ??
-                `WhatsApp Connection ending ${connection.numberSuffix}`,
-              value: connection.id,
-            }))}
-            onValueChange={(value) => {
-              setConnectionId(String(value));
-            }}
+    <div className="flex w-full flex-col gap-6">
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,16rem)_10rem_minmax(16rem,1fr)] sm:items-start">
+        <label
+          className="grid gap-1.5 text-sm font-medium"
+          htmlFor="recipient-connection"
+        >
+          WhatsApp Connection
+          <select
+            className="h-10 w-full rounded-lg border bg-background px-3 text-sm shadow-xs outline-none transition-[border-color,box-shadow] duration-150 ease-[var(--ease-out)] focus:border-ring focus:ring-3 focus:ring-ring/20"
+            id="recipient-connection"
+            onChange={(event) => setConnectionId(event.target.value)}
             value={selectedConnectionId ?? ""}
           >
-            <SelectTrigger id="recipient-connection">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {connections.map((connection) => (
-                  <SelectItem key={connection.id} value={connection.id}>
-                    {connection.displayName ??
-                      `WhatsApp Connection ending ${connection.numberSuffix}`}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </Field>
-        <Field className="sm:w-40">
-          <FieldLabel htmlFor="recipient-kind">Recipient kind</FieldLabel>
-          <Select
-            items={[
-              { label: "Contacts", value: "contact" },
-              { label: "Groups", value: "group" },
-            ]}
-            onValueChange={(value) => {
-              setKind(value === "group" ? "group" : "contact");
-            }}
+            {connections.map((connection) => (
+              <option key={connection.id} value={connection.id}>
+                {connection.displayName ??
+                  `WhatsApp Connection ending ${connection.numberSuffix}`}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label
+          className="grid gap-1.5 text-sm font-medium"
+          htmlFor="recipient-kind"
+        >
+          Recipient kind
+          <select
+            className="h-10 w-full rounded-lg border bg-background px-3 text-sm shadow-xs outline-none transition-[border-color,box-shadow] duration-150 ease-[var(--ease-out)] focus:border-ring focus:ring-3 focus:ring-ring/20"
+            id="recipient-kind"
+            onChange={(event) =>
+              setKind(event.target.value === "group" ? "group" : "contact")
+            }
             value={kind}
           >
-            <SelectTrigger id="recipient-kind">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                <SelectItem value="contact">Contacts</SelectItem>
-                <SelectItem value="group">Groups</SelectItem>
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </Field>
-        <Field className="sm:flex-1">
-          <FieldLabel htmlFor="recipient-search">Search by name</FieldLabel>
-          <Input
+            <option value="contact">Contacts</option>
+            <option value="group">Groups</option>
+          </select>
+        </label>
+        <label
+          className="grid gap-1.5 text-sm font-medium"
+          htmlFor="recipient-search"
+        >
+          Search by name
+          <input
+            className="h-10 w-full rounded-lg border bg-background px-3 text-sm shadow-xs outline-none transition-[border-color,box-shadow] duration-150 ease-[var(--ease-out)] placeholder:text-muted-foreground focus:border-ring focus:ring-3 focus:ring-ring/20"
             id="recipient-search"
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Start of a display name"
             type="search"
             value={search}
           />
-          <FieldDescription>
-            Enter at least three characters of a display name.
-          </FieldDescription>
-        </Field>
+          <span className="text-xs font-normal text-muted-foreground">
+            Enter at least three characters.
+          </span>
+        </label>
       </div>
 
       {page === null ? null : (
@@ -244,65 +222,133 @@ export function RecipientExclusions({
         </p>
       ) : null}
 
-      <ul className="flex flex-col gap-2" data-testid="recipient-exclusions">
-        {(page?.recipients ?? []).map((recipient) => (
-          <li
-            className="flex items-center justify-between gap-3 rounded-xl bg-card p-3 text-card-foreground ring-1 ring-foreground/10"
-            data-testid="recipient-exclusion"
-            key={recipient.id}
-          >
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="truncate font-medium">
-                  {recipientLabel(recipient)}
-                </p>
-                <Badge variant="outline">
-                  {recipient.kind === "contact" ? "Contact" : "Group"}
-                </Badge>
+      {page === null || listUnavailable ? null : (
+        <div className="grid gap-8" data-testid="recipient-exclusions">
+          {[
+            {
+              empty: `No known ${kind === "contact" ? "contacts" : "groups"} are currently tracked.`,
+              heading: `Tracked ${kind === "contact" ? "contacts" : "groups"}`,
+              recipients: trackedRecipients,
+            },
+            {
+              empty: `No known ${kind === "contact" ? "contacts" : "groups"} are excluded.`,
+              heading: `${kind === "contact" ? "Contacts" : "Groups"} not tracked`,
+              recipients: excludedRecipients,
+            },
+          ].map((table) => (
+            <section className="grid gap-2" key={table.heading}>
+              <div className="flex items-baseline justify-between gap-4">
+                <h3 className="text-sm font-semibold">{table.heading}</h3>
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {table.recipients.length}
+                </span>
               </div>
-              {recipient.phoneLastFour === null ? null : (
-                <p className="text-xs text-muted-foreground">
-                  Ends in {recipient.phoneLastFour}
-                </p>
-              )}
-            </div>
-            <div className="flex shrink-0 items-center gap-2 text-sm">
-              {exclusionMutation.isPending &&
-              exclusionMutation.variables?.recipient.id === recipient.id ? (
-                <Spinner data-icon="inline-start" />
-              ) : null}
-              <Checkbox
-                checked={recipient.excluded}
-                disabled={exclusionMutation.isPending}
-                id={`exclude-${recipient.id}`}
-                onCheckedChange={(checked) =>
-                  void setExcluded(recipient, checked === true)
-                }
-              />
-              <Label htmlFor={`exclude-${recipient.id}`}>
-                Do not track
-                <span className="sr-only"> {recipientLabel(recipient)}</span>
-              </Label>
-            </div>
-          </li>
-        ))}
-      </ul>
+              <div className="overflow-x-auto rounded-xl border">
+                <table className="w-full min-w-[34rem] border-collapse text-left text-sm">
+                  <thead className="bg-muted/45 text-xs text-muted-foreground">
+                    <tr>
+                      <th className="px-4 py-2.5 font-medium" scope="col">
+                        Name
+                      </th>
+                      <th className="px-4 py-2.5 font-medium" scope="col">
+                        Kind
+                      </th>
+                      <th className="px-4 py-2.5 font-medium" scope="col">
+                        Phone
+                      </th>
+                      <th
+                        className="px-4 py-2.5 text-right font-medium"
+                        scope="col"
+                      >
+                        Action
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {table.recipients.length === 0 ? (
+                      <tr>
+                        <td
+                          className="px-4 py-8 text-center text-muted-foreground"
+                          colSpan={4}
+                        >
+                          {table.empty}
+                        </td>
+                      </tr>
+                    ) : (
+                      table.recipients.map((recipient) => {
+                        const saving =
+                          exclusionMutation.isPending &&
+                          exclusionMutation.variables?.recipient.id ===
+                            recipient.id;
+                        return (
+                          <tr
+                            data-testid="recipient-exclusion"
+                            key={recipient.id}
+                          >
+                            <th className="px-4 py-3 font-medium" scope="row">
+                              {recipientLabel(recipient)}
+                            </th>
+                            <td className="px-4 py-3 text-muted-foreground">
+                              {recipient.kind === "contact"
+                                ? "Contact"
+                                : "Group"}
+                            </td>
+                            <td className="px-4 py-3 tabular-nums text-muted-foreground">
+                              {recipient.phoneLastFour === null
+                                ? "Not available"
+                                : `Ending ${recipient.phoneLastFour}`}
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              <button
+                                aria-label={`${recipient.excluded ? "Track again" : "Stop tracking"} ${recipientLabel(recipient)}`}
+                                className="rounded-md px-2.5 py-1.5 font-medium text-foreground outline-none transition-[background-color,transform] duration-150 ease-[var(--ease-out)] hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/40 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
+                                disabled={exclusionMutation.isPending}
+                                onClick={() =>
+                                  void setExcluded(
+                                    recipient,
+                                    !recipient.excluded,
+                                  )
+                                }
+                                type="button"
+                              >
+                                {saving
+                                  ? "Saving..."
+                                  : recipient.excluded
+                                    ? "Track again"
+                                    : "Stop tracking"}
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
 
       {listLoading && page === null ? (
         <p className="text-sm text-muted-foreground">Loading recipients.</p>
       ) : null}
 
       {page?.nextCursor == null ? null : (
-        <Button
+        <button
+          className="w-fit rounded-lg border bg-background px-3 py-2 text-sm font-medium shadow-xs outline-none transition-[background-color,transform] duration-150 ease-[var(--ease-out)] hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/40 active:scale-[0.97]"
           onClick={() => void recipientsQuery.fetchNextPage()}
           type="button"
-          variant="outline"
         >
           Show more recipients
-        </Button>
+        </button>
       )}
 
-      <p aria-live="polite" data-testid="recipient-exclusion-status">
+      <p
+        aria-live="polite"
+        className="min-h-5 text-sm text-muted-foreground"
+        data-testid="recipient-exclusion-status"
+      >
         {status}
       </p>
     </div>

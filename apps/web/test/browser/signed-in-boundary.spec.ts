@@ -597,25 +597,26 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     name: "WhatsApp Recipient Exclusions",
   });
   await expect(exclusions).toBeVisible();
-  const excludeAda = exclusions.getByRole("checkbox", {
-    name: "Do not track Ada Lovelace",
+  const excludeAda = exclusions.getByRole("button", {
+    name: "Stop tracking Ada Lovelace",
   });
-  await expect(excludeAda).not.toBeChecked();
   await excludeAda.click();
   await expect(page.getByTestId("recipient-exclusion-status")).toContainText(
     "Normal no longer tracks Ada Lovelace.",
   );
-  await expect(excludeAda).toBeChecked();
+  await expect(
+    exclusions.getByRole("button", { name: "Track again Ada Lovelace" }),
+  ).toBeVisible();
   await page.reload();
   await expect(
-    page.getByRole("checkbox", { name: "Do not track Ada Lovelace" }),
-  ).toBeChecked();
+    page.getByRole("button", { name: "Track again Ada Lovelace" }),
+  ).toBeVisible();
   await page.getByLabel("Search by name").fill("grace");
   await expect(
-    page.getByRole("checkbox", { name: "Do not track Grace Hopper" }),
+    page.getByRole("button", { name: "Stop tracking Grace Hopper" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("checkbox", { name: "Do not track Ada Lovelace" }),
+    page.getByRole("button", { name: "Track again Ada Lovelace" }),
   ).toHaveCount(0);
   // A scoped recipient outage must not disable unrelated account controls.
   await expect(

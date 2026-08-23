@@ -2537,11 +2537,11 @@ export function PublicBoundaryJourney({
           aria-label="WhatsApp Recipient Exclusions"
           className="flex flex-col items-start gap-3"
         >
-          <h2 className="text-lg font-semibold">Recipients Normal may track</h2>
+          <h2 className="text-lg font-semibold">Recipient tracking</h2>
           <p className="text-sm text-muted-foreground">
-            Choose contacts and groups Normal must not track. A recipient you
-            exclude disappears from every MCP Client, cannot be sent to, and has
-            its stored history removed. Removing an exclusion permits only
+            Manage known contacts and groups Normal may track. An excluded
+            recipient disappears from every MCP Client, cannot be sent to, and
+            has its stored history removed. Tracking it again permits only
             future activity.
           </p>
           <RecipientExclusions
