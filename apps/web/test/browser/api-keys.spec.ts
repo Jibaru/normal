@@ -146,7 +146,7 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
   expect(createRequests).toBe(1);
   expect(tokenRequests).toContainEqual({ skipCache: true });
   await expect(panel).not.toContainText("temporarily unavailable");
-  await expect(panel.getByRole("heading", { name: "CI" })).toBeVisible();
+  await expect(panel.getByTestId("api-key-row")).toContainText("CI");
   await expect(panel.getByTestId("api-key-state")).toHaveText("Active");
 
   const curlCommand = reveal.getByLabel("Send message curl command");
@@ -285,8 +285,12 @@ test("renders expired and revoked API Key dashboard states without recovery", as
   await page.goto("/dashboard/api-keys");
 
   const panel = page.getByRole("region", { name: "API Keys" });
-  await expect(panel.getByRole("heading", { name: "Temporary" })).toBeVisible();
-  await expect(panel.getByRole("heading", { name: "Retired" })).toBeVisible();
+  await expect(
+    panel.getByTestId("api-key-row").filter({ hasText: "Temporary" }),
+  ).toBeVisible();
+  await expect(
+    panel.getByTestId("api-key-row").filter({ hasText: "Retired" }),
+  ).toBeVisible();
   await expect(panel.getByTestId("api-key-state")).toHaveText([
     "Expired",
     "Revoked",

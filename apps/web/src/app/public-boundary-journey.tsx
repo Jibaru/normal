@@ -1641,109 +1641,111 @@ export function PublicBoundaryJourney({
               ) : authorizations.length === 0 ? (
                 <p>No MCP Clients currently have access.</p>
               ) : (
-                <ul className="flex flex-col gap-3">
-                  {authorizations.map((authorization) => {
-                    const stateLabel =
-                      authorization.revocationState === "revoked"
-                        ? "Revoked"
-                        : authorization.expiryState === "expired"
-                          ? "Expired"
-                          : "Active";
-                    return (
-                      <li
-                        className="flex flex-col gap-4 rounded-xl bg-card p-5 ring-1 ring-foreground/10 sm:p-6"
-                        key={authorization.id}
-                      >
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
-                            <h3 className="font-medium">
-                              {authorization.client.name}
-                            </h3>
-                            <p
-                              className="mt-0.5 max-w-48 truncate font-mono text-xs text-muted-foreground"
-                              title={authorization.client.id}
-                            >
-                              {authorization.client.id}
-                            </p>
-                          </div>
-                          <Badge
-                            data-testid="mcp-authorization-state"
-                            variant="outline"
+                <div className="rounded-xl border bg-card">
+                  <Table className="min-w-5xl">
+                    <TableHeader className="bg-muted/40 text-xs text-muted-foreground">
+                      <TableRow>
+                        <TableHead className="px-4">MCP Client</TableHead>
+                        <TableHead className="px-4">Status</TableHead>
+                        <TableHead className="px-4">Created</TableHead>
+                        <TableHead className="px-4">Expires</TableHead>
+                        <TableHead className="px-4">Permissions</TableHead>
+                        <TableHead className="px-4">Connections</TableHead>
+                        <TableHead className="px-4 text-right">
+                          Actions
+                        </TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {authorizations.map((authorization) => {
+                        const stateLabel =
+                          authorization.revocationState === "revoked"
+                            ? "Revoked"
+                            : authorization.expiryState === "expired"
+                              ? "Expired"
+                              : "Active";
+                        return (
+                          <TableRow
+                            data-testid="mcp-authorization-row"
+                            key={authorization.id}
                           >
-                            {stateLabel}
-                          </Badge>
-                        </div>
-                        <dl className="grid gap-3 text-sm sm:grid-cols-2">
-                          <div>
-                            <dt className="text-muted-foreground">Created</dt>
-                            <dd>
+                            <TableCell className="px-4 py-3 align-top">
+                              <p className="font-medium">
+                                {authorization.client.name}
+                              </p>
+                              <p
+                                className="mt-0.5 max-w-48 truncate font-mono text-xs text-muted-foreground"
+                                title={authorization.client.id}
+                              >
+                                {authorization.client.id}
+                              </p>
+                            </TableCell>
+                            <TableCell className="px-4 py-3 align-top">
+                              <Badge
+                                data-testid="mcp-authorization-state"
+                                variant="outline"
+                              >
+                                {stateLabel}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="px-4 py-3 align-top">
                               <time dateTime={authorization.createdAt}>
                                 {displayTime(authorization.createdAt)} UTC
                               </time>
-                            </dd>
-                          </div>
-                          <div>
-                            <dt className="text-muted-foreground">Expires</dt>
-                            <dd>
+                            </TableCell>
+                            <TableCell className="px-4 py-3 align-top">
                               <time dateTime={authorization.expiresAt}>
                                 {displayTime(authorization.expiresAt)} UTC
                               </time>
-                            </dd>
-                          </div>
-                        </dl>
-                        <details className="text-sm text-muted-foreground">
-                          <summary className="w-fit cursor-pointer select-none font-medium text-foreground">
-                            Technical details
-                          </summary>
-                          <div className="mt-3 flex flex-col gap-1">
-                            <p className="text-sm text-muted-foreground">
-                              WhatsApp Connections
-                            </p>
-                            <ul className="flex flex-col gap-1 font-mono text-xs">
-                              {authorization.connectionIds.map(
-                                (connectionId) => (
-                                  <li key={connectionId}>{connectionId}</li>
-                                ),
-                              )}
-                            </ul>
-                          </div>
-                        </details>
-                        <div className="flex flex-col gap-1">
-                          <p className="text-sm text-muted-foreground">
-                            Permissions
-                          </p>
-                          <ul className="flex flex-wrap gap-2 text-xs">
-                            {authorization.scopes.map((scope) => (
-                              <li key={scope}>
-                                <Badge variant="secondary">
-                                  {scopeLabels[scope]}
-                                </Badge>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                        <Button
-                          className="self-start"
-                          aria-label={`Revoke ${authorization.client.name}`}
-                          disabled={
-                            authorization.revocationState === "revoked" ||
-                            revokingAuthorization === authorization.id
-                          }
-                          onClick={() => revokeAuthorization(authorization)}
-                          type="button"
-                          variant="destructive"
-                        >
-                          {revokingAuthorization === authorization.id ? (
-                            <Spinner data-icon="inline-start" />
-                          ) : null}
-                          {revokingAuthorization === authorization.id
-                            ? "Revoking…"
-                            : "Revoke access"}
-                        </Button>
-                      </li>
-                    );
-                  })}
-                </ul>
+                            </TableCell>
+                            <TableCell className="max-w-72 px-4 py-3 align-top whitespace-normal">
+                              <ul className="flex flex-wrap gap-1.5 text-xs">
+                                {authorization.scopes.map((scope) => (
+                                  <li key={scope}>
+                                    <Badge variant="secondary">
+                                      {scopeLabels[scope]}
+                                    </Badge>
+                                  </li>
+                                ))}
+                              </ul>
+                            </TableCell>
+                            <TableCell className="max-w-64 px-4 py-3 align-top whitespace-normal">
+                              <ul className="flex flex-col gap-1 font-mono text-xs text-muted-foreground">
+                                {authorization.connectionIds.map(
+                                  (connectionId) => (
+                                    <li key={connectionId}>{connectionId}</li>
+                                  ),
+                                )}
+                              </ul>
+                            </TableCell>
+                            <TableCell className="px-4 py-3 text-right align-top">
+                              <Button
+                                aria-label={`Revoke ${authorization.client.name}`}
+                                disabled={
+                                  authorization.revocationState === "revoked" ||
+                                  revokingAuthorization === authorization.id
+                                }
+                                onClick={() =>
+                                  revokeAuthorization(authorization)
+                                }
+                                size="sm"
+                                type="button"
+                                variant="destructive"
+                              >
+                                {revokingAuthorization === authorization.id ? (
+                                  <Spinner data-icon="inline-start" />
+                                ) : null}
+                                {revokingAuthorization === authorization.id
+                                  ? "Revoking…"
+                                  : "Revoke"}
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
               )}
             </section>
           ) : null}

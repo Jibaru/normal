@@ -33,6 +33,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { queryKeys } from "@/lib/query/keys";
 import {
   type ApiKeyRecord,
@@ -577,42 +585,54 @@ export function ApiKeysPanel({
           {keys.length === 0 ? (
             <p>No API Keys yet.</p>
           ) : (
-            <ul className="flex flex-col gap-3">
-              {keys.map((key) => {
-                const stateLabel =
-                  key.state === "revoked"
-                    ? "Revoked"
-                    : key.state === "expired"
-                      ? "Expired"
-                      : "Active";
-                return (
-                  <li
-                    className="flex flex-col gap-4 rounded-xl bg-card p-5 ring-1 ring-foreground/10"
-                    key={key.id}
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <h3 className="font-medium">{key.name}</h3>
-                        <p className="mt-0.5 font-mono text-xs text-muted-foreground">
-                          {key.credential_hint}
-                        </p>
-                      </div>
-                      <Badge data-testid="api-key-state" variant="outline">
-                        {stateLabel}
-                      </Badge>
-                    </div>
-                    <dl className="grid gap-3 text-sm sm:grid-cols-2">
-                      <div>
-                        <dt className="text-muted-foreground">Created</dt>
-                        <dd>
+            <div className="rounded-xl border bg-card">
+              <Table className="min-w-6xl">
+                <TableHeader className="bg-muted/40 text-xs text-muted-foreground">
+                  <TableRow>
+                    <TableHead className="px-4">API Key</TableHead>
+                    <TableHead className="px-4">Status</TableHead>
+                    <TableHead className="px-4">Created</TableHead>
+                    <TableHead className="px-4">Expires</TableHead>
+                    <TableHead className="px-4">Last used</TableHead>
+                    <TableHead className="px-4">Permissions</TableHead>
+                    <TableHead className="px-4">Connections</TableHead>
+                    <TableHead className="px-4 text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {keys.map((key) => {
+                    const stateLabel =
+                      key.state === "revoked"
+                        ? "Revoked"
+                        : key.state === "expired"
+                          ? "Expired"
+                          : "Active";
+                    return (
+                      <TableRow data-testid="api-key-row" key={key.id}>
+                        <TableCell className="px-4 py-3 align-top">
+                          <p className="font-medium">{key.name}</p>
+                          <p className="mt-0.5 font-mono text-xs text-muted-foreground">
+                            {key.credential_hint}
+                          </p>
+                        </TableCell>
+                        <TableCell className="px-4 py-3 align-top">
+                          <Badge data-testid="api-key-state" variant="outline">
+                            {stateLabel}
+                          </Badge>
+                          {key.revoked_at === null ? null : (
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              <time dateTime={key.revoked_at}>
+                                {displayTime(key.revoked_at)} UTC
+                              </time>
+                            </p>
+                          )}
+                        </TableCell>
+                        <TableCell className="px-4 py-3 align-top">
                           <time dateTime={key.created_at}>
                             {displayTime(key.created_at)} UTC
                           </time>
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-muted-foreground">Expires</dt>
-                        <dd>
+                        </TableCell>
+                        <TableCell className="px-4 py-3 align-top">
                           {key.expires_at === null ? (
                             "No expiry"
                           ) : (
@@ -620,53 +640,49 @@ export function ApiKeysPanel({
                               {displayTime(key.expires_at)} UTC
                             </time>
                           )}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-muted-foreground">Last used</dt>
-                        <dd>
-                          {key.last_used_at === null
-                            ? "Never"
-                            : displayTime(key.last_used_at)}
-                        </dd>
-                      </div>
-                      {key.revoked_at === null ? null : (
-                        <div>
-                          <dt className="text-muted-foreground">Revoked</dt>
-                          <dd>
-                            <time dateTime={key.revoked_at}>
-                              {displayTime(key.revoked_at)} UTC
+                        </TableCell>
+                        <TableCell className="px-4 py-3 align-top">
+                          {key.last_used_at === null ? (
+                            "Never"
+                          ) : (
+                            <time dateTime={key.last_used_at}>
+                              {displayTime(key.last_used_at)} UTC
                             </time>
-                          </dd>
-                        </div>
-                      )}
-                    </dl>
-                    <p className="text-sm">
-                      {key.permissions
-                        .map(
-                          (permission) =>
-                            PERMISSIONS.find((item) => item.id === permission)
-                              ?.label ?? permission,
-                        )
-                        .join(", ")}
-                    </p>
-                    <p className="font-mono text-xs text-muted-foreground">
-                      {key.connection_ids.join(", ")}
-                    </p>
-                    <Button
-                      disabled={
-                        key.state !== "active" || revokeMutation.isPending
-                      }
-                      onClick={() => void revoke(key)}
-                      type="button"
-                      variant="outline"
-                    >
-                      Revoke {key.name}
-                    </Button>
-                  </li>
-                );
-              })}
-            </ul>
+                          )}
+                        </TableCell>
+                        <TableCell className="max-w-60 px-4 py-3 align-top whitespace-normal">
+                          {key.permissions
+                            .map(
+                              (permission) =>
+                                PERMISSIONS.find(
+                                  (item) => item.id === permission,
+                                )?.label ?? permission,
+                            )
+                            .join(", ")}
+                        </TableCell>
+                        <TableCell className="max-w-64 px-4 py-3 align-top font-mono text-xs whitespace-normal text-muted-foreground">
+                          {key.connection_ids.join(", ")}
+                        </TableCell>
+                        <TableCell className="px-4 py-3 text-right align-top">
+                          <Button
+                            aria-label={`Revoke ${key.name}`}
+                            disabled={
+                              key.state !== "active" || revokeMutation.isPending
+                            }
+                            onClick={() => void revoke(key)}
+                            size="sm"
+                            type="button"
+                            variant="outline"
+                          >
+                            Revoke
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </>
       )}
