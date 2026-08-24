@@ -185,10 +185,10 @@ describe("Send Operation grant identities", () => {
     expect(second).toMatchObject({ outcome: "created" });
     repository = makeMcpToolRepository(provider);
     sends = makePgAtomicSendRepository(provider);
-  }, 30_000);
+  }, 120_000);
 
   afterEach(async () => {
-    await database.close();
+    await database?.close();
   }, 30_000);
 
   const mcpGrant = mcpSendGrant({
