@@ -787,6 +787,101 @@ html {
   border-top: 1px solid var(--landing-line);
 }
 
+.developer-sections {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  padding-bottom: 128px;
+}
+
+.developer-section {
+  display: flex;
+  min-height: 460px;
+  flex-direction: column;
+  align-items: flex-start;
+  border-radius: var(--radius);
+  padding: clamp(38px, 5vw, 62px);
+}
+
+.developer-section-icon {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 64px;
+  place-items: center;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+}
+
+.developer-section-icon svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 1.6;
+}
+
+.developer-section h2 {
+  max-width: 500px;
+  margin-top: 18px;
+  font-size: clamp(2.4rem, 4vw, 4rem);
+  font-weight: 580;
+  letter-spacing: -0.06em;
+  line-height: 1.02;
+  text-wrap: balance;
+}
+
+.developer-section > p:not(.section-kicker) {
+  max-width: 500px;
+  margin-top: 24px;
+  font-size: 0.92rem;
+  line-height: 1.75;
+}
+
+.developer-section > a {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: auto;
+  border-radius: var(--radius);
+  padding: 12px 17px;
+  font-size: 0.86rem;
+  font-weight: 680;
+  text-decoration: none;
+}
+
+.developer-section > a svg {
+  width: 15px;
+  transition: transform 180ms var(--ease-out);
+}
+
+.open-source-section {
+  background: var(--landing-ink);
+  color: var(--landing-paper);
+}
+
+.open-source-section .section-kicker,
+.open-source-section > p:not(.section-kicker) {
+  color: color-mix(in oklch, var(--landing-paper) 70%, transparent);
+}
+
+.open-source-section > a {
+  background: var(--landing-paper);
+  color: var(--landing-ink);
+}
+
+.docs-section {
+  border: 1px solid var(--landing-line);
+  background: var(--landing-wash);
+}
+
+.docs-section > p:not(.section-kicker) {
+  color: var(--muted-foreground);
+}
+
+.docs-section > a {
+  background: var(--landing-ink);
+  color: var(--landing-paper);
+}
+
 .faq-section h2 {
   margin-top: 22px;
   font-size: clamp(2.4rem, 4vw, 4.1rem);
@@ -876,7 +971,7 @@ html {
 
 .landing-footer {
   display: grid;
-  grid-template-columns: minmax(180px, 1.3fr) 1fr 1fr auto;
+  grid-template-columns: minmax(180px, 1.3fr) repeat(3, 1fr) auto;
   gap: 64px;
   align-items: start;
   padding-block: 64px;
@@ -915,6 +1010,10 @@ html {
 }
 
 @media (hover: hover) and (pointer: fine) {
+  .developer-section > a:hover svg {
+    transform: translateX(3px);
+  }
+
   .landing-footer-contact:hover svg {
     transform: translateX(3px);
   }
@@ -986,6 +1085,10 @@ html {
   }
 
   .control-card {
+    grid-template-columns: 1fr;
+  }
+
+  .developer-sections {
     grid-template-columns: 1fr;
   }
 
@@ -1070,6 +1173,19 @@ html {
   .control-section {
     width: 100%;
     padding: 0;
+  }
+
+  .developer-sections {
+    padding-block: 88px;
+  }
+
+  .developer-section {
+    min-height: 420px;
+    padding: 38px 28px;
+  }
+
+  .developer-section-icon {
+    margin-bottom: 52px;
   }
 
   .control-card {
@@ -1401,6 +1517,12 @@ html {
 
 .resource-footer > a:last-child {
   justify-self: end;
+}
+
+.resource-footer > nav {
+  display: flex;
+  justify-self: end;
+  gap: 20px;
 }
 
 .resource-footer p {

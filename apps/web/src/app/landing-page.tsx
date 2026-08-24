@@ -1,8 +1,10 @@
 import {
   ArrowDown,
   ArrowRight,
+  BookOpen,
   CalendarCheck2,
   Check,
+  GitFork,
   ListTodo,
   MessagesSquare,
   Reply,
@@ -28,6 +30,8 @@ import {
 } from "@/components/ui/card";
 
 const contactUrl = "https://cal.com/cuevaio/whatsapp-mcp";
+const docsUrl = "https://docs.normal.fast";
+const sourceUrl = "https://github.com/cuevaio/normal";
 
 const useCases = [
   {
@@ -126,6 +130,12 @@ export function LandingPage() {
           <a href="/guides">Guides</a>
           <a href="#how-it-works">How it works</a>
           <a href="#control">Control</a>
+          <a href={docsUrl} rel="noreferrer" target="_blank">
+            Docs
+          </a>
+          <a href={sourceUrl} rel="noreferrer" target="_blank">
+            GitHub
+          </a>
         </div>
         <div className="landing-nav-actions">
           <a
@@ -401,6 +411,39 @@ export function LandingPage() {
         </div>
       </section>
 
+      <div className="developer-sections landing-shell">
+        <section className="developer-section open-source-section">
+          <div className="developer-section-icon">
+            <GitFork aria-hidden="true" />
+          </div>
+          <p className="section-kicker">Open source</p>
+          <h2>Normal is open source.</h2>
+          <p>
+            Inspect how Normal works, follow its development, or contribute on
+            GitHub. The complete codebase is available under the AGPL v3
+            license.
+          </p>
+          <a href={sourceUrl} rel="noreferrer" target="_blank">
+            Explore the source <ArrowRight aria-hidden="true" />
+          </a>
+        </section>
+
+        <section className="developer-section docs-section">
+          <div className="developer-section-icon">
+            <BookOpen aria-hidden="true" />
+          </div>
+          <p className="section-kicker">Documentation</p>
+          <h2>Build with the Normal API.</h2>
+          <p>
+            Explore the API reference for authentication, permissions,
+            connections, messages, and outbound sends.
+          </p>
+          <a href={docsUrl} rel="noreferrer" target="_blank">
+            Read the docs <ArrowRight aria-hidden="true" />
+          </a>
+        </section>
+      </div>
+
       <section
         aria-labelledby="faq-title"
         className="faq-section landing-shell"
@@ -444,6 +487,15 @@ export function LandingPage() {
           <a href="/guides/what-is-whatsapp-mcp">What is Normal?</a>
           <a href="/guides/connect-whatsapp-to-claude">Connect to Claude</a>
           <a href="/guides/whatsapp-mcp-privacy">Privacy and control</a>
+        </nav>
+        <nav aria-label="Developer links" className="landing-footer-links">
+          <strong>Developers</strong>
+          <a href={docsUrl} rel="noreferrer" target="_blank">
+            Documentation
+          </a>
+          <a href={sourceUrl} rel="noreferrer" target="_blank">
+            GitHub
+          </a>
         </nav>
         <a
           className="landing-footer-contact"

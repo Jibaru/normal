@@ -4,6 +4,8 @@ import type { ContentCollection, ContentPage, ContentSummary } from "./content";
 import { collectionLabels } from "./content";
 
 const contactUrl = "https://cal.com/cuevaio/whatsapp-mcp";
+const docsUrl = "https://docs.normal.fast";
+const sourceUrl = "https://github.com/cuevaio/normal";
 
 function Header() {
   return (
@@ -14,6 +16,12 @@ function Header() {
       <nav aria-label="Resources">
         <Link href="/use-cases">Use cases</Link>
         <Link href="/guides">Guides</Link>
+        <a href={docsUrl} rel="noreferrer" target="_blank">
+          Docs
+        </a>
+        <a href={sourceUrl} rel="noreferrer" target="_blank">
+          GitHub
+        </a>
       </nav>
       <a href={contactUrl} rel="noreferrer" target="_blank">
         Contact <ArrowRight aria-hidden="true" />
@@ -29,9 +37,17 @@ function Footer() {
         Normal<span aria-hidden="true">.</span>
       </Link>
       <p>Normal, on your terms.</p>
-      <a href={contactUrl} rel="noreferrer" target="_blank">
-        Contact now
-      </a>
+      <nav aria-label="Developer resources">
+        <a href={docsUrl} rel="noreferrer" target="_blank">
+          Docs
+        </a>
+        <a href={sourceUrl} rel="noreferrer" target="_blank">
+          GitHub
+        </a>
+        <a href={contactUrl} rel="noreferrer" target="_blank">
+          Contact
+        </a>
+      </nav>
     </footer>
   );
 }
