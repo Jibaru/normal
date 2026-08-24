@@ -14,6 +14,7 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
   let createRequests = 0;
   let failKeysListAfterCreate = true;
   let reverificationOpened = false;
+  const createAuthorizations: Array<string | undefined> = [];
   const tokenRequests: Array<unknown> = [];
   await page.route("https://api.example.test/**", async (route) => {
     const original = route.request();
@@ -62,7 +63,8 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
     }
     if (requestPath === "/v1/api-keys" && original.method() === "POST") {
       createRequests += 1;
-      if (createRequests === 1) {
+      createAuthorizations.push(original.headers().authorization);
+      if (original.headers().authorization !== "Bearer fresh-session-token") {
         await route.fulfill({
           body: JSON.stringify({
             clerk_error: {
@@ -104,6 +106,7 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
       data: original.postDataBuffer(),
       headers: {
         ...original.headers(),
+        authorization: "Bearer signed-test-user",
         origin: "http://127.0.0.1:3000",
       },
       method: original.method(),
@@ -122,8 +125,11 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
       reverificationOpened = true;
     },
     onTokenRequest: (options) => tokenRequests.push(options),
+    reverifiedToken: "fresh-session-token",
     renderReverification: true,
+    sessionToken: "stale-session-token",
     signedIn: true,
+    token: "custom-template-token",
   });
   await context.grantPermissions(["clipboard-read", "clipboard-write"], {
     origin: webOrigin,
@@ -194,10 +200,11 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
     /^normal_apk_[A-Za-z0-9_-]{21}\.[A-Za-z0-9_-]{43}$/u,
   );
   expect(createRequests).toBe(2);
-  expect(tokenRequests).toContainEqual({
-    skipCache: true,
-    template: "whatsapp-api",
-  });
+  expect(createAuthorizations).toEqual([
+    "Bearer stale-session-token",
+    "Bearer fresh-session-token",
+  ]);
+  expect(tokenRequests).toContainEqual({ skipCache: true });
   await expect(panel).not.toContainText("temporarily unavailable");
   await expect(panel.getByTestId("api-key-row")).toContainText("CI");
   await expect(panel.getByTestId("api-key-state")).toHaveText("Active");

@@ -7,7 +7,9 @@ const clerkUiScript = resolve("test/support/clerk-ui-test.js");
 interface ClerkBrowserOptions {
   readonly onReverification?: (() => void) | undefined;
   readonly onTokenRequest?: ((options: unknown) => void) | undefined;
+  readonly reverifiedToken?: string | undefined;
   readonly renderReverification?: boolean | undefined;
+  readonly sessionToken?: string | undefined;
   readonly signedIn?: boolean | undefined;
   readonly signInToken?: string | undefined;
   readonly token?: string | undefined;
@@ -49,10 +51,22 @@ export const installClerkBrowser = async (
           }
         ).__clerkTestRecordTokenRequest(tokenOptions);
         if (tokenError) throw new Error(tokenError);
-        return token;
+        if (
+          typeof tokenOptions === "object" &&
+          tokenOptions !== null &&
+          "template" in tokenOptions
+        ) {
+          return token;
+        }
+        return state.reverified
+          ? (configuration.reverifiedToken ?? token)
+          : (configuration.sessionToken ?? token);
       },
     });
     const state = {
+      completeReverification: () => {
+        state.reverified = true;
+      },
       openReverification: () => {
         void (
           window as unknown as {
@@ -76,6 +90,7 @@ export const installClerkBrowser = async (
         });
       },
       renderReverification: configuration.renderReverification ?? false,
+      reverified: false,
       session: configuration.signedIn
         ? makeSession(
             configuration.token ?? "signed-test-user",

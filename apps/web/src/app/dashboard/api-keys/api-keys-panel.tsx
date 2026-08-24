@@ -139,10 +139,7 @@ export function ApiKeysPanel({
   const connections = selectableConnections(connectionsQuery.data ?? []);
   const creating = useMutation({
     mutationFn: async () => {
-      const token = await getToken({
-        skipCache: true,
-        template: clerkJwtTemplate,
-      });
+      const token = await getToken({ skipCache: true });
       if (!token) throw new Error("token unavailable");
       return createApiKey({
         body: {

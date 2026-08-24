@@ -82,6 +82,7 @@ class TestClerk {
       complete.textContent = "Complete verification";
       complete.addEventListener("click", () => {
         backdrop.remove();
+        window.__clerkTestConfig?.completeReverification?.();
         options?.afterVerification?.();
       });
       dialog.append(title, complete);
@@ -89,6 +90,7 @@ class TestClerk {
       document.body.append(backdrop);
       return;
     }
+    window.__clerkTestConfig?.completeReverification?.();
     options?.afterVerification?.();
   }
 }
