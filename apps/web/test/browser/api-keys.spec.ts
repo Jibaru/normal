@@ -13,6 +13,7 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
 }) => {
   let createRequests = 0;
   let failKeysListAfterCreate = true;
+  let reverificationOpened = false;
   const tokenRequests: Array<unknown> = [];
   await page.route("https://api.example.test/**", async (route) => {
     const original = route.request();
@@ -61,6 +62,25 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
     }
     if (requestPath === "/v1/api-keys" && original.method() === "POST") {
       createRequests += 1;
+      if (createRequests === 1) {
+        await route.fulfill({
+          body: JSON.stringify({
+            clerk_error: {
+              metadata: {
+                reverification: {
+                  afterMinutes: 5,
+                  level: "first_factor",
+                },
+              },
+              reason: "reverification-error",
+              type: "forbidden",
+            },
+          }),
+          contentType: "application/json",
+          status: 403,
+        });
+        return;
+      }
     }
     if (
       requestPath === "/v1/api-keys" &&
@@ -98,6 +118,9 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
     });
   });
   await installClerkBrowser(page, {
+    onReverification: () => {
+      reverificationOpened = true;
+    },
     onTokenRequest: (options) => tokenRequests.push(options),
     signedIn: true,
   });
@@ -134,6 +157,7 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
     })
     .check();
   await createDialog.getByRole("button", { name: "Create API Key" }).click();
+  await expect.poll(() => reverificationOpened).toBe(true);
   await expect(createDialog).toBeHidden();
 
   const reveal = panel.getByLabel("New API Key credential");
@@ -143,8 +167,11 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
   expect(plaintext).toMatch(
     /^normal_apk_[A-Za-z0-9_-]{21}\.[A-Za-z0-9_-]{43}$/u,
   );
-  expect(createRequests).toBe(1);
-  expect(tokenRequests).toContainEqual({ skipCache: true });
+  expect(createRequests).toBe(2);
+  expect(tokenRequests).toContainEqual({
+    skipCache: true,
+    template: "whatsapp-api",
+  });
   await expect(panel).not.toContainText("temporarily unavailable");
   await expect(panel.getByTestId("api-key-row")).toContainText("CI");
   await expect(panel.getByTestId("api-key-state")).toHaveText("Active");

@@ -139,7 +139,10 @@ export function ApiKeysPanel({
   const connections = selectableConnections(connectionsQuery.data ?? []);
   const creating = useMutation({
     mutationFn: async () => {
-      const token = await getToken({ skipCache: true });
+      const token = await getToken({
+        skipCache: true,
+        template: clerkJwtTemplate,
+      });
       if (!token) throw new Error("token unavailable");
       return createApiKey({
         body: {
@@ -155,7 +158,7 @@ export function ApiKeysPanel({
       });
     },
     onSuccess: (result) => {
-      if (!result.ok) return;
+      if (!("ok" in result) || !result.ok) return;
       queryClient.setQueryData(
         queryKeys.apiKeys(),
         (current: ReadonlyArray<ApiKeyRecord> | undefined) =>
@@ -189,6 +192,10 @@ export function ApiKeysPanel({
     setCreateError(null);
     try {
       const result = await submitCreate();
+      if (!("ok" in result)) {
+        setCreateError("API Key creation was cancelled or failed. Try again.");
+        return;
+      }
       if (!result.ok) {
         if (result.error === "duplicate_name") {
           setCreateError("An active API Key already uses this name.");
