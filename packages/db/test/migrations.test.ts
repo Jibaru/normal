@@ -50,7 +50,7 @@ describe("production migrations", () => {
         (SELECT count(*)::int FROM public.schema_migrations) AS legacy,
         (SELECT count(*)::int FROM public.drizzle_migrations) AS standard
     `);
-    expect(ledgers.rows).toEqual([{ legacy: 40, standard: 28 }]);
+    expect(ledgers.rows).toEqual([{ legacy: 40, standard: 29 }]);
   });
 
   test("clears only retention limitations superseded by a complete Directory snapshot", async () => {
@@ -1478,7 +1478,7 @@ describe("production migrations", () => {
          attempt_claimed_at, lease_expires_at, expires_at
        ) VALUES ($1,'snd_000000000000000000127',$2,$3,$4,$5,'contact',
          'ctc_000000000000000000127','processing',$6,$6,$6,
-         $6::timestamptz + interval '30 seconds',
+          $6::timestamptz + interval '30 seconds',
          $6::timestamptz + interval '90 days')`,
       [sendId, accountA, authorizationId, auditLogId, connectionA, replayedAt],
     );

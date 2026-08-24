@@ -125,7 +125,7 @@ export const sendOperationsInApp = publicSchema.table(
     ),
     check(
       "send_operations_check",
-      sql`lease_expires_at = (attempt_claimed_at + '00:00:30'::interval)`,
+      sql`lease_expires_at = (attempt_claimed_at + '00:00:30'::interval) OR lease_expires_at = (attempt_claimed_at + '00:00:45'::interval)`,
     ),
     check(
       "send_operations_check1",
@@ -340,6 +340,7 @@ export const sendIdempotencyBindingsInApp = publicSchema.table(
     idempotencyKey: text("idempotency_key").notNull(),
     sendOperationId: uuid("send_operation_id").notNull(),
     requestFingerprint: text("request_fingerprint").notNull(),
+    requestShapeFingerprint: text("request_shape_fingerprint"),
     createdAt: timestamp("created_at", {
       withTimezone: true,
       mode: "string",
@@ -392,6 +393,10 @@ export const sendIdempotencyBindingsInApp = publicSchema.table(
     check(
       "send_idempotency_bindings_request_fingerprint_check",
       sql`request_fingerprint ~ '^sf1_[A-Za-z0-9_-]{43}$'::text`,
+    ),
+    check(
+      "send_idempotency_bindings_request_shape_fingerprint_check",
+      sql`request_shape_fingerprint IS NULL OR request_shape_fingerprint ~ '^sf1_[A-Za-z0-9_-]{43}$'::text`,
     ),
     check(
       "send_idempotency_bindings_check",

@@ -83,6 +83,7 @@ import {
   normalizeGroupDisplayName,
 } from "./group-privacy";
 import { noStoreJsonResponse, noStoreResponse } from "./http-response";
+import { decodeImageBase64, downloadImage } from "./image-source";
 import { SendTextMessage, type SendTextMessageService } from "./mcp";
 import {
   importMessageSearchIndexKey,
@@ -450,6 +451,7 @@ const emitCompletion = (
     | "search_messages"
     | "send_text_message"
     | "send_pdf_file"
+    | "send_image"
     | "get_send_status",
   outcome:
     | "audit_unavailable"
@@ -3414,7 +3416,12 @@ const createSendOperation = (
       if (idempotencyKey === null || body === null) {
         return problemResponse("invalid_request", 400);
       }
-      const operation = "text" in body ? SEND_OPERATION : "send_pdf_file";
+      const operation =
+        "text" in body
+          ? SEND_OPERATION
+          : "image_url" in body || "image_base64" in body
+            ? "send_image"
+            : "send_pdf_file";
       const send = yield* SendTextMessage;
       const sendGrant = apiSendGrant({
         grantId: grant.grantId,
@@ -3431,7 +3438,13 @@ const createSendOperation = (
                 channel: "api",
                 connectionId,
                 grant: sendGrant,
-                operationName: "send_pdf_file",
+                idempotencyKey,
+                operationName: operation,
+                ...(body && "recipient_id" in body
+                  ? { recipientId: body.recipient_id }
+                  : "phone" in body
+                    ? { phone: body.phone }
+                    : { username: body.username }),
               });
         if (preflight.outcome === "authorization_denied") {
           yield* emitCompletion(operation, "authorization_denied");
@@ -3443,26 +3456,75 @@ const createSendOperation = (
           yield* emitCompletion(operation, "audit_unavailable");
           return problemResponse("unavailable", 503);
         }
+        if (preflight.outcome === "recipient_not_found") {
+          yield* emitCompletion(operation, "execution_error");
+          return problemResponse("not_found", 404);
+        }
+        if (preflight.outcome === "idempotency_conflict") {
+          yield* emitCompletion(operation, "execution_error");
+          return problemResponse("idempotency_conflict", 409);
+        }
       }
-      const pdf =
-        "text" in body
-          ? undefined
-          : yield* Effect.tryPromise({
-              try: () =>
-                "pdf_base64" in body
-                  ? Promise.resolve(decodePdfBase64(body.pdf_base64))
-                  : downloadPdf(body.pdf_url),
-              catch: () => problemResponse("invalid_request", 400),
-            });
-      const content =
-        "text" in body
-          ? ({ text: body.text } as const)
-          : pdf === undefined
-            ? null
-            : ({
-                pdf: { bytes: pdf, fileName: body.file_name },
-              } as const);
-      if (content === null) return problemResponse("invalid_request", 400);
+      const loadedContent = yield* Effect.tryPromise({
+        try: async () => {
+          if ("text" in body) return { text: body.text } as const;
+          if ("image_base64" in body || "image_url" in body) {
+            const bytes =
+              "image_base64" in body
+                ? decodeImageBase64(body.image_base64)
+                : await downloadImage(body.image_url);
+            return {
+              image: {
+                bytes,
+                ...(body.caption === undefined
+                  ? {}
+                  : { caption: body.caption }),
+              },
+            } as const;
+          }
+          const bytes =
+            "pdf_base64" in body
+              ? decodePdfBase64(body.pdf_base64)
+              : await downloadPdf(body.pdf_url);
+          return { pdf: { bytes, fileName: body.file_name } } as const;
+        },
+        catch: () => undefined,
+      }).pipe(Effect.either);
+      if (loadedContent._tag === "Left") {
+        const persistence = yield* RestPersistence;
+        const clock = yield* RestClock;
+        const identifiers = yield* RestIdentifiers;
+        const rejected = yield* persistence
+          .rejectProtectedOperation({
+            apiKey: {
+              grantId: grant.grantId,
+              name: grant.name,
+              publicId: grant.id,
+            },
+            auditLogId: yield* identifiers.nextAuditLogId,
+            connectionPublicId: connectionId,
+            errorCode: "invalid_request",
+            observedAt: yield* clock.now,
+            operationName: operation,
+            permissions: grant.permissions,
+            personalAccountId: grant.personalAccountId,
+            requiredPermission: "messages:send",
+          })
+          .pipe(Effect.either);
+        if (rejected._tag === "Left") {
+          yield* emitCompletion(operation, "audit_unavailable");
+          return problemResponse("unavailable", 503);
+        }
+        if (rejected.right === "authorization_denied") {
+          yield* emitCompletion(operation, "authorization_denied");
+          return grant.permissions.includes("messages:send")
+            ? problemResponse("not_found", 404)
+            : problemResponse("insufficient_permission", 403);
+        }
+        yield* emitCompletion(operation, "execution_error");
+        return problemResponse("invalid_request", 400);
+      }
+      const content = loadedContent.right;
       const result = yield* send.send(
         {
           channel: "api",

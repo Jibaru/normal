@@ -131,6 +131,13 @@
           "groupBy": ["outcome", "operationClass"]
         },
         {
+          "title": "Image send ambiguity",
+          "source": "workerTelemetry",
+          "metric": "count",
+          "filter": { "event": "provider.image_send.completed" },
+          "groupBy": ["outcome", "operationClass"]
+        },
+        {
           "title": "Queue lag and depth",
           "source": "cloudflarePlatform",
           "metric": "queueLagSeconds",

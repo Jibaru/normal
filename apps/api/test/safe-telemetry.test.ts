@@ -139,6 +139,43 @@ describe("safe telemetry serialization", () => {
     });
   });
 
+  test("serializes image-send counters without caption, URLs, or image bytes", () => {
+    const caption = "private image caption";
+    const imageUrl = "https://provider.example/private-image.jpg";
+    const imageBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]);
+    const serialized = serializeSafeTelemetry({
+      event: "provider.image_send.completed",
+      durationMs: 125,
+      operationClass: "image-send",
+      outcome: "identity_evidence",
+      responseBytes: 96,
+      sendAttemptCount: 1,
+      service: "api",
+      uploadAttemptCount: 1,
+      uploadBytes: imageBytes.byteLength,
+      caption,
+      imageBytes,
+      imageUrl,
+      sourceUrl: "https://source.example/private-image.jpg",
+    });
+
+    expect(JSON.parse(serialized)).toEqual({
+      event: "provider.image_send.completed",
+      durationMs: 125,
+      operationClass: "image-send",
+      outcome: "identity_evidence",
+      responseBytes: 96,
+      sendAttemptCount: 1,
+      service: "api",
+      uploadAttemptCount: 1,
+      uploadBytes: imageBytes.byteLength,
+    });
+    expect(serialized).not.toContain(caption);
+    expect(serialized).not.toContain(imageUrl);
+    expect(serialized).not.toContain("source.example");
+    expect(serialized).not.toContain("255,216,255,224");
+  });
+
   test("rejects non-scalar values in allowlisted fields without serializing them", () => {
     let serialized = false;
     const maliciousOutcome = {

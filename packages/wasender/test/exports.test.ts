@@ -23,11 +23,16 @@ describe("@whatsapp-mcp/wasender boundaries", () => {
     expect(sessionExports).toHaveProperty("makeWasenderTextSendingLayer");
     expect(sessionExports).toHaveProperty("makeWasenderPdfSending");
     expect(sessionExports).toHaveProperty("makeWasenderPdfSendingLayer");
+    expect(sessionExports).toHaveProperty("makeWasenderImageSending");
+    expect(sessionExports).toHaveProperty("makeWasenderImageSendingLayer");
     expect(sessionExports).not.toHaveProperty(
       "makeWasenderTextSendingWithRuntime",
     );
     expect(sessionExports).not.toHaveProperty(
       "makeWasenderPdfSendingWithRuntime",
+    );
+    expect(sessionExports).not.toHaveProperty(
+      "makeWasenderImageSendingWithRuntime",
     );
   });
 

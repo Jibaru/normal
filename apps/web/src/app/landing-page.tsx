@@ -129,6 +129,7 @@ export function LandingPage() {
         <div className="landing-nav-links">
           <a href="/use-cases">Use cases</a>
           <a href="/guides">Guides</a>
+          <a href="/changelog">Changelog</a>
           <a href="#how-it-works">How it works</a>
           <a href="#control">Control</a>
           <a href={docsUrl} rel="noreferrer" target="_blank">
@@ -498,6 +499,7 @@ export function LandingPage() {
           <a href={sourceUrl} rel="noreferrer" target="_blank">
             GitHub
           </a>
+          <a href="/changelog">Changelog</a>
         </nav>
         <a
           className="landing-footer-contact"

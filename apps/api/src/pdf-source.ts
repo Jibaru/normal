@@ -9,7 +9,10 @@ export const MAX_PDF_BYTES = 16_777_216;
 const MAX_DNS_BYTES = 65_536;
 const MAX_REDIRECTS = 3;
 const TIMEOUT_MS = 15_000;
-type PdfFetch = (input: string | URL, init: RequestInit) => Promise<Response>;
+export type OutboundFileFetch = (
+  input: string | URL,
+  init: RequestInit,
+) => Promise<Response>;
 
 const unsafeHostSuffix =
   /(?:^|\.)(?:localhost|local|internal|home|lan|test|invalid|example|onion|example\.(?:com|net|org))$/iu;
@@ -55,7 +58,7 @@ const readBounded = async (
 const resolveHostname = async (
   hostname: string,
   signal: AbortSignal,
-  fetcher: PdfFetch,
+  fetcher: OutboundFileFetch,
 ): Promise<ReadonlyArray<string>> => {
   const query = async (type: "A" | "AAAA") => {
     const url = new URL("https://cloudflare-dns.com/dns-query");
@@ -86,7 +89,7 @@ const resolveHostname = async (
 const validateUrl = async (
   value: string,
   signal: AbortSignal,
-  fetcher: PdfFetch,
+  fetcher: OutboundFileFetch,
 ): Promise<URL> => {
   const url = new URL(value);
   if (
@@ -126,17 +129,22 @@ export const decodePdfBase64 = (value: string): VerifiedPdfBytes => {
   return makeVerifiedPdfBytes(decodeBase64(value));
 };
 
-export const downloadPdf = async (
+export const downloadVerifiedFile = async <Bytes extends Uint8Array>(
   value: string,
-  fetcher: PdfFetch = globalThis.fetch,
-): Promise<VerifiedPdfBytes> => {
+  options: {
+    readonly accept: string;
+    readonly maximumBytes: number;
+    readonly verify: (bytes: Uint8Array) => Bytes;
+  },
+  fetcher: OutboundFileFetch = globalThis.fetch,
+): Promise<Bytes> => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
     let url = await validateUrl(value, controller.signal, fetcher);
     for (let redirects = 0; ; redirects += 1) {
       const response = await fetcher(url, {
-        headers: { accept: "application/pdf" },
+        headers: { accept: options.accept },
         redirect: "manual",
         signal: controller.signal,
       });
@@ -145,7 +153,9 @@ export const downloadPdf = async (
           await response.body?.cancel().catch(() => undefined);
           throw new Error("PDF download failed");
         }
-        return makeVerifiedPdfBytes(await readBounded(response, MAX_PDF_BYTES));
+        return options.verify(
+          await readBounded(response, options.maximumBytes),
+        );
       }
       const location = response.headers.get("location");
       await response.body?.cancel().catch(() => undefined);
@@ -162,3 +172,17 @@ export const downloadPdf = async (
     clearTimeout(timer);
   }
 };
+
+export const downloadPdf = async (
+  value: string,
+  fetcher: OutboundFileFetch = globalThis.fetch,
+): Promise<VerifiedPdfBytes> =>
+  downloadVerifiedFile(
+    value,
+    {
+      accept: "application/pdf",
+      maximumBytes: MAX_PDF_BYTES,
+      verify: makeVerifiedPdfBytes,
+    },
+    fetcher,
+  );

@@ -218,8 +218,12 @@ describe("Send Operation grant identities", () => {
       readonly directRecipientType?: "phone" | "username";
       readonly fingerprint: string;
       readonly idempotencyKey: string;
-      readonly operationName?: "send_pdf_file" | "send_text_message";
+      readonly operationName?:
+        | "send_image"
+        | "send_pdf_file"
+        | "send_text_message";
       readonly recipientPublicId?: string | null;
+      readonly requestShapeFingerprint?: string;
       readonly sendId: string;
       readonly sendPublicId: string;
     },
@@ -233,6 +237,7 @@ describe("Send Operation grant identities", () => {
     operationName: "send_text_message" as const,
     pendingExpiresAt: new Date("2026-08-22T12:00:00.000Z"),
     recipientPublicId: contactPublicId,
+    requestShapeFingerprint: `sf1_${"Z".repeat(43)}`,
     sendDailyLimit: 100,
     sendPerMinuteLimit: 100,
     ...overrides,
@@ -299,6 +304,314 @@ describe("Send Operation grant identities", () => {
     });
   });
 
+  test("authorizes and commits send_image with generic attachment quota and replay semantics", async () => {
+    await expect(
+      sends.preflight?.({
+        auditLogId: "51000000-0000-4000-8000-000000000096",
+        channel: "api",
+        connectionPublicId,
+        grant: apiGrantA,
+        idempotencyKey: "123456789012345678996",
+        observedAt,
+        operationName: "send_image",
+        recipientPublicId: contactPublicId,
+        requestShapeFingerprint: `sf1_${"Z".repeat(43)}`,
+      }),
+    ).resolves.toBe("authorized");
+
+    const input = {
+      ...commitInput(apiGrantA, {
+        auditLogId: "51000000-0000-4000-8000-000000000096",
+        fingerprint: `sf1_${"I".repeat(43)}`,
+        idempotencyKey: "123456789012345678996",
+        operationName: "send_image",
+        sendId: "60000000-0000-4000-8000-000000000096",
+        sendPublicId: "snd_123456789012345678996",
+      }),
+      attachment: {
+        plaintextSizeBytes: 128,
+        sha256: "a".repeat(64),
+      },
+    } as const;
+    let encrypted = 0;
+    expect(
+      await sends.commit(input, async () => {
+        encrypted += 1;
+        return {
+          attachment: { objectKey: "pending/send-image-96" },
+          ciphertext: new Uint8Array(32).fill(20),
+          keyVersion: 1,
+          nonce: new Uint8Array(12).fill(21),
+        };
+      }),
+    ).toMatchObject({ outcome: "created" });
+    expect(
+      await sends.commit(
+        {
+          ...input,
+          auditLogId: "51000000-0000-4000-8000-000000000097",
+        },
+        async () => {
+          throw new Error("image replay must not encrypt");
+        },
+      ),
+    ).toMatchObject({
+      outcome: "replay",
+      receipt: { publicId: "snd_123456789012345678996" },
+    });
+    await expect(
+      sends.preflight?.({
+        auditLogId: "51000000-0000-4000-8000-000000000100",
+        channel: "api",
+        connectionPublicId,
+        directRecipientType: "phone",
+        grant: apiGrantA,
+        idempotencyKey: "123456789012345678996",
+        observedAt,
+        operationName: "send_image",
+        recipientPublicId: null,
+        requestShapeFingerprint: `sf1_${"Y".repeat(43)}`,
+      }),
+    ).resolves.toBe("idempotency_conflict");
+    expect(encrypted).toBe(1);
+
+    const dispatchWindow = await database.query<{
+      claimed_after_snapshot: boolean;
+      lease_seconds: number;
+    }>(
+      `SELECT attempt_claimed_at > created_at AS claimed_after_snapshot,
+              extract(epoch FROM lease_expires_at - attempt_claimed_at)::integer AS lease_seconds
+       FROM public.send_operations
+       WHERE id = $1`,
+      [input.sendId],
+    );
+    expect(dispatchWindow.rows).toEqual([
+      { claimed_after_snapshot: true, lease_seconds: 45 },
+    ]);
+
+    const reserved = await database.query<{
+      object_bytes: number;
+      quota_count: number;
+      stored_media_used_bytes: number;
+    }>(
+      `SELECT
+         (SELECT sum(plaintext_size_bytes)::integer FROM public.send_operation_objects) AS object_bytes,
+         (SELECT count(*)::integer FROM public.send_quota_reservations) AS quota_count,
+         stored_media_used_bytes
+       FROM public.personal_accounts
+       WHERE id = $1`,
+      [accountId],
+    );
+    expect(reserved.rows).toEqual([
+      {
+        object_bytes: 128,
+        quota_count: 1,
+        stored_media_used_bytes: 128,
+      },
+    ]);
+
+    const audits = await database.query<{
+      outcome: string;
+      quota_reserved: boolean;
+      tool_name: string;
+    }>(
+      `SELECT tool_name, outcome, quota_reserved
+       FROM public.tool_call_logs
+       WHERE id IN (
+         '51000000-0000-4000-8000-000000000096',
+         '51000000-0000-4000-8000-000000000097',
+         '51000000-0000-4000-8000-000000000100'
+       )
+       ORDER BY id`,
+    );
+    expect(audits.rows).toEqual([
+      { outcome: "started", quota_reserved: true, tool_name: "send_image" },
+      { outcome: "success", quota_reserved: false, tool_name: "send_image" },
+      {
+        outcome: "execution_error",
+        quota_reserved: false,
+        tool_name: "send_image",
+      },
+    ]);
+  });
+
+  test("supersedes a pending image when its outbound upsert arrives before the provider response", async () => {
+    const sendId = "60000000-0000-4000-8000-000000000102";
+    const messageIdentity = `wi1_${"R".repeat(43)}`;
+    expect(
+      await sends.commit(
+        {
+          ...commitInput(apiGrantA, {
+            auditLogId: "51000000-0000-4000-8000-000000000102",
+            fingerprint: `sf1_${"R".repeat(43)}`,
+            idempotencyKey: "223456789012345678902",
+            operationName: "send_image",
+            sendId,
+            sendPublicId: "snd_223456789012345678902",
+          }),
+          attachment: {
+            plaintextSizeBytes: 128,
+            sha256: "b".repeat(64),
+          },
+        },
+        async () => ({
+          attachment: { objectKey: "pending/send-image-race" },
+          ciphertext: new Uint8Array(32).fill(20),
+          keyVersion: 1,
+          nonce: new Uint8Array(12).fill(21),
+        }),
+      ),
+    ).toMatchObject({ outcome: "created" });
+    await database.query(
+      `INSERT INTO public.whatsapp_conversations (
+         id, personal_account_id, whatsapp_connection_id, public_id, kind,
+         recipient_locator, recipient_public_id, last_activity_at,
+         last_activity_direction
+       ) VALUES (
+         '70000000-0000-4000-8000-000000000102', $1, $2,
+         'cvs_223456789012345678902', 'direct', $3, $4, $5, 'outbound'
+       )`,
+      [
+        accountId,
+        connectionId,
+        `di1_${"A".repeat(43)}`,
+        contactPublicId,
+        observedAt,
+      ],
+    );
+    await database.query(
+      `INSERT INTO public.stored_messages (
+         id, personal_account_id, whatsapp_connection_id, conversation_id,
+         public_id, message_identity, direction, sent_at, content_type,
+         content_ciphertext_version, content_key_version, content_nonce,
+         content_ciphertext, received_at
+       ) VALUES (
+         '80000000-0000-4000-8000-000000000102', $1, $2,
+         '70000000-0000-4000-8000-000000000102',
+         'msg_223456789012345678902', $3, 'outbound', $4, 'image', 1, 1,
+         decode(repeat('22', 12), 'hex'), decode(repeat('23', 32), 'hex'), $4
+       )`,
+      [accountId, connectionId, messageIdentity, observedAt],
+    );
+
+    await expect(
+      sends.recordProviderOutcome({
+        changedAt: new Date(observedAt.valueOf() + 1_000),
+        messageIdentity,
+        sendId,
+        status: "sent",
+      }),
+    ).resolves.toMatchObject({ status: "sent" });
+    const state = await database.query<{
+      deletion_count: number;
+      object_state: string;
+      pending_count: number;
+      stored_media_used_bytes: number;
+    }>(
+      `SELECT accounts.stored_media_used_bytes,
+         (SELECT count(*)::integer FROM public.pending_send_contents
+          WHERE send_operation_id = $1) AS pending_count,
+         (SELECT state FROM public.send_operation_objects
+          WHERE send_operation_id = $1) AS object_state,
+         (SELECT count(*)::integer FROM public.stored_media_object_deletions
+          WHERE personal_account_id = $2
+            AND object_key = 'pending/send-image-race') AS deletion_count
+       FROM public.personal_accounts accounts
+       WHERE accounts.id = $2`,
+      [sendId, accountId],
+    );
+    expect(state.rows).toEqual([
+      {
+        deletion_count: 1,
+        object_state: "purging",
+        pending_count: 0,
+        stored_media_used_bytes: 128,
+      },
+    ]);
+  });
+
+  test("rejects changed destinations for legacy file bindings before retrieval", async () => {
+    const idempotencyKey = "223456789012345678987";
+    const sendId = "60000000-0000-4000-8000-000000000101";
+    await expect(
+      sends.commit(
+        commitInput(apiGrantA, {
+          auditLogId: "51000000-0000-4000-8000-000000000101",
+          fingerprint: `sf1_${"L".repeat(43)}`,
+          idempotencyKey,
+          operationName: "send_pdf_file",
+          sendId,
+          sendPublicId: "snd_223456789012345678987",
+        }),
+        encrypt,
+      ),
+    ).resolves.toMatchObject({ outcome: "created" });
+    await database.query(
+      `UPDATE public.send_idempotency_bindings
+       SET request_shape_fingerprint = NULL
+       WHERE send_operation_id = $1`,
+      [sendId],
+    );
+
+    await expect(
+      sends.preflight?.({
+        auditLogId: "51000000-0000-4000-8000-000000000102",
+        channel: "api",
+        connectionPublicId,
+        grant: apiGrantA,
+        idempotencyKey,
+        observedAt,
+        operationName: "send_pdf_file",
+        recipientPublicId: contactPublicId,
+        requestShapeFingerprint: `sf1_${"M".repeat(43)}`,
+      }),
+    ).resolves.toBe("authorized");
+    await expect(
+      sends.preflight?.({
+        auditLogId: "51000000-0000-4000-8000-000000000103",
+        channel: "api",
+        connectionPublicId,
+        directRecipientType: "phone",
+        grant: apiGrantA,
+        idempotencyKey,
+        observedAt,
+        operationName: "send_pdf_file",
+        recipientPublicId: null,
+        requestShapeFingerprint: `sf1_${"N".repeat(43)}`,
+      }),
+    ).resolves.toBe("idempotency_conflict");
+
+    const secondConnectionId = "20000000-0000-4000-8000-000000000101";
+    const secondConnectionPublicId = "con_223456789012345678987";
+    await database.query(
+      `INSERT INTO public.whatsapp_connections (
+         id, personal_account_id, webhook_ingress_id, display_name_fallback,
+         public_id, number_suffix, state, state_changed_at
+       ) VALUES ($1,$2,'30000000-0000-4000-8000-000000000101','Calm Falcon',
+         $3,'5678','connected',$4)`,
+      [secondConnectionId, accountId, secondConnectionPublicId, observedAt],
+    );
+    await database.query(
+      `INSERT INTO public.api_key_connections (
+         personal_account_id, api_key_id, whatsapp_connection_id, created_at
+       ) VALUES ($1,$2,$3,$4)`,
+      [accountId, apiKeyIdA, secondConnectionId, observedAt],
+    );
+    await expect(
+      sends.preflight?.({
+        auditLogId: "51000000-0000-4000-8000-000000000104",
+        channel: "api",
+        connectionPublicId: secondConnectionPublicId,
+        grant: apiGrantA,
+        idempotencyKey,
+        observedAt,
+        operationName: "send_pdf_file",
+        recipientPublicId: contactPublicId,
+        requestShapeFingerprint: `sf1_${"O".repeat(43)}`,
+      }),
+    ).resolves.toBe("idempotency_conflict");
+  });
+
   test("preflights send authorization without quota and commit rechecks selection", async () => {
     await expect(
       sends.preflight?.({
@@ -306,8 +619,11 @@ describe("Send Operation grant identities", () => {
         channel: "api",
         connectionPublicId,
         grant: apiGrantA,
+        idempotencyKey: "123456789012345678993",
         observedAt,
         operationName: "send_pdf_file",
+        recipientPublicId: contactPublicId,
+        requestShapeFingerprint: `sf1_${"Z".repeat(43)}`,
       }),
     ).resolves.toBe("authorized");
     await database.query(
@@ -320,8 +636,11 @@ describe("Send Operation grant identities", () => {
         channel: "api",
         connectionPublicId,
         grant: apiGrantA,
+        idempotencyKey: "123456789012345678994",
         observedAt,
         operationName: "send_pdf_file",
+        recipientPublicId: contactPublicId,
+        requestShapeFingerprint: `sf1_${"Z".repeat(43)}`,
       }),
     ).resolves.toBe("authorization_denied");
     await expect(
@@ -432,6 +751,51 @@ describe("Send Operation grant identities", () => {
        WHERE send_operation_id = '60000000-0000-4000-8000-000000000092'`,
     );
     expect(pending.rows[0]?.count).toBe(0);
+
+    await expect(
+      sends.preflight?.({
+        auditLogId: "51000000-0000-4000-8000-000000000098",
+        channel: "api",
+        connectionPublicId,
+        directRecipientType: "username",
+        grant: apiGrantA,
+        idempotencyKey: "123456789012345678998",
+        observedAt: new Date(observedAt.valueOf() + 1_100),
+        operationName: "send_image",
+        recipientPublicId: null,
+        requestShapeFingerprint: `sf1_${"Z".repeat(43)}`,
+      }),
+    ).resolves.toBe("recipient_not_found");
+    await expect(
+      sends.preflight?.({
+        auditLogId: "51000000-0000-4000-8000-000000000099",
+        channel: "api",
+        connectionPublicId,
+        directRecipientType: "username",
+        grant: apiGrantA,
+        idempotencyKey: "123456789012345678992",
+        observedAt: new Date(observedAt.valueOf() + 1_100),
+        operationName: "send_image",
+        recipientPublicId: null,
+        requestShapeFingerprint: `sf1_${"Z".repeat(43)}`,
+      }),
+    ).resolves.toBe("authorized");
+    const preflightAudit = await database.query<{
+      error_code: string;
+      quota_reserved: boolean;
+      tool_name: string;
+    }>(
+      `SELECT tool_name, error_code, quota_reserved
+       FROM public.tool_call_logs
+       WHERE id = '51000000-0000-4000-8000-000000000098'`,
+    );
+    expect(preflightAudit.rows).toEqual([
+      {
+        error_code: "recipient_not_found",
+        quota_reserved: false,
+        tool_name: "send_image",
+      },
+    ]);
 
     await expect(
       sends.commit(

@@ -5,7 +5,10 @@ import {
   type SendEncryptionMaterial,
   type SendProviderMaterial,
 } from "@whatsapp-mcp/db/send";
-import { makeVerifiedPdfBytes } from "@whatsapp-mcp/wasender/session";
+import {
+  makeVerifiedImageBytes,
+  makeVerifiedPdfBytes,
+} from "@whatsapp-mcp/wasender/session";
 import { Effect } from "effect";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
@@ -552,6 +555,275 @@ describe("atomic send workflow", () => {
         }),
       }),
     );
+  });
+
+  test("commits an exact encrypted image snapshot before dispatch without projecting identity-only evidence as text", async () => {
+    const caption = " exact\ne\u0301 ";
+    const image = makeVerifiedImageBytes(
+      new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]),
+    );
+    const order: string[] = [];
+    let writtenObjectKey: string | undefined;
+    const recordProviderOutcome = vi.fn(async ({ status }) => {
+      order.push("record-outcome");
+      return {
+        createdAt: new Date("2026-08-03T12:00:00.000Z"),
+        publicId: "snd_123456789012345678947",
+        status,
+        statusChangedAt: new Date("2026-08-03T12:00:01.000Z"),
+      };
+    });
+    const repository: AtomicSendRepository = {
+      commit: async (request, encrypt) => {
+        order.push("transaction-open");
+        expect(request).toMatchObject({
+          attachment: {
+            plaintextSizeBytes: 7,
+            sha256:
+              "474ebe266cd7f9ed28807fa3fdfe0c04cdb3cef9313cdda5c08b15910fcc8184",
+          },
+          operationName: "send_image",
+        });
+        const content = await encrypt(material);
+        expect(content.attachment?.objectKey).toBe(writtenObjectKey);
+        order.push("commit");
+        return {
+          outcome: "created",
+          provider: {
+            ...material,
+            authority: protectedValue(storedAuthority),
+            identityKey: protectedValue("x".repeat(32)),
+            messageSearchKey: protectedValue("s".repeat(32)),
+            recipient: protectedValue(recipientRoute),
+            recipientRecordId: `di1_${"B".repeat(43)}`,
+            recipientType: "contact",
+          },
+          receipt: {
+            createdAt: new Date("2026-08-03T12:00:00.000Z"),
+            publicId: "snd_123456789012345678947",
+            status: "processing",
+            statusChangedAt: new Date("2026-08-03T12:00:00.000Z"),
+          },
+        };
+      },
+      expireLeases: vi.fn(),
+      recordProviderOutcome,
+    };
+    const encryption: EnvelopeEncryption = {
+      createConnectionKey: () => Effect.die("unused"),
+      createPersonalAccountKey: () => Effect.die("unused"),
+      decrypt: ({ context }) => {
+        if (context.fieldOrObjectPurpose === "message-search-key") {
+          return Effect.die("image evidence must not create a text message");
+        }
+        return Effect.succeed(
+          new TextEncoder().encode(
+            context.fieldOrObjectPurpose === "webhook-identity-key"
+              ? "x".repeat(32)
+              : context.fieldOrObjectPurpose === "provider-session-authority"
+                ? storedAuthority
+                : recipientRoute,
+          ),
+        );
+      },
+      decryptMany: () => Effect.die("unused"),
+      encrypt: ({ context, plaintext }) => {
+        order.push("encrypt-descriptor");
+        expect(context.fieldOrObjectPurpose).toBe("pending-send-content");
+        expect(new TextDecoder().decode(plaintext)).toBe(
+          JSON.stringify({ caption, mimeType: "image/jpeg", type: "image" }),
+        );
+        return Effect.succeed({
+          ciphertext: btoa("encrypted-image-descriptor"),
+          keyVersion: 1,
+          nonce: btoa(String.fromCharCode(...new Uint8Array(12))),
+          version: 1,
+        });
+      },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: unknown, request: RequestInit) => {
+        if (String(url).endsWith("/api/upload")) {
+          order.push("provider-upload");
+          expect(request.body).toEqual(image);
+          expect(new Headers(request.headers).get("content-type")).toBe(
+            "image/jpeg",
+          );
+          return Response.json({
+            publicUrl: "https://www.wasenderapi.com/media/private-image.jpg",
+            success: true,
+          });
+        }
+        order.push("provider-send");
+        expect(JSON.parse(String(request.body))).toEqual({
+          imageUrl: "https://www.wasenderapi.com/media/private-image.jpg",
+          text: caption,
+          to: "+15551234567",
+        });
+        return Response.json({
+          data: {
+            key: {
+              fromMe: true,
+              id: "provider-image-message-47",
+              remoteJid: "15551234567@s.whatsapp.net",
+            },
+            status: "sent",
+          },
+          success: true,
+        });
+      }),
+    );
+    const service = makeAtomicSendTextMessageService({
+      deleteStoredMediaObject: vi.fn(async () => undefined),
+      encryption,
+      fingerprintKey: await importSendFingerprintKey("47".repeat(32)),
+      hourRequestLimit: 600,
+      minuteRequestLimit: 60,
+      nextAuditLogId: () => "50000000-0000-4000-8000-000000000047",
+      nextStoredMessage: () => {
+        throw new Error("image evidence must not allocate a text message");
+      },
+      nextSend: () => ({
+        id: "60000000-0000-4000-8000-000000000047",
+        publicId: "snd_123456789012345678947",
+      }),
+      now: () => new Date("2026-08-03T12:00:01.000Z"),
+      repository,
+      sendDailyLimit: 200,
+      sendPerMinuteLimit: 10,
+      storedMediaContainer: {
+        read: () => Effect.die("unused"),
+        write: ({ objectKey, plaintext }) =>
+          Effect.promise(async () => {
+            order.push("write-object");
+            writtenObjectKey = objectKey;
+            const reader = plaintext.getReader();
+            const first = await reader.read();
+            expect(first.done).toBe(false);
+            expect(first.value).toEqual(image);
+            expect((await reader.read()).done).toBe(true);
+            return {
+              chunkCount: 1,
+              containerVersion: 1,
+              keyVersion: 1,
+              plaintextBytes: image.byteLength,
+            };
+          }),
+      },
+      telemetry: () => undefined,
+    });
+    const { text: _text, ...destination } = input;
+
+    await expect(
+      Effect.runPromise(
+        service.send({ ...destination, image: { bytes: image, caption } }),
+      ),
+    ).resolves.toMatchObject({
+      outcome: "receipt",
+      receipt: { status: "sent" },
+    });
+    expect(order).toEqual([
+      "transaction-open",
+      "write-object",
+      "encrypt-descriptor",
+      "commit",
+      "provider-upload",
+      "provider-send",
+      "record-outcome",
+    ]);
+    expect(recordProviderOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageIdentity: expect.stringMatching(/^wi1_/u),
+        status: "sent",
+      }),
+    );
+    expect(recordProviderOutcome.mock.calls[0]?.[0]).not.toHaveProperty(
+      "storedMessage",
+    );
+  });
+
+  test("binds an image caption, normalized MIME, and exact bytes to the fingerprint", async () => {
+    const receipt = {
+      createdAt: new Date("2026-08-03T12:00:00.000Z"),
+      publicId: "snd_123456789012345678947",
+      status: "processing" as const,
+      statusChangedAt: new Date("2026-08-03T12:00:00.000Z"),
+    };
+    let existingFingerprint: string | undefined;
+    const fingerprints: string[] = [];
+    const repository: AtomicSendRepository = {
+      commit: async (request) => {
+        expect(request.operationName).toBe("send_image");
+        fingerprints.push(request.fingerprint);
+        if (existingFingerprint === undefined) {
+          existingFingerprint = request.fingerprint;
+          return { outcome: "replay", receipt };
+        }
+        return request.fingerprint === existingFingerprint
+          ? { outcome: "replay", receipt }
+          : { outcome: "idempotency_conflict" };
+      },
+      expireLeases: vi.fn(),
+      recordProviderOutcome: vi.fn(),
+    };
+    const providerAttempt = vi.fn();
+    vi.stubGlobal("fetch", providerAttempt);
+    const service = makeAtomicSendTextMessageService({
+      encryption: {
+        createConnectionKey: () => Effect.die("unused"),
+        createPersonalAccountKey: () => Effect.die("unused"),
+        decrypt: () => Effect.die("unused"),
+        decryptMany: () => Effect.die("unused"),
+        encrypt: () => Effect.die("replays must not encrypt"),
+      },
+      fingerprintKey: await importSendFingerprintKey("47".repeat(32)),
+      hourRequestLimit: 600,
+      minuteRequestLimit: 60,
+      nextAuditLogId: () => "50000000-0000-4000-8000-000000000047",
+      nextSend: () => ({
+        id: "60000000-0000-4000-8000-000000000047",
+        publicId: "snd_123456789012345678947",
+      }),
+      now: () => new Date("2026-08-03T12:00:01.000Z"),
+      repository,
+      sendDailyLimit: 200,
+      sendPerMinuteLimit: 10,
+      telemetry: () => undefined,
+    });
+    const jpeg = makeVerifiedImageBytes(new Uint8Array([0xff, 0xd8, 0xff, 1]));
+    const changedJpeg = makeVerifiedImageBytes(
+      new Uint8Array([0xff, 0xd8, 0xff, 2]),
+    );
+    const png = makeVerifiedImageBytes(
+      new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    );
+    const { text: _text, ...destination } = input;
+    const send = (bytes: typeof jpeg, caption: string) =>
+      Effect.runPromise(
+        service.send({ ...destination, image: { bytes, caption } }),
+      );
+
+    await expect(send(jpeg, "caption")).resolves.toMatchObject({
+      outcome: "receipt",
+      receipt: { idempotent_replay: true },
+    });
+    await expect(send(jpeg, "caption")).resolves.toMatchObject({
+      outcome: "receipt",
+      receipt: { idempotent_replay: true },
+    });
+    await expect(send(jpeg, "changed caption")).resolves.toEqual({
+      outcome: "idempotency_conflict",
+    });
+    await expect(send(changedJpeg, "caption")).resolves.toEqual({
+      outcome: "idempotency_conflict",
+    });
+    await expect(send(png, "caption")).resolves.toEqual({
+      outcome: "idempotency_conflict",
+    });
+    expect(fingerprints[0]).toBe(fingerprints[1]);
+    expect(new Set(fingerprints)).toHaveLength(4);
+    expect(providerAttempt).not.toHaveBeenCalled();
   });
 
   test("returns an exact replay without encryption or provider work", async () => {

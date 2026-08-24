@@ -85,10 +85,13 @@ coverage, audit-before-release, last-selected Connection Deletion as invalid
 credentials, constant-shape not found for a deleted, excluded, or unselected
 Connection or Conversation, and retained disconnected reads. REST Send
 Operation tests prove `POST /v1/connections/{connection_id}/send-operations`
-requires `messages:send`, an `Idempotency-Key`, exactly one text or PDF content
-form, and exactly one `ctc_`/`grp_` handle, E.164 phone, or WhatsApp username
-destination; exact replay and payload conflict stay on the shared send
-operation; failed and unknown post-boundary outcomes remain Send Operation
+requires `messages:send`, an `Idempotency-Key`, exactly one text, PDF, or image
+content form, and exactly one `ctc_`/`grp_` handle, E.164 phone, or WhatsApp
+username destination. Image coverage proves strict HTTPS and standard padded
+Base64 sources, exact `5,000,000`-byte enforcement, JPEG/PNG signature-derived
+MIME, and the optional caption's shared SendText Unicode rules. Exact replay
+binds image bytes, MIME, and caption; changed payloads conflict on the shared
+send operation; failed and unknown post-boundary outcomes remain Send Operation
 resources; and pre-operation failures use Problem Details.
 `GET /v1/connections/{connection_id}/send-operations/{send_operation_id}`
 returns local Send Status only to the originating still-active API Key with
@@ -146,6 +149,12 @@ The Worker runtime suite proves:
 - scheduled-handler effects through the supported runtime helpers;
 - an OAuth authorization redirect over signed-in HTTP;
 - MCP tool discovery over HTTP JSON-RPC;
+- `send_image` authorization and Client Confirmation metadata, strict image
+  source and caption validation, and the public REST and MCP adapters; focused
+  database and provider-adapter suites separately prove Recipient Exclusion
+  before source retrieval for unbound or changed-destination requests, encrypted Pending Send File snapshot before provider
+  upload, one upload and at most one image-send attempt, and no retry after
+  ambiguous acceptance;
 - authorization-scoped `list_contacts` discovery, encrypted Directory
   projection, connection-scoped normalized name-prefix and exact E.164 blind
   indexes, query-bound deterministic cursor pagination, suffix-only output,
@@ -174,7 +183,11 @@ the production RLS policies, bootstrap functions, and composite tenant
 foreign keys. Do not replace repositories with
 in-memory implementations when data is involved. Send Operation tests prove
 MCP Authorization and API Key remain distinct grant identities for create,
-replay, quota, and status, and that public receipts omit internal IDs.
+replay, quota, and status, that image MIME and optional caption are bound to
+idempotency, that Pending Send Files count against retained-media quota until
+confirmed deletion, and that public receipts omit internal IDs. Projection
+tests prove identity-only provider evidence never materializes an image caption
+without the image.
 
 ## Commands
 

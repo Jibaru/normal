@@ -295,6 +295,7 @@ describe("MCP tool repository", () => {
       operationName: "send_text_message",
       pendingExpiresAt: new Date("2026-08-07T12:00:00.000Z"),
       recipientPublicId: "ctc_123456789012345678930",
+      requestShapeFingerprint: `sf1_${"S".repeat(43)}`,
       sendDailyLimit: 100,
       sendId: "60000000-0000-4000-8000-000000000099",
       sendPerMinuteLimit: 100,
@@ -568,6 +569,7 @@ describe("MCP tool repository", () => {
       operationName: "send_text_message",
       pendingExpiresAt: new Date("2026-08-07T12:00:00.000Z"),
       recipientPublicId: "ctc_123456789012345678930",
+      requestShapeFingerprint: `sf1_${"S".repeat(43)}`,
       sendDailyLimit: 100,
       sendId: "60000000-0000-4000-8000-000000000091",
       sendPerMinuteLimit: 100,
@@ -623,16 +625,16 @@ describe("MCP tool repository", () => {
     );
     await database.query(
       `INSERT INTO public.send_operations (id,public_id,personal_account_id,mcp_authorization_id,tool_call_log_id,whatsapp_connection_id,recipient_type,recipient_public_id,status,created_at,status_changed_at,attempt_claimed_at,lease_expires_at,expires_at)
-       VALUES ('60000000-0000-4000-8000-000000000089','snd_123456789012345678929',$1,$2,'50000000-0000-4000-8000-000000000089','20000000-0000-4000-8000-000000000030','contact','ctc_123456789012345678930','processing',$3,$3,$3,$3::timestamptz+interval '30 seconds',$3::timestamptz+interval '90 days')`,
+       VALUES ('60000000-0000-4000-8000-000000000089','snd_123456789012345678929',$1,$2,'50000000-0000-4000-8000-000000000089','20000000-0000-4000-8000-000000000030','contact','ctc_123456789012345678930','processing',$3,$3,$3,$3::timestamptz+interval '45 seconds',$3::timestamptz+interval '90 days')`,
       [accountId, authorizationId, observedAt],
     );
 
     await expect(
-      sends.expireLeases(new Date(observedAt.valueOf() + 30_000)),
+      sends.expireLeases(new Date(observedAt.valueOf() + 45_000)),
     ).resolves.toBe(1);
     await expect(
       sends.recordProviderOutcome({
-        changedAt: new Date(observedAt.valueOf() + 31_000),
+        changedAt: new Date(observedAt.valueOf() + 46_000),
         sendId: "60000000-0000-4000-8000-000000000089",
         status: "accepted",
       }),
@@ -1331,6 +1333,23 @@ describe("MCP tool repository", () => {
        WHERE id = $1`,
       [authorizationId],
     );
+    await expect(
+      repository.beginProtectedOperation({
+        channel: "mcp",
+        authorization,
+        auditLogId: "50000000-0000-4000-8000-000000000036",
+        hourLimit: 3,
+        minuteLimit: 2,
+        observedAt,
+        operationName: "send_image",
+      }),
+    ).resolves.toMatchObject({ outcome: "started" });
+    const imageAudit = await database.query<{ tool_name: string }>(
+      `SELECT tool_name FROM public.tool_call_logs
+       WHERE id = '50000000-0000-4000-8000-000000000036'`,
+    );
+    expect(imageAudit.rows).toEqual([{ tool_name: "send_image" }]);
+
     await expect(
       repository.beginProtectedOperation({
         channel: "mcp",

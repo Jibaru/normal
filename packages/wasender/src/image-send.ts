@@ -1,5 +1,10 @@
 import { Effect, Layer, Redacted } from "effect";
-import { makeBoundedRetryAfterMs, maximumRetryAfterMs } from "./common";
+import {
+  providerDestination,
+  publicUrlFrom,
+  requestWithTimeout,
+  uploadFailure,
+} from "./pdf-send";
 import {
   deriveIdentityRecipientRouteKeys,
   deriveRecipientRouteKeys,
@@ -7,11 +12,11 @@ import {
   openRecipientRoute,
 } from "./recipient-route";
 import type {
-  PdfSending,
-  PdfSendResult,
-  WasenderPdfSendingOptions,
+  ImageSending,
+  ImageSendResult,
+  WasenderImageSendingOptions,
 } from "./session";
-import { PdfSending as PdfSendingTag } from "./session";
+import { ImageSending as ImageSendingTag } from "./session";
 import {
   type BoundedBody,
   classifySendResponse,
@@ -23,130 +28,12 @@ import {
 
 const uploadUrl = "https://www.wasenderapi.com/api/upload";
 const sendMessageUrl = "https://www.wasenderapi.com/api/send-message";
-const publicMediaOrigins = new Set([
-  "https://wasenderapi.com",
-  "https://www.wasenderapi.com",
-]);
-
-const contactIdentifier =
-  /^(?:\+[1-9]\d{1,14}|[1-9]\d{6,14}|[1-9]\d{6,14}(?::\d{1,5})?@s\.whatsapp\.net|[1-9]\d{1,31}(?::\d{1,5})?@lid|@[A-Za-z0-9._-]{1,64})$/u;
-const groupIdentifier = /^[1-9]\d{1,31}(?:-[1-9]\d{1,31})?@g\.us$/u;
-
-export const providerDestination = (
-  kind: "contact" | "group",
-  identifier: string,
-): string | null => {
-  if (kind === "group")
-    return groupIdentifier.test(identifier) ? identifier : null;
-  if (!contactIdentifier.test(identifier)) return null;
-  const phone =
-    /^\+([1-9]\d{1,14})$/u.exec(identifier)?.[1] ??
-    /^([1-9]\d{6,14})$/u.exec(identifier)?.[1] ??
-    /^([1-9]\d{6,14})(?::\d{1,5})?@s\.whatsapp\.net$/u.exec(identifier)?.[1];
-  return phone === undefined ? identifier : `+${phone}`;
-};
-
-const validFileName = (value: string): boolean =>
-  value.length >= 5 &&
-  value.length <= 255 &&
-  value.toLowerCase().endsWith(".pdf") &&
-  !/[\\/]/u.test(value) &&
-  !Array.from(value).some((character) => {
-    const point = character.codePointAt(0);
-    return point !== undefined && (point <= 31 || point === 127);
-  });
-
-const retryAfter = (
-  response: Response,
-): ReturnType<typeof makeBoundedRetryAfterMs> | null => {
-  const value = response.headers.get("retry-after");
-  if (value === null || !/^\d+$/u.test(value)) return null;
-  const seconds = Number(value);
-  return Number.isSafeInteger(seconds)
-    ? makeBoundedRetryAfterMs(Math.min(seconds * 1_000, maximumRetryAfterMs))
-    : null;
-};
-
-export const uploadFailure = (response?: Response): PdfSendResult => {
-  if (response?.status === 401 || response?.status === 403) {
-    return {
-      outcome: "definitive_failure",
-      reason: "authentication_failed",
-      retryAfterMs: null,
-    };
-  }
-  if (response?.status === 429) {
-    return {
-      outcome: "definitive_failure",
-      reason: "throttled",
-      retryAfterMs: retryAfter(response),
-    };
-  }
-  return {
-    outcome: "definitive_failure",
-    reason: "upload_failed",
-    retryAfterMs: null,
-  };
-};
-
-export const publicUrlFrom = (text: string | null): string | null => {
-  if (text === null) return null;
-  try {
-    const value: unknown = JSON.parse(text);
-    if (
-      typeof value !== "object" ||
-      value === null ||
-      Array.isArray(value) ||
-      (value as Record<string, unknown>).success !== true ||
-      typeof (value as Record<string, unknown>).publicUrl !== "string"
-    ) {
-      return null;
-    }
-    const raw = (value as Record<string, unknown>).publicUrl as string;
-    if (raw.length === 0 || raw.length > 4_096) return null;
-    const url = new URL(raw);
-    return publicMediaOrigins.has(url.origin) &&
-      url.username === "" &&
-      url.password === "" &&
-      url.pathname.startsWith("/")
-      ? url.href
-      : null;
-  } catch {
-    return null;
-  }
-};
-
-export const requestWithTimeout = async (
-  runtime: OutboundSendRuntime,
-  input: string,
-  init: RequestInit,
-  timeoutMs: number,
-): Promise<{ readonly body: BoundedBody; readonly response: Response }> => {
-  const controller = new AbortController();
-  let timedOut = false;
-  const timeout = runtime.setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, timeoutMs);
-  try {
-    const response = await runtime.fetch(input, {
-      ...init,
-      signal: controller.signal,
-    });
-    return { body: await readBoundedBody(response), response };
-  } catch (error) {
-    if (timedOut) throw new DOMException("aborted", "AbortError");
-    throw error;
-  } finally {
-    runtime.clearTimeout(timeout);
-  }
-};
 
 /** Internal transport seam used only by focused adapter tests. */
-export const makeWasenderPdfSendingWithRuntime = (
-  options: WasenderPdfSendingOptions,
+export const makeWasenderImageSendingWithRuntime = (
+  options: WasenderImageSendingOptions,
   runtime: OutboundSendRuntime,
-): PdfSending => {
+): ImageSending => {
   const authority = Redacted.value(options.authority);
   const identityKey = new Uint8Array(Redacted.value(options.identityKey));
   if (!isProtectedString(authority)) {
@@ -163,13 +50,13 @@ export const makeWasenderPdfSendingWithRuntime = (
     .then(deriveIdentityRecipientRouteKeys);
 
   return {
-    sendPdf: ({ bytes, fileName, recipient }) =>
+    sendImage: ({ bytes, caption, recipient }) =>
       Effect.promise(async () => {
         const startedAt = runtime.now();
         let uploadAttemptCount: 0 | 1 = 0;
         let sendAttemptCount: 0 | 1 = 0;
         let responseBytes: number | null = null;
-        let result: PdfSendResult = uploadFailure();
+        let result: ImageSendResult = uploadFailure();
 
         try {
           const resolved = options.resolveRecipient(recipient);
@@ -192,8 +79,6 @@ export const makeWasenderPdfSendingWithRuntime = (
               reason: "recipient_rejected",
               retryAfterMs: null,
             };
-          } else if (!validFileName(fileName)) {
-            result = uploadFailure();
           } else {
             uploadAttemptCount = 1;
             let uploadBody: BoundedBody;
@@ -207,7 +92,7 @@ export const makeWasenderPdfSendingWithRuntime = (
                     body: bytes,
                     headers: {
                       authorization: `Bearer ${authority}`,
-                      "content-type": "application/pdf",
+                      "content-type": bytes.mimeType,
                     },
                     method: "POST",
                     redirect: "manual",
@@ -219,11 +104,11 @@ export const makeWasenderPdfSendingWithRuntime = (
               uploadBody = await readBoundedBody(uploadResponse);
             }
             responseBytes = uploadBody.bytes;
-            const documentUrl = uploadResponse.ok
+            const imageUrl = uploadResponse.ok
               ? publicUrlFrom(uploadBody.text)
               : null;
 
-            if (documentUrl === null) {
+            if (imageUrl === null) {
               result = uploadFailure(uploadResponse);
             } else {
               sendAttemptCount = 1;
@@ -234,8 +119,8 @@ export const makeWasenderPdfSendingWithRuntime = (
                   {
                     body: JSON.stringify({
                       to: destination,
-                      documentUrl,
-                      fileName,
+                      imageUrl,
+                      ...(caption === undefined ? {} : { text: caption }),
                     }),
                     headers: {
                       authorization: `Bearer ${authority}`,
@@ -274,7 +159,7 @@ export const makeWasenderPdfSendingWithRuntime = (
         try {
           options.telemetry.emit({
             durationMs: Math.max(0, runtime.now() - startedAt),
-            operationClass: "pdf-send",
+            operationClass: "image-send",
             outcome: result.outcome,
             responseBytes,
             sendAttemptCount,
@@ -289,11 +174,11 @@ export const makeWasenderPdfSendingWithRuntime = (
   };
 };
 
-export const makeWasenderPdfSending = (
-  options: WasenderPdfSendingOptions,
-): PdfSending =>
-  makeWasenderPdfSendingWithRuntime(options, productionOutboundSendRuntime);
+export const makeWasenderImageSending = (
+  options: WasenderImageSendingOptions,
+): ImageSending =>
+  makeWasenderImageSendingWithRuntime(options, productionOutboundSendRuntime);
 
-export const makeWasenderPdfSendingLayer = (
-  options: WasenderPdfSendingOptions,
-) => Layer.succeed(PdfSendingTag, makeWasenderPdfSending(options));
+export const makeWasenderImageSendingLayer = (
+  options: WasenderImageSendingOptions,
+) => Layer.succeed(ImageSendingTag, makeWasenderImageSending(options));
