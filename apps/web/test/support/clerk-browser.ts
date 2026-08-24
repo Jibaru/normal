@@ -7,6 +7,7 @@ const clerkUiScript = resolve("test/support/clerk-ui-test.js");
 interface ClerkBrowserOptions {
   readonly onReverification?: (() => void) | undefined;
   readonly onTokenRequest?: ((options: unknown) => void) | undefined;
+  readonly renderReverification?: boolean | undefined;
   readonly signedIn?: boolean | undefined;
   readonly signInToken?: string | undefined;
   readonly token?: string | undefined;
@@ -74,6 +75,7 @@ export const installClerkBrowser = async (
           value: true,
         });
       },
+      renderReverification: configuration.renderReverification ?? false,
       session: configuration.signedIn
         ? makeSession(
             configuration.token ?? "signed-test-user",

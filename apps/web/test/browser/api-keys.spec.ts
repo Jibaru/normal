@@ -122,6 +122,7 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
       reverificationOpened = true;
     },
     onTokenRequest: (options) => tokenRequests.push(options),
+    renderReverification: true,
     signedIn: true,
   });
   await context.grantPermissions(["clipboard-read", "clipboard-write"], {
@@ -158,6 +159,31 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
     .check();
   await createDialog.getByRole("button", { name: "Create API Key" }).click();
   await expect.poll(() => reverificationOpened).toBe(true);
+  const clerkDialog = page.getByRole("dialog", {
+    name: "Verify your identity",
+  });
+  await expect(clerkDialog).toBeVisible();
+  await expect(createDialog).toBeVisible();
+  const clerkLayer = page.getByTestId("clerk-reverification-layer");
+  const [clerkZIndex, formZIndex, clerkIsTopmost] = await Promise.all([
+    clerkLayer.evaluate((element) => Number(getComputedStyle(element).zIndex)),
+    createDialog.evaluate((element) =>
+      Number(getComputedStyle(element.parentElement as HTMLElement).zIndex),
+    ),
+    clerkDialog.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      const topmost = document.elementFromPoint(
+        bounds.left + bounds.width / 2,
+        bounds.top + bounds.height / 2,
+      );
+      return topmost !== null && element.contains(topmost);
+    }),
+  ]);
+  expect(clerkZIndex).toBeGreaterThan(formZIndex);
+  expect(clerkIsTopmost).toBe(true);
+  await clerkDialog
+    .getByRole("button", { name: "Complete verification" })
+    .click();
   await expect(createDialog).toBeHidden();
 
   const reveal = panel.getByLabel("New API Key credential");
