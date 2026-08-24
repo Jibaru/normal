@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "description": "Normal's public REST API for one User's server-side personal automations.\n\n## Getting started\n\nCreate an API Key from the signed-in dashboard at `/dashboard/api-keys`. Choose a unique name, any non-empty subset of the four permissions, the WhatsApp Connections this automation may use, and an optional expiry. The plaintext credential is shown once. If that response is lost, create a replacement key.\n\nCall `https://api.normal.fast` from a server. Do not put an API Key in a browser, mobile app, query parameter, cookie, or this documentation site.\n\n```bash\ncurl -sS https://api.normal.fast/v1/connections \\\n  -H 'Authorization: Bearer <API Key>'\n```\n\nSigned-in API Key management routes (`/v1/api-keys`) are product routes. They require a Clerk bearer token, the exact web Origin, and — for creation — first-factor verification within five minutes. They are not authenticated with an API Key.\n\n## Server-side authentication\n\nSend one `Authorization: Bearer <API Key>` header. The credential uses the `normal_apk_` split format: a public `apk_` handle and a high-entropy secret shown only at creation. Duplicate or oversized authorization headers are rejected.\n\nNeon is the sole authority for validity, selected Connections, permissions, expiry, and revocation. There is no cache that can extend a revoked or expired key. Invalid, malformed, expired, or revoked credentials return the same 401 Problem Details shape.\n\n## Permissions\n\n| Permission | Capabilities |\n| --- | --- |\n| `connections:read` | List WhatsApp Connections explicitly selected for this API Key. |\n| `directory:read` | Page Directory contacts and currently joined groups. |\n| `messages:read` | Page WhatsApp Conversations, complete Stored Messages, private exact-word search, and eligible Stored Media. |\n| `messages:send` | Create or replay text or PDF Send Operations and read Send Status for operations created by this key. |\n\nPermissions are independent. `messages:send` never implies Directory or Stored Message read permission. A newly created WhatsApp Connection is never added to an existing API Key.\n\n## Pagination\n\nCollection responses use `data`, `pagination`, and optional `meta`. `pagination` contains `next_cursor` and `has_more`. The default page size is 20 and the maximum is 50, except Stored Message search which remains capped at 20.\n\nREST cursors are short-lived HMAC keyset cursors bound to the calling API Key, operation, WhatsApp Connection, normalized filters or a keyed digest of search terms, limit, sort version, and a 15-minute expiry. MCP cursors are not accepted. A tampered, expired, or rebound cursor returns 400. Search terms themselves never appear in a cursor.\n\n## Problem Details\n\nREST errors use RFC 9457 `application/problem+json` with `type`, `title`, `status`, a safe `detail`, a stable Normal `code`, and optional `retryable`, `retry_after_seconds`, or `resets_at`.\n\n| Code | Status | Meaning |\n| --- | --- | --- |\n| `invalid_credentials` | 401 | Missing, malformed, expired, or revoked API Key. |\n| `insufficient_permission` | 403 | The grant does not include the required permission. |\n| `not_found` | 404 | Unknown, cross-tenant, deleted, excluded, or mismatched resource. The shape is constant. |\n| `invalid_request` / `invalid_cursor` | 400 | Closed request, header, or cursor contract failed. |\n| `idempotency_conflict` / `connection_unavailable` | 409 | Idempotency payload mismatch, or the Connection is not connected for a new send. |\n| `rate_limited` | 429 | Personal Account or API Key quota is exhausted. |\n| `unavailable` | 503 | Authentication, audit, or quota authority is unavailable. The request fails closed. |\n\nEach `type` is `https://docs.normal.fast/problems/{code}`.\n\n## Idempotency\n\n`POST /v1/connections/{connection_id}/send-operations` requires `Idempotency-Key` using the NanoID default alphabet (21 characters). Exact replay returns the existing Send Operation without calling the provider again or consuming send quota. A changed payload under the same key returns `idempotency_conflict`.\n\n## PDF sends\n\nA Send Operation accepts exact `text`, or a PDF with `file_name` and exactly one of `pdf_url` or standard padded `pdf_base64`. Each request accepts exactly one destination: `recipient_id`, E.164 `phone`, or WhatsApp `username`.\n\n```bash\ncurl --request POST \\\n  'https://api.normal.fast/v1/connections/<CONNECTION_ID>/send-operations' \\\n  --header 'Authorization: Bearer <API Key>' \\\n  --header 'Content-Type: application/json' \\\n  --header 'Idempotency-Key: <21-character key>' \\\n  --data '{\"phone\":\"<E.164_PHONE>\",\"file_name\":\"report.pdf\",\"pdf_url\":\"https://files.example.com/report.pdf\"}'\n```\n\nPDFs must be 8 through 16,777,216 bytes and begin with a PDF version signature. `file_name` must be 5-255 characters, contain no path separators or control characters, and end in `.pdf` case-insensitively. URL sources must use HTTPS without credentials or a custom port. Normal validates every redirect and rejects private or reserved network targets.\n\nThe exact PDF bytes and filename, not the source URL, are bound to idempotency. The verified PDF is encrypted as a Pending Send File, counts against the Personal Account's Stored Media quota, and expires at the earliest of seven days, the Message Retention Policy deadline, Connection Deletion, or Personal Account Deletion. Normal never retains the source URL or the provider upload URL.\n\n## Ambiguous sends\n\nA Send Operation is not a Stored Message. After the durable provider-attempt boundary, `failed` and `unknown` remain Send Operation resources, not HTTP execution errors. An unknown outcome means the provider may have accepted the message. Normal never automatically retries an unknown Send Operation. `GET /v1/connections/{connection_id}/send-operations/{send_operation_id}` returns the originating key's current local Send Status and never contacts the provider.\n\n## Retention and history coverage\n\nStored Messages, Stored Media, Pending Send Content, and Pending Send Files follow the User's Message Retention Policy. The default is 30 days. Pending Send Content and Pending Send Files also expire at most seven days after Send Operation creation.\n\nMessage pages include the Message History Window (`history_starts_at`, `history_start_reason`) and intersecting Ingestion Gaps. History is observed, not provider-certified complete. The absence of a known gap does not prove that every provider message arrived.\n\nDisconnected WhatsApp Connections remain readable for retained history. New Send Operations require a connected Connection.\n\n## Media\n\nEligible Stored Media appears as an authenticated nested path on the Stored Message, never an MCP URI, public URL, provider URL, R2 URL, or presigned URL. `GET` that path with the same API Key. v1 returns the complete ready object up to 16 MiB after Activity Log admission and full-byte quota reservation. Responses use the normalized MIME type, a sanitized optional filename, and `Cache-Control: private, no-store`. Range and chunk downloads are not provided.\n\nUnknown, mismatched, excluded, non-ready, unauthorized, or oversized media share one constant-shape 404.\n\n## Deletion\n\nConnection Deletion immediately removes that WhatsApp Connection from every API Key. If it was a key's last selected Connection, the key is revoked and its digest is cleared. Personal Account Deletion revokes every API Key and clears every digest before purge continues. Safe expired or revoked metadata remains visible in the dashboard for 90 days, then purges. Activity Logs retain their own 90-day window.\n\nWhatsApp Recipient Exclusions apply beneath every API Key. Excluded recipients are absent from Directory, conversation, message, and media results. A send to an excluded recipient returns the same 404 as an unknown recipient. Because a Direct Address cannot be proven distinct from an excluded recipient, all direct phone and username sends fail with that same 404 while any exclusion is active on the Connection. Removing an exclusion never restores purged history or Pending Send Content.\n\n## Restore invalidation\n\nA production database restore globally invalidates every restored API Key before verification traffic reopens. Digests are cleared and the API Key HMAC authority is rotated. Previous HMAC generations are not accepted as a fallback. Users create replacement keys after recovery.\n\n## Privacy\n\nDirect phone numbers and usernames are accepted only in the closed Send Operation request body. They are used in memory for one provider attempt and never persisted, returned, logged, or placed in telemetry. Other public fields use opaque handles (`con_`, `ctc_`, `grp_`, `cvs_`, `msg_`, `med_`, `snd_`, `apk_`) and suffix-only phone presentation.\n\nSearch terms, message content, media bytes, credentials, credential digests, full phone numbers, provider payloads, raw bodies, and tenant identifiers must not appear in URLs, cursors, Activity Logs, telemetry, or Problem Details. `POST /v1/connections/{connection_id}/messages/search` accepts terms only in a closed JSON body and binds pagination to a keyed digest of the normalized terms.\n\nThis documentation site cannot execute authenticated requests or persist an API Key. Server-side curl and language examples are generated for copy-out use only.",
+    "description": "Normal's public REST API for one User's server-side personal automations.\n\n## Getting started\n\nCreate an API Key from the signed-in dashboard at `/dashboard/api-keys`. Choose a unique name, any non-empty subset of the four permissions, the WhatsApp Connections this automation may use, and an optional expiry. The plaintext credential is shown once. If that response is lost, create a replacement key.\n\nCall `https://api.normal.fast` from a server. Do not put an API Key in a browser, mobile app, query parameter, cookie, or this documentation site.\n\n```bash\ncurl -sS https://api.normal.fast/v1/connections \\\n  -H 'Authorization: Bearer <API Key>'\n```\n\nSigned-in API Key management routes (`/v1/api-keys`) are product routes. They require a Clerk bearer token, the exact web Origin, and — for creation — first-factor verification within five minutes. They are not authenticated with an API Key.\n\n## Server-side authentication\n\nSend one `Authorization: Bearer <API Key>` header. The credential uses the `normal_apk_` split format: a public `apk_` handle and a high-entropy secret shown only at creation. Duplicate or oversized authorization headers are rejected.\n\nNeon is the sole authority for validity, selected Connections, permissions, expiry, and revocation. There is no cache that can extend a revoked or expired key. Invalid, malformed, expired, or revoked credentials return the same 401 Problem Details shape.\n\n## Permissions\n\n| Permission | Capabilities |\n| --- | --- |\n| `connections:read` | List WhatsApp Connections explicitly selected for this API Key. |\n| `directory:read` | Page Directory contacts and currently joined groups. |\n| `messages:read` | Page WhatsApp Conversations, complete Stored Messages, private exact-word search, and eligible Stored Media. |\n| `messages:send` | Create or replay text, PDF, or image Send Operations and read Send Status for operations created by this key. |\n\nPermissions are independent. `messages:send` never implies Directory or Stored Message read permission. A newly created WhatsApp Connection is never added to an existing API Key.\n\n## Pagination\n\nCollection responses use `data`, `pagination`, and optional `meta`. `pagination` contains `next_cursor` and `has_more`. The default page size is 20 and the maximum is 50, except Stored Message search which remains capped at 20.\n\nREST cursors are short-lived HMAC keyset cursors bound to the calling API Key, operation, WhatsApp Connection, normalized filters or a keyed digest of search terms, limit, sort version, and a 15-minute expiry. MCP cursors are not accepted. A tampered, expired, or rebound cursor returns 400. Search terms themselves never appear in a cursor.\n\n## Problem Details\n\nREST errors use RFC 9457 `application/problem+json` with `type`, `title`, `status`, a safe `detail`, a stable Normal `code`, and optional `retryable`, `retry_after_seconds`, or `resets_at`.\n\n| Code | Status | Meaning |\n| --- | --- | --- |\n| `invalid_credentials` | 401 | Missing, malformed, expired, or revoked API Key. |\n| `insufficient_permission` | 403 | The grant does not include the required permission. |\n| `not_found` | 404 | Unknown, cross-tenant, deleted, excluded, or mismatched resource. The shape is constant. |\n| `invalid_request` / `invalid_cursor` | 400 | Closed request, header, or cursor contract failed. |\n| `idempotency_conflict` / `connection_unavailable` | 409 | Idempotency payload mismatch, or the Connection is not connected for a new send. |\n| `rate_limited` | 429 | Personal Account or API Key quota is exhausted. |\n| `unavailable` | 503 | Authentication, audit, or quota authority is unavailable. The request fails closed. |\n\nEach `type` is `https://docs.normal.fast/problems/{code}`.\n\n## Idempotency\n\n`POST /v1/connections/{connection_id}/send-operations` requires `Idempotency-Key` using the NanoID default alphabet (21 characters). Exact replay returns the existing Send Operation without calling the provider again or consuming send quota. A changed payload under the same key returns `idempotency_conflict`.\n\n## PDF and image sends\n\nA Send Operation accepts exact `text`; a PDF with `file_name` and exactly one of `pdf_url` or standard padded `pdf_base64`; or a JPEG/PNG image with exactly one of `image_url` or standard padded `image_base64` and an optional `caption`. Image requests do not accept a filename. Each request accepts exactly one destination: `recipient_id`, E.164 `phone`, or WhatsApp `username`.\n\n```bash\ncurl --request POST \\\n  'https://api.normal.fast/v1/connections/<CONNECTION_ID>/send-operations' \\\n  --header 'Authorization: Bearer <API Key>' \\\n  --header 'Content-Type: application/json' \\\n  --header 'Idempotency-Key: <21-character key>' \\\n  --data '{\"phone\":\"<E.164_PHONE>\",\"file_name\":\"report.pdf\",\"pdf_url\":\"https://files.example.com/report.pdf\"}'\n```\n\nPDFs must be 8 through 16,777,216 bytes and begin with a PDF version signature. `file_name` must be 5-255 characters, contain no path separators or control characters, and end in `.pdf` case-insensitively. URL sources must use HTTPS without credentials or a custom port. Normal validates every redirect and rejects private or reserved network targets.\n\nThe exact PDF bytes and filename, not the source URL, are bound to idempotency. The verified PDF is encrypted as a Pending Send File, counts against the Personal Account's Stored Media quota, and expires at the earliest of seven days, the Message Retention Policy deadline, Connection Deletion, or Personal Account Deletion. Normal never retains the source URL or the provider upload URL.\n\nImages must be JPEG or PNG and no larger than 5,000,000 bytes. An optional `caption` is validated exactly like `text`: 1-4,096 Unicode scalar values, not solely Unicode whitespace, with no unpaired surrogate. Image URL sources follow the same HTTPS, credentials, port, redirect, and public-network rules as PDF URLs.\n\n## Ambiguous sends\n\nA Send Operation is not a Stored Message. After the durable provider-attempt boundary, `failed` and `unknown` remain Send Operation resources, not HTTP execution errors. An unknown outcome means the provider may have accepted the message. Normal never automatically retries an unknown Send Operation. `GET /v1/connections/{connection_id}/send-operations/{send_operation_id}` returns the originating key's current local Send Status and never contacts the provider.\n\n## Retention and history coverage\n\nStored Messages, Stored Media, Pending Send Content, and Pending Send Files follow the User's Message Retention Policy. The default is 30 days. Pending Send Content and Pending Send Files also expire at most seven days after Send Operation creation.\n\nMessage pages include the Message History Window (`history_starts_at`, `history_start_reason`) and intersecting Ingestion Gaps. History is observed, not provider-certified complete. The absence of a known gap does not prove that every provider message arrived.\n\nDisconnected WhatsApp Connections remain readable for retained history. New Send Operations require a connected Connection.\n\n## Media\n\nEligible Stored Media appears as an authenticated nested path on the Stored Message, never an MCP URI, public URL, provider URL, R2 URL, or presigned URL. `GET` that path with the same API Key. v1 returns the complete ready object up to 16 MiB after Activity Log admission and full-byte quota reservation. Responses use the normalized MIME type, a sanitized optional filename, and `Cache-Control: private, no-store`. Range and chunk downloads are not provided.\n\nUnknown, mismatched, excluded, non-ready, unauthorized, or oversized media share one constant-shape 404.\n\n## Deletion\n\nConnection Deletion immediately removes that WhatsApp Connection from every API Key. If it was a key's last selected Connection, the key is revoked and its digest is cleared. Personal Account Deletion revokes every API Key and clears every digest before purge continues. Safe expired or revoked metadata remains visible in the dashboard for 90 days, then purges. Activity Logs retain their own 90-day window.\n\nWhatsApp Recipient Exclusions apply beneath every API Key. Excluded recipients are absent from Directory, conversation, message, and media results. A send to an excluded recipient returns the same 404 as an unknown recipient. Because a Direct Address cannot be proven distinct from an excluded recipient, all direct phone and username sends fail with that same 404 while any exclusion is active on the Connection. Removing an exclusion never restores purged history or Pending Send Content.\n\n## Restore invalidation\n\nA production database restore globally invalidates every restored API Key before verification traffic reopens. Digests are cleared and the API Key HMAC authority is rotated. Previous HMAC generations are not accepted as a fallback. Users create replacement keys after recovery.\n\n## Privacy\n\nDirect phone numbers and usernames are accepted only in the closed Send Operation request body. They are used in memory for one provider attempt and never persisted, returned, logged, or placed in telemetry. Other public fields use opaque handles (`con_`, `ctc_`, `grp_`, `cvs_`, `msg_`, `med_`, `snd_`, `apk_`) and suffix-only phone presentation.\n\nSearch terms, message content, media bytes, credentials, credential digests, full phone numbers, provider payloads, raw bodies, and tenant identifiers must not appear in URLs, cursors, Activity Logs, telemetry, or Problem Details. `POST /v1/connections/{connection_id}/messages/search` accepts terms only in a closed JSON body and binds pagination to a keyed digest of the normalized terms.\n\nThis documentation site cannot execute authenticated requests or persist an API Key. Server-side curl and language examples are generated for copy-out use only.",
     "title": "Normal API",
     "version": "1.0.0"
   },
@@ -37,7 +37,7 @@
       "name": "Messages"
     },
     {
-      "description": "Idempotent text and PDF Send Operations created by the calling API Key. Creating a Send Operation is the caller's explicit action; Client Confirmation is MCP-specific and is not a REST field.",
+      "description": "Idempotent text, PDF, and JPEG/PNG image Send Operations created by the calling API Key. Creating a Send Operation is the caller's explicit action; Client Confirmation is MCP-specific and is not a REST field.",
       "name": "Send Operations"
     }
   ],
@@ -1350,7 +1350,7 @@
     },
     "/v1/connections/{connection_id}/send-operations": {
       "post": {
-        "description": "Create or exactly replay one Send Operation using exactly one destination: a known active `ctc_` contact, a joined `grp_` group, an E.164 `phone`, or a WhatsApp `username`. Supply exact `text`, or supply `file_name` with exactly one PDF source: `pdf_url` or standard padded `pdf_base64`. PDFs may not exceed 16 MiB. Requires `Idempotency-Key`. Conversation identifiers, provider JIDs, channel identifiers, and self-attested confirmation flags are not accepted. Direct addresses are not persisted or returned and fail closed while a Recipient Exclusion is active on the Connection. PDF source and provider upload URLs are not retained or returned. Exact replay returns the existing operation without resending. Failed and unknown post-boundary outcomes remain Send Operation resources.",
+        "description": "Create or exactly replay one Send Operation using exactly one destination: a known active `ctc_` contact, a joined `grp_` group, an E.164 `phone`, or a WhatsApp `username`. Supply exact `text`; supply `file_name` with exactly one PDF source (`pdf_url` or standard padded `pdf_base64`); or supply exactly one JPEG/PNG image source (`image_url` or standard padded `image_base64`) with an optional `caption` and no filename. PDFs may not exceed 16 MiB and images may not exceed 5,000,000 bytes. Requires `Idempotency-Key`. Conversation identifiers, provider JIDs, channel identifiers, and self-attested confirmation flags are not accepted. Direct addresses are not persisted or returned and fail closed while a Recipient Exclusion is active on the Connection. Source and provider upload URLs are not retained or returned. Exact replay returns the existing operation without resending. Failed and unknown post-boundary outcomes remain Send Operation resources.",
         "operationId": "createSendOperation",
         "parameters": [
           {
@@ -1399,6 +1399,21 @@
                     "recipient_id": "ctc_xxxxxxxxxxxxxxxxxxxxx",
                     "file_name": "report.pdf",
                     "pdf_base64": "JVBERi0xLjcKJSVFT0YK"
+                  }
+                },
+                "imageUrl": {
+                  "summary": "JPEG image from an HTTPS URL with a caption",
+                  "value": {
+                    "recipient_id": "ctc_xxxxxxxxxxxxxxxxxxxxx",
+                    "image_url": "https://files.example.com/photo.jpg",
+                    "caption": "A photo from a server-side automation."
+                  }
+                },
+                "imageBase64": {
+                  "summary": "PNG image from standard padded Base64",
+                  "value": {
+                    "recipient_id": "ctc_xxxxxxxxxxxxxxxxxxxxx",
+                    "image_base64": "iVBORw0KGgo="
                   }
                 }
               },
@@ -2235,7 +2250,9 @@
                     ]
                   },
                   "text": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
                   }
                 },
                 "additionalProperties": false
@@ -2253,7 +2270,9 @@
                     "pattern": "^\\+[1-9][0-9]{1,14}$"
                   },
                   "text": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
                   }
                 },
                 "additionalProperties": false
@@ -2271,7 +2290,9 @@
                     "pattern": "^@[A-Za-z0-9._-]{1,64}$"
                   },
                   "text": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
                   }
                 },
                 "additionalProperties": false
@@ -2315,7 +2336,9 @@
                     "description": "a string at most 4096 character(s) long",
                     "title": "maxLength(4096)",
                     "minLength": 1,
-                    "maxLength": 4096
+                    "maxLength": 4096,
+                    "format": "uri",
+                    "pattern": "^[Hh][Tt][Tt][Pp][Ss]://"
                   }
                 },
                 "additionalProperties": false
@@ -2345,7 +2368,9 @@
                     "description": "a string at most 4096 character(s) long",
                     "title": "maxLength(4096)",
                     "minLength": 1,
-                    "maxLength": 4096
+                    "maxLength": 4096,
+                    "format": "uri",
+                    "pattern": "^[Hh][Tt][Tt][Pp][Ss]://"
                   }
                 },
                 "additionalProperties": false
@@ -2375,7 +2400,9 @@
                     "description": "a string at most 4096 character(s) long",
                     "title": "maxLength(4096)",
                     "minLength": 1,
-                    "maxLength": 4096
+                    "maxLength": 4096,
+                    "format": "uri",
+                    "pattern": "^[Hh][Tt][Tt][Pp][Ss]://"
                   }
                 },
                 "additionalProperties": false
@@ -2416,11 +2443,11 @@
                   },
                   "pdf_base64": {
                     "type": "string",
-                    "description": "a string matching the pattern ^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
+                    "description": "a string matching the pattern ^[A-Za-z0-9+/]+={0,2}$",
                     "title": "maxLength(22369624)",
                     "minLength": 12,
                     "maxLength": 22369624,
-                    "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+                    "pattern": "^[A-Za-z0-9+/]+={0,2}$"
                   }
                 },
                 "additionalProperties": false
@@ -2447,11 +2474,11 @@
                   },
                   "pdf_base64": {
                     "type": "string",
-                    "description": "a string matching the pattern ^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
+                    "description": "a string matching the pattern ^[A-Za-z0-9+/]+={0,2}$",
                     "title": "maxLength(22369624)",
                     "minLength": 12,
                     "maxLength": 22369624,
-                    "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+                    "pattern": "^[A-Za-z0-9+/]+={0,2}$"
                   }
                 },
                 "additionalProperties": false
@@ -2478,17 +2505,216 @@
                   },
                   "pdf_base64": {
                     "type": "string",
-                    "description": "a string matching the pattern ^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
+                    "description": "a string matching the pattern ^[A-Za-z0-9+/]+={0,2}$",
                     "title": "maxLength(22369624)",
                     "minLength": 12,
                     "maxLength": 22369624,
-                    "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+                    "pattern": "^[A-Za-z0-9+/]+={0,2}$"
                   }
                 },
                 "additionalProperties": false
               }
             ],
             "title": "PDF file (Base64)"
+          },
+          {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "recipient_id",
+                  "image_url"
+                ],
+                "properties": {
+                  "recipient_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "description": "a string matching the pattern ^ctc_[A-Za-z0-9_-]{21}(?![\\s\\S])$",
+                        "pattern": "^ctc_[A-Za-z0-9_-]{21}(?![\\s\\S])$"
+                      },
+                      {
+                        "type": "string",
+                        "description": "a string matching the pattern ^grp_[A-Za-z0-9_-]{21}(?![\\s\\S])$",
+                        "pattern": "^grp_[A-Za-z0-9_-]{21}(?![\\s\\S])$"
+                      }
+                    ]
+                  },
+                  "image_url": {
+                    "type": "string",
+                    "description": "a string at most 4096 character(s) long",
+                    "title": "maxLength(4096)",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "format": "uri",
+                    "pattern": "^[Hh][Tt][Tt][Pp][Ss]://"
+                  },
+                  "caption": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": [
+                  "phone",
+                  "image_url"
+                ],
+                "properties": {
+                  "phone": {
+                    "type": "string",
+                    "description": "a string matching the pattern ^\\+[1-9][0-9]{1,14}$",
+                    "pattern": "^\\+[1-9][0-9]{1,14}$"
+                  },
+                  "image_url": {
+                    "type": "string",
+                    "description": "a string at most 4096 character(s) long",
+                    "title": "maxLength(4096)",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "format": "uri",
+                    "pattern": "^[Hh][Tt][Tt][Pp][Ss]://"
+                  },
+                  "caption": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": [
+                  "username",
+                  "image_url"
+                ],
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "description": "a string matching the pattern ^@[A-Za-z0-9._-]{1,64}$",
+                    "pattern": "^@[A-Za-z0-9._-]{1,64}$"
+                  },
+                  "image_url": {
+                    "type": "string",
+                    "description": "a string at most 4096 character(s) long",
+                    "title": "maxLength(4096)",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "format": "uri",
+                    "pattern": "^[Hh][Tt][Tt][Pp][Ss]://"
+                  },
+                  "caption": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  }
+                },
+                "additionalProperties": false
+              }
+            ],
+            "title": "Image from URL"
+          },
+          {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "recipient_id",
+                  "image_base64"
+                ],
+                "properties": {
+                  "recipient_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "description": "a string matching the pattern ^ctc_[A-Za-z0-9_-]{21}(?![\\s\\S])$",
+                        "pattern": "^ctc_[A-Za-z0-9_-]{21}(?![\\s\\S])$"
+                      },
+                      {
+                        "type": "string",
+                        "description": "a string matching the pattern ^grp_[A-Za-z0-9_-]{21}(?![\\s\\S])$",
+                        "pattern": "^grp_[A-Za-z0-9_-]{21}(?![\\s\\S])$"
+                      }
+                    ]
+                  },
+                  "image_base64": {
+                    "type": "string",
+                    "description": "a string matching the pattern ^[A-Za-z0-9+/]+={0,2}$",
+                    "title": "maxLength(6666668)",
+                    "minLength": 4,
+                    "maxLength": 6666668,
+                    "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+                  },
+                  "caption": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": [
+                  "phone",
+                  "image_base64"
+                ],
+                "properties": {
+                  "phone": {
+                    "type": "string",
+                    "description": "a string matching the pattern ^\\+[1-9][0-9]{1,14}$",
+                    "pattern": "^\\+[1-9][0-9]{1,14}$"
+                  },
+                  "image_base64": {
+                    "type": "string",
+                    "description": "a string matching the pattern ^[A-Za-z0-9+/]+={0,2}$",
+                    "title": "maxLength(6666668)",
+                    "minLength": 4,
+                    "maxLength": 6666668,
+                    "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+                  },
+                  "caption": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": [
+                  "username",
+                  "image_base64"
+                ],
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "description": "a string matching the pattern ^@[A-Za-z0-9._-]{1,64}$",
+                    "pattern": "^@[A-Za-z0-9._-]{1,64}$"
+                  },
+                  "image_base64": {
+                    "type": "string",
+                    "description": "a string matching the pattern ^[A-Za-z0-9+/]+={0,2}$",
+                    "title": "maxLength(6666668)",
+                    "minLength": 4,
+                    "maxLength": 6666668,
+                    "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+                  },
+                  "caption": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  }
+                },
+                "additionalProperties": false
+              }
+            ],
+            "title": "Image file (Base64)"
           }
         ]
       },

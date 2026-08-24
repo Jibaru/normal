@@ -38,16 +38,37 @@ const hasUnpairedSurrogate = (value: string): boolean => {
   return false;
 };
 
+const hasCanonicalBase64Padding = (value: string): boolean => {
+  if (value.length % 4 !== 0) return false;
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  if (padding === 0) return true;
+  const code = value.charCodeAt(value.length - padding - 1);
+  const trailingValue =
+    code >= 65 && code <= 90
+      ? code - 65
+      : code >= 97 && code <= 122
+        ? code - 71
+        : code >= 48 && code <= 57
+          ? code + 4
+          : code === 43
+            ? 62
+            : 63;
+  return (trailingValue & (padding === 2 ? 0x0f : 0x03)) === 0;
+};
+
 export const SendText = Schema.String.pipe(
-  Schema.filter((value) => {
-    const length = Array.from(value).length;
-    return (
-      length >= 1 &&
-      length <= 4_096 &&
-      !hasUnpairedSurrogate(value) &&
-      !isOnlyUnicodeWhiteSpace(value)
-    );
-  }),
+  Schema.filter(
+    (value) => {
+      const length = Array.from(value).length;
+      return (
+        length >= 1 &&
+        length <= 4_096 &&
+        !hasUnpairedSurrogate(value) &&
+        !isOnlyUnicodeWhiteSpace(value)
+      );
+    },
+    { jsonSchema: { minLength: 1, maxLength: 4_096 } },
+  ),
 );
 export type SendText = typeof SendText.Type;
 
@@ -77,26 +98,41 @@ export const SendPdfFileName = Schema.String.pipe(
 export const SendPdfUrl = Schema.String.pipe(
   Schema.minLength(1),
   Schema.maxLength(4_096),
-  Schema.filter((value) => {
-    try {
-      const url = new URL(value);
-      return (
-        url.protocol === "https:" &&
-        url.username === "" &&
-        url.password === "" &&
-        url.port === ""
-      );
-    } catch {
-      return false;
-    }
-  }),
+  Schema.filter(
+    (value) => {
+      try {
+        const url = new URL(value);
+        return (
+          url.protocol === "https:" &&
+          url.username === "" &&
+          url.password === "" &&
+          url.port === ""
+        );
+      } catch {
+        return false;
+      }
+    },
+    {
+      jsonSchema: {
+        format: "uri",
+        pattern: "^[Hh][Tt][Tt][Pp][Ss]://",
+      },
+    },
+  ),
 );
 export const SendPdfBase64 = Schema.String.pipe(
   Schema.minLength(12),
   Schema.maxLength(22_369_624),
-  Schema.pattern(
-    /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/,
-  ),
+  Schema.pattern(/^[A-Za-z0-9+/]+={0,2}$/),
+  Schema.filter(hasCanonicalBase64Padding),
+);
+
+export const SendImageUrl = SendPdfUrl;
+export const SendImageBase64 = Schema.String.pipe(
+  Schema.minLength(4),
+  Schema.maxLength(6_666_668),
+  Schema.pattern(/^[A-Za-z0-9+/]+={0,2}$/),
+  Schema.filter(hasCanonicalBase64Padding),
 );
 
 export const RestConnectionState = Schema.Literal(
@@ -485,6 +521,20 @@ export const RestCreateSendOperationContract = makePublicContract(
         pdf_base64: SendPdfBase64,
       }),
     ).annotations({ title: "PDF file (Base64)" }),
+    Schema.extend(
+      RestSendDestination,
+      Schema.Struct({
+        image_url: SendImageUrl,
+        caption: Schema.optional(SendText),
+      }),
+    ).annotations({ title: "Image from URL" }),
+    Schema.extend(
+      RestSendDestination,
+      Schema.Struct({
+        image_base64: SendImageBase64,
+        caption: Schema.optional(SendText),
+      }),
+    ).annotations({ title: "Image file (Base64)" }),
   ),
 );
 export type RestCreateSendOperation =
