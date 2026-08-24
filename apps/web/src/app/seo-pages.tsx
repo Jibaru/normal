@@ -1,5 +1,6 @@
 import { ArrowRight, ShieldCheck } from "lucide-react";
 import Link from "next/link";
+import { ModeToggle } from "@/components/mode-toggle";
 import type { ContentCollection, ContentPage, ContentSummary } from "./content";
 import { collectionLabels } from "./content";
 
@@ -23,9 +24,12 @@ function Header() {
           GitHub
         </a>
       </nav>
-      <a href={contactUrl} rel="noreferrer" target="_blank">
-        Contact <ArrowRight aria-hidden="true" />
-      </a>
+      <div className="resource-header-actions">
+        <ModeToggle />
+        <a href={contactUrl} rel="noreferrer" target="_blank">
+          Contact <ArrowRight aria-hidden="true" />
+        </a>
+      </div>
     </header>
   );
 }

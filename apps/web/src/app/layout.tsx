@@ -1,6 +1,7 @@
 import { ClerkProvider } from "@clerk/nextjs";
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { ThemeProvider } from "@/components/theme-provider";
 import { isClerkPublishableKey } from "../effect/clerk-config";
 import { parseProductAnalyticsConfiguration } from "../effect/product-analytics";
 import { ProductAnalyticsBootstrap } from "./product-analytics-bootstrap";
@@ -40,10 +41,18 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col">
-        <ProductAnalyticsBootstrap configuration={productAnalytics} />
-        <QueryProvider>{children}</QueryProvider>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="system"
+          disableTransitionOnChange
+          enableSystem
+        >
+          <ProductAnalyticsBootstrap configuration={productAnalytics} />
+          <QueryProvider>{children}</QueryProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

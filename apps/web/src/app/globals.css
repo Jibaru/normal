@@ -191,12 +191,21 @@ html {
 .landing {
   --landing-ink: var(--foreground);
   --landing-paper: var(--background);
-  --landing-wash: var(--muted);
+  --landing-wash: color-mix(in oklch, var(--background) 96%, var(--foreground));
   --landing-line: var(--border);
+  --landing-emphasis: var(--foreground);
+  --landing-emphasis-foreground: var(--background);
+  --landing-emphasis-muted: var(--muted);
   min-height: 100vh;
   overflow: hidden;
   background: var(--landing-paper);
   color: var(--landing-ink);
+}
+
+.dark .landing {
+  --landing-emphasis: var(--card);
+  --landing-emphasis-foreground: var(--foreground);
+  --landing-emphasis-muted: var(--muted-foreground);
 }
 
 .landing-shell {
@@ -713,8 +722,8 @@ html {
   grid-template-columns: minmax(0, 1.05fr) minmax(380px, 0.95fr);
   overflow: hidden;
   border-radius: var(--radius);
-  background: var(--landing-ink);
-  color: var(--landing-paper);
+  background: var(--landing-emphasis);
+  color: var(--landing-emphasis-foreground);
 }
 
 .control-copy {
@@ -722,7 +731,7 @@ html {
 }
 
 .control-copy .section-kicker {
-  color: var(--primary-foreground);
+  color: var(--landing-emphasis-muted);
 }
 
 .control-copy h2 {
@@ -732,13 +741,13 @@ html {
 .control-copy > p:not(.section-kicker) {
   max-width: 540px;
   margin-top: 30px;
-  color: var(--muted);
+  color: var(--landing-emphasis-muted);
   line-height: 1.75;
 }
 
 .control-quote {
   margin-top: 76px;
-  color: var(--muted);
+  color: var(--landing-emphasis-muted);
   font-family: Georgia, "Times New Roman", serif;
   font-size: 1.4rem;
   font-style: italic;
@@ -754,14 +763,14 @@ html {
   display: flex;
   gap: 16px;
   border-bottom: 1px solid
-    color-mix(in oklch, var(--background) 15%, transparent);
+    color-mix(in oklch, var(--landing-emphasis-foreground) 15%, transparent);
   padding-block: 24px;
 }
 
 .control-list svg {
   width: 19px;
   flex: 0 0 auto;
-  color: var(--primary-foreground);
+  color: var(--landing-emphasis-foreground);
 }
 
 .control-title,
@@ -775,7 +784,7 @@ html {
 
 .control-description {
   margin-top: 7px;
-  color: var(--muted);
+  color: var(--landing-emphasis-muted);
   font-size: 0.78rem;
   line-height: 1.55;
 }
@@ -854,18 +863,18 @@ html {
 }
 
 .open-source-section {
-  background: var(--landing-ink);
-  color: var(--landing-paper);
+  background: var(--landing-emphasis);
+  color: var(--landing-emphasis-foreground);
 }
 
 .open-source-section .section-kicker,
 .open-source-section > p:not(.section-kicker) {
-  color: color-mix(in oklch, var(--landing-paper) 70%, transparent);
+  color: var(--landing-emphasis-muted);
 }
 
 .open-source-section > a {
-  background: var(--landing-paper);
-  color: var(--landing-ink);
+  background: var(--landing-emphasis-foreground);
+  color: var(--landing-emphasis);
 }
 
 .docs-section {
@@ -944,13 +953,13 @@ html {
 
 .final-cta {
   padding-block: 120px;
-  background: var(--foreground);
-  color: var(--background);
+  background: var(--landing-emphasis);
+  color: var(--landing-emphasis-foreground);
   text-align: center;
 }
 
 .final-cta .section-kicker {
-  color: var(--muted);
+  color: var(--landing-emphasis-muted);
 }
 
 .final-cta h2 {
@@ -1259,7 +1268,7 @@ html {
 }
 
 .resource-header nav a,
-.resource-header > a,
+.resource-header-actions > a,
 .resource-footer a {
   color: inherit;
   font-size: 0.875rem;
@@ -1267,9 +1276,15 @@ html {
   text-decoration: none;
 }
 
-.resource-header > a {
+.resource-header-actions {
   display: flex;
   justify-self: end;
+  align-items: center;
+  gap: 8px;
+}
+
+.resource-header-actions > a {
+  display: flex;
   align-items: center;
   gap: 7px;
 }

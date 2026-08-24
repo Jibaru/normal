@@ -1,4 +1,5 @@
 const COLORS = {
+  auto: "currentColor",
   dark: "#FFFFFF",
   light: "#000000",
 };
@@ -10,7 +11,7 @@ export function OpenAILogo({
 }: {
   className?: string;
   variant?: "icon" | "wordmark";
-  mode?: "dark" | "light";
+  mode?: keyof typeof COLORS;
 }) {
   const color = COLORS[mode];
 

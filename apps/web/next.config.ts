@@ -50,6 +50,8 @@ const clerkOrigin = clerkOriginFromPublishableKey(
 const connectSrc = ["'self'", apiOrigin, posthogOrigin]
   .filter((value): value is string => typeof value === "string")
   .join(" ");
+const developmentScriptSource =
+  process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : "";
 
 const contentSecurityPolicy = [
   "default-src 'self'",
@@ -60,7 +62,7 @@ const contentSecurityPolicy = [
   "font-src 'self' data:",
   "style-src 'self' 'unsafe-inline'",
   // Clerk supplies the signed-in browser identity UI; keep inline bootstrap scripts allowed.
-  `script-src 'self' 'unsafe-inline' https://*.clerk.accounts.dev https://*.clerk.com${clerkOrigin === null ? "" : ` ${clerkOrigin}`}`,
+  `script-src 'self' 'unsafe-inline'${developmentScriptSource} https://*.clerk.accounts.dev https://*.clerk.com${clerkOrigin === null ? "" : ` ${clerkOrigin}`}`,
   `frame-src 'self' https://*.clerk.accounts.dev https://*.clerk.com${clerkOrigin === null ? "" : ` ${clerkOrigin}`}`,
   "worker-src 'self' blob:",
   `connect-src ${connectSrc} https://*.clerk.accounts.dev https://api.clerk.com https://*.clerk.com${clerkOrigin === null ? "" : ` ${clerkOrigin}`}`,

@@ -19,6 +19,7 @@ import type { ReactNode } from "react";
 import { FaqAccordion } from "@/components/faq-accordion";
 import { ClaudeLogo } from "@/components/logos/claude";
 import { OpenAILogo } from "@/components/logos/openai";
+import { ModeToggle } from "@/components/mode-toggle";
 import { buttonVariants } from "@/components/ui/button";
 import {
   Card,
@@ -108,7 +109,7 @@ function AiClientLogo({ client }: { readonly client: "ChatGPT" | "Claude" }) {
     return <ClaudeLogo aria-hidden="true" />;
   }
 
-  return <OpenAILogo mode="light" />;
+  return <OpenAILogo mode="auto" />;
 }
 
 function AiClientPill({ client }: { readonly client: "ChatGPT" | "Claude" }) {
@@ -138,6 +139,7 @@ export function LandingPage() {
           </a>
         </div>
         <div className="landing-nav-actions">
+          <ModeToggle />
           <a
             className={buttonVariants({ variant: "outline" })}
             href="/dashboard"
