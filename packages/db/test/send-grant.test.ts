@@ -435,6 +435,101 @@ describe("Send Operation grant identities", () => {
     ]);
   });
 
+  test("supersedes a pending image when its outbound upsert arrives before the provider response", async () => {
+    const sendId = "60000000-0000-4000-8000-000000000102";
+    const messageIdentity = `wi1_${"R".repeat(43)}`;
+    expect(
+      await sends.commit(
+        {
+          ...commitInput(apiGrantA, {
+            auditLogId: "51000000-0000-4000-8000-000000000102",
+            fingerprint: `sf1_${"R".repeat(43)}`,
+            idempotencyKey: "223456789012345678902",
+            operationName: "send_image",
+            sendId,
+            sendPublicId: "snd_223456789012345678902",
+          }),
+          attachment: {
+            plaintextSizeBytes: 128,
+            sha256: "b".repeat(64),
+          },
+        },
+        async () => ({
+          attachment: { objectKey: "pending/send-image-race" },
+          ciphertext: new Uint8Array(32).fill(20),
+          keyVersion: 1,
+          nonce: new Uint8Array(12).fill(21),
+        }),
+      ),
+    ).toMatchObject({ outcome: "created" });
+    await database.query(
+      `INSERT INTO public.whatsapp_conversations (
+         id, personal_account_id, whatsapp_connection_id, public_id, kind,
+         recipient_locator, recipient_public_id, last_activity_at,
+         last_activity_direction
+       ) VALUES (
+         '70000000-0000-4000-8000-000000000102', $1, $2,
+         'cvs_223456789012345678902', 'direct', $3, $4, $5, 'outbound'
+       )`,
+      [
+        accountId,
+        connectionId,
+        `di1_${"A".repeat(43)}`,
+        contactPublicId,
+        observedAt,
+      ],
+    );
+    await database.query(
+      `INSERT INTO public.stored_messages (
+         id, personal_account_id, whatsapp_connection_id, conversation_id,
+         public_id, message_identity, direction, sent_at, content_type,
+         content_ciphertext_version, content_key_version, content_nonce,
+         content_ciphertext, received_at
+       ) VALUES (
+         '80000000-0000-4000-8000-000000000102', $1, $2,
+         '70000000-0000-4000-8000-000000000102',
+         'msg_223456789012345678902', $3, 'outbound', $4, 'image', 1, 1,
+         decode(repeat('22', 12), 'hex'), decode(repeat('23', 32), 'hex'), $4
+       )`,
+      [accountId, connectionId, messageIdentity, observedAt],
+    );
+
+    await expect(
+      sends.recordProviderOutcome({
+        changedAt: new Date(observedAt.valueOf() + 1_000),
+        messageIdentity,
+        sendId,
+        status: "sent",
+      }),
+    ).resolves.toMatchObject({ status: "sent" });
+    const state = await database.query<{
+      deletion_count: number;
+      object_state: string;
+      pending_count: number;
+      stored_media_used_bytes: number;
+    }>(
+      `SELECT accounts.stored_media_used_bytes,
+         (SELECT count(*)::integer FROM public.pending_send_contents
+          WHERE send_operation_id = $1) AS pending_count,
+         (SELECT state FROM public.send_operation_objects
+          WHERE send_operation_id = $1) AS object_state,
+         (SELECT count(*)::integer FROM public.stored_media_object_deletions
+          WHERE personal_account_id = $2
+            AND object_key = 'pending/send-image-race') AS deletion_count
+       FROM public.personal_accounts accounts
+       WHERE accounts.id = $2`,
+      [sendId, accountId],
+    );
+    expect(state.rows).toEqual([
+      {
+        deletion_count: 1,
+        object_state: "purging",
+        pending_count: 0,
+        stored_media_used_bytes: 128,
+      },
+    ]);
+  });
+
   test("rejects changed destinations for legacy file bindings before retrieval", async () => {
     const idempotencyKey = "223456789012345678987";
     const sendId = "60000000-0000-4000-8000-000000000101";

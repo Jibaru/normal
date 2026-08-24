@@ -3,7 +3,7 @@ import {
   makeVerifiedPdfBytes,
   type VerifiedPdfBytes,
 } from "@whatsapp-mcp/wasender/session";
-import { decodeBase64, isStandardPaddedBase64 } from "./base64-url";
+import { decodeBase64 } from "./base64-url";
 
 export const MAX_PDF_BYTES = 16_777_216;
 const MAX_DNS_BYTES = 65_536;
@@ -118,7 +118,12 @@ const validateUrl = async (
 };
 
 export const decodePdfBase64 = (value: string): VerifiedPdfBytes => {
-  if (value.length > 22_369_624 || !isStandardPaddedBase64(value)) {
+  if (
+    value.length > 22_369_624 ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(
+      value,
+    )
+  ) {
     throw new Error("invalid PDF base64");
   }
   return makeVerifiedPdfBytes(decodeBase64(value));

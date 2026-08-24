@@ -1289,8 +1289,18 @@ export const makePgAtomicSendRepository = (
               cleared_pending AS (
                 DELETE FROM public.pending_send_contents AS pending
                 USING updated
-                WHERE ${input.status} = 'failed'
-                  AND pending.send_operation_id = updated.id
+                WHERE pending.send_operation_id = updated.id
+                  AND (
+                    ${input.status} = 'failed'
+                    OR EXISTS (
+                      SELECT 1
+                      FROM public.stored_messages AS message
+                      WHERE message.personal_account_id = updated.personal_account_id
+                        AND message.whatsapp_connection_id = updated.whatsapp_connection_id
+                        AND message.message_identity = ${input.messageIdentity ?? null}
+                        AND message.direction = 'outbound'
+                    )
+                  )
               ),
               completed_audit AS (
                 UPDATE public.tool_call_logs AS audit
