@@ -434,7 +434,7 @@ Provider-control startup also validates both Wasender secrets before serving
 even its private health route or an RPC method. The Wrangler manifest declares
 both names as required secrets, so deployment fails before serving when either
 secret has not been configured. Its adapter always calls the fixed
-`https://www.wasenderapi.com` origin with the account-level credential, forces
+`https://api.wapi.crafter.run` origin with the account-level credential, forces
 provider message logging and automatic incoming-message reads off during
 creation, and emits only operation class, normalized outcome, attempt, duration,
 bounded response size, RPC method, and normalized result code. No telemetry
@@ -860,7 +860,7 @@ the normalized outcome `complete`, `in_progress`, `qr_available`, or
 
 The Wasender media adapter has no hostname, endpoint, redirect, timeout, or
 byte-limit environment override. Its production Layer fixes the decrypt
-endpoint and approved download hostname to `www.wasenderapi.com`, resolves that
+endpoint and approved download hostname to `api.wapi.crafter.run`, resolves that
 host through bounded DNS-over-HTTPS at `cloudflare-dns.com`, and fails closed
 when the per-session authority is empty, non-printable, or otherwise invalid.
 The session authority is provider data encrypted under the owning WhatsApp
@@ -889,7 +889,7 @@ specification](stored-media-container.md).
 Text sending does not add an account-level Provider API Credential, endpoint
 override, public route, service binding, or infrastructure secret. The
 production adapter always calls
-`https://www.wasenderapi.com/api/send-message` over the Worker's existing
+`https://api.wapi.crafter.run/api/send-message` over the Worker's existing
 outbound HTTPS capability, rejects redirects, and cannot select a test
 transport at runtime. This zero-binding infrastructure delta keeps ordinary
 connection operations outside provider-control and preserves ADR 0004's

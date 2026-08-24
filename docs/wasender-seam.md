@@ -1,7 +1,35 @@
 # Provider-neutral WhatsApp seam
 
 `@whatsapp-mcp/wasender` is the internal replacement seam around the sole
-private-beta provider. It exports no catch-all barrel and has five independent
+private-beta provider.
+
+## Provider origin
+
+The provider origin is `https://api.wapi.crafter.run`, defined once in
+`src/provider-origin.ts` and imported by the six modules that previously repeated it as a
+literal. It is a call target for `text-send`, `pdf-send`, `directory` and `control-wasender`,
+and a *validation* boundary for `media` and `pdf-send`, which pin the hostname a download may
+come from and the origins an upload response may name in `publicUrl`. Those two boundaries are
+why it is one constant rather than six: a build whose call target and validated host disagree
+fails mid-operation, at a boundary, rather than anywhere a reader would look for it.
+
+The package, its types and its fixtures keep the Wasender name deliberately. This is a change
+of host, not of protocol. The wire contract is still the one Wasender defined, and the adapters
+still encode its response envelopes, its distinct failure shapes and its two different
+pagination styles; the `api-docs` links throughout these documents remain the reference for
+that contract. Renaming the package would be a separate change with a much larger diff and no
+behavioural content.
+
+There is no runtime override and no environment variable. The origin is a constant, so the
+seam still offers no runtime provider selection and no selectable fake, exactly as before.
+
+**Known gap.** `apps/operations-control/src/wasender.ts` still reads
+`https://wasenderapi.com/status` for the dependency-availability signal. That page is an
+Inertia status page exposing 7-day uptime and a scheduled-outage feed; the new origin exposes a
+liveness endpoint (`GET /health`) and no uptime history, so there is no equivalent source to
+read and no honest way to synthesise one from a health check. The signal is therefore now
+measuring a provider that is no longer in the request path, and closing this properly means
+sourcing the SLO input from the operator's own monitoring rather than from the provider. It exports no catch-all barrel and has five independent
 Effect capabilities:
 
 - `SessionLifecycle` is account-authority lifecycle control.
@@ -37,7 +65,7 @@ log-safe `Redacted` value so the owning Worker can envelope-encrypt it before a
 per-session Layer uses it.
 
 The lifecycle adapter calls the documented account endpoints at the fixed
-`https://www.wasenderapi.com` origin. Creation uses the deterministic Connection
+`https://api.wapi.crafter.run` origin. Creation uses the deterministic Connection
 Setup marker as the provider name, always disables provider message logging
 and automatic incoming-message reads, and explicitly keeps group webhook
 delivery enabled. The five-minute reconciliation may repair only this complete
@@ -177,12 +205,12 @@ encrypted adapter values, raw response data, URLs, or credentials.
 ## Production media retrieval
 
 The real `MediaRetrieval` Layer uses the per-session authority only for the
-30-second `POST https://www.wasenderapi.com/api/decrypt-media` metadata call.
+30-second `POST https://api.wapi.crafter.run/api/decrypt-media` metadata call.
 The encrypted provider message and the returned one-hour download URL remain
 inside versioned Effect `Redacted` adapter values. The download request never
 forwards the session authority.
 
-`www.wasenderapi.com` is the only approved metadata and download hostname and
+`api.wapi.crafter.run` is the only approved metadata and download hostname and
 is deliberately not configurable. Before every request, including every
 same-host redirect, the adapter resolves both address families through bounded
 DNS-over-HTTPS requests and rejects empty answers or any non-global, private,
@@ -202,7 +230,7 @@ authority and exposes no runtime fake or host override.
 
 The production Directory adapter calls Wasender's documented paginated
 `GET /api/contacts` and `GET /api/groups` endpoints at the fixed
-`https://www.wasenderapi.com` origin. It closes over exactly one redacted
+`https://api.wapi.crafter.run` origin. It closes over exactly one redacted
 session API key and sends that value only as the Bearer credential for those
 per-session requests. No account-level PAT is accepted by the constructor or
 read methods.

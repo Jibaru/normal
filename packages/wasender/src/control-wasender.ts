@@ -20,8 +20,8 @@ import {
   type SessionReconciliation,
   type SetupMarker,
 } from "./control";
+import { providerOrigin } from "./provider-origin";
 
-const providerOrigin = "https://www.wasenderapi.com";
 const safeReadAttemptTimeoutMs = 10_000;
 const safeReadMaximumAttempts = 3;
 const safeReadTotalTimeoutMs = 25_000;
