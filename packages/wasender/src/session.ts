@@ -55,6 +55,56 @@ export const makeVerifiedPdfBytes = (bytes: Uint8Array): VerifiedPdfBytes => {
   return bytes.slice() as VerifiedPdfBytes;
 };
 
+declare const verifiedImageBytes: unique symbol;
+
+export type OutboundImageMimeType = "image/jpeg" | "image/png";
+
+/** Raw image bytes whose MIME type was derived from a supported signature. */
+export type VerifiedImageBytes = Uint8Array & {
+  readonly mimeType: OutboundImageMimeType;
+  readonly [verifiedImageBytes]: "VerifiedImageBytes";
+};
+
+export const maximumOutboundImageBytes = 5_000_000;
+
+export const makeVerifiedImageBytes = (
+  bytes: Uint8Array,
+): VerifiedImageBytes => {
+  if (bytes.byteLength > maximumOutboundImageBytes) {
+    throw new RangeError(
+      `Image bytes must contain at most ${maximumOutboundImageBytes} bytes`,
+    );
+  }
+
+  const isJpeg =
+    bytes.byteLength >= 3 &&
+    bytes[0] === 0xff &&
+    bytes[1] === 0xd8 &&
+    bytes[2] === 0xff;
+  const pngSignature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  const isPng =
+    bytes.byteLength >= pngSignature.length &&
+    pngSignature.every((value, index) => bytes[index] === value);
+  const mimeType: OutboundImageMimeType | null = isJpeg
+    ? "image/jpeg"
+    : isPng
+      ? "image/png"
+      : null;
+
+  if (mimeType === null) {
+    throw new TypeError("Image bytes must begin with a JPEG or PNG signature");
+  }
+
+  const verified = bytes.slice() as VerifiedImageBytes;
+  Object.defineProperty(verified, "mimeType", {
+    configurable: false,
+    enumerable: false,
+    value: mimeType,
+    writable: false,
+  });
+  return verified;
+};
+
 declare const wasenderIdentityProtectionKey: unique symbol;
 
 /**
@@ -236,6 +286,42 @@ export interface WasenderPdfSendingOptions {
   };
 }
 
+export type ImageSendResult = PdfSendResult;
+
+/** Uploads one verified image and performs at most one image-send attempt. */
+export interface ImageSending {
+  readonly sendImage: (request: {
+    readonly bytes: VerifiedImageBytes;
+    readonly caption?: string;
+    readonly recipient: RecipientLocator;
+  }) => Effect.Effect<ImageSendResult>;
+}
+
+export const ImageSending = Context.GenericTag<ImageSending>(
+  "@whatsapp-mcp/wasender/ImageSending",
+);
+
+export interface ImageSendTelemetryEvent {
+  readonly durationMs: number;
+  readonly operationClass: "image-send";
+  readonly outcome: ImageSendResult["outcome"];
+  readonly responseBytes: number | null;
+  readonly sendAttemptCount: 0 | 1;
+  readonly uploadAttemptCount: 0 | 1;
+  readonly uploadBytes: number;
+}
+
+export interface WasenderImageSendingOptions {
+  readonly authority: SessionAuthority;
+  readonly identityKey: WasenderIdentityProtectionKey;
+  readonly resolveRecipient: (
+    recipient: RecipientLocator,
+  ) => WasenderRecipientRoute | null;
+  readonly telemetry: {
+    readonly emit: (event: ImageSendTelemetryEvent) => void;
+  };
+}
+
 declare const mediaDownloadByteLimit: unique symbol;
 
 export type MediaDownloadByteLimit = number & {
@@ -346,6 +432,10 @@ export {
   type WasenderDirectoryTelemetryEvent,
   type WasenderSessionDirectoryConfig,
 } from "./directory";
+export {
+  makeWasenderImageSending,
+  makeWasenderImageSendingLayer,
+} from "./image-send";
 export {
   makeWasenderPdfSending,
   makeWasenderPdfSendingLayer,

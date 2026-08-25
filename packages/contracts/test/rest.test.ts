@@ -589,6 +589,12 @@ describe("REST contracts", () => {
     expect(serialized).toContain(
       '"summary": "PDF from standard padded Base64"',
     );
+    expect(serialized).toContain(
+      '"summary": "JPEG image from an HTTPS URL with a caption"',
+    );
+    expect(serialized).toContain(
+      '"summary": "PNG image from standard padded Base64"',
+    );
     expect(serialized).toContain('"type": "http"');
     expect(serialized).toContain('"scheme": "bearer"');
     expect(serialized).toContain("con_xxxxxxxxxxxxxxxxxxxxx");
@@ -660,6 +666,8 @@ describe("REST contracts", () => {
       "Text message",
       "PDF from URL",
       "PDF file (Base64)",
+      "Image from URL",
+      "Image file (Base64)",
     ]);
 
     const created = {
@@ -714,6 +722,74 @@ describe("REST contracts", () => {
     expect(() =>
       decodeRestCreateSendOperation({ ...pdf, file_name: "../report.pdf" }),
     ).toThrow();
+    const imageUrl = {
+      caption: " exact\ne\u0301 ",
+      image_url: "https://files.example.com/photo.jpg",
+      recipient_id: "ctc_xxxxxxxxxxxxxxxxxxxxx",
+    } as const;
+    expect(decodeRestCreateSendOperation(imageUrl) as unknown).toEqual(
+      imageUrl,
+    );
+    const maximumAstralCaption = "😀".repeat(4_096);
+    expect(
+      decodeRestCreateSendOperation({
+        ...imageUrl,
+        caption: maximumAstralCaption,
+      }) as unknown,
+    ).toEqual({ ...imageUrl, caption: maximumAstralCaption });
+    expect(() =>
+      decodeRestCreateSendOperation({
+        ...imageUrl,
+        caption: `${maximumAstralCaption}😀`,
+      }),
+    ).toThrow();
+    const imageBase64 = {
+      image_base64: "iVBORw0KGgo=",
+      username: "@jane_doe",
+    } as const;
+    expect(decodeRestCreateSendOperation(imageBase64) as unknown).toEqual(
+      imageBase64,
+    );
+    expect(() =>
+      decodeRestCreateSendOperation({
+        ...imageUrl,
+        image_base64: "iVBORw0KGgo=",
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeRestCreateSendOperation({ ...imageBase64, file_name: "photo.png" }),
+    ).toThrow();
+    expect(() =>
+      decodeRestCreateSendOperation({ ...imageBase64, caption: " \n\t" }),
+    ).toThrow();
+    expect(() =>
+      decodeRestCreateSendOperation({
+        ...imageBase64,
+        image_base64: "iVBORw0KGgo",
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeRestCreateSendOperation({
+        ...imageBase64,
+        image_base64: "iVBORw0KGgo=\n",
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeRestCreateSendOperation({
+        ...imageUrl,
+        image_url: "http://files.example.com/photo.jpg",
+      }),
+    ).toThrow();
+    const imageBase64Variant = schema.anyOf[4] as {
+      readonly anyOf: ReadonlyArray<{
+        readonly properties: {
+          readonly image_base64: { readonly maxLength: number };
+        };
+      }>;
+    };
+    expect(imageBase64Variant.anyOf[0]?.properties.image_base64.maxLength).toBe(
+      6_666_668,
+    );
     expect(() =>
       decodeRestCreateSendOperation({
         ...created,

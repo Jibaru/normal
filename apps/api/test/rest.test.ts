@@ -93,6 +93,7 @@ const makeHarness = (options?: {
   readonly permissions?: ReadonlyArray<
     "connections:read" | "directory:read" | "messages:read" | "messages:send"
   >;
+  readonly preflight?: NonNullable<SendTextMessageService["preflight"]>;
   readonly send?: SendTextMessageService["send"];
 }) => {
   const telemetry: Array<SafeTelemetryEvent> = [];
@@ -184,7 +185,9 @@ const makeHarness = (options?: {
       encode: () => Effect.succeed("rest-cursor"),
     }),
     Layer.succeed(SendTextMessage, {
-      preflight: () => Effect.succeed({ outcome: "authorized" as const }),
+      preflight:
+        options?.preflight ??
+        (() => Effect.succeed({ outcome: "authorized" as const })),
       send:
         options?.send ??
         (() =>
@@ -2480,6 +2483,157 @@ describe("REST Send Operations", () => {
       undefined,
     );
     expect(JSON.stringify(await response.json())).not.toContain("report.pdf");
+  });
+
+  test("routes a verified JPEG and exact caption through image preflight and send", async () => {
+    const imageBase64 = "/9j/4A==";
+    const caption = "Exact image caption";
+    const preflight = vi.fn<NonNullable<SendTextMessageService["preflight"]>>(
+      () => Effect.succeed({ outcome: "authorized" }),
+    );
+    const send = vi.fn<SendTextMessageService["send"]>(() =>
+      Effect.succeed({ outcome: "receipt", receipt }),
+    );
+    const response = await makeHarness({
+      permissions: ["messages:send"],
+      preflight,
+      send,
+    }).handler(
+      request(sendPath, {
+        body: {
+          caption,
+          image_base64: imageBase64,
+          recipient_id: "ctc_123456789012345678901",
+        },
+        idempotencyKey,
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(preflight).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "api",
+        connectionId,
+        operationName: "send_image",
+      }),
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        image: {
+          bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xe0]),
+          caption,
+        },
+        recipientId: "ctc_123456789012345678901",
+      }),
+      undefined,
+    );
+    expect(send.mock.calls[0]?.[0].image?.bytes.mimeType).toBe("image/jpeg");
+    const output = await response.json();
+    expect(output).toEqual({
+      send_id: receipt.send_id,
+      status: receipt.status,
+      created_at: receipt.created_at,
+      status_changed_at: receipt.status_changed_at,
+      idempotent_replay: false,
+    });
+    expect(JSON.stringify(output)).not.toContain(imageBase64);
+    expect(JSON.stringify(output)).not.toContain(caption);
+    expect(JSON.stringify(output)).not.toContain("caption");
+    expect(JSON.stringify(output)).not.toContain("image_base64");
+  });
+
+  test("accepts a verified PNG without a caption", async () => {
+    const send = vi.fn<SendTextMessageService["send"]>(() =>
+      Effect.succeed({ outcome: "receipt", receipt }),
+    );
+    const response = await makeHarness({
+      permissions: ["messages:send"],
+      send,
+    }).handler(
+      request(sendPath, {
+        body: {
+          image_base64: "iVBORw0KGgo=",
+          recipient_id: "ctc_123456789012345678901",
+        },
+        idempotencyKey,
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    const image = send.mock.calls[0]?.[0].image;
+    expect(image?.bytes).toEqual(
+      new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    );
+    expect(image?.bytes.mimeType).toBe("image/png");
+    expect(image).not.toHaveProperty("caption");
+  });
+
+  test("rejects image bytes without a JPEG or PNG signature", async () => {
+    const send = vi.fn<SendTextMessageService["send"]>(() =>
+      Effect.succeed({ outcome: "receipt", receipt }),
+    );
+    const response = await makeHarness({
+      permissions: ["messages:send"],
+      send,
+    }).handler(
+      request(sendPath, {
+        body: {
+          image_base64: "bm90IGFuIGltYWdl",
+          recipient_id: "ctc_123456789012345678901",
+        },
+        idempotencyKey,
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      code: "invalid_request",
+      status: 400,
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  test("does not resolve or fetch an image URL before send authorization", async () => {
+    const preflight = vi.fn<NonNullable<SendTextMessageService["preflight"]>>(
+      () => Effect.succeed({ outcome: "authorization_denied" }),
+    );
+    const send = vi.fn<SendTextMessageService["send"]>(() =>
+      Effect.succeed({ outcome: "receipt", receipt }),
+    );
+    const originalFetch = globalThis.fetch;
+    let fetchCalls = 0;
+    globalThis.fetch = (async () => {
+      fetchCalls += 1;
+      throw new Error("unexpected fetch");
+    }) as unknown as typeof fetch;
+    try {
+      const response = await makeHarness({
+        permissions: ["messages:send"],
+        preflight,
+        send,
+      }).handler(
+        request(sendPath, {
+          body: {
+            image_url: "https://files.normalcdn.com/image.jpg",
+            recipient_id: "ctc_123456789012345678901",
+          },
+          idempotencyKey,
+          method: "POST",
+        }),
+      );
+
+      expect(response.status).toBe(404);
+      expect(preflight).toHaveBeenCalledWith(
+        expect.objectContaining({ operationName: "send_image" }),
+      );
+      expect(fetchCalls).toBe(0);
+      expect(send).not.toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   test("replays an exact Send Operation and rejects changed or unaccepted payloads", async () => {

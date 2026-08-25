@@ -45,7 +45,7 @@ Secret examples never contain usable key material.
 | `DECRYPTED_MEDIA_BYTES_PER_DAY` | Non-secret approved quota | API MCP and REST resource server | Authoritative per-Personal-Account full plaintext Stored Media bytes reserved per UTC day before decryption, shared by MCP and REST. There is no production default. |
 | `MCP_CURSOR_HMAC_SECRET` | Secret | API MCP and REST resource server | Dedicated 32-byte hex HMAC key for authorization-bound pagination cursors. REST Directory cursors use a distinct signing document that binds the API Key grant and operation ID, so MCP and REST cursors are not interchangeable. Generate independently with `openssl rand -hex 32`; never reuse OAuth, content, provider-reference, webhook, reservation, or deletion keys. Rotation invalidates outstanding short-lived cursors. |
 | `API_KEY_HMAC_SECRET` | Secret | API API Key management, REST authentication, and direct MCP authentication | Dedicated 32-byte hex HMAC key for User-created API Key credential digests. The Worker computes the digest and passes only the public handle and digest to `bootstrap_api_key`. API Key-shaped credentials at `POST /mcp` take this path before OAuth middleware; failure never falls back to OAuth. Generate independently with `openssl rand -hex 32`; never reuse OAuth, cursor, content, provider-reference, webhook, reservation, or deletion keys. A Personal Account may retain at most ten active API Keys. Creating an API Key requires Clerk first-factor verification within five minutes. Optional expiry is enforced with database time on the next request; hourly scheduled work then clears the digest and later purges safe expired or revoked metadata after 90 days. Connection Deletion removes that WhatsApp Connection from every API Key and permanently revokes a key that loses its last selected Connection, clearing the digest. Disconnection does not revoke the key. Every production database restore revokes every restored API Key, clears every digest, and requires a newly generated secret before traffic reopens; the predecessor is not accepted as a verification fallback. Users create replacement keys after recovery. Routine rotation that preserves active keys is not part of v1. |
-| `SEND_FINGERPRINT_HMAC_SECRET` | Secret | API outbound-send workflow | Dedicated 32-byte hex HMAC key for non-reversible exact-request fingerprints retained with idempotency bindings. Generate independently; do not replace it while any 90-day binding remains live. |
+| `SEND_FINGERPRINT_HMAC_SECRET` | Secret | API outbound-send workflow | Dedicated 32-byte hex HMAC key for domain-separated non-reversible exact-request and request-shape fingerprints retained with idempotency bindings, including image MIME and optional exact caption. Generate independently; do not replace it while any 90-day binding remains live. |
 | `SENDS_PER_MINUTE` | Non-secret approved quota | API outbound-send workflow | Per-authorization exact rolling-minute send reservation limit. There is no production default. |
 | `SENDS_PER_DAY` | Non-secret approved quota | API outbound-send workflow | Per-Personal-Account UTC-day send reservation limit. There is no production default. |
 | `MESSAGE_RETENTION_DAY_OPTIONS` | Non-secret reviewed product policy | API and web Message Retention Policy controls | Set to the reviewed strictly increasing comma-separated finite-day choices containing the 30-day default; `7,30,90` is the private-beta example. Change only through a reviewed product deployment. |
@@ -88,6 +88,7 @@ Secret examples never contain usable key material.
 | `AWS_SESSION_TOKEN` | Secret | API and deletion coordinator | Required role-session token. Its absence prevents the owning production composition root from running. |
 | `WASENDER_API_CREDENTIAL` | Secret | Provider-control | Account-level Wasender Personal Access Token used only for lifecycle endpoints. Store it as a Worker secret and rotate it in Wasender and Cloudflare together. |
 | `WASENDER_REFERENCE_SECRET` | Secret | Provider-control | Stable 32-byte hex HMAC key used to turn raw provider session IDs into opaque adapter locators. Generate with `openssl rand -hex 32`; rotate only through the reconciliation procedure below. |
+| `WEBSHARE_API_KEY` | Secret | Provider-control | Webshare account API key used only to read the assigned proxy list. The plan must contain static shared ISP proxies allocated exclusively to Colombia with Auto-Refresh disabled. Store it as a Worker secret and rotate it in Webshare and Cloudflare together. |
 
 Wasender Directory reads do not add a platform-wide environment secret. The
 owning API workflow decrypts the selected WhatsApp Connection's envelope-
@@ -373,15 +374,19 @@ Its response is an explicit allowlist and never exposes internal IDs, message
 or media content, full phone numbers, credentials, OAuth tokens, API Key
 secrets, provider identifiers, scope sets, request or response content, or raw
 payloads. MCP-channel rows remain compatible; API-channel rows omit
-`mcp_authorization_id` and present the `apk_` handle instead. MCP tool
-telemetry is limited to `mcp.tool_call.completed`, the fixed
-`list_connections` or `list_groups` tool name, an allowlisted outcome, the API service name, and
-the bounded result count on success. REST telemetry is limited to
-`rest.operation.completed`, the fixed `list_connections`, `list_contacts`,
-`list_groups`, `list_chats`, `read_messages`, `read_stored_media`, or
-`send_text_message` operation name, an allowlisted outcome, the API service name, and the bounded
-result count on success. Do not enrich either event with tenant, authorization, client,
-Connection, quota, credential, request, or response fields.
+`mcp_authorization_id` and present the `apk_` handle instead. MCP tool telemetry
+is limited to `mcp.tool_call.completed`, one fixed contract-defined tool name
+(`list_connections`, `list_contacts`, `list_groups`, `list_chats`,
+`read_messages`, `search_messages`, `send_text_message`, `send_pdf_file`,
+`send_image`, or `get_send_status`), an allowlisted outcome, the API service
+name, and the bounded result count on success. REST telemetry is limited to
+`rest.operation.completed`, one fixed contract-defined operation name
+(`list_connections`, `list_contacts`, `list_groups`, `list_chats`,
+`read_messages`, `read_stored_media`, `search_messages`, `send_text_message`,
+`send_pdf_file`, `send_image`, or `get_send_status`), an allowlisted outcome,
+the API service name, and the bounded result count on success. Do not enrich
+either event with tenant, authorization, client, Connection, quota, credential,
+request, or response fields.
 
 The endpoint returns at most 100 newest-first records at a time. Follow its
 opaque `next_cursor` until it is `null` to traverse the complete unexpired
@@ -407,12 +412,13 @@ Connection, send, network, or capability identifiers.
 
 The signed-in `GET /v1/personal-account/insights` overview returns a closed
 allowlist of aggregate counts for the last 30 UTC days: WhatsApp Connection
-state totals, retained inbound and outbound Stored Message totals with the
-previous window for comparison, conversation mix and weekly activity, Send
-Operation confirmed/failed/unknown totals, active MCP Authorization count, and
-a 30-point daily series. It never returns message content, media, conversation
-or recipient identity, phone numbers, credentials, public handles, tenant
-identifiers, or provider identifiers. Review telemetry is
+state totals, retained inbound and outbound Stored Message totals,
+conversation mix and weekly activity, Send Operation confirmed/failed/unknown
+totals, active MCP Authorization count, and a 30-point daily series. Counts
+exclude WhatsApp Connections in Connection Deletion. It never returns message
+content, media, conversation or recipient identity, phone numbers, credentials,
+public handles, tenant identifiers, or provider identifiers, and it does not
+compare against a prior retention window. Review telemetry is
 `account_insights.review.completed` with only inbound and outbound counts,
 window days, and the API service name.
 
@@ -430,17 +436,36 @@ client, redirect, metadata-document origin, or client-class source change as an
 authorization-policy change. Authorization requires exact string equality, and KV never acts as the
 client registry.
 
-Provider-control startup also validates both Wasender secrets before serving
+Provider-control startup validates the two Wasender secrets and the Webshare API
+key before serving
 even its private health route or an RPC method. The Wrangler manifest declares
-both names as required secrets, so deployment fails before serving when either
-secret has not been configured. Its adapter always calls the fixed
+all three names as required secrets, so deployment fails before serving when any
+secret has not been configured. Its lifecycle adapter calls only the fixed
 `https://www.wasenderapi.com` origin with the account-level credential, forces
 provider message logging and automatic incoming-message reads off during
-creation, and emits only operation class, normalized outcome, attempt, duration,
+creation, and assigns one unused static Colombian SOCKS5 proxy through
+`p.webshare.io`. Proxy selection reads only the fixed
+`https://proxy.webshare.io/api/v2/subscription/plan/` and
+`https://proxy.webshare.io/api/v2/proxy/list/` endpoints, accepts only one
+active shared ISP plan with exactly 20 `CO` proxies and Auto-Refresh disabled,
+then requires its complete Backbone list, preserves an existing listed assignment, and
+fails closed when no valid unused proxy remains. The Webshare plan keeps
+Auto-Refresh disabled; proxy credential or inventory changes require a reviewed
+configuration reconciliation. One named provider-control Durable Object
+represents the environment's proxy pool and serializes create, reconcile, repair,
+and reconnect validation across Worker isolates. Before a proxy-changing write,
+it persists only the opaque Connection Setup marker and a settlement deadline;
+definitive completion deletes that reservation, while ambiguous completion keeps
+the pool quarantined until alarm-driven or caller-driven safe reconciliation.
+It never persists a proxy assignment, proxy credential, provider identifier, or
+tenant identifier. Wasender's current session configuration is reread inside
+every operation. Disconnect and deletion do not depend on the gate's Webshare
+validation. The adapter emits only operation class,
+normalized outcome, attempt, duration,
 bounded response size, RPC method, and normalized result code. No telemetry
 field contains a Connection Setup marker, WhatsApp Number, provider locator,
-per-session authority, Provider API Credential, or raw result. No runtime value
-can select a fake provider or an alternate origin.
+per-session authority, Provider API Credential, proxy URL, proxy credential, or
+raw result. No runtime value can select a fake provider or an alternate origin.
 
 `WASENDER_REFERENCE_SECRET` must remain stable because persisted adapter
 locators are keyed by it. To rotate it, stop provisioning, retain the old value,
@@ -884,16 +909,16 @@ hash, or other Stored Media metadata. The complete format and authenticated
 context are documented in [the encrypted Stored Media container
 specification](stored-media-container.md).
 
-## Wasender text-send authority
+## Wasender outbound-send authority
 
-Text sending does not add an account-level Provider API Credential, endpoint
+Text, PDF, and image sending do not add an account-level Provider API Credential, endpoint
 override, public route, service binding, or infrastructure secret. The
-production adapter always calls
-`https://www.wasenderapi.com/api/send-message` over the Worker's existing
-outbound HTTPS capability, rejects redirects, and cannot select a test
-transport at runtime. This zero-binding infrastructure delta keeps ordinary
-connection operations outside provider-control and preserves ADR 0004's
-least-privilege split.
+production adapters always call their fixed Wasender send and upload endpoints
+over the Worker's existing outbound HTTPS capability, reject unapproved
+redirects, and cannot select a test transport at runtime. Provider upload URLs
+remain adapter-local and are never persisted. This zero-binding infrastructure
+delta keeps ordinary connection operations outside provider-control and
+preserves ADR 0004's least-privilege split.
 
 The adapter is composed per WhatsApp Connection with two values already
 protected by the connection's encryption boundary: its session-specific
@@ -905,10 +930,12 @@ runtime connection records, not deployment environment variables, so they do
 not belong in `.dev.vars`, Wrangler bindings, OpenTofu state, or operator
 configuration.
 
-Text-send telemetry is mandatory at composition and is limited to operation
-class, normalized outcome, attempt count, duration, and bounded response-byte
-count. It must not include text, phone numbers, recipient or message tokens,
-session authority, raw response data, URLs, or provider status values.
+Outbound-send telemetry is mandatory at composition and is limited to operation
+class, normalized outcome, upload and send attempt counts where applicable,
+duration, and bounded byte counts. It must not include text or captions, image
+bytes or MIME, PDF filenames, phone numbers, recipient or message tokens,
+session authority, raw response data, source or provider URLs, or provider
+status values.
 
 ## Infrastructure inputs
 
@@ -955,10 +982,10 @@ that would serialize them into state.
 
 Each environment declares four separate R2 buckets. Encrypted Webhook Events
 expire after seven days and incomplete multipart uploads abort after one day.
-Stored Media has no blanket object-expiry rule because Message Retention Policy
-can be shorter or explicitly retain content until deletion; application
-retention jobs own object deletion, while incomplete multipart uploads still
-abort after one day. Encrypted Deletion Capsules have no age-based deletion
+Stored Media, including Pending Send Files, has no blanket object-expiry rule
+because Message Retention Policy can be shorter or explicitly retain content
+until deletion; application retention jobs own object deletion, while
+incomplete multipart uploads still abort after one day. Encrypted Deletion Capsules have no age-based deletion
 rule: only confirmed provider absence permits the deletion coordinator to
 destroy one, and an overdue capsule must alert rather than silently lose the
 cleanup identifier. The capsule bucket is protected from OpenTofu destroy.

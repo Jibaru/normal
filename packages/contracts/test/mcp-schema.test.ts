@@ -8,6 +8,7 @@ import {
   makePublicObjectContract,
   ReadMessagesOutputContract,
   SearchMessagesOutputContract,
+  SendImageOutputContract,
   SendTextMessageOutputContract,
 } from "../src/mcp-schema";
 
@@ -199,6 +200,10 @@ describe("makePublicObjectContract", () => {
     expect(
       SendTextMessageOutputContract.decodeUnknown(output) as unknown,
     ).toEqual(output);
+    expect(SendImageOutputContract).toBe(SendTextMessageOutputContract);
+    expect(SendImageOutputContract.decodeUnknown(output) as unknown).toEqual(
+      output,
+    );
     expect(() =>
       SendTextMessageOutputContract.decodeUnknown({
         ...output,

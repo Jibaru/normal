@@ -7,6 +7,7 @@ import {
   directoryContactsInApp,
   pendingSendContentsInApp,
   personalAccountsInApp,
+  sendIdempotencyBindingsInApp,
   sendOperationObjectsInApp,
   sendOperationsInApp,
   storedMessagesInApp,
@@ -118,10 +119,11 @@ export type CommitSendInput = {
   readonly idempotencyKey: string;
   readonly minuteRequestLimit: number;
   readonly observedAt: Date;
-  readonly operationName: "send_pdf_file" | "send_text_message";
+  readonly operationName: "send_image" | "send_pdf_file" | "send_text_message";
   readonly pendingExpiresAt: Date;
   readonly directRecipientType?: "phone" | "username";
   readonly recipientPublicId: string | null;
+  readonly requestShapeFingerprint: string;
   readonly sendDailyLimit: number;
   readonly sendId: string;
   readonly sendPublicId: string;
@@ -137,10 +139,22 @@ export interface AtomicSendRepository {
     readonly auditLogId: string;
     readonly channel: "api" | "mcp";
     readonly connectionPublicId: string;
+    readonly directRecipientType?: "phone" | "username";
     readonly grant: SendGrantIdentity;
+    readonly idempotencyKey: string;
     readonly observedAt: Date;
-    readonly operationName: "send_pdf_file" | "send_text_message";
-  }) => Promise<"authorization_denied" | "authorized">;
+    readonly operationName:
+      | "send_image"
+      | "send_pdf_file"
+      | "send_text_message";
+    readonly recipientPublicId: string | null;
+    readonly requestShapeFingerprint: string;
+  }) => Promise<
+    | "authorization_denied"
+    | "authorized"
+    | "idempotency_conflict"
+    | "recipient_not_found"
+  >;
   readonly commit: <Input extends CommitSendInput>(
     input: Input,
     encrypt: (material: SendEncryptionMaterial) => Promise<CommitSendContent>,
@@ -284,9 +298,9 @@ export const makePgAtomicSendRepository = (
           await db.execute(sql`ROLLBACK`);
           return "authorization_denied";
         }
-        const authorized = await db.execute(
+        const authorized = await db.execute<Record<string, unknown>>(
           input.grant.kind === "mcp"
-            ? sql`SELECT 1
+            ? sql`SELECT conn.id AS connection_id
                   FROM public.mcp_authorizations AS auth
                   INNER JOIN public.mcp_authorization_connections AS selected
                     ON selected.personal_account_id = auth.personal_account_id
@@ -303,7 +317,7 @@ export const makePgAtomicSendRepository = (
                     ) = auth.personal_account_id
                     AND ${"messages:send"} = ANY(auth.scopes)
                     AND conn.public_id = ${input.connectionPublicId}`
-            : sql`SELECT 1
+            : sql`SELECT conn.id AS connection_id
                   FROM public.api_keys AS keys
                   INNER JOIN public.api_key_connections AS selected
                     ON selected.personal_account_id = keys.personal_account_id
@@ -319,8 +333,155 @@ export const makePgAtomicSendRepository = (
                     AND conn.public_id = ${input.connectionPublicId}`,
         );
         if (authorized.length > 0) {
-          await db.execute(sql`ROLLBACK`);
-          return "authorized";
+          const connectionId = scalar(authorized[0], "connection_id");
+          const recipientType =
+            input.directRecipientType ??
+            (input.recipientPublicId?.startsWith("ctc_") ? "contact" : "group");
+          const bound = await db
+            .select({
+              connectionId: sendOperationsInApp.whatsappConnectionId,
+              operationName: activityLogsInApp.toolName,
+              recipientPublicId: sendOperationsInApp.recipientPublicId,
+              recipientType: sendOperationsInApp.recipientType,
+              requestShapeFingerprint:
+                sendIdempotencyBindingsInApp.requestShapeFingerprint,
+            })
+            .from(sendIdempotencyBindingsInApp)
+            .innerJoin(
+              sendOperationsInApp,
+              and(
+                eq(
+                  sendOperationsInApp.personalAccountId,
+                  sendIdempotencyBindingsInApp.personalAccountId,
+                ),
+                eq(
+                  sendOperationsInApp.id,
+                  sendIdempotencyBindingsInApp.sendOperationId,
+                ),
+              ),
+            )
+            .innerJoin(
+              activityLogsInApp,
+              and(
+                eq(
+                  activityLogsInApp.personalAccountId,
+                  sendOperationsInApp.personalAccountId,
+                ),
+                eq(activityLogsInApp.id, sendOperationsInApp.activityLogId),
+              ),
+            )
+            .where(
+              and(
+                eq(sendIdempotencyBindingsInApp.personalAccountId, accountId),
+                eq(sendIdempotencyBindingsInApp.grantId, principal.grantId),
+                eq(
+                  sendIdempotencyBindingsInApp.idempotencyKey,
+                  input.idempotencyKey,
+                ),
+                gt(
+                  sendIdempotencyBindingsInApp.expiresAt,
+                  input.observedAt.toISOString(),
+                ),
+              ),
+            )
+            .limit(1);
+          if (bound.length > 0) {
+            const legacyFileDestinationCompatible =
+              bound[0]?.requestShapeFingerprint === null &&
+              bound[0]?.operationName === input.operationName &&
+              bound[0]?.operationName !== "send_text_message" &&
+              bound[0]?.connectionId === connectionId &&
+              bound[0]?.recipientType === recipientType &&
+              input.recipientPublicId !== null &&
+              bound[0]?.recipientPublicId === input.recipientPublicId;
+            if (
+              bound[0]?.requestShapeFingerprint ===
+                input.requestShapeFingerprint ||
+              (bound[0]?.requestShapeFingerprint === null &&
+                bound[0]?.operationName === "send_text_message" &&
+                input.operationName === "send_text_message") ||
+              legacyFileDestinationCompatible
+            ) {
+              await db.execute(sql`ROLLBACK`);
+              return "authorized";
+            }
+            await db.insert(activityLogsInApp).values({
+              id: input.auditLogId,
+              personalAccountId: accountId,
+              channel: principal.channel,
+              mcpAuthorizationId: principal.mcpAuthorizationId,
+              apiKeyId: principal.apiKeyId,
+              apiKeyPublicId: principal.apiKeyPublicId,
+              apiKeyName: principal.apiKeyName,
+              toolName: input.operationName,
+              startedAt: input.observedAt.toISOString(),
+              completedAt: input.observedAt.toISOString(),
+              outcome: "execution_error",
+              errorCode: "idempotency_conflict",
+              resultCount: null,
+              latencyMs: 0,
+              quotaReserved: false,
+              expiresAt: sql`${input.observedAt}::timestamptz + interval '90 days'`,
+              connectionPublicId: input.connectionPublicId,
+            });
+            await db.execute(sql`COMMIT`);
+            return "idempotency_conflict";
+          }
+          const directRecipient =
+            recipientType === "phone" || recipientType === "username";
+          const eligible = directRecipient
+            ? await db.execute(sql`SELECT 1
+                WHERE NOT EXISTS (
+                  SELECT 1
+                  FROM public.whatsapp_recipient_exclusions AS exclusions
+                  WHERE exclusions.personal_account_id = ${accountId}
+                    AND exclusions.whatsapp_connection_id = ${connectionId}
+                    AND exclusions.excluded = true
+                )`)
+            : recipientType === "contact"
+              ? await db.execute(sql`SELECT 1
+                  FROM public.directory_contacts AS contacts
+                  WHERE contacts.personal_account_id = ${accountId}
+                    AND contacts.whatsapp_connection_id = ${connectionId}
+                    AND contacts.public_id = ${input.recipientPublicId}
+                    AND contacts.active = true
+                    AND NOT public.whatsapp_recipient_excluded(
+                      ${accountId}, ${connectionId}, 'contact', contacts.provider_identity_index
+                    )`)
+              : await db.execute(sql`SELECT 1
+                  FROM public.whatsapp_groups AS groups
+                  WHERE groups.personal_account_id = ${accountId}
+                    AND groups.whatsapp_connection_id = ${connectionId}
+                    AND groups.public_id = ${input.recipientPublicId}
+                    AND groups.joined = true
+                    AND NOT public.whatsapp_recipient_excluded(
+                      ${accountId}, ${connectionId}, 'group', groups.provider_locator
+                    )`);
+          if (eligible.length > 0) {
+            await db.execute(sql`ROLLBACK`);
+            return "authorized";
+          }
+          await db.insert(activityLogsInApp).values({
+            id: input.auditLogId,
+            personalAccountId: accountId,
+            channel: principal.channel,
+            mcpAuthorizationId: principal.mcpAuthorizationId,
+            apiKeyId: principal.apiKeyId,
+            apiKeyPublicId: principal.apiKeyPublicId,
+            apiKeyName: principal.apiKeyName,
+            toolName: input.operationName,
+            startedAt: input.observedAt.toISOString(),
+            completedAt: input.observedAt.toISOString(),
+            outcome: "execution_error",
+            errorCode: "recipient_not_found",
+            resultCount: null,
+            latencyMs: 0,
+            quotaReserved: false,
+            expiresAt: sql`${input.observedAt}::timestamptz + interval '90 days'`,
+            connectionPublicId: input.connectionPublicId,
+          });
+          await db.execute(sql`COMMIT`);
+          return "recipient_not_found";
         }
         await db.insert(activityLogsInApp).values({
           id: input.auditLogId,
@@ -879,8 +1040,8 @@ export const makePgAtomicSendRepository = (
                        ${principal.apiKeyId}, inserted_audit.id,
                        ${connectionId}, ${recipientType},
                        ${input.recipientPublicId}, 'processing', ${observedAt},
-                       ${observedAt}, ${observedAt},
-                       ${input.observedAt}::timestamptz + interval '30 seconds',
+                       ${observedAt}, statement_timestamp(),
+                       statement_timestamp() + interval '45 seconds',
                        ${input.observedAt}::timestamptz + interval '90 days'
                 FROM inserted_audit
                 RETURNING id, personal_account_id
@@ -889,13 +1050,15 @@ export const makePgAtomicSendRepository = (
                 INSERT INTO public.send_idempotency_bindings (
                   personal_account_id, grant_type, grant_id,
                   mcp_authorization_id, api_key_id, idempotency_key,
-                  send_operation_id, request_fingerprint, created_at, expires_at
+                  send_operation_id, request_fingerprint,
+                  request_shape_fingerprint, created_at, expires_at
                 )
                 SELECT inserted_send.personal_account_id,
                        ${principal.grantType}, ${principal.grantId},
-                       ${principal.mcpAuthorizationId}, ${principal.apiKeyId},
-                       ${input.idempotencyKey}, inserted_send.id,
-                       ${input.fingerprint}, ${observedAt},
+                        ${principal.mcpAuthorizationId}, ${principal.apiKeyId},
+                        ${input.idempotencyKey}, inserted_send.id,
+                        ${input.fingerprint}, ${input.requestShapeFingerprint},
+                        ${observedAt},
                        ${input.observedAt}::timestamptz + interval '90 days'
                 FROM inserted_send
                 RETURNING send_operation_id, personal_account_id
@@ -1126,8 +1289,18 @@ export const makePgAtomicSendRepository = (
               cleared_pending AS (
                 DELETE FROM public.pending_send_contents AS pending
                 USING updated
-                WHERE ${input.status} = 'failed'
-                  AND pending.send_operation_id = updated.id
+                WHERE pending.send_operation_id = updated.id
+                  AND (
+                    ${input.status} = 'failed'
+                    OR EXISTS (
+                      SELECT 1
+                      FROM public.stored_messages AS message
+                      WHERE message.personal_account_id = updated.personal_account_id
+                        AND message.whatsapp_connection_id = updated.whatsapp_connection_id
+                        AND message.message_identity = ${input.messageIdentity ?? null}
+                        AND message.direction = 'outbound'
+                    )
+                  )
               ),
               completed_audit AS (
                 UPDATE public.tool_call_logs AS audit

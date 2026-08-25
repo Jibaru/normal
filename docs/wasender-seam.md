@@ -1,7 +1,7 @@
 # Provider-neutral WhatsApp seam
 
 `@whatsapp-mcp/wasender` is the internal replacement seam around the sole
-private-beta provider. It exports no catch-all barrel and has six independent
+private-beta provider. It exports no catch-all barrel and has seven independent
 Effect capabilities:
 
 - `SessionLifecycle` is account-authority lifecycle control.
@@ -9,25 +9,36 @@ Effect capabilities:
 - `TextSending` performs one per-session text-send attempt.
 - `PdfSending` uploads one verified PDF and performs at most one document-send
   attempt.
+- `ImageSending` uploads one verified JPEG or PNG and performs at most one
+  image-send attempt.
 - `MediaRetrieval` reads per-session metadata and guarded Effect streams.
 - `WebhookNormalization` turns one authenticated delivery into independently
   processable provider-neutral items.
 
 The text-send implementation is available through `makeWasenderTextSendingLayer`
-and the PDF implementation through `makeWasenderPdfSendingLayer`; both fix the
-provider endpoint and platform transport in production. The real Directory
+and the PDF and image implementations through `makeWasenderPdfSendingLayer` and
+`makeWasenderImageSendingLayer`; all three fix the provider endpoint and
+platform transport in production. The real Directory
 implementation is exported as
 `makeWasenderSessionDirectory` from `@whatsapp-mcp/wasender/session`. The other
 production implementations are exposed through their capability-specific
 modules. The seam does not add runtime provider selection or a selectable fake.
 The lifecycle implementation closes over the account-level Provider API
-Credential and a stable locator HMAC key in provider-control; neither is a
-capability input or output, and no runtime setting can select a fake or
-alternate provider origin.
+Credential, a stable locator HMAC key, and a Webshare proxy selector in
+provider-control; none is a capability input or output, and no runtime setting
+can select a fake or alternate provider origin. The selector accepts only the
+complete Colombian Backbone inventory and returns a redacted SOCKS5 URL for one
+unused static ISP proxy.
 Provider-control publishes that capability only as closed Cloudflare RPC
 methods on its service-binding entrypoint. Each input is validated before the
 credential-backed Layer is loaded, adapter failures cross as content-free
-provider-control results, and lifecycle methods are not HTTP routes. The
+provider-control results, and lifecycle methods are not HTTP routes. Create,
+proxy-aware reconcile, repair, and reconnect validation run through the one
+named Durable Object representing the deployment's proxy pool so their
+read-then-write allocation cannot race across Worker isolates. The gate stores
+only an opaque setup marker and settlement deadline while a proxy-changing write
+is unresolved; it stores no assignment or credential data. Disconnect, deletion, QR reads, and number
+verification remain direct provider-control RPC methods. The
 account-level credential never crosses the binding. Because Effect `Redacted`
 instances intentionally do not serialize their hidden values, provider-control
 unwraps only the newly issued per-session authority into the RPC value; the API
@@ -142,7 +153,8 @@ policy. The other capabilities use their named policy directly.
 | --- | --- | --- | --- |
 | Safe JSON read | At most three jittered 10-second attempts within 25 seconds | Safe to repeat; retries network failures, 408, 429, and 5xx | 1 MiB |
 | Text send | One 15-second attempt | Acceptance may be unknown; reconcile only through exact identity-bearing evidence | 1 MiB |
-| PDF send | One bounded upload, then one 15-second send attempt | Upload failure before send is definitive; send acceptance may be unknown and is never retried | 1 MiB per JSON response |
+| PDF send | One bounded upload, then at most one 15-second document-send attempt | Upload failure before send is definitive; send acceptance may be unknown and is never retried | 1 MiB per JSON response |
+| Image send | One upload with an exact maximum of 5,000,000 verified bytes, then at most one 15-second image-send attempt | Upload failure before send is definitive; send acceptance may be unknown and is never retried | 1 MiB per JSON response |
 | Lifecycle write | One 15-second attempt before reconciliation | Reconcile provider state before any repeat | 1 MiB |
 | Media metadata | One 30-second attempt | Safe to repeat, but no implicit retry schedule | 1 MiB |
 | Guarded media download | One 60-second attempt | Discard partial bytes; a later attempt restarts at byte zero | Caller bound, at most 100,000,000 bytes |
@@ -171,10 +183,22 @@ LID JID is acknowledgement-only because the provider does not document that
 alias mapping as stable identity. It may advance the causally bound operation to
 `accepted`, but cannot materialize Pending Send Content as a Stored Message.
 
+The PDF- and image-send adapters receive only already verified, snapshotted
+bytes and the domain-resolved provider identity. Each performs one bounded
+upload and keeps the returned provider URL inside the adapter for at most one
+send request; that URL is never a capability result or persisted value. The
+image adapter also receives the signature-derived `image/jpeg` or `image/png`
+MIME and an optional exact validated caption. Its send result follows the same
+stable-identity and ambiguity classifications as text sending. Identity-only
+evidence may advance the causally bound Send Operation, but downstream
+projection must materialize an image caption only together with the retained
+image or stronger media-bearing evidence.
+
 Adapter telemetry may contain only the operation class, normalized outcome,
-attempt count, duration, and bounded byte counts. It never contains capability
-inputs or outputs, message text, full phone numbers, opaque references,
-encrypted adapter values, raw response data, URLs, or credentials.
+upload and send attempt counts, duration, and bounded byte counts. It never
+contains capability inputs or outputs, message text or captions, image MIME,
+full phone numbers, opaque references, encrypted adapter values, raw response
+data, URLs, or credentials.
 
 ## Production media retrieval
 

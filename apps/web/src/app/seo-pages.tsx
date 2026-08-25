@@ -8,7 +8,7 @@ const contactUrl = "https://cal.com/cuevaio/whatsapp-mcp";
 const docsUrl = "https://docs.normal.fast";
 const sourceUrl = "https://github.com/cuevaio/normal";
 
-function Header() {
+export function ResourceHeader() {
   return (
     <header className="resource-header resource-shell">
       <Link className="wordmark" href="/">
@@ -17,6 +17,7 @@ function Header() {
       <nav aria-label="Resources">
         <Link href="/use-cases">Use cases</Link>
         <Link href="/guides">Guides</Link>
+        <Link href="/changelog">Changelog</Link>
         <a href={docsUrl} rel="noreferrer" target="_blank">
           Docs
         </a>
@@ -34,7 +35,7 @@ function Header() {
   );
 }
 
-function Footer() {
+export function ResourceFooter() {
   return (
     <footer className="resource-footer resource-shell">
       <Link className="wordmark" href="/">
@@ -48,6 +49,7 @@ function Footer() {
         <a href={sourceUrl} rel="noreferrer" target="_blank">
           GitHub
         </a>
+        <Link href="/changelog">Changelog</Link>
         <a href={contactUrl} rel="noreferrer" target="_blank">
           Contact
         </a>
@@ -66,7 +68,7 @@ export function CollectionPage({
   const isGuide = collection === "guides";
   return (
     <main className="resource-site">
-      <Header />
+      <ResourceHeader />
       <section className="resource-collection-hero resource-shell">
         <p className="section-kicker">
           {isGuide ? "Learn" : "What becomes possible"}
@@ -94,7 +96,7 @@ export function CollectionPage({
           </Link>
         ))}
       </section>
-      <Footer />
+      <ResourceFooter />
     </main>
   );
 }
@@ -115,7 +117,7 @@ export function ResourcePage({
   };
   return (
     <main className="resource-site">
-      <Header />
+      <ResourceHeader />
       <script
         type="application/ld+json"
         // biome-ignore lint/security/noDangerouslySetInnerHtml: JSON is generated from trusted local MDX frontmatter and escaped before rendering.
@@ -175,7 +177,7 @@ export function ResourcePage({
           </div>
         </section>
       </article>
-      <Footer />
+      <ResourceFooter />
     </main>
   );
 }

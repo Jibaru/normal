@@ -53,6 +53,9 @@ describe("static Scalar documentation", () => {
         "/v1/connections/{connection_id}/send-operations/{send_operation_id}",
       ]),
     );
+    expect(openApi).toContain('"image_url"');
+    expect(openApi).toContain('"image_base64"');
+    expect(openApi).toContain('"caption"');
     expect(openApi).not.toMatch(
       /normal_apk_[A-Za-z0-9_-]{21}\.[A-Za-z0-9_-]+/u,
     );

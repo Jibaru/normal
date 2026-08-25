@@ -28,6 +28,7 @@ import {
   ReadMessagesOutputContract,
   type SearchMessagesOutput,
   SearchMessagesOutputContract,
+  SendImageOutputContract,
   SendPdfFileOutputContract,
   type SendTextMessageOutput,
   SendTextMessageOutputContract,
@@ -56,11 +57,14 @@ import {
   type SendGrantIdentity,
 } from "@whatsapp-mcp/db/mcp-tool";
 import { normalizeWhatsAppConnectionName } from "@whatsapp-mcp/domain/whatsapp-connection";
-import type { VerifiedPdfBytes } from "@whatsapp-mcp/wasender/session";
+import type {
+  VerifiedImageBytes,
+  VerifiedPdfBytes,
+} from "@whatsapp-mcp/wasender/session";
 import { createMcpHandler } from "agents/mcp/server";
 import { Context, Data, Effect, type Layer, Option } from "effect";
 import { z } from "zod";
-import { encodeBase64 } from "./base64-url";
+import { encodeBase64, isStandardPaddedBase64 } from "./base64-url";
 import {
   contactSearchIndex,
   decryptDirectoryString,
@@ -83,6 +87,7 @@ import {
   importGroupDirectoryIndexKey,
   normalizeGroupDisplayName,
 } from "./group-privacy";
+import { decodeImageBase64, downloadImage } from "./image-source";
 import {
   importMessageSearchIndexKey,
   messageSearchIndexesForQuery,
@@ -295,7 +300,9 @@ export interface McpToolPersistenceService {
       readonly operationName:
         | "list_connections"
         | "list_contacts"
-        | "search_messages";
+        | "search_messages"
+        | "send_image"
+        | "send_pdf_file";
     },
   ) => Effect.Effect<RejectProtectedOperationResult, McpToolPersistenceError>;
 }
@@ -334,7 +341,13 @@ export type SendTextMessageResult =
 
 export type SendPreflightResult =
   | { readonly outcome: "authorized" }
-  | { readonly outcome: "authorization_denied" | "audit_unavailable" };
+  | {
+      readonly outcome:
+        | "authorization_denied"
+        | "audit_unavailable"
+        | "idempotency_conflict"
+        | "recipient_not_found";
+    };
 
 type SendDestination =
   | {
@@ -354,12 +367,18 @@ type SendDestination =
     };
 
 export interface SendTextMessageService {
-  readonly preflight?: (input: {
-    readonly channel: "api" | "mcp";
-    readonly connectionId: string;
-    readonly grant: SendGrantIdentity;
-    readonly operationName: "send_pdf_file" | "send_text_message";
-  }) => Effect.Effect<SendPreflightResult, never>;
+  readonly preflight?: (
+    input: SendDestination & {
+      readonly channel: "api" | "mcp";
+      readonly connectionId: string;
+      readonly grant: SendGrantIdentity;
+      readonly idempotencyKey: string;
+      readonly operationName:
+        | "send_image"
+        | "send_pdf_file"
+        | "send_text_message";
+    },
+  ) => Effect.Effect<SendPreflightResult, never>;
   readonly send: (
     input: SendDestination & {
       readonly channel: "api" | "mcp";
@@ -367,12 +386,25 @@ export interface SendTextMessageService {
       readonly grant: SendGrantIdentity;
       readonly idempotencyKey: string;
     } & (
-        | { readonly text: string; readonly pdf?: never }
+        | {
+            readonly image: {
+              readonly bytes: VerifiedImageBytes;
+              readonly caption?: string;
+            };
+            readonly pdf?: never;
+            readonly text?: never;
+          }
+        | {
+            readonly text: string;
+            readonly image?: never;
+            readonly pdf?: never;
+          }
         | {
             readonly pdf: {
               readonly bytes: VerifiedPdfBytes;
               readonly fileName: string;
             };
+            readonly image?: never;
             readonly text?: never;
           }
       ),
@@ -624,6 +656,8 @@ const sendTextMessageDescription =
   "Send exact text once after Client Confirmation. Supply exactly one destination: recipient_id returned by a Directory or message tool, an E.164 phone beginning with +, or a WhatsApp username beginning with @. Generate a fresh idempotency_key of exactly 21 characters matching [A-Za-z0-9_-]{21}; reuse that exact key only to retry the same connection, destination, and text.";
 const sendPdfFileDescription =
   "Send one verified PDF after Client Confirmation. Supply exactly one destination and exactly one source: pdf_url or pdf_base64. file_name must be a safe name ending in .pdf. The decoded or downloaded PDF may not exceed 16 MiB. Generate a fresh 21-character idempotency_key and reuse it only for the same connection, destination, exact PDF bytes, and filename.";
+const sendImageDescription =
+  "Send one verified JPEG or PNG image after Client Confirmation. Supply exactly one destination and exactly one source: image_url or image_base64. An optional caption must contain 1 to 4096 Unicode scalar values and non-whitespace. The decoded or downloaded image may not exceed 5,000,000 bytes. Generate a fresh 21-character idempotency_key and reuse it only for the same connection, destination, exact image bytes, MIME type, and caption.";
 const searchMessagesDescription =
   "Search exact normalized words in retained Stored Message text and captions within one selected WhatsApp Connection. Results are newest first, not relevance ranked.";
 const ListGroupsInput = z
@@ -795,7 +829,8 @@ const PdfBase64 = z
   .string()
   .min(12)
   .max(22_369_624)
-  .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u);
+  .regex(/^[A-Za-z0-9+/]+={0,2}$/u)
+  .refine(isStandardPaddedBase64);
 const PdfDestinations = [
   { recipient_id: z.string().regex(/^(?:ctc|grp)_[A-Za-z0-9_-]{21}$/u) },
   { phone: z.string().regex(/^\+[1-9]\d{1,14}$/u) },
@@ -806,6 +841,31 @@ const SendPdfFileInput = z.union(
     z.object({ ...SendPdfCommon, ...destination, pdf_url: PdfUrl }).strict(),
     z
       .object({ ...SendPdfCommon, ...destination, pdf_base64: PdfBase64 })
+      .strict(),
+  ]) as unknown as readonly [z.ZodObject, z.ZodObject, ...z.ZodObject[]],
+);
+const SendImageCommon = {
+  connection_id: z.string().regex(/^con_[A-Za-z0-9_-]{21}$/u),
+  caption: SendTextMessageCommon.text.optional(),
+  idempotency_key: z.string().regex(/^[A-Za-z0-9_-]{21}$/u),
+} as const;
+const ImageBase64 = z
+  .string()
+  .min(4)
+  .max(6_666_668)
+  .regex(/^[A-Za-z0-9+/]+={0,2}$/u)
+  .refine(isStandardPaddedBase64);
+const SendImageInput = z.union(
+  PdfDestinations.flatMap((destination) => [
+    z
+      .object({ ...SendImageCommon, ...destination, image_url: PdfUrl })
+      .strict(),
+    z
+      .object({
+        ...SendImageCommon,
+        ...destination,
+        image_base64: ImageBase64,
+      })
       .strict(),
   ]) as unknown as readonly [z.ZodObject, z.ZodObject, ...z.ZodObject[]],
 );
@@ -946,6 +1006,7 @@ const buildSendTextMessageResult = makeSuccessResultBuilder(
 const buildSendPdfFileResult = makeSuccessResultBuilder(
   SendPdfFileOutputContract,
 );
+const buildSendImageResult = makeSuccessResultBuilder(SendImageOutputContract);
 const buildGetSendStatusResult = makeSuccessResultBuilder(
   GetSendStatusOutputContract,
 );
@@ -982,6 +1043,13 @@ const invalidRequest = () =>
   makeExecutionErrorResult({
     error_code: "invalid_request",
     message: "The PDF source is invalid or unavailable.",
+    retryable: false,
+  });
+
+const invalidImageRequest = () =>
+  makeExecutionErrorResult({
+    error_code: "invalid_request",
+    message: "The image source is invalid or unavailable.",
     retryable: false,
   });
 
@@ -1294,6 +1362,41 @@ const sendTextMessage = (
     return sendError(result.outcome);
   }).pipe(Effect.catchAll(() => Effect.succeed(auditUnavailable())));
 
+const rejectInvalidSendSource = (
+  authorization: McpAccessGrant,
+  connectionId: string,
+  operationName: "send_image" | "send_pdf_file",
+) =>
+  Effect.gen(function* () {
+    const clock = yield* McpToolClock;
+    const identifiers = yield* McpToolIdentifiers;
+    const persistence = yield* McpToolPersistence;
+    const rejected = yield* persistence
+      .rejectProtectedOperation({
+        ...authorization,
+        auditLogId: yield* identifiers.nextAuditLogId,
+        connectionPublicId: connectionId,
+        errorCode: "invalid_request",
+        observedAt: yield* clock.now,
+        operationName,
+      })
+      .pipe(Effect.either);
+    const outcome =
+      rejected._tag === "Left"
+        ? ("audit_unavailable" as const)
+        : rejected.right === "authorization_denied"
+          ? ("authorization_denied" as const)
+          : ("execution_error" as const);
+    yield* emitToolCompletion(operationName, outcome);
+    return rejected._tag === "Left"
+      ? auditUnavailable()
+      : rejected.right === "authorization_denied"
+        ? authorizationDenied()
+        : operationName === "send_image"
+          ? invalidImageRequest()
+          : invalidRequest();
+  });
+
 const sendPdfFile = (
   authorization: McpAccessGrant,
   input: {
@@ -1326,7 +1429,13 @@ const sendPdfFile = (
             channel: "mcp",
             connectionId: input.connection_id,
             grant,
+            idempotencyKey: input.idempotency_key,
             operationName: "send_pdf_file",
+            ...(input.recipient_id !== undefined
+              ? { recipientId: input.recipient_id }
+              : input.phone !== undefined
+                ? { phone: input.phone }
+                : { username: input.username ?? "" }),
           });
     if (preflight.outcome === "authorization_denied") {
       yield* emitToolCompletion("send_pdf_file", "authorization_denied");
@@ -1336,6 +1445,14 @@ const sendPdfFile = (
       yield* emitToolCompletion("send_pdf_file", "audit_unavailable");
       return auditUnavailable();
     }
+    if (preflight.outcome === "recipient_not_found") {
+      yield* emitToolCompletion("send_pdf_file", "execution_error");
+      return sendError("recipient_not_found");
+    }
+    if (preflight.outcome === "idempotency_conflict") {
+      yield* emitToolCompletion("send_pdf_file", "execution_error");
+      return sendError("idempotency_conflict");
+    }
     const loaded = yield* Effect.tryPromise({
       try: () =>
         input.pdf_base64 === undefined
@@ -1344,8 +1461,11 @@ const sendPdfFile = (
       catch: () => undefined,
     }).pipe(Effect.either);
     if (loaded._tag === "Left") {
-      yield* emitToolCompletion("send_pdf_file", "execution_error");
-      return invalidRequest();
+      return yield* rejectInvalidSendSource(
+        authorization,
+        input.connection_id,
+        "send_pdf_file",
+      );
     }
     const result = yield* service.send(
       {
@@ -1383,6 +1503,118 @@ const sendPdfFile = (
       return serviceUnavailable();
     }
     yield* emitToolCompletion("send_pdf_file", "execution_error");
+    return sendError(result.outcome);
+  }).pipe(Effect.catchAll(() => Effect.succeed(auditUnavailable())));
+
+const sendImage = (
+  authorization: McpAccessGrant,
+  input: {
+    readonly caption?: string;
+    readonly connection_id: string;
+    readonly idempotency_key: string;
+    readonly image_base64?: string;
+    readonly image_url?: string;
+    readonly phone?: string;
+    readonly recipient_id?: string;
+    readonly username?: string;
+  },
+  deferProviderAttempt?: (attempt: Promise<void>) => void,
+) =>
+  Effect.gen(function* () {
+    const service = yield* SendTextMessage;
+    const grant = isMcpApiKeyGrant(authorization)
+      ? apiSendGrant({
+          grantId: authorization.apiKey.grantId,
+          name: authorization.apiKey.name,
+          permissions: authorization.apiKey.permissions,
+          personalAccountId: authorization.apiKey.personalAccountId,
+          publicId: authorization.apiKey.id,
+        })
+      : mcpSendGrant(authorization);
+    const preflight =
+      service.preflight === undefined
+        ? ({ outcome: "audit_unavailable" } as const)
+        : yield* service.preflight({
+            channel: "mcp",
+            connectionId: input.connection_id,
+            grant,
+            idempotencyKey: input.idempotency_key,
+            operationName: "send_image",
+            ...(input.recipient_id !== undefined
+              ? { recipientId: input.recipient_id }
+              : input.phone !== undefined
+                ? { phone: input.phone }
+                : { username: input.username ?? "" }),
+          });
+    if (preflight.outcome === "authorization_denied") {
+      yield* emitToolCompletion("send_image", "authorization_denied");
+      return authorizationDenied();
+    }
+    if (preflight.outcome === "audit_unavailable") {
+      yield* emitToolCompletion("send_image", "audit_unavailable");
+      return auditUnavailable();
+    }
+    if (preflight.outcome === "recipient_not_found") {
+      yield* emitToolCompletion("send_image", "execution_error");
+      return sendError("recipient_not_found");
+    }
+    if (preflight.outcome === "idempotency_conflict") {
+      yield* emitToolCompletion("send_image", "execution_error");
+      return sendError("idempotency_conflict");
+    }
+    const loaded = yield* Effect.tryPromise({
+      try: () =>
+        input.image_base64 === undefined
+          ? downloadImage(input.image_url ?? "")
+          : Promise.resolve(decodeImageBase64(input.image_base64)),
+      catch: () => undefined,
+    }).pipe(Effect.either);
+    if (loaded._tag === "Left") {
+      return yield* rejectInvalidSendSource(
+        authorization,
+        input.connection_id,
+        "send_image",
+      );
+    }
+    const result = yield* service.send(
+      {
+        channel: "mcp",
+        connectionId: input.connection_id,
+        grant,
+        idempotencyKey: input.idempotency_key,
+        ...(input.recipient_id !== undefined
+          ? { recipientId: input.recipient_id }
+          : input.phone !== undefined
+            ? { phone: input.phone }
+            : { username: input.username ?? "" }),
+        image: {
+          bytes: loaded.right,
+          ...(input.caption === undefined ? {} : { caption: input.caption }),
+        },
+      },
+      deferProviderAttempt,
+    );
+    if (result.outcome === "receipt") {
+      yield* emitToolCompletion("send_image", "success", 1);
+      return buildSendImageResult(result.receipt);
+    }
+    if (result.outcome === "rate_limited") {
+      yield* emitToolCompletion("send_image", "rate_limited");
+      return rateLimited(result.retryAfterSeconds, result.resetsAt);
+    }
+    if (result.outcome === "authorization_denied") {
+      yield* emitToolCompletion("send_image", "authorization_denied");
+      return authorizationDenied();
+    }
+    if (result.outcome === "audit_unavailable") {
+      yield* emitToolCompletion("send_image", "audit_unavailable");
+      return auditUnavailable();
+    }
+    if (result.outcome === "service_unavailable") {
+      yield* emitToolCompletion("send_image", "service_unavailable");
+      return serviceUnavailable();
+    }
+    yield* emitToolCompletion("send_image", "execution_error");
     return sendError(result.outcome);
   }).pipe(Effect.catchAll(() => Effect.succeed(auditUnavailable())));
 
@@ -3729,6 +3961,37 @@ export const createMcpRequestHandler =
         },
       );
       server.registerTool(
+        "send_image",
+        {
+          annotations: {
+            readOnlyHint: false,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: true,
+          },
+          description: sendImageDescription,
+          inputSchema: SendImageInput,
+          outputSchema: SendTextMessageOutputSchema,
+          title: "Send WhatsApp Image",
+          _meta: { "anthropic/requiresUserInteraction": true },
+        },
+        async (input) => {
+          const operation = Effect.runPromise(
+            sendImage(
+              authorization,
+              input as Parameters<typeof sendImage>[1],
+              (attempt) => context.waitUntil(attempt),
+            ).pipe(Effect.provide(options.layer)),
+          );
+          context.waitUntil(operation.then(() => undefined));
+          const result = await operation;
+          return {
+            ...result,
+            content: result.content.map((block) => ({ ...block })),
+          } as CallToolResult;
+        },
+      );
+      server.registerTool(
         "get_send_status",
         {
           annotations: { readOnlyHint: true },
@@ -3956,6 +4219,24 @@ export const createMcpRequestHandler =
               target: "draft-2020-12",
             }),
             title: "Send WhatsApp Text Message",
+            _meta: { "anthropic/requiresUserInteraction": true },
+          });
+          tools.push({
+            annotations: {
+              readOnlyHint: false,
+              destructiveHint: false,
+              idempotentHint: true,
+              openWorldHint: true,
+            },
+            description: sendImageDescription,
+            inputSchema: z.toJSONSchema(SendImageInput, {
+              target: "draft-2020-12",
+            }),
+            name: "send_image",
+            outputSchema: z.toJSONSchema(SendTextMessageOutputSchema, {
+              target: "draft-2020-12",
+            }),
+            title: "Send WhatsApp Image",
             _meta: { "anthropic/requiresUserInteraction": true },
           });
           tools.push({

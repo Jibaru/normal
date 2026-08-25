@@ -392,6 +392,9 @@ describe("Webhook Event repository", () => {
     const auditLogId = "50000000-0000-4000-8000-000000000050";
     const sendId = "60000000-0000-4000-8000-000000000050";
     const messageIdentity = itemIdentity("send-message");
+    const imageAuditLogId = "50000000-0000-4000-8000-000000000051";
+    const imageSendId = "60000000-0000-4000-8000-000000000051";
+    const imageMessageIdentity = itemIdentity("send-image-message");
     await database.query(
       `INSERT INTO public.mcp_authorizations (
          id, personal_account_id, oauth_subject, client_id, client_class,
@@ -414,7 +417,7 @@ describe("Webhook Event repository", () => {
          attempt_claimed_at, lease_expires_at, expires_at, message_identity
        ) VALUES ($1,'snd_000000000000000000050',$2,$3,$4,$5,'contact',
          'ctc_000000000000000000050','processing',$6,$6,$6,
-         $6::timestamptz + interval '30 seconds',
+          $6::timestamptz + interval '45 seconds',
          $6::timestamptz + interval '90 days',$7)`,
       [
         sendId,
@@ -444,6 +447,48 @@ describe("Webhook Event repository", () => {
        ) VALUES ($1,$2,$3,1,2,decode(repeat('13',12),'hex'),
          decode(repeat('14',32),'hex'),$4::timestamptz + interval '7 days')`,
       [sendId, accountId, connectionId, receivedAt],
+    );
+    await database.query(
+      `INSERT INTO public.tool_call_logs (
+         id, personal_account_id, mcp_authorization_id, tool_name, started_at,
+         outcome, quota_reserved, expires_at
+       ) VALUES ($1,$2,$3,'send_image',$4,'started',true,$4::timestamptz + interval '90 days')`,
+      [imageAuditLogId, accountId, authorizationId, receivedAt],
+    );
+    await database.query(
+      `INSERT INTO public.send_operations (
+         id, public_id, personal_account_id, mcp_authorization_id,
+         tool_call_log_id, whatsapp_connection_id, recipient_type,
+         recipient_public_id, status, created_at, status_changed_at,
+         attempt_claimed_at, lease_expires_at, expires_at, message_identity
+       ) VALUES ($1,'snd_000000000000000000051',$2,$3,$4,$5,'contact',
+         'ctc_000000000000000000050','processing',$6,$6,$6,
+         $6::timestamptz + interval '45 seconds',
+         $6::timestamptz + interval '90 days',$7)`,
+      [
+        imageSendId,
+        accountId,
+        authorizationId,
+        imageAuditLogId,
+        connectionId,
+        receivedAt,
+        imageMessageIdentity,
+      ],
+    );
+    await database.query(
+      `INSERT INTO public.pending_send_contents (
+         send_operation_id,personal_account_id,whatsapp_connection_id,
+         ciphertext_version,key_version,nonce,ciphertext,expires_at
+       ) VALUES ($1,$2,$3,1,2,decode(repeat('17',12),'hex'),
+         decode(repeat('18',32),'hex'),$4::timestamptz + interval '7 days')`,
+      [imageSendId, accountId, connectionId, receivedAt],
+    );
+    await database.query(
+      `INSERT INTO public.send_operation_objects (
+         send_operation_id,personal_account_id,whatsapp_connection_id,state,
+         object_key,plaintext_size_bytes,sha256,created_at
+       ) VALUES ($1,$2,$3,'ready','pending/send-image-51',128,$4,$5)`,
+      [imageSendId, accountId, connectionId, "a".repeat(64), receivedAt],
     );
     await repository.prepare(eventInput(firstEventId));
 
@@ -503,6 +548,45 @@ describe("Webhook Event repository", () => {
     );
     await expect(project("failed", 4)).resolves.toBe("applied");
     await expect(project("sent", 5)).resolves.toBe("applied");
+    await expect(
+      repository.projectSendEvidence(
+        {
+          eventId: firstEventId,
+          evidence: { occurredAt: null, version: null },
+          itemIdentity: itemIdentity("send-image-sent"),
+          itemIndex: 6,
+          messageIdentity: imageMessageIdentity,
+          personalAccountId: accountId,
+          receivedAt,
+          status: "sent",
+          whatsappConnectionId: connectionId,
+        },
+        async () => {
+          throw new Error("identity-only image evidence must not materialize");
+        },
+      ),
+    ).resolves.toBe("applied");
+    const retainedImage = await database.query<{
+      object_count: number;
+      pending_count: number;
+      status: string;
+      stored_count: number;
+    }>(
+      `SELECT operations.status,
+         (SELECT count(*)::int FROM public.pending_send_contents
+          WHERE send_operation_id=$1) AS pending_count,
+         (SELECT count(*)::int FROM public.send_operation_objects
+          WHERE send_operation_id=$1 AND state='ready') AS object_count,
+         (SELECT count(*)::int FROM public.stored_messages
+          WHERE personal_account_id=$2 AND whatsapp_connection_id=$3
+            AND message_identity=$4) AS stored_count
+       FROM public.send_operations operations
+       WHERE operations.id=$1`,
+      [imageSendId, accountId, connectionId, imageMessageIdentity],
+    );
+    expect(retainedImage.rows).toEqual([
+      { object_count: 1, pending_count: 1, status: "sent", stored_count: 0 },
+    ]);
     const persisted = await database.query<{ status: string }>(
       "SELECT status FROM public.send_operations WHERE id=$1",
       [sendId],

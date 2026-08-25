@@ -143,7 +143,7 @@ flowchart LR
   and API Key stay distinct principals across both adapters. REST pages complete
   retained Stored Messages at
   `GET /v1/connections/{connection_id}/conversations/{conversation_id}/messages`
-  and creates or exactly replays a text or PDF Send Operation at
+  and creates or exactly replays a text, PDF, or JPEG/PNG image Send Operation at
   `POST /v1/connections/{connection_id}/send-operations`. Local Send Status is
   available only to the originating still-active API Key at
   `GET /v1/connections/{connection_id}/send-operations/{send_operation_id}`.

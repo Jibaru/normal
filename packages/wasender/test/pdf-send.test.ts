@@ -42,6 +42,7 @@ const makeHarness = (
 ) => {
   const attempts: Array<Attempt> = [];
   const telemetry: Array<PdfSendTelemetryEvent> = [];
+  const timeouts: Array<number> = [];
   let now = 1_000;
   const sending = makeWasenderPdfSendingWithRuntime(
     {
@@ -69,12 +70,12 @@ const makeHarness = (
         return now;
       },
       setTimeout: (_callback, milliseconds) => {
-        expect(milliseconds).toBe(15_000);
+        timeouts.push(milliseconds);
         return 1;
       },
     },
   );
-  return { attempts, sending, telemetry };
+  return { attempts, sending, telemetry, timeouts };
 };
 
 const send = (sending: ReturnType<typeof makeHarness>["sending"]) =>
@@ -103,6 +104,7 @@ describe("real Wasender PDF-send adapter", () => {
       outcome: "provider_acknowledgement",
       status: "accepted",
     });
+    expect(harness.timeouts).toEqual([10_000, 15_000]);
     expect(harness.attempts).toHaveLength(2);
     expect(harness.attempts[0]).toMatchObject({
       body: pdf,

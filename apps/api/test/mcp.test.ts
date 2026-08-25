@@ -166,6 +166,10 @@ const makeHarness = (
     readonly mediaDecryptFails?: boolean;
     readonly sendResult?: SendTextMessageResult;
     readonly sendPreflightDenied?: boolean;
+    readonly sendPreflightOutcome?:
+      | "authorized"
+      | "authorization_denied"
+      | "idempotency_conflict";
     readonly sendStatusNotFound?: boolean;
     readonly tombstone?: boolean;
     readonly mediaRead?: "not_found" | "ready";
@@ -185,10 +189,18 @@ const makeHarness = (
   const messageSearchQueries: Array<ReadonlyArray<string> | null> = [];
   const principals: Array<"api_key" | "mcp_authorization"> = [];
   const sendGrantKinds: Array<"api" | "mcp"> = [];
+  const sendPreflightOperationNames: Array<
+    "send_image" | "send_pdf_file" | "send_text_message"
+  > = [];
   const sendDestinations: Array<{
     readonly phone?: string;
     readonly recipientId?: string;
     readonly username?: string;
+  }> = [];
+  const sentImages: Array<{
+    readonly bytes: Uint8Array;
+    readonly caption?: string;
+    readonly mimeType: "image/jpeg" | "image/png";
   }> = [];
   const layer = Layer.mergeAll(
     Layer.succeed(McpToolClock, {
@@ -271,12 +283,15 @@ const makeHarness = (
       write: () => Effect.die("not used"),
     }),
     Layer.succeed(SendTextMessage, {
-      preflight: () => {
+      preflight: (input) => {
         observations.push("send-preflight");
+        sendPreflightOperationNames.push(input.operationName);
         return Effect.succeed({
-          outcome: overrides.sendPreflightDenied
-            ? ("authorization_denied" as const)
-            : ("authorized" as const),
+          outcome:
+            overrides.sendPreflightOutcome ??
+            (overrides.sendPreflightDenied
+              ? ("authorization_denied" as const)
+              : ("authorized" as const)),
         });
       },
       send: (input) => {
@@ -289,6 +304,15 @@ const makeHarness = (
             : { recipientId: input.recipientId }),
           ...(input.username === undefined ? {} : { username: input.username }),
         });
+        if (input.image !== undefined) {
+          sentImages.push({
+            bytes: input.image.bytes,
+            ...(input.image.caption === undefined
+              ? {}
+              : { caption: input.image.caption }),
+            mimeType: input.image.bytes.mimeType,
+          });
+        }
         return Effect.succeed(
           overrides.sendResult ?? {
             outcome: "receipt" as const,
@@ -873,6 +897,8 @@ const makeHarness = (
     principals,
     sendGrantKinds,
     sendDestinations,
+    sendPreflightOperationNames,
+    sentImages,
     telemetry,
   };
 };
@@ -938,6 +964,16 @@ describe("stateless MCP list_connections boundary", () => {
             text: "known recipient",
           },
           name: "send_text_message",
+          scope: "messages:send",
+        },
+        {
+          arguments: {
+            connection_id: "con_123456789012345678901",
+            image_base64: "/9j/",
+            idempotency_key: "123456789012345678901",
+            recipient_id: "ctc_123456789012345678901",
+          },
+          name: "send_image",
           scope: "messages:send",
         },
         {
@@ -2601,6 +2637,16 @@ describe("atomic send_text_message MCP boundary", () => {
         _meta: { "anthropic/requiresUserInteraction": true },
       }),
       expect.objectContaining({
+        name: "send_image",
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+        },
+        _meta: { "anthropic/requiresUserInteraction": true },
+      }),
+      expect.objectContaining({
         name: "send_pdf_file",
         annotations: {
           readOnlyHint: false,
@@ -2628,6 +2674,9 @@ describe("atomic send_text_message MCP boundary", () => {
     ).json()) as { result: { tools: Array<{ name: string }> } };
     expect(omittedBody.result.tools.map((tool) => tool.name)).not.toContain(
       "send_text_message",
+    );
+    expect(omittedBody.result.tools.map((tool) => tool.name)).not.toContain(
+      "send_image",
     );
   });
 
@@ -2704,6 +2753,47 @@ describe("atomic send_text_message MCP boundary", () => {
     );
   });
 
+  test("invokes send_image with a verified Base64 JPEG after its authorization preflight", async () => {
+    const harness = makeHarness({ scopes: ["messages:send"] });
+    const response = await harness.handler(
+      jsonRpcRequest("tools/call", {
+        name: "send_image",
+        arguments: {
+          caption: "  e\u0301\n ",
+          connection_id: "con_123456789012345678901",
+          idempotency_key: "123456789012345678901",
+          image_base64: "/9j/",
+          recipient_id: "ctc_123456789012345678901",
+        },
+      }),
+      {},
+      executionContext,
+      authorization,
+    );
+    const body = (await response.json()) as {
+      result: { structuredContent: unknown };
+    };
+
+    expect(harness.sendPreflightOperationNames).toEqual(["send_image"]);
+    expect(harness.observations.indexOf("send-preflight")).toBeLessThan(
+      harness.observations.indexOf("send"),
+    );
+    expect(harness.sentImages).toEqual([
+      {
+        bytes: new Uint8Array([0xff, 0xd8, 0xff]),
+        caption: "  e\u0301\n ",
+        mimeType: "image/jpeg",
+      },
+    ]);
+    expect(body.result.structuredContent).toEqual({
+      send_id: "snd_123456789012345678901",
+      status: "accepted",
+      created_at: "2026-08-03T12:00:00.000Z",
+      status_changed_at: "2026-08-03T12:00:01.000Z",
+      idempotent_replay: false,
+    });
+  });
+
   test("does not resolve or fetch a PDF URL before send authorization", async () => {
     const harness = makeHarness({
       scopes: ["messages:send"],
@@ -2724,6 +2814,84 @@ describe("atomic send_text_message MCP boundary", () => {
             file_name: "report.pdf",
             idempotency_key: "123456789012345678901",
             pdf_url: "https://files.example.test/report.pdf",
+            recipient_id: "ctc_123456789012345678901",
+          },
+        }),
+        {},
+        executionContext,
+        authorization,
+      );
+      expect(await response.json()).toMatchObject({
+        result: { isError: true },
+      });
+      expect(fetchCalls).toBe(0);
+      expect(harness.observations).not.toContain("send");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("does not resolve or fetch an image URL before send authorization", async () => {
+    const harness = makeHarness({
+      scopes: ["messages:send"],
+      sendPreflightDenied: true,
+    });
+    const originalFetch = globalThis.fetch;
+    let dnsCalls = 0;
+    let fetchCalls = 0;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      fetchCalls += 1;
+      if (String(input).startsWith("https://cloudflare-dns.com/")) {
+        dnsCalls += 1;
+      }
+      throw new Error("unexpected fetch");
+    }) as unknown as typeof fetch;
+    try {
+      const response = await harness.handler(
+        jsonRpcRequest("tools/call", {
+          name: "send_image",
+          arguments: {
+            connection_id: "con_123456789012345678901",
+            idempotency_key: "123456789012345678901",
+            image_url: "https://files.normal.dev/photo.jpg",
+            recipient_id: "ctc_123456789012345678901",
+          },
+        }),
+        {},
+        executionContext,
+        authorization,
+      );
+      expect(await response.json()).toMatchObject({
+        result: { isError: true },
+      });
+      expect(harness.sendPreflightOperationNames).toEqual(["send_image"]);
+      expect(fetchCalls).toBe(0);
+      expect(dnsCalls).toBe(0);
+      expect(harness.observations).not.toContain("send");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("does not resolve or fetch an image URL for a conflicting bound key", async () => {
+    const harness = makeHarness({
+      scopes: ["messages:send"],
+      sendPreflightOutcome: "idempotency_conflict",
+    });
+    const originalFetch = globalThis.fetch;
+    let fetchCalls = 0;
+    globalThis.fetch = (async () => {
+      fetchCalls += 1;
+      throw new Error("unexpected fetch");
+    }) as unknown as typeof fetch;
+    try {
+      const response = await harness.handler(
+        jsonRpcRequest("tools/call", {
+          name: "send_image",
+          arguments: {
+            connection_id: "con_123456789012345678901",
+            idempotency_key: "123456789012345678901",
+            image_url: "https://files.normal.dev/photo.jpg",
             recipient_id: "ctc_123456789012345678901",
           },
         }),

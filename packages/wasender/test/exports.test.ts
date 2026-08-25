@@ -17,17 +17,23 @@ describe("@whatsapp-mcp/wasender boundaries", () => {
       "./media",
       "./session",
       "./webhook",
+      "./webshare",
     ]);
     expect(packageManifest.exports).not.toHaveProperty(".");
     expect(sessionExports).toHaveProperty("makeWasenderTextSending");
     expect(sessionExports).toHaveProperty("makeWasenderTextSendingLayer");
     expect(sessionExports).toHaveProperty("makeWasenderPdfSending");
     expect(sessionExports).toHaveProperty("makeWasenderPdfSendingLayer");
+    expect(sessionExports).toHaveProperty("makeWasenderImageSending");
+    expect(sessionExports).toHaveProperty("makeWasenderImageSendingLayer");
     expect(sessionExports).not.toHaveProperty(
       "makeWasenderTextSendingWithRuntime",
     );
     expect(sessionExports).not.toHaveProperty(
       "makeWasenderPdfSendingWithRuntime",
+    );
+    expect(sessionExports).not.toHaveProperty(
+      "makeWasenderImageSendingWithRuntime",
     );
   });
 

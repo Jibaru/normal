@@ -9,7 +9,7 @@ Implemented. The selected shape below is the accepted contract. Do not treat thi
 ## Current State
 
 - `apps/api` is the sole public data plane. Signed-in product routes use short-lived Clerk JWTs and exact browser Origin. `/mcp` accepts Worker-issued OAuth tokens or an existing API Key. REST uses User-created API Keys.
-- MCP and REST expose the same capabilities: list Connections, contacts, groups, and conversations; read and search Stored Messages; create text or PDF Send Operations; and read Send Status. Both expose non-listable protected Stored Media.
+- MCP and REST expose the same capabilities: list Connections, contacts, groups, and conversations; read and search Stored Messages; create text, PDF, and image Send Operations; and read Send Status. Both expose non-listable protected Stored Media.
 - MCP Authorizations and API Keys model four independent permissions and explicit WhatsApp Connection selection. Newly created Connections never enter an existing grant automatically.
 - Protected MCP and REST operations fail closed unless a metadata-only Activity Log can be written before decryption, media release, or provider access. Neon atomically enforces authoritative quotas shared by both adapters.
 - Public handles, privacy modules, output schemas, send orchestration, encryption, and database repositories are shared. MCP request envelopes, OAuth context, REST Problem Details, cursor signing documents, result wrappers, and media URIs remain protocol-specific.
@@ -27,7 +27,7 @@ Implemented. The selected shape below is the accepted contract. Do not treat thi
 | R5 | MCP and REST use protocol-neutral application operations so authorization, privacy, quota, retention, Recipient Exclusion, and send decisions do not diverge between adapters. | Must-have |
 | R6 | Every protected REST operation durably begins an Activity Log and reserves applicable quota before decrypting data, releasing media, or invoking the provider. Audit unavailability fails closed. | Must-have |
 | R7 | MCP and REST share Personal Account send, returned-message-record, and decrypted-media-byte quotas. REST also enforces per-API-Key request-frequency limits. | Must-have |
-| R8 | REST sends require a caller-supplied `Idempotency-Key`, preserve exact content and ambiguous-outcome rules, and create a Send Operation rather than pretending to create a Stored Message. | Must-have |
+| R8 | REST sends require a caller-supplied `Idempotency-Key`, preserve exact content and ambiguous-outcome rules, bind image MIME and optional caption, and create a Send Operation rather than pretending to create a Stored Message. | Must-have |
 | R9 | Send Status is available only through the originating active API Key, selected Connection, and `messages:send` permission. | Must-have |
 | R10 | REST errors use RFC 9457 Problem Details with a stable safe Normal code. Invalid credentials return 401, missing permission returns 403, and unknown, cross-tenant, or mismatched resources share a 404 boundary. | Must-have |
 | R11 | `/v1` is stable and additive. Breaking changes require a future major version with an announced sunset. | Must-have |
@@ -119,11 +119,11 @@ All request objects are closed, fields use `snake_case`, timestamps use RFC 3339
 | GET | `/v1/connections/{connection_id}/conversations` | `messages:read` | Page WhatsApp Conversations by Conversation Activity. |
 | GET | `/v1/connections/{connection_id}/conversations/{conversation_id}/messages` | `messages:read` | Page complete retained Stored Message content, history boundary, and intersecting Ingestion Gaps. |
 | POST | `/v1/connections/{connection_id}/messages/search` | `messages:read` | Search exact normalized words from a privacy-safe JSON body. |
-| POST | `/v1/connections/{connection_id}/send-operations` | `messages:send` | Create or replay one idempotent text or PDF Send Operation for exactly one handle, E.164 phone, or WhatsApp username destination. PDFs accept an HTTPS URL or standard padded Base64. |
+| POST | `/v1/connections/{connection_id}/send-operations` | `messages:send` | Create or replay one idempotent text, PDF, or JPEG/PNG image Send Operation for exactly one handle, E.164 phone, or WhatsApp username destination. PDFs and images accept an HTTPS URL or strict standard padded Base64; images have an exact maximum of 5,000,000 bytes and may include an exact SendText-valid caption. |
 | GET | `/v1/connections/{connection_id}/send-operations/{send_operation_id}` | `messages:send` | Read the originating API Key's local Send Status. |
 | GET | `/v1/connections/{connection_id}/messages/{message_id}/media/{media_id}` | `messages:read` | Read eligible binary Stored Media with private no-store headers. |
 
-Search is POST because terms may contain private message content. It is synchronous and creates no persisted search resource. Send creation requires `Idempotency-Key`; exact replay never resends, a changed payload conflicts, and ambiguous provider outcomes are never automatically retried.
+Search is POST because terms may contain private message content. It is synchronous and creates no persisted search resource. Send creation requires `Idempotency-Key`; exact replay never resends, a changed payload conflicts, and ambiguous provider outcomes are never automatically retried. Image MIME and optional caption are part of the idempotency binding, and identity-only provider evidence cannot materialize a caption without its image.
 
 ### HTTP Contract
 
