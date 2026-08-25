@@ -451,9 +451,11 @@ creation, and assigns one unused static Colombian SOCKS5 proxy through
 `https://proxy.webshare.io/api/v2/proxy/list/` endpoints, accepts only one
 active shared ISP plan with exactly 20 `CO` proxies and Auto-Refresh disabled,
 then requires its complete Backbone list, preserves an existing listed assignment, and
-fails closed when no valid unused proxy remains. The Webshare plan keeps
-Auto-Refresh disabled; proxy credential or inventory changes require a reviewed
-configuration reconciliation. One named provider-control Durable Object
+fails closed when no valid unused proxy remains. A structurally empty inventory for
+the active paid plan is reported as temporary provider-capacity unavailability;
+malformed or policy-incompatible inventory remains an integrity failure. The
+Webshare plan keeps Auto-Refresh disabled; proxy credential or inventory changes
+require a reviewed configuration reconciliation. One named provider-control Durable Object
 represents the environment's proxy pool and serializes create, reconcile, repair,
 and reconnect validation across Worker isolates. Before a proxy-changing write,
 it persists only the opaque Connection Setup marker and a settlement deadline;

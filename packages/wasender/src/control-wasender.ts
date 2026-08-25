@@ -776,10 +776,18 @@ export const makeWasenderSessionLifecycle = (
       }
       if (operation === "safe-read") {
         throw safeFailure(
-          cause instanceof WebshareProxySelectionError && !cause.retryable
+          cause instanceof WebshareProxySelectionError &&
+            !cause.retryable &&
+            !cause.capacityUnavailable
             ? "integrity_failed"
             : "unavailable",
         );
+      }
+      if (
+        cause instanceof WebshareProxySelectionError &&
+        cause.capacityUnavailable
+      ) {
+        throw writeFailure("source_rejected", false);
       }
       if (cause instanceof WebshareProxySelectionError && !cause.retryable) {
         throw writeFailure("integrity_failed", false);

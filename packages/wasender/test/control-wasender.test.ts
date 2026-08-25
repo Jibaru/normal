@@ -268,6 +268,30 @@ describe("real Wasender lifecycle adapter", () => {
     });
   });
 
+  test("maps empty paid proxy inventory to provider capacity unavailability", async () => {
+    const lifecycle = makeWasenderSessionLifecycle(
+      { credential, referenceSecret },
+      {
+        fetch: async () => json({ success: true, data: [] }),
+        proxySelector: {
+          select: async () => {
+            throw new WebshareProxySelectionError(false, true);
+          },
+        },
+      },
+    );
+
+    const failure = await runFailure(
+      lifecycle.createSession({ phoneNumber, setupMarker, webhookEndpoint }),
+    );
+
+    expect(failure).toMatchObject({
+      code: "source_rejected",
+      operation: "lifecycle-write",
+      retryDecision: "do_not_retry",
+    });
+  });
+
   test("maps an unavailable allocation snapshot to a retryable lifecycle write", async () => {
     let calls = 0;
     const lifecycle = makeWasenderSessionLifecycle(

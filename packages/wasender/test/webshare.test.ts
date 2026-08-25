@@ -34,8 +34,8 @@ const proxy = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-const proxies = (count = 20) =>
-  Array.from({ length: count }, (_, index) =>
+const proxies = () =>
+  Array.from({ length: 20 }, (_, index) =>
     proxy({
       id: `b-${index + 1}`,
       password: proxyCredential("pass", index + 1),
@@ -117,27 +117,23 @@ describe("Webshare proxy selector", () => {
     expect(Redacted.value(selected)).toContain("@p.webshare.io:");
   });
 
-  test("uses the plan's bounded Colombian proxy count and skips invalid inventory", async () => {
-    const inventory = proxies(24).map((value, index) =>
-      index === 0 ? { ...value, valid: false } : value,
-    );
+  test("classifies an empty paid inventory as unavailable capacity", async () => {
     const selector = makeWebshareProxySelector(
       { apiKey },
       {
-        fetch: async (request) =>
-          request.url.includes("/subscription/plan/")
-            ? planResponse({ proxy_count: 24, proxy_countries: { CO: 24 } })
-            : response(inventory),
+        fetch: fetchList([]),
       },
     );
 
-    const selected = await selector.select({
-      occupiedProxyUrls: [],
-      setupMarker,
-    });
+    const failure = await selector
+      .select({ occupiedProxyUrls: [], setupMarker })
+      .catch((cause) => cause);
 
-    expect(Redacted.value(selected)).toContain("@p.webshare.io:");
-    expect(Redacted.value(selected)).not.toBe(proxyUrl(1, 10_000));
+    expect(failure).toBeInstanceOf(WebshareProxySelectionError);
+    expect((failure as WebshareProxySelectionError).capacityUnavailable).toBe(
+      true,
+    );
+    expect((failure as WebshareProxySelectionError).retryable).toBe(false);
   });
 
   test("fails closed when the assigned list is not Colombian", async () => {
