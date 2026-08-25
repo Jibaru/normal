@@ -7,14 +7,17 @@ Effect capabilities:
 - `SessionLifecycle` is account-authority lifecycle control.
 - `SessionDirectory` is read-only, per-session Directory authority.
 - `TextSending` performs one per-session text-send attempt.
-- `PdfSending` uploads one verified PDF and performs at most one document-send attempt.
-- `ImageSending` uploads one verified JPEG or PNG and performs at most one image-send attempt.
+- `PdfSending` uploads one verified PDF and performs at most one document-send
+  attempt.
+- `ImageSending` uploads one verified JPEG or PNG and performs at most one
+  image-send attempt.
 - `MediaRetrieval` reads per-session metadata and guarded Effect streams.
 - `WebhookNormalization` turns one authenticated delivery into independently
   processable provider-neutral items.
 
-Production implementations are supplied by capability-specific modules. The
-text, PDF, and image send implementations fix the provider endpoints and
+The text-send implementation is available through `makeWasenderTextSendingLayer`
+and the PDF and image implementations through `makeWasenderPdfSendingLayer` and
+`makeWasenderImageSendingLayer`; all three fix the provider endpoint and
 platform transport in production. The real Directory
 implementation is exported as
 `makeWasenderSessionDirectory` from `@whatsapp-mcp/wasender/session`. The other

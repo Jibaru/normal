@@ -1,17 +1,19 @@
 ---
-shaping: true
+status: implemented
 ---
 
 # Public API - Shaping
 
+Implemented. The selected shape below is the accepted contract. Do not treat this as an open shaping document.
+
 ## Current State
 
-- `apps/api` is the sole public data plane. Signed-in product routes use short-lived Clerk JWTs and exact browser Origin; `/mcp` uses Worker-issued OAuth tokens and live MCP Authorization checks.
-- MCP lists Connections, contacts, groups, and conversations; reads and searches Stored Messages; creates text, PDF, and image Send Operations through distinct tools; and reads Send Status. It also exposes non-listable protected Stored Media.
-- MCP Authorizations already model four independent permissions and explicit WhatsApp Connection selection. Newly created Connections never enter an existing grant automatically.
-- Protected MCP operations fail closed unless a metadata-only Tool Call Log can be written before decryption, media release, or provider access. Neon atomically enforces authoritative quotas.
-- Public handles, privacy modules, output schemas, send orchestration, encryption, and database repositories are reusable. MCP request envelopes, OAuth context, audit taxonomy, cursor authority, result wrappers, and media URIs are not protocol-neutral today.
-- The dashboard has no API Key destination. The engineering `docs` directory is not deployed, and the product has no OpenAPI document or Scalar dependency.
+- `apps/api` is the sole public data plane. Signed-in product routes use short-lived Clerk JWTs and exact browser Origin. `/mcp` accepts Worker-issued OAuth tokens or an existing API Key. REST uses User-created API Keys.
+- MCP and REST expose the same capabilities: list Connections, contacts, groups, and conversations; read and search Stored Messages; create text, PDF, and image Send Operations; and read Send Status. Both expose non-listable protected Stored Media.
+- MCP Authorizations and API Keys model four independent permissions and explicit WhatsApp Connection selection. Newly created Connections never enter an existing grant automatically.
+- Protected MCP and REST operations fail closed unless a metadata-only Activity Log can be written before decryption, media release, or provider access. Neon atomically enforces authoritative quotas shared by both adapters.
+- Public handles, privacy modules, output schemas, send orchestration, encryption, and database repositories are shared. MCP request envelopes, OAuth context, REST Problem Details, cursor signing documents, result wrappers, and media URIs remain protocol-specific.
+- The dashboard has a top-level API Keys destination and a channel-aware Activity Log. `apps/docs` deploys the generated OpenAPI 3.1 document through a static Astro/Scalar app at `docs.normal.fast`.
 
 ## Requirements
 

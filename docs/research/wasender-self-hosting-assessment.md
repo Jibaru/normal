@@ -3,6 +3,7 @@
 - **Decision status:** Phase 0 evidence collection approved; non-production technical pilot pending legal, policy, license, and supply-chain gates; production replacement not approved
 - **Research cutoff:** 2026-07-30
 - **Internal repository snapshot:** `a7e2469` (rechecked 2026-07-31 after the concurrent Connection Setup provisioning merge)
+- **Later product note:** After this snapshot, ADR 0034 added `PdfSending` as a sixth Wasender capability. The five-capability language below is historical to the research cutoff. The current seam is documented in [`docs/wasender-seam.md`](../wasender-seam.md).
 - **Targets evaluated:** 100, 1,000, and 10,000 simultaneously connected WhatsApp accounts
 - **Tier interpretation:** The targets are fleet-wide WhatsApp Connections, not per-Personal-Account limits. One Personal Account can retain at most three Connections and has an exact 5 GiB (`5368709120`-byte) Stored Media ceiling shared across them. [I9]
 - **Scope:** Replace WasenderAPI while retaining QR-linked WhatsApp accounts, ordinary direct and group conversations, and the repository's provider-neutral behavior

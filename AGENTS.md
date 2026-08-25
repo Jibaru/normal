@@ -4,7 +4,7 @@
 
 - Read `CONTEXT.md` before changing names, behavior, copy, or tests; its glossary is authoritative.
 - Read the relevant ADR in `docs/adr` and the relevant contract, configuration, testing, or runbook document under `docs` before changing that boundary. Do not introduce a second model when an ADR already decides it.
-- Prefer package scripts, CI workflows, and manifests over prose when they conflict. In particular, `.github/workflows/deploy-production.yml` includes both coordinator deployments while `docs/runbooks/deployment.md` currently omits them.
+- Prefer package scripts, CI workflows, and manifests over prose when they conflict. The executable production order is `.github/workflows/deploy-production.yml`; keep `docs/runbooks/deployment.md` aligned with that workflow.
 
 ## Repository boundaries
 
@@ -12,7 +12,7 @@
 - `apps/docs`: static Astro/Scalar API reference on a separate Vercel project. It must not proxy authenticated requests or retain API Keys.
 - `apps/api`: public Cloudflare Worker for HTTP, OAuth, MCP, REST, webhooks, reconciliation, Queue consumers, and scheduled work.
 - `apps/provider-control`: private Cloudflare RPC service for provider provisioning/control. Provider credentials and provider-specific behavior stay here and in `packages/wasender`.
-- `apps/deletion-coordinator` and `apps/restore-coordinator`: scheduled Workers that preserve deletion and serving-branch recovery invariants. `apps/recovery-control` is the authenticated, serialized Workflow boundary for non-serving production drills and has no production object-delete binding.
+- `apps/deletion-coordinator` and `apps/restore-coordinator`: scheduled Workers that preserve deletion and serving-branch recovery invariants. `apps/recovery-control` is the authenticated, serialized Workflow boundary for non-serving production drills and has no production object-delete binding. `apps/recovery-verifier` and `apps/recovery-game-day` are private recovery evidence Workers. `apps/operations-control` is the authenticated availability and pager boundary.
 - `packages/domain`: pure rules; `packages/contracts`: schemas, public handles, and OpenAPI; `packages/db`: migrations and RLS-aware repositories; `packages/wasender`: provider-neutral Effect capabilities.
 - Shared packages expose explicit subpaths. Do not add root or catch-all barrel exports.
 - Runtime configuration may select only `development`, `preview`, or `production`. Production and test composition roots are statically separate; no request or runtime switch may select test wiring.
@@ -63,7 +63,7 @@ bun run infra:validate
 ```
 
 - `format:check` checks formatting only; `lint` runs workspace Biome checks plus `.sandcastle` and `scripts`.
-- Use root `bun run typecheck` as workspace truth; root TypeScript project references omit `apps/docs` and both coordinators.
+- Use root `bun run typecheck` as workspace truth; the root TypeScript project references omit `apps/docs`, both coordinators, the recovery Workers, and `apps/operations-control`. Those packages typecheck through Turbo.
 - `bun run build` also renders/dry-runs production Worker bundles and scans Worker, source-map, Next.js, and docs output for forbidden test fixtures and controls.
 - Infrastructure/release-only gates include `bun run launch:gate`, `bun run release:public-api`, and `bun run deploy:smoke`; do not run operational gates without their documented environment and runbook.
 
@@ -116,7 +116,7 @@ bun run --cwd packages/db test
 ## Operations
 
 - Deployment, replay, recovery, deletion, key rotation, break-glass access, and teardown are runbook-driven. Do not improvise commands from local manifests.
-- Production deployment order is encoded in `.github/workflows/deploy-production.yml`: migrate/check DB, provider-control, deletion coordinator, restore coordinator, recovery control, rendered API, web, docs, then smoke.
+- Production deployment order is encoded in `.github/workflows/deploy-production.yml`: migrate/check DB, provider-control, deletion coordinator, restore coordinator, operations control, recovery game day, recovery verifier, recovery control, rendered API, web, docs, then smoke.
 - Development, preview, and production infrastructure/state are separate. `validate:infra` and `infra:validate` are distinct checks; CI pins OpenTofu `1.12.5`.
 
 <!-- BEGIN:nextjs-agent-rules -->
