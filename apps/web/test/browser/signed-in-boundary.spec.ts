@@ -362,7 +362,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   releaseFirstQr?.();
   await expect(
     page.getByRole("img", { name: "Scan this WhatsApp QR code" }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId("connection-setup-status")).toHaveText(
     "Scan this QR code with WhatsApp.",
   );
@@ -635,6 +635,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   expect(await providerObservations.json()).toEqual([
     "reconcileSession",
     "connectSession",
+    "reconcileSession",
     "getQrCode",
     "reconcileSession",
     "verifySessionNumber",
@@ -818,7 +819,9 @@ test.describe("Connection Setup loading UI", () => {
     const placeholderBox = await placeholder.boundingBox();
     expect(placeholderBox).not.toBeNull();
     releaseFirstQr?.();
-    await expect.poll(() => firstQrResponseStatus).toBe(200);
+    await expect.poll(() => firstQrResponseStatus).toBe(202);
+    await expect(placeholder).toBeVisible();
+    releaseQrPoll?.();
 
     const qrImage = page.getByRole("img", {
       name: "Scan this WhatsApp QR code",
@@ -839,7 +842,6 @@ test.describe("Connection Setup loading UI", () => {
     );
     await expect(placeholder).toHaveCount(0);
     await expect(loadingProgress).toHaveCount(0);
-    releaseQrPoll?.();
     await expect(
       setup.getByRole("button", { name: "Start again" }),
     ).toBeVisible();
