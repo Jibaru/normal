@@ -23,6 +23,10 @@ export const personalAccountOnboardingProfilesInApp = publicSchema.table(
       withTimezone: true,
       mode: "string",
     }),
+    firstConnectionCompletedAt: timestamp("first_connection_completed_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
       .default(sql`transaction_timestamp()`)
       .notNull(),

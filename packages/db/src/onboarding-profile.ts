@@ -38,6 +38,7 @@ export type OnboardingResearchCallInterest = "yes" | "no" | "not_sure";
 export interface OnboardingProfile {
   readonly completedAt: string;
   readonly createdAt: string;
+  readonly firstConnectionCompletedAt: string | null;
   readonly intendedMcpClient: OnboardingIntendedMcpClient;
   readonly primaryUseCase: OnboardingPrimaryUseCase;
   readonly researchCallInterest: OnboardingResearchCallInterest;
@@ -114,6 +115,9 @@ const decodeProfile = (
   const createdAt = timestamp(row.created_at);
   const updatedAt = timestamp(row.updated_at);
   const completedAt = timestamp(row.completed_at);
+  const firstConnectionCompletedAt = timestamp(
+    row.first_connection_completed_at,
+  );
   const securityCompletedAt = timestamp(row.security_completed_at);
   if (
     typeof primaryUseCase !== "string" ||
@@ -135,6 +139,7 @@ const decodeProfile = (
   return {
     completedAt,
     createdAt,
+    firstConnectionCompletedAt,
     intendedMcpClient: intendedMcpClient as OnboardingIntendedMcpClient,
     primaryUseCase: primaryUseCase as OnboardingPrimaryUseCase,
     researchCallInterest:

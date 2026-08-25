@@ -459,7 +459,10 @@ export function PublicBoundaryJourney({
     if (!onboardingQuery.isSuccess || sawInitialConnections.current) return;
     sawInitialConnections.current = true;
     setOnboardingProfile(onboardingQuery.data);
-    setShowFirstConnectionOnboarding(true);
+    setShowFirstConnectionOnboarding(
+      onboardingQuery.data === null ||
+        onboardingQuery.data.firstConnectionCompletedAt === null,
+    );
   }, [
     connectionsQuery.data,
     connectionsQuery.isSuccess,

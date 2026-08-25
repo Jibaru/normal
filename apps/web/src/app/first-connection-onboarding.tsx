@@ -123,6 +123,7 @@ export interface OnboardingProfile {
   readonly whatsappUsageContext: WhatsAppUsageContext;
   readonly role: OnboardingRole;
   readonly securityCompletedAt: string | null;
+  readonly firstConnectionCompletedAt: string | null;
   readonly intendedMcpClient: IntendedMcpClient;
   readonly researchCallInterest: ResearchCallInterest;
   readonly createdAt: string;
@@ -345,6 +346,8 @@ export function decodeOnboardingProfileResponse(
     !isResearchCallInterest(record.research_call_interest) ||
     !isIsoDate(record.created_at) ||
     !isIsoDate(record.updated_at) ||
+    (record.first_connection_completed_at !== null &&
+      !isIsoDate(record.first_connection_completed_at)) ||
     (record.completed_at !== null && !isIsoDate(record.completed_at)) ||
     (record.security_completed_at !== null &&
       !isIsoDate(record.security_completed_at))
@@ -356,6 +359,7 @@ export function decodeOnboardingProfileResponse(
     whatsappUsageContext: record.whatsapp_usage_context,
     role: record.role,
     securityCompletedAt: record.security_completed_at,
+    firstConnectionCompletedAt: record.first_connection_completed_at,
     intendedMcpClient: record.intended_mcp_client,
     researchCallInterest: record.research_call_interest,
     createdAt: record.created_at,

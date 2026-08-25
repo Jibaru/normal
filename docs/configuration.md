@@ -546,12 +546,17 @@ cascades on Personal Account purge. Personal Account Deletion removes it with
 other User-addressable tenant data; a terminally deleted profile must not become
 readable after restore.
 
-The same profile row records security-stage completion. The browser marks that
-transition through an idempotent `PATCH` on the profile route before showing
-Connection Setup. A refresh therefore resumes Connection Setup without replaying
-the security disclosures, including when no Connection Setup has been created.
-Neon also requires this durable completion before the first Connection Setup,
-so browser state alone cannot bypass the security stage.
+The same profile row records security-stage completion and the first successful
+WhatsApp Connection activation. The first-activation marker remains after
+Connection Deletion so an account with zero current Connections does not restart
+onboarding. Both markers share the profile's Personal Account ownership,
+deletion, restore, and access behavior and contain no WhatsApp Number or provider
+identity. The browser marks the security transition through an idempotent `PATCH`
+on the profile route before showing Connection Setup. A refresh therefore resumes
+Connection Setup without replaying the security disclosures, including when no
+Connection Setup has been created. Neon also requires this durable completion
+before the first Connection Setup, so browser state alone cannot bypass the
+security stage.
 
 The first Connection Setup is rejected at the API boundary until a completed
 profile exists, except when the Personal Account already retains a WhatsApp

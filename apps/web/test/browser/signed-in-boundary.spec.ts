@@ -927,7 +927,7 @@ test("shows a terminal provisioning failure during Connection Setup", async ({
   ).toHaveCount(0);
 });
 
-test("starts irreversible Connection Deletion and keeps the deleted connection gone after refresh", async ({
+test("starts irreversible Connection Deletion without restarting onboarding after refresh", async ({
   page,
   request,
 }) => {
@@ -971,9 +971,6 @@ test("starts irreversible Connection Deletion and keeps the deleted connection g
     await setup.getByLabel("Name", { exact: true }).fill("Personal WhatsApp");
     await setup.getByLabel("WhatsApp number").fill("+1 (555) 012-3456");
     await setup.getByRole("button", { name: "Continue", exact: true }).click();
-    await expect(
-      page.getByRole("img", { name: "Scan this WhatsApp QR code" }),
-    ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Connect your MCP Client" }),
     ).toBeVisible({ timeout: 15_000 });
@@ -1020,8 +1017,13 @@ test("starts irreversible Connection Deletion and keeps the deleted connection g
   ).toBeVisible();
 
   await page.reload();
+  await expect(page).toHaveURL(/\/dashboard\/connections$/u);
   await expect(page.getByTestId("whatsapp-connection")).toHaveCount(0);
-  await expectStandaloneOnboarding(page);
+  await expect(page.getByTestId("first-connection-onboarding")).toHaveCount(0);
+  await expect(page.getByText("No WhatsApp Connections yet.")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Register WhatsApp Number" }),
+  ).toBeVisible();
   await page.unrouteAll({ behavior: "ignoreErrors" });
 });
 

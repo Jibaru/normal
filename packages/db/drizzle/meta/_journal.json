@@ -204,6 +204,13 @@
       "when": 1787544000000,
       "tag": "0028_bind_send_request_shapes",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1787678308000,
+      "tag": "0029_persist_first_connection_completion",
+      "breakpoints": true
     }
   ]
 }

@@ -79,6 +79,8 @@ const makeHarness = (
             const profile: OnboardingProfile = {
               completedAt: existing?.completedAt ?? input.updatedAt,
               createdAt: existing?.createdAt ?? input.updatedAt,
+              firstConnectionCompletedAt:
+                existing?.firstConnectionCompletedAt ?? null,
               intendedMcpClient: input.intendedMcpClient,
               primaryUseCase: input.primaryUseCase,
               researchCallInterest: input.researchCallInterest,
@@ -156,6 +158,7 @@ describe("Onboarding profile HTTP boundary", () => {
       profile: {
         completed_at: "2026-08-13T12:00:00.000Z",
         created_at: "2026-08-13T12:00:00.000Z",
+        first_connection_completed_at: null,
         intended_mcp_client: "claude",
         primary_use_case: "conversation_search",
         research_call_interest: "yes",

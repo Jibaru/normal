@@ -103,6 +103,7 @@ test.beforeEach(async ({ page }) => {
         ...original.postDataJSON(),
         completed_at: "2026-08-18T20:00:00.000Z",
         created_at: "2026-08-18T20:00:00.000Z",
+        first_connection_completed_at: null,
         security_completed_at: null,
         updated_at: "2026-08-18T20:00:00.000Z",
       };

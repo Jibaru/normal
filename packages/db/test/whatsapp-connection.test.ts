@@ -7,6 +7,7 @@ import {
 } from "../src/connection-setup";
 import { makeMcpAuthorizationRepository } from "../src/mcp-authorization";
 import { makeMcpToolRepository } from "../src/mcp-tool";
+import { makeOnboardingProfileRepository } from "../src/onboarding-profile";
 import {
   makePersonalAccountRepository,
   type PersonalAccountConnectionProvider,
@@ -546,6 +547,20 @@ describe("WhatsApp Connection repository", () => {
 
   test("makes Connection Deletion terminal and revokes keys and inventory atomically", async () => {
     const repository = makeWhatsAppConnectionRepository(provider);
+    const onboarding = makeOnboardingProfileRepository(provider);
+    await onboarding.upsertForUser({
+      clerkUserId: "user_connectiona",
+      intendedMcpClient: "chatgpt",
+      primaryUseCase: "conversation_search",
+      researchCallInterest: "not_sure",
+      role: "engineer",
+      updatedAt: "2026-07-31T12:00:00.000Z",
+      whatsappUsageContext: "personal",
+    });
+    await onboarding.markSecurityCompletedForUser({
+      clerkUserId: "user_connectiona",
+      completedAt: "2026-07-31T12:00:30.000Z",
+    });
     await repository.activate(activationInput);
     const authorizationId = "40000000-0000-4000-8000-000000000031";
     const oauthSubject = "A".repeat(43);
@@ -617,6 +632,19 @@ describe("WhatsApp Connection repository", () => {
     await expect(repository.listForUser("user_connectiona")).resolves.toEqual(
       [],
     );
+    await expect(
+      makePersonalAccountRepository(provider).resolve("user_connectiona"),
+    ).resolves.toMatchObject({
+      admissionState: "active",
+      keyAvailable: true,
+      personalAccountId: accountA,
+    });
+    await expect(
+      onboarding.getForUser("user_connectiona"),
+    ).resolves.toMatchObject({
+      accessible: true,
+      profile: { firstConnectionCompletedAt: connectedAt },
+    });
     await expect(
       repository.claimLifecycle({
         action: "reconnect",

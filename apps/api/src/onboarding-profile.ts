@@ -91,6 +91,7 @@ const json = (body: unknown, status: number, origin?: string) =>
 const profileJson = (profile: OnboardingProfile) => ({
   completed_at: profile.completedAt,
   created_at: profile.createdAt,
+  first_connection_completed_at: profile.firstConnectionCompletedAt,
   intended_mcp_client: profile.intendedMcpClient,
   primary_use_case: profile.primaryUseCase,
   research_call_interest: profile.researchCallInterest,

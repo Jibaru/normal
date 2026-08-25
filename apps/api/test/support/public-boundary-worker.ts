@@ -138,6 +138,7 @@ const onboardingProfiles = new Map<
   {
     readonly completedAt: string;
     readonly createdAt: string;
+    readonly firstConnectionCompletedAt: string | null;
     readonly intendedMcpClient: "claude" | "chatgpt" | "other" | "not_sure";
     readonly primaryUseCase:
       | "conversation_search"
@@ -775,6 +776,8 @@ const makeTestLayer = (
           const profile = {
             completedAt: existing?.completedAt ?? input.updatedAt,
             createdAt: existing?.createdAt ?? input.updatedAt,
+            firstConnectionCompletedAt:
+              existing?.firstConnectionCompletedAt ?? null,
             intendedMcpClient: input.intendedMcpClient,
             primaryUseCase: input.primaryUseCase,
             researchCallInterest: input.researchCallInterest,
@@ -1429,6 +1432,20 @@ const makeTestLayer = (
             stateChangedAt: input.connectedAt,
           };
           whatsAppConnections.push(connection);
+          const setupOwner = [...connectionSetups.values()].find(
+            ({ setup }) => setup.setupId === input.setupId,
+          )?.clerkUserId;
+          const profile =
+            setupOwner === undefined
+              ? undefined
+              : onboardingProfiles.get(setupOwner);
+          if (setupOwner !== undefined && profile !== undefined) {
+            onboardingProfiles.set(setupOwner, {
+              ...profile,
+              firstConnectionCompletedAt:
+                profile.firstConnectionCompletedAt ?? input.connectedAt,
+            });
+          }
           return protectedTestConnection(connection);
         }),
       claimLifecycle: ({
