@@ -3872,8 +3872,11 @@ export const createProductionScheduledHandler =
           await storedMediaRepository.finishObjectDeletion(deletion);
         }),
       );
-      const connectionDeletionRepository =
-        makePgWhatsAppConnectionRepository(connectionString);
+      const connectionDeletionRepository = makePgWhatsAppConnectionRepository(
+        connectionString,
+        // Cascading retained webhook projections can exceed the request budget.
+        30_000,
+      );
       const deletionMarkers =
         await connectionDeletionRepository.listDeletionPurgeCandidates({
           limit: 100,
