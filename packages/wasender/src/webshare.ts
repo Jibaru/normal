@@ -8,7 +8,7 @@ const webshareProxyListUrl =
   "https://proxy.webshare.io/api/v2/proxy/list/?mode=backbone&page_size=100";
 const proxyHostname = "p.webshare.io";
 const proxyCountry = "CO";
-const proxyCount = 20;
+const maximumProxyCount = 100;
 const requestAttemptTimeoutMs = 5_000;
 const requestTotalTimeoutMs = 10_000;
 const maximumAttempts = 3;
@@ -230,7 +230,10 @@ export const makeWebshareProxySelector = (
     throw new WebshareProxySelectionError(true);
   };
 
-  const loadPlanId = async (): Promise<number> => {
+  const loadPlan = async (): Promise<{
+    readonly id: number;
+    readonly proxyCount: number;
+  }> => {
     const body = await loadBody(websharePlanListUrl);
     if (
       !isRecord(body) ||
@@ -247,25 +250,28 @@ export const makeWebshareProxySelector = (
     const plan = active[0];
     if (!isRecord(plan)) throw new WebshareProxySelectionError(false);
     const countries = plan.proxy_countries;
+    const planProxyCount = plan.proxy_count;
     if (
       !Number.isSafeInteger(plan.id) ||
       plan.proxy_type !== "shared" ||
       plan.proxy_subtype !== "isp" ||
-      plan.proxy_count !== proxyCount ||
+      !Number.isSafeInteger(planProxyCount) ||
+      (planProxyCount as number) < 1 ||
+      (planProxyCount as number) > maximumProxyCount ||
       plan.automatic_refresh_frequency !== 0 ||
       !isRecord(countries) ||
       Object.keys(countries).length !== 1 ||
-      countries[proxyCountry] !== proxyCount
+      countries[proxyCountry] !== planProxyCount
     ) {
       throw new WebshareProxySelectionError(false);
     }
-    return plan.id as number;
+    return { id: plan.id as number, proxyCount: planProxyCount as number };
   };
 
   const loadProxies = async (): Promise<ReadonlyArray<WebshareProxy>> => {
-    const planId = await loadPlanId();
+    const plan = await loadPlan();
     const url = new URL(webshareProxyListUrl);
-    url.searchParams.set("plan_id", String(planId));
+    url.searchParams.set("plan_id", String(plan.id));
     const body = await loadBody(url.href);
     if (!isRecord(body) || !Array.isArray(body.results)) {
       throw new WebshareProxySelectionError(false);
@@ -286,7 +292,7 @@ export const makeWebshareProxySelector = (
         (left, right) =>
           left.port - right.port || left.id.localeCompare(right.id),
       );
-    if (count !== proxyCount || valid.length !== proxyCount) {
+    if (count !== plan.proxyCount || valid.length === 0) {
       throw new WebshareProxySelectionError(false);
     }
     if (new Set(valid.map((proxy) => proxy.url)).size !== valid.length) {
