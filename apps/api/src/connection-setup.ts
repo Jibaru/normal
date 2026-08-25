@@ -171,6 +171,7 @@ type ConnectionSetupOutcome =
       readonly outcome:
         | "connection_limit_reached"
         | "idempotency_conflict"
+        | "number_deletion_in_progress"
         | "number_unavailable"
         | "onboarding_profile_required";
     };
@@ -574,7 +575,9 @@ export const createConnectionSetupHandler =
             const error =
               result.outcome === "number_unavailable"
                 ? "whatsapp_number_unavailable"
-                : result.outcome;
+                : result.outcome === "number_deletion_in_progress"
+                  ? "whatsapp_number_deletion_in_progress"
+                  : result.outcome;
             return jsonResponse(
               { error },
               result.outcome === "onboarding_profile_required" ? 403 : 409,

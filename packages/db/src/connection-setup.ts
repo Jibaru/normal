@@ -123,6 +123,7 @@ export type StartedConnectionSetup =
       readonly outcome:
         | "connection_limit_reached"
         | "idempotency_conflict"
+        | "number_deletion_in_progress"
         | "number_unavailable";
     };
 
@@ -972,10 +973,30 @@ export const makeConnectionSetupRepository = (
         const row = rows[0];
         if (
           row?.outcome === "connection_limit_reached" ||
-          row?.outcome === "idempotency_conflict" ||
-          row?.outcome === "number_unavailable"
+          row?.outcome === "idempotency_conflict"
         ) {
           return { outcome: row.outcome };
+        }
+        if (row?.outcome === "number_unavailable") {
+          const ownedDeletion = await db.execute<{ in_progress: unknown }>(sql`
+            SELECT EXISTS (
+              SELECT 1
+              FROM public.whatsapp_number_reservations AS reservations
+              JOIN public.whatsapp_connections AS connections
+                ON connections.personal_account_id = reservations.personal_account_id
+               AND connections.connection_setup_id = reservations.connection_setup_id
+              WHERE reservations.personal_account_id = ${input.personalAccountId}
+                AND reservations.number_token = ${input.numberToken}
+                AND reservations.released_at IS NULL
+                AND connections.state = 'deleting'
+            ) AS in_progress
+          `);
+          return {
+            outcome:
+              ownedDeletion[0]?.in_progress === true
+                ? ("number_deletion_in_progress" as const)
+                : row.outcome,
+          };
         }
         if (row?.outcome === "created" || row?.outcome === "replay") {
           if (row.outcome === "created") {

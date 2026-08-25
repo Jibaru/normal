@@ -61,6 +61,7 @@ export type ConnectionSetupState =
   | "provisioning_quarantined"
   | "replayed"
   | "invalid"
+  | "number_deletion_in_progress"
   | "number_unavailable"
   | "connection_limit_reached"
   | "expired"
@@ -489,6 +490,9 @@ function connectionSetupStatusText(
   if (setupState === "number_unavailable") {
     return "That WhatsApp Number is already in use.";
   }
+  if (setupState === "number_deletion_in_progress") {
+    return "Your previous Connection Deletion is still removing this WhatsApp Number. Please try again in a few minutes.";
+  }
   if (setupState === "connection_limit_reached") {
     return "Your Personal Account already has three active setup or Connection slots.";
   }
@@ -619,6 +623,13 @@ function connectionSetupPanelCopy(
       body: "That WhatsApp Number is already reserved by another Connection Setup or WhatsApp Connection.",
       hint: "Enter a different WhatsApp Number and continue.",
       title: "WhatsApp Number unavailable",
+    };
+  }
+  if (setupState === "number_deletion_in_progress") {
+    return {
+      body: "Your previous WhatsApp Connection is deleted, but provider cleanup must finish before Normal can reserve this number again.",
+      hint: "Try the same WhatsApp Number again in a few minutes.",
+      title: "Connection Deletion in progress",
     };
   }
   if (setupState === "connection_limit_reached") {

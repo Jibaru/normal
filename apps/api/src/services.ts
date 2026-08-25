@@ -66,6 +66,7 @@ export interface ConnectionSetupStartCompletedEvent {
     | "connection_limit_reached"
     | "created"
     | "idempotency_conflict"
+    | "number_deletion_in_progress"
     | "number_unavailable"
     | "onboarding_profile_required"
     | "replay";

@@ -1444,16 +1444,21 @@ export function PublicBoundaryJourney({
       }
       if (
         body.error === "whatsapp_number_unavailable" ||
+        body.error === "whatsapp_number_deletion_in_progress" ||
         body.error === "connection_limit_reached"
       ) {
         setupStateRef.current =
           body.error === "whatsapp_number_unavailable"
             ? "number_unavailable"
-            : body.error;
+            : body.error === "whatsapp_number_deletion_in_progress"
+              ? "number_deletion_in_progress"
+              : body.error;
         setSetupState(
           body.error === "whatsapp_number_unavailable"
             ? "number_unavailable"
-            : body.error,
+            : body.error === "whatsapp_number_deletion_in_progress"
+              ? "number_deletion_in_progress"
+              : body.error,
         );
         return;
       }

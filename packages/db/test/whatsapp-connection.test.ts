@@ -158,6 +158,36 @@ describe("WhatsApp Connection repository", () => {
     webhookSecretNonce: new Uint8Array(12).fill(19),
   } as const;
 
+  const replacementSetupInput = (
+    personalAccountId: string,
+    requestedSetupId: string,
+    idempotencyKey: string,
+  ) => ({
+    accountKey: {
+      ciphertext: personalAccountId === accountA ? "AQID" : "BAUG",
+      keyVersion: 1,
+      kmsKeyId: "arn:aws:kms:us-east-1:111122223333:key/content-root-key",
+      personalAccountId,
+      version: 1 as const,
+    },
+    connectionKeyCiphertext: new Uint8Array(32).fill(30),
+    connectionKeyNonce: new Uint8Array(12).fill(31),
+    connectionKeyVersion: 1,
+    createdAt: "2026-07-31T12:10:00.000Z",
+    displayNameCiphertext: new Uint8Array(32).fill(32),
+    displayNameCiphertextNonce: new Uint8Array(12).fill(33),
+    displayNameCiphertextVersion: 1,
+    displayNameKeyVersion: 1,
+    idempotencyKey,
+    numberCiphertext: new Uint8Array(32).fill(34),
+    numberCiphertextNonce: new Uint8Array(12).fill(35),
+    numberCiphertextVersion: 1,
+    numberKeyVersion: 1,
+    numberToken: new Uint8Array(32).fill(7),
+    personalAccountId,
+    setupId: requestedSetupId,
+  });
+
   test("loads activation material only for the owning signed-in User", async () => {
     const repository = makeWhatsAppConnectionRepository(provider);
 
@@ -683,6 +713,7 @@ describe("WhatsApp Connection repository", () => {
 
   test("purges a provider-absent Connection and permanently reserves its public handle", async () => {
     const repository = makeWhatsAppConnectionRepository(provider);
+    const setupRepository = makeConnectionSetupRepository(provider);
     const deletionRepository = makeWhatsAppConnectionRepository({
       withConnection: async (use) => {
         await database.exec("SET ROLE whatsapp_deletion_runtime");
@@ -700,6 +731,25 @@ describe("WhatsApp Connection repository", () => {
       publicId,
       requestedAt: "2026-07-31T12:08:00.000Z",
     });
+
+    await expect(
+      setupRepository.start(
+        replacementSetupInput(
+          accountA,
+          "cst_000000000000000000032",
+          "223456789012345678931",
+        ),
+      ),
+    ).resolves.toEqual({ outcome: "number_deletion_in_progress" });
+    await expect(
+      setupRepository.start(
+        replacementSetupInput(
+          accountB,
+          "cst_000000000000000000033",
+          "323456789012345678931",
+        ),
+      ),
+    ).resolves.toEqual({ outcome: "number_unavailable" });
     await database.exec("SET ROLE whatsapp_deletion_runtime");
     try {
       await expect(
@@ -806,6 +856,16 @@ describe("WhatsApp Connection repository", () => {
     expect(counts.rows).toEqual([
       { connection_count: 0, reservation_count: 0, tombstone_count: 1 },
     ]);
+
+    await expect(
+      setupRepository.start(
+        replacementSetupInput(
+          accountA,
+          "cst_000000000000000000034",
+          "423456789012345678931",
+        ),
+      ),
+    ).resolves.toMatchObject({ outcome: "created" });
 
     await expect(repository.activate(activationInput)).rejects.toThrow();
     await expect(
