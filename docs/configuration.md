@@ -764,8 +764,10 @@ The owning signed-in browser reads
 Worker. The API resolves the verified Clerk User through the narrow activation
 bootstrap function before it invokes provider-control. It first reconciles the
 deterministic setup marker, starts QR linking only after that reconciliation
-shows a single non-connected provider session, and then asks provider-control
-for the current generated SVG. An available SVG is streamed directly as
+shows a single non-connected provider session, and returns `connecting` without
+immediately reading provider state after that lifecycle write. A later browser
+observation reconciles the session and asks provider-control for the current
+generated SVG. An available SVG is streamed directly as
 `image/svg+xml` with `Cache-Control: no-store`, a restrictive content security
 policy, and `X-Content-Type-Options: nosniff`. The bytes exist only in the
 bounded provider-control RPC result, API response, and browser object URL; no
