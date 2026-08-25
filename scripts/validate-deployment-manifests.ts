@@ -71,7 +71,6 @@ for (const deployable of deployables) {
     const requiredSecretNames = [
       "WASENDER_API_CREDENTIAL",
       "WASENDER_REFERENCE_SECRET",
-      "WEBSHARE_API_KEY",
     ].sort();
     const forbiddenAuthority = [
       "d1_databases",
@@ -96,19 +95,12 @@ for (const deployable of deployables) {
           `Provider-control ${configurationName} configuration must require all lifecycle secrets.`,
         );
       }
-      const durableObjects = configuration.durable_objects as
-        | { readonly bindings?: ReadonlyArray<Record<string, unknown>> }
-        | undefined;
-      const bindings = durableObjects?.bindings ?? [];
-      if (
-        bindings.length !== 1 ||
-        bindings[0]?.name !== "PROVIDER_ALLOCATION_GATE" ||
-        bindings[0]?.class_name !== "ProviderAllocationGate"
-      ) {
-        throw new Error(
-          `Provider-control ${configurationName} configuration must declare only its provider allocation gate.`,
-        );
-      }
+      assertAbsent(
+        configuration,
+        ["durable_objects"],
+        () =>
+          `Provider-control ${configurationName} must not bind the dormant proxy allocation gate.`,
+      );
     }
   } else if (deployable === "deletion-coordinator") {
     const configurations = manifestConfigurations(manifest);

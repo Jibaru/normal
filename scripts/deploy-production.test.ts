@@ -7,6 +7,9 @@ describe("production deployment order", () => {
       new URL("../.github/workflows/deploy-production.yml", import.meta.url),
     ).text();
     const provider = workflow.indexOf("Deploy provider control");
+    const removeWebshare = workflow.indexOf(
+      "Remove dormant Webshare credential",
+    );
     const deletion = workflow.indexOf("Deploy deletion coordinator");
     const restore = workflow.indexOf("Deploy restore coordinator");
     const operations = workflow.indexOf("Deploy operations control");
@@ -15,6 +18,8 @@ describe("production deployment order", () => {
     const recovery = workflow.indexOf("Deploy recovery control");
     const api = workflow.indexOf("Deploy API");
     expect(provider).toBeGreaterThan(-1);
+    expect(removeWebshare).toBeGreaterThan(provider);
+    expect(removeWebshare).toBeLessThan(deletion);
     expect(deletion).toBeGreaterThan(provider);
     expect(restore).toBeGreaterThan(deletion);
     expect(operations).toBeGreaterThan(restore);

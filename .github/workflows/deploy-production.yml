@@ -110,6 +110,15 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
+      - name: Remove dormant Webshare credential
+        run: |
+          if bun run --cwd apps/provider-control wrangler secret list --env production --format json | jq -e 'any(.[]; .name == "WEBSHARE_API_KEY")' >/dev/null; then
+            bun run --cwd apps/provider-control wrangler secret delete WEBSHARE_API_KEY --env production
+          fi
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
       - name: Assume the production deletion credential broker
         uses: aws-actions/configure-aws-credentials@v6.1.0
         with:
