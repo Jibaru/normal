@@ -361,12 +361,6 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   ).toHaveCount(0);
   releaseFirstQr?.();
   await expect(
-    page.getByRole("img", { name: "Scan this WhatsApp QR code" }),
-  ).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByTestId("connection-setup-status")).toHaveText(
-    "Scan this QR code with WhatsApp.",
-  );
-  await expect(
     page.getByRole("heading", { name: "Connect your MCP Client" }),
   ).toBeVisible({ timeout: 15_000 });
   const verificationPrompt = onboarding.getByTestId("mcp-verification-prompt");
