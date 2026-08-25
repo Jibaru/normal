@@ -23,6 +23,14 @@ describe("production deployment order", () => {
     expect(recovery).toBeGreaterThan(verifier);
     expect(api).toBeGreaterThan(recovery);
     expect(
+      workflow.indexOf("Verify deletion credential rotation authority"),
+    ).toBeGreaterThan(-1);
+    expect(
+      workflow.indexOf("Verify deletion credential rotation authority"),
+    ).toBeLessThan(
+      workflow.indexOf("Migrate and verify the production database"),
+    );
+    expect(
       workflow.match(
         /bun run --cwd apps\/recovery-control wrangler deploy --env production/gu,
       ),
@@ -108,6 +116,7 @@ describe("production deployment order", () => {
       "public-api-release-gate.yml",
       "recovery-drills.yml",
       "rotate-production-content-credentials.yml",
+      "rotate-production-deletion-credentials.yml",
     ]) {
       const source = await Bun.file(
         new URL(`../.github/workflows/${workflow}`, import.meta.url),

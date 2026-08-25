@@ -552,6 +552,80 @@ verify the three secret names before relying on its schedule. The broker retains
 the reviewed emergency assumer in its trust policy for incident recovery, but
 neither authority receives content permissions directly.
 
+The deletion credential broker is a separate authority declared by
+`infra/aws/deletion-credential-broker.template.json`. Deploy it against the
+existing GitHub OIDC provider with the exact `DeletionCoordinatorRoleArn`, then
+update the production KMS stack's `DeletionCoordinatorAssumerArn` parameter to
+the broker role ARN. Retain the prior deletion bootstrap principal only as the
+broker's reviewed emergency assumer. Store the broker output as
+`AWS_DELETION_CREDENTIAL_BROKER_ROLE_ARN` and the coordinator role output as
+`AWS_DELETION_COORDINATOR_ROLE_ARN` in the protected `production` GitHub
+environment.
+
+Bootstrap the broker only from the authenticated production infrastructure
+shell. These commands derive the existing coordinator and emergency authority
+without printing credentials:
+
+```sh
+export AWS_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+export GITHUB_OIDC_PROVIDER_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"
+export AWS_DELETION_COORDINATOR_ROLE_ARN="$(
+  tofu -chdir=infra/aws output -raw deletion_coordinator_role_arn
+)"
+export DELETION_EMERGENCY_ASSUMER_ARN="$(
+  aws cloudformation describe-stacks \
+    --stack-name whatsapp-mcp-production-kms \
+    --query "Stacks[0].Parameters[?ParameterKey=='DeletionCoordinatorAssumerArn'].ParameterValue | [0]" \
+    --output text
+)"
+
+aws cloudformation deploy \
+  --stack-name whatsapp-mcp-production-deletion-credential-broker \
+  --template-file infra/aws/deletion-credential-broker.template.json \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --no-fail-on-empty-changeset \
+  --parameter-overrides \
+    "DeletionCoordinatorRoleArn=${AWS_DELETION_COORDINATOR_ROLE_ARN}" \
+    "EmergencyAssumerArn=${DELETION_EMERGENCY_ASSUMER_ARN}" \
+    "GitHubOidcProviderArn=${GITHUB_OIDC_PROVIDER_ARN}"
+
+export AWS_DELETION_CREDENTIAL_BROKER_ROLE_ARN="$(
+  aws cloudformation describe-stacks \
+    --stack-name whatsapp-mcp-production-deletion-credential-broker \
+    --query "Stacks[0].Outputs[?OutputKey=='DeletionCredentialBrokerRoleArn'].OutputValue | [0]" \
+    --output text
+)"
+```
+
+Re-run the reviewed `tofu -chdir=infra/aws plan` command above with every
+unchanged production input and
+`-var="deletion_coordinator_assumer_arn=${AWS_DELETION_CREDENTIAL_BROKER_ROLE_ARN}"`,
+review the plan for that one trust-parameter change, then apply its saved plan:
+
+```sh
+tofu -chdir=infra/aws apply kms.tfplan
+
+gh variable set AWS_DELETION_COORDINATOR_ROLE_ARN \
+  --env production \
+  --body "${AWS_DELETION_COORDINATOR_ROLE_ARN}"
+gh variable set AWS_DELETION_CREDENTIAL_BROKER_ROLE_ARN \
+  --env production \
+  --body "${AWS_DELETION_CREDENTIAL_BROKER_ROLE_ARN}"
+```
+
+Set the broker variable last because it enables the workflows. Production
+deployment checks both variables before migration or any Worker publication,
+so an incomplete bootstrap fails before changing production.
+
+Run `rotate-production-deletion-credentials.yml` manually and verify that the
+three session secret names exist only on
+`whatsapp-mcp-deletion-coordinator`. The workflow renews them every 20 minutes,
+and production deployment renews them again before publishing the coordinator.
+Credential rotation uses a dedicated concurrency group so a long production
+operation or recovery drill cannot delay renewal beyond the one-hour session.
+Never copy the API Content Runtime session to the coordinator or allow either
+broker to assume the other's runtime role.
+
 Production MCP smoke uses the separate
 `infra/aws/mcp-smoke-credential.template.json` stack. Deploy it with the
 existing GitHub OIDC provider ARN and a distinct emergency recovery assumer,
@@ -561,10 +635,11 @@ then store its outputs as protected environment variables
 as `MCP_SMOKE_CLIENT_ID`. The role trusts only those two exact environment
 subjects and can only describe, read, and create a version of that one secret.
 
-Do not give Cloudflare the administrator, deletion coordinator,
-provider-control, or ordinary operator credentials. Never print the assumed
-credentials or store them in GitHub secrets, repository files, workflow
-artifacts, or shell history.
+Do not give Cloudflare the administrator, provider-control, or ordinary
+operator credentials. The deletion coordinator Worker receives only its
+short-lived, purpose-specific role session. Never print assumed credentials or
+store them in GitHub secrets, repository files, workflow artifacts, or shell
+history.
 
 Generate the deletion-marker HMAC once per environment, store it only as the
 `DELETION_MARKER_HMAC_SECRET` Worker secret and in the encrypted recovery
