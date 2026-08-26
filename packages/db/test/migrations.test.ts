@@ -50,7 +50,51 @@ describe("production migrations", () => {
         (SELECT count(*)::int FROM public.schema_migrations) AS legacy,
         (SELECT count(*)::int FROM public.drizzle_migrations) AS standard
     `);
-    expect(ledgers.rows).toEqual([{ legacy: 40, standard: 31 }]);
+    expect(ledgers.rows).toEqual([{ legacy: 40, standard: 32 }]);
+  });
+
+  test("keeps account-envelope recovery evidence private and account-bound", async () => {
+    await runMigrations(database);
+    await seedTenants(database);
+
+    await expect(
+      database.query(
+        `INSERT INTO public.personal_account_envelope_recovery_operations
+          (change_reference, personal_account_id, source_point_at, recovered_key_version)
+         VALUES ('unsafe', $1, '2026-08-24T22:45:00.000Z', 1)`,
+        [accountA],
+      ),
+    ).rejects.toThrow();
+    await database.query(
+      `INSERT INTO public.personal_account_envelope_recovery_operations
+        (change_reference, personal_account_id, source_point_at, recovered_key_version)
+       VALUES ($1, $2, '2026-08-24T22:45:00.000Z', 1)`,
+      [`change_${"a".repeat(32)}`, accountA],
+    );
+    await expect(
+      database.query(
+        `INSERT INTO public.personal_account_envelope_recovery_operations
+          (change_reference, personal_account_id, source_point_at, recovered_key_version)
+         VALUES ($1, $2, '2026-08-24T22:45:00.000Z', 1)`,
+        [`change_${"b".repeat(32)}`, accountA],
+      ),
+    ).rejects.toThrow();
+
+    await database.exec("SET ROLE whatsapp_api_runtime");
+    await expect(
+      database.query(
+        "SELECT * FROM public.personal_account_envelope_recovery_operations",
+      ),
+    ).rejects.toThrow();
+    await database.exec("RESET ROLE");
+
+    await database.query("DELETE FROM public.personal_accounts WHERE id = $1", [
+      accountA,
+    ]);
+    const evidence = await database.query<{ count: number }>(
+      "SELECT count(*)::integer AS count FROM public.personal_account_envelope_recovery_operations",
+    );
+    expect(evidence.rows).toEqual([{ count: 0 }]);
   });
 
   test("clears only retention limitations superseded by a complete Directory snapshot", async () => {

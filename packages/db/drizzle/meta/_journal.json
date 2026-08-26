@@ -218,6 +218,13 @@
       "when": 1787689711458,
       "tag": "0030_stop_serving_branch_restore_replay",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1787707546000,
+      "tag": "0031_record_account_envelope_recovery",
+      "breakpoints": true
     }
   ]
 }
