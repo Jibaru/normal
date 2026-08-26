@@ -36,8 +36,7 @@ Secret examples never contain usable key material.
 | Operations control origin | Non-secret | Recovery verifier, recovery game day, and observability canary | OpenTofu assigns `https://operations.normal.fast` in production. Use `/v1/availability`, `/v1/alerts`, and `/v1/receipts` only with their separate bearer credentials. It is not an application API origin. |
 | `CLOUDFLARE_ANALYTICS_TOKEN` | Secret | Operations control only | Zone scoped Cloudflare token with Analytics Read and no write authority. It queries HTTP request and Email Service delivery evidence for the production zone. |
 | `CLOUDFLARE_ZONE_ID` | Sensitive identifier | Operations control and infrastructure runners | Exact production zone containing the API, operations, and pager sending hostnames. Store it with the operations Worker secrets so a request cannot redirect an analytics query. |
-| `MCP_SMOKE_CLIENT_ID` | Public authorization-policy identifier | Deployment and launch-gate workflows | The reviewed public OAuth client ID used by the dedicated deployment-smoke MCP Authorization. Change only with the corresponding client-policy review and reauthorization. |
-| `MCP_SMOKE_REFRESH_SECRET_ID` | Sensitive identifier | Deployment and launch-gate workflows | The exact AWS Secrets Manager secret created by `mcp-smoke-credential.template.json`. Its plaintext is the current one-time refresh credential and is read and replaced only by the environment-bound smoke role. |
+| `MCP_SMOKE_REFRESH_SECRET_ID` | Sensitive identifier | Deployment and launch-gate workflows | The exact AWS Secrets Manager secret created by `mcp-smoke-credential.template.json`. Its plaintext is the current one-time refresh credential and is read and replaced only by the environment-bound smoke role. Readers resolve the exact `AWSCURRENT` version with `DescribeSecret`, then bind both that version ID and stage when fetching its value so a stale mapping fails closed instead of replaying a consumed predecessor. |
 | `AWS_MCP_SMOKE_CREDENTIAL_ROLE_ARN` | Non-secret authority identifier | GitHub Actions OIDC | Exact role allowed to read and rotate only the production smoke refresh secret. Trust is limited to this repository's `production` and `production-launch-gate` protected environments. |
 | `MCP_REQUESTS_PER_MINUTE` | Non-secret approved quota | API MCP and REST resource server | Authoritative per-Personal-Account request reservations allowed in an exact rolling minute, shared by MCP and REST. REST also applies the same reviewed value as the per-API-Key minute limit. Set the reviewed positive integer through `mcp_requests_per_minute`; there is no production default. |
 | `MCP_REQUESTS_PER_HOUR` | Non-secret approved quota | API MCP and REST resource server | Authoritative per-Personal-Account request reservations allowed in an exact rolling hour, shared by MCP and REST. REST also applies the same reviewed value as the per-API-Key hour limit. Set the reviewed integer through `mcp_requests_per_hour`; it must be at least the minute value and has no production default. |
@@ -229,7 +228,12 @@ global fetch protection.
 
 Before consent, the API exactly matches `client_id`, `redirect_uri`,
 `resource`, response type, and PKCE against the source-defined client policy.
-Fixed clients use the local allowlist. A URL-shaped ChatGPT client ID must be an
+Fixed clients use the local allowlist. The `deployment-smoke` client accepts
+only the literal HTTP `127.0.0.1` loopback redirect with the exact registered
+path, a nonzero explicit callback port, and no query or fragment; the
+dynamically selected RFC 8252 callback port is the only variable part. It also
+admits only `connections:read`, independently of what a caller requests or a
+User selects. A URL-shaped ChatGPT client ID must be an
 HTTPS `chatgpt.com` OAuth metadata document ending in `/client.json`; the OAuth
 provider fetches and validates that document, and every advertised redirect
 must also be HTTPS on `chatgpt.com`. ChatGPT metadata may identify the client as
@@ -305,7 +309,9 @@ memory only. Deployment, migration, recovery drills, launch gate, and the
 public API release gate share the `production-operations` concurrency group
 with production credential rotation, preserving one serialized credential
 lineage.
-Neither token may enter GitHub secrets, command arguments, outputs, artifacts,
+The workflows fix the public client ID to `deployment-smoke`; it is not a
+mutable repository or environment variable. Neither token may enter GitHub
+secrets, command arguments, outputs, artifacts,
 telemetry, repository state, or OpenTofu state.
 
 Migration 0009 adds an ADR 0023 `mca_` management handle and the consent-time
@@ -426,6 +432,7 @@ window days, and the API service name.
 The public OAuth clients are defined in `apps/api/src/oauth.ts`:
 
 ```text
+Normal deployment smoke: client_id=deployment-smoke, redirect_uri=http://127.0.0.1:<ephemeral-port>/oauth/callback
 Claude: client_id=claude, redirect_uri=https://claude.ai/api/mcp/auth_callback
 Claude CIMD: client_id=https://claude.ai/oauth/mcp-oauth-client-metadata, redirect_uri=https://claude.ai/api/mcp/auth_callback
 ChatGPT: client_id=chatgpt, redirect_uri=https://chatgpt.com/connector/oauth/djePJ1RTfjI5 or https://chatgpt.com/connector_platform_oauth_redirect
@@ -434,8 +441,9 @@ ChatGPT CIMD: client_id=https://chatgpt.com/oauth/.../client.json, redirects sup
 
 Client IDs identify public PKCE clients and are not credentials. Treat every
 client, redirect, metadata-document origin, or client-class source change as an
-authorization-policy change. Authorization requires exact string equality, and KV never acts as the
-client registry.
+authorization-policy change. Authorization requires exact string equality
+except for the reviewed deployment-smoke loopback port, and KV never acts as
+the client registry.
 
 Provider-control startup validates the two Wasender secrets before serving even
 its private health route or an RPC method. The Wrangler manifest declares both

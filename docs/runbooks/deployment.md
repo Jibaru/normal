@@ -634,9 +634,10 @@ Production MCP smoke uses the separate
 existing GitHub OIDC provider ARN and a distinct emergency recovery assumer,
 then store its outputs as protected environment variables
 `AWS_MCP_SMOKE_CREDENTIAL_ROLE_ARN` and `MCP_SMOKE_REFRESH_SECRET_ID` in both
-`production` and `production-launch-gate`. Store the reviewed public client ID
-as `MCP_SMOKE_CLIENT_ID`. The role trusts only those two exact environment
-subjects and can only describe, read, and create a version of that one secret.
+`production` and `production-launch-gate`. The workflows fix the reviewed
+public client ID to `deployment-smoke`; do not add a mutable client-ID variable.
+The role trusts only those two exact environment subjects and can only describe,
+read, and create a version of that one secret.
 
 Do not give Cloudflare the administrator, provider-control, or ordinary
 operator credentials. The deletion coordinator Worker receives only its
@@ -821,32 +822,59 @@ private service-binding health before deploying the API. Never rotate
 ## Smoke check
 
 Create a dedicated approved MCP Authorization for deployment automation with
-the minimum discovery scope needed by the release policy. During bootstrap,
-complete consent once, capture the returned refresh credential without printing
-it, and put it into the exact `MCP_SMOKE_REFRESH_SECRET_ID` through a reviewed
-stdin or console operation. Never place it in a command argument, shell history,
-OpenTofu input/state, GitHub secret, workflow output, log, or artifact. Store the
-independently generated `SMOKE_CHECK_SECRET` in GitHub and the API Worker as
-before. The deployment and launch-gate workflows assume the narrow smoke role
-through GitHub OIDC and run the same command:
+the minimum `connections:read` discovery scope needed by the release policy.
+First deploy the API containing the source-allowlisted `deployment-smoke`
+client. Because the old refresh family belongs to a different client, the first
+ordinary production workflow run is expected to fail only at its final MCP
+smoke step after the API deployment succeeds. Verify that the API deployment
+step completed and that no earlier step failed; do not bypass the workflow with
+an improvised API-only deployment. Authenticate to AWS as the exact emergency
+assumer reviewed when the smoke stack was deployed, then run the PKCE bootstrap
+from a trusted local machine:
+
+```sh
+SMOKE_API_ORIGIN="https://api.normal.fast" \
+AWS_MCP_SMOKE_CREDENTIAL_ROLE_ARN="$(gh variable get AWS_MCP_SMOKE_CREDENTIAL_ROLE_ARN --env production)" \
+SMOKE_MCP_REFRESH_SECRET_ID="$(gh variable get MCP_SMOKE_REFRESH_SECRET_ID --env production)" \
+bun run deploy:smoke:bootstrap
+```
+
+The command assumes the narrow smoke role for 15 minutes, verifies the exact
+secret exists, binds an ephemeral listener only to `127.0.0.1`, opens the
+source-allowlisted authorization request with S256 PKCE and a random state, and
+requests only `connections:read`. Complete Clerk reverification and consent for
+one designated smoke-test WhatsApp Connection. The command exchanges the code,
+writes only the returned refresh credential directly to the exact Secrets
+Manager secret, prints only `{"status":"ok"}`, and discards the access token.
+It never prints either token or passes one through a command argument, shell
+history, OpenTofu input/state, GitHub secret, workflow output, log, or artifact.
+If exchange or persistence fails, revoke the newly created MCP Authorization
+before retrying bootstrap.
+
+Store the independently generated `SMOKE_CHECK_SECRET` in GitHub and the API
+Worker as before. The deployment and launch-gate workflows assume the narrow
+smoke role through GitHub OIDC and run the rotating smoke command with the fixed
+client:
 
 ```sh
 SMOKE_API_ORIGIN="$(tofu -chdir=infra/compute output -raw api_origin)" \
 SMOKE_DOCS_ORIGIN="$(tofu -chdir=infra/compute output -raw docs_origin)" \
 SMOKE_WEB_ORIGIN="$(tofu -chdir=infra/compute output -raw web_origin)" \
-SMOKE_MCP_CLIENT_ID="$MCP_SMOKE_CLIENT_ID" \
 SMOKE_MCP_REFRESH_SECRET_ID="$MCP_SMOKE_REFRESH_SECRET_ID" \
 SMOKE_CHECK_SECRET="$DEPLOYMENT_SMOKE_CHECK_SECRET" \
 bun run deploy:smoke
 ```
 
-The command first reads the current refresh credential and proves durable write
-authority by creating an equivalent secret version before contacting OAuth. It
-then exchanges the one-time credential, persists the descendant, and only then
-uses the ephemeral ten-minute access token for MCP smoke. All production
-deployment, migration, recovery, launch, release, and credential-rotation
-workflows use the `production-operations` concurrency group, so only one
-production operation can run at a time.
+The command first resolves the exact `AWSCURRENT` version through
+`DescribeSecret`, then reads that immutable version with both its version ID and
+the `AWSCURRENT` stage so a stale stage mapping fails closed instead of returning
+a consumed predecessor. It proves durable write authority by creating an
+equivalent secret version before contacting OAuth, exchanges the one-time
+credential, persists the descendant, and only then uses the ephemeral ten-minute
+access token for MCP smoke. All production deployment, migration, recovery,
+launch, release, and credential-rotation workflows use the
+`production-operations` concurrency group, so only one production operation can
+run at a time.
 
 The command validates web and API health, the static docs origin serving the
 generated OpenAPI document with reviewed security headers and no Scalar CDN or
