@@ -123,6 +123,7 @@ export type StartedConnectionSetup =
       readonly outcome:
         | "connection_limit_reached"
         | "idempotency_conflict"
+        | "number_cleanup_in_progress"
         | "number_deletion_in_progress"
         | "number_unavailable";
     };
@@ -978,8 +979,24 @@ export const makeConnectionSetupRepository = (
           return { outcome: row.outcome };
         }
         if (row?.outcome === "number_unavailable") {
-          const ownedDeletion = await db.execute<{ in_progress: unknown }>(sql`
-            SELECT EXISTS (
+          const ownedReservation = await db.execute<{
+            cleanup_in_progress: unknown;
+            deletion_in_progress: unknown;
+          }>(sql`
+            SELECT
+              EXISTS (
+                SELECT 1
+                FROM public.whatsapp_number_reservations AS reservations
+                JOIN public.connection_setups AS setups
+                  ON setups.personal_account_id = reservations.personal_account_id
+                 AND setups.id = reservations.connection_setup_id
+                WHERE reservations.personal_account_id = ${input.personalAccountId}
+                  AND reservations.number_token = ${input.numberToken}
+                  AND reservations.released_at IS NULL
+                  AND setups.state IN ('cancelled', 'expired', 'provisioning_failed')
+                  AND setups.cleanup_state <> 'complete'
+              ) AS cleanup_in_progress,
+              EXISTS (
               SELECT 1
               FROM public.whatsapp_number_reservations AS reservations
               JOIN public.whatsapp_connections AS connections
@@ -989,13 +1006,16 @@ export const makeConnectionSetupRepository = (
                 AND reservations.number_token = ${input.numberToken}
                 AND reservations.released_at IS NULL
                 AND connections.state = 'deleting'
-            ) AS in_progress
+              ) AS deletion_in_progress
           `);
+          const owned = ownedReservation[0];
           return {
             outcome:
-              ownedDeletion[0]?.in_progress === true
+              owned?.deletion_in_progress === true
                 ? ("number_deletion_in_progress" as const)
-                : row.outcome,
+                : owned?.cleanup_in_progress === true
+                  ? ("number_cleanup_in_progress" as const)
+                  : row.outcome,
           };
         }
         if (row?.outcome === "created" || row?.outcome === "replay") {
