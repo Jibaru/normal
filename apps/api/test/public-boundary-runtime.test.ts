@@ -355,7 +355,7 @@ describe("public-boundary Worker harness", () => {
         body: JSON.stringify({
           idempotency_key: "423456789012345678901",
           name: "Work WhatsApp",
-          whatsapp_number: "+1 (555) 012-3457",
+          whatsapp_number: "+1 (555) 012-3459",
         }),
         headers: {
           authorization: "Bearer signed-test-user",
@@ -404,7 +404,7 @@ describe("public-boundary Worker harness", () => {
     });
     expect(await listed.json()).not.toMatchObject({
       whatsapp_connections: expect.arrayContaining([
-        expect.objectContaining({ number_suffix: "3457" }),
+        expect.objectContaining({ number_suffix: "3459" }),
       ]),
     });
   });

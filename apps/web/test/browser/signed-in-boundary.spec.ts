@@ -322,7 +322,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expectStandaloneOnboarding(page);
   await expect(page.getByRole("button", { name: "Sign out" })).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "Register WhatsApp Number" }),
+    page.getByRole("button", { name: "Add WhatsApp number" }),
   ).toHaveCount(0);
   await completeFirstConnectionProfile(page, "ChatGPT");
   const onboarding = page.getByTestId("first-connection-onboarding");
@@ -444,6 +444,9 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     page.getByRole("navigation", { name: "Dashboard navigation" }),
   ).toBeVisible();
   await page.getByRole("link", { name: "WhatsApp Connections" }).click();
+  await expect(
+    page.getByText("1 currently connected or retained.", { exact: false }),
+  ).toBeVisible();
   await expect(page.getByTestId("whatsapp-connection")).toContainText(
     "Number ending 3456",
   );
@@ -471,7 +474,9 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     }),
   ).toHaveCount(0);
   await page.getByRole("link", { name: "WhatsApp Connections" }).click();
-  await page.getByRole("button", { name: "Register WhatsApp Number" }).click();
+  await page
+    .getByRole("button", { name: "Add another WhatsApp number" })
+    .click();
   await expect(page.getByLabel("Name", { exact: true })).toBeEnabled();
   await expect(page.getByLabel("Name", { exact: true })).toHaveValue("");
   await expect(page.getByLabel("WhatsApp number")).toBeEnabled();
@@ -1007,7 +1012,7 @@ test("starts irreversible Connection Deletion without restarting onboarding afte
   await expect(page.getByTestId("whatsapp-connection")).toHaveCount(0);
   await expect(page.getByText("No WhatsApp Connections yet.")).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Register WhatsApp Number" }),
+    page.getByRole("button", { name: "Add WhatsApp number" }),
   ).toBeVisible();
 
   await page.reload();
@@ -1016,7 +1021,7 @@ test("starts irreversible Connection Deletion without restarting onboarding afte
   await expect(page.getByTestId("first-connection-onboarding")).toHaveCount(0);
   await expect(page.getByText("No WhatsApp Connections yet.")).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Register WhatsApp Number" }),
+    page.getByRole("button", { name: "Add WhatsApp number" }),
   ).toBeVisible();
   await page.unrouteAll({ behavior: "ignoreErrors" });
 });
@@ -1200,4 +1205,103 @@ test("opens the Personal Account automatically after Clerk signs in", async ({
       "Signed in. Continue to create or open your Personal Account.",
     ),
   ).toHaveCount(0);
+});
+
+test("adds a second and third WhatsApp number before showing the three-number limit", async ({
+  page,
+  request,
+}) => {
+  await page.route("https://api.example.test/**", async (route) => {
+    const original = route.request();
+    const localUrl = new URL(original.url());
+    localUrl.protocol = "http:";
+    localUrl.hostname = "127.0.0.1";
+    localUrl.port = apiPort;
+
+    const response = await request.fetch(localUrl.toString(), {
+      data: original.postDataBuffer(),
+      headers: {
+        ...original.headers(),
+        origin: "http://127.0.0.1:3000",
+      },
+      method: original.method(),
+    });
+    await route.fulfill({
+      body: await response.body(),
+      headers: {
+        ...response.headers(),
+        "access-control-allow-origin": webOrigin,
+      },
+      status: response.status(),
+    });
+  });
+  await installClerkBrowser(page, { signedIn: true });
+  await page.goto("/dashboard/connections");
+
+  const onboarding = page.getByTestId("first-connection-onboarding");
+  const connectionsHeading = page.getByRole("heading", {
+    name: "Your WhatsApp Connections",
+  });
+  await expect(onboarding.or(connectionsHeading)).toBeVisible();
+
+  if (await onboarding.isVisible()) {
+    await completeFirstConnectionProfile(page);
+    await onboarding
+      .getByRole("button", { name: "Continue", exact: true })
+      .click();
+    const setup = page.getByRole("dialog", { name: "Connection Setup" });
+    await setup.getByLabel("Name", { exact: true }).fill("Personal WhatsApp");
+    await setup.getByLabel("WhatsApp number").fill("+1 (555) 012-3456");
+    await setup.getByRole("button", { name: "Continue", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Connect your MCP Client" }),
+    ).toBeVisible({ timeout: 15_000 });
+    await onboarding.getByRole("button", { name: "Go to dashboard" }).click();
+    await page.getByRole("link", { name: "WhatsApp Connections" }).click();
+  }
+
+  await expect(
+    page
+      .getByTestId("whatsapp-connection")
+      .first()
+      .or(page.getByText("No WhatsApp Connections yet.")),
+  ).toBeVisible();
+
+  const addNumber = async (name: string, number: string, suffix: string) => {
+    const existing = page
+      .getByTestId("whatsapp-connection")
+      .filter({ hasText: `ending ${suffix}` });
+    if ((await existing.count()) > 0) return;
+
+    await page
+      .getByRole("button", {
+        name: /^Add (?:another )?WhatsApp number$/u,
+      })
+      .click();
+    const setup = page.getByRole("dialog", {
+      name: "New WhatsApp Connection",
+    });
+    await setup.getByLabel("Name", { exact: true }).fill(name);
+    await setup.getByLabel("WhatsApp number").fill(number);
+    await setup.getByRole("button", { name: "Continue", exact: true }).click();
+    await expect(page.getByTestId("connection-setup-status")).toHaveText(
+      "WhatsApp Connection active.",
+      { timeout: 15_000 },
+    );
+    await expect(existing).toBeVisible();
+    await setup.getByRole("button", { name: "Close" }).click();
+  };
+
+  await addNumber("Personal WhatsApp", "+1 (555) 012-3456", "3456");
+  await addNumber("Family WhatsApp", "+1 (555) 012-3457", "3457");
+  await addNumber("Work WhatsApp", "+1 (555) 012-3458", "3458");
+
+  await expect(page.getByTestId("whatsapp-connection")).toHaveCount(3);
+  await expect(
+    page.getByText("3 currently connected or retained.", { exact: false }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "3-number limit reached" }),
+  ).toBeDisabled();
+  await page.unrouteAll({ behavior: "ignoreErrors" });
 });

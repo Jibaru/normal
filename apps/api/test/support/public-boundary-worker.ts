@@ -1410,7 +1410,10 @@ const makeTestLayer = (
       nextLifecycleClaimId: Effect.succeed(
         "40000000-0000-4000-8000-000000000018",
       ),
-      nextPublicId: Effect.succeed("con_000000000000000000018"),
+      nextPublicId: Effect.sync(
+        () =>
+          `con_${String(18 + whatsAppConnections.length).padStart(21, "0")}`,
+      ),
       nextWebhookIdentityKey: Effect.succeed(new Uint8Array(32).fill(18)),
     }),
     Layer.succeed(WhatsAppConnectionPersistence, {
@@ -1749,7 +1752,13 @@ const makeTestLayer = (
           return {
             ok: true as const,
             value: {
-              outcome: phoneNumber === "+15550123456" ? "match" : "mismatch",
+              outcome: [
+                "+15550123456",
+                "+15550123457",
+                "+15550123458",
+              ].includes(phoneNumber)
+                ? "match"
+                : "mismatch",
             },
           };
         }),

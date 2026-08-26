@@ -83,6 +83,10 @@ import {
 import { captureProductAnalyticsEvent } from "../effect/product-analytics";
 import { AccountOverview } from "./account-overview";
 import {
+  getWhatsAppConnectionCapacity,
+  WHATSAPP_CONNECTION_LIMIT,
+} from "./connection-capacity";
+import {
   nextConnectionSetupPollDelayMs,
   observationMetricDurationMs,
 } from "./connection-setup-observation";
@@ -371,6 +375,7 @@ export function PublicBoundaryJourney({
   });
 
   const connections = connectionsQuery.data ?? [];
+  const connectionCapacity = getWhatsAppConnectionCapacity(connections.length);
   const authorizations = authorizationsQuery.data ?? [];
   const insights = insightsQuery.data ?? null;
   const activityLogs = flattenActivityLogs(activityLogsQuery.data?.pages);
@@ -1263,7 +1268,8 @@ export function PublicBoundaryJourney({
       if (
         body.personal_account?.state !== "active" ||
         body.personal_account.message_retention_days !== 30 ||
-        body.personal_account.whatsapp_connection_limit !== 3 ||
+        body.personal_account.whatsapp_connection_limit !==
+          WHATSAPP_CONNECTION_LIMIT ||
         body.personal_account.stored_media_limit_bytes !== 5_368_709_120
       ) {
         setState("unavailable");
@@ -2108,11 +2114,13 @@ export function PublicBoundaryJourney({
                 Your WhatsApp Connections
               </h2>
               <p className="text-sm text-muted-foreground">
-                Connection health, message history, and reconnect controls.
+                Add and manage up to {connectionCapacity.limit} WhatsApp
+                numbers. {connections.length} currently connected or retained.
               </p>
             </div>
             <FormOverlay
               onOpenChange={(open) => {
+                if (open && connectionCapacity.reached) return;
                 const durableActiveSetup =
                   setupId !== null &&
                   setupState !== "cancelled" &&
@@ -2133,8 +2141,14 @@ export function PublicBoundaryJourney({
               }}
               open={setupDialogOpen}
             >
-              <FormOverlayTrigger render={<Button />}>
-                Register WhatsApp Number
+              <FormOverlayTrigger
+                render={<Button disabled={connectionCapacity.reached} />}
+              >
+                {connectionCapacity.reached
+                  ? `${connectionCapacity.limit}-number limit reached`
+                  : connections.length === 0
+                    ? "Add WhatsApp number"
+                    : "Add another WhatsApp number"}
               </FormOverlayTrigger>
               <FormOverlayContent>
                 <FormOverlayHeader>
