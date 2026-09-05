@@ -1457,6 +1457,7 @@ const mcpPermissionForOperation = (
   if (
     operation === "send_text_message" ||
     operation === "send_pdf_file" ||
+    operation === "send_image" ||
     operation === "get_send_status"
   ) {
     return "messages:send";
@@ -2046,6 +2047,19 @@ const atomicSendLayer = (environment: ApiEnvironment) =>
                 uploadBytes: number;
               }
             | {
+                durationMs: number;
+                operationClass: "image-send";
+                outcome:
+                  | "ambiguous"
+                  | "definitive_failure"
+                  | "identity_evidence"
+                  | "provider_acknowledgement";
+                responseBytes: number | null;
+                sendAttemptCount: 0 | 1;
+                uploadAttemptCount: 0 | 1;
+                uploadBytes: number;
+              }
+            | {
                 attemptCount: 0 | 1;
                 durationMs: number;
                 operationClass: "text-send";
@@ -2063,11 +2077,17 @@ const atomicSendLayer = (environment: ApiEnvironment) =>
                   event: "provider.pdf_send.completed",
                   service: "api",
                 })
-              : safeTelemetry.emit({
-                  ...providerEvent,
-                  event: "provider.text_send.completed",
-                  service: "api",
-                }),
+              : providerEvent.operationClass === "image-send"
+                ? safeTelemetry.emit({
+                    ...providerEvent,
+                    event: "provider.image_send.completed",
+                    service: "api",
+                  })
+                : safeTelemetry.emit({
+                    ...providerEvent,
+                    event: "provider.text_send.completed",
+                    service: "api",
+                  }),
           );
         },
       });
@@ -3852,8 +3872,11 @@ export const createProductionScheduledHandler =
           await storedMediaRepository.finishObjectDeletion(deletion);
         }),
       );
-      const connectionDeletionRepository =
-        makePgWhatsAppConnectionRepository(connectionString);
+      const connectionDeletionRepository = makePgWhatsAppConnectionRepository(
+        connectionString,
+        // Cascading retained webhook projections can exceed the request budget.
+        30_000,
+      );
       const deletionMarkers =
         await connectionDeletionRepository.listDeletionPurgeCandidates({
           limit: 100,

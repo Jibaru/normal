@@ -66,6 +66,8 @@ export interface ConnectionSetupStartCompletedEvent {
     | "connection_limit_reached"
     | "created"
     | "idempotency_conflict"
+    | "number_cleanup_in_progress"
+    | "number_deletion_in_progress"
     | "number_unavailable"
     | "onboarding_profile_required"
     | "replay";
@@ -321,6 +323,7 @@ export interface RestOperationCompletedEvent {
     | "search_messages"
     | "send_text_message"
     | "send_pdf_file"
+    | "send_image"
     | "get_send_status";
   readonly outcome:
     | "audit_unavailable"
@@ -363,6 +366,7 @@ export interface McpToolCallCompletedEvent {
     | "get_send_status"
     | "send_text_message"
     | "send_pdf_file"
+    | "send_image"
     | "list_chats"
     | "read_messages"
     | "search_messages";
@@ -435,6 +439,22 @@ export interface ProviderPdfSendCompletedEvent {
   readonly durationMs: number;
   readonly event: "provider.pdf_send.completed";
   readonly operationClass: "pdf-send";
+  readonly outcome:
+    | "ambiguous"
+    | "definitive_failure"
+    | "identity_evidence"
+    | "provider_acknowledgement";
+  readonly responseBytes: number | null;
+  readonly sendAttemptCount: 0 | 1;
+  readonly service: "api";
+  readonly uploadAttemptCount: 0 | 1;
+  readonly uploadBytes: number;
+}
+
+export interface ProviderImageSendCompletedEvent {
+  readonly durationMs: number;
+  readonly event: "provider.image_send.completed";
+  readonly operationClass: "image-send";
   readonly outcome:
     | "ambiguous"
     | "definitive_failure"
@@ -536,6 +556,7 @@ export type SafeTelemetryEvent =
   | ProviderDirectoryCompletedEvent
   | ProviderTextSendCompletedEvent
   | ProviderPdfSendCompletedEvent
+  | ProviderImageSendCompletedEvent
   | RecipientExclusionCleanupCompletedEvent
   | RecipientExclusionListCompletedEvent
   | RecipientExclusionRecoveryCompletedEvent

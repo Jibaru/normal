@@ -1,5 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 import { installClerkBrowser } from "../support/clerk-browser";
+import { expectSuccessToast } from "../support/toasts";
 
 const apiPort = process.env.PLAYWRIGHT_API_PORT ?? "8787";
 const webOrigin = `http://127.0.0.1:${process.env.PLAYWRIGHT_WEB_PORT ?? "3000"}`;
@@ -55,6 +56,7 @@ const completeFirstConnectionProfile = async (
     await choose("Intended MCP Client", intendedClient);
     await choose("Interested in a short research call?", "Yes");
     await profile.getByRole("button", { name: "Save and continue" }).click();
+    await expectSuccessToast(page, "Onboarding profile saved");
   }
   const securityHeading = page.getByRole("heading", {
     name: "Review security before you scan",
@@ -73,6 +75,7 @@ const completeFirstConnectionProfile = async (
     await onboarding
       .getByRole("button", { name: "Review complete. Start Connection Setup" })
       .click();
+    await expectSuccessToast(page, "Security completion saved");
   }
   await expect(
     page.getByRole("heading", { name: "Start Connection Setup" }),
@@ -319,7 +322,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expectStandaloneOnboarding(page);
   await expect(page.getByRole("button", { name: "Sign out" })).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "Register WhatsApp Number" }),
+    page.getByRole("button", { name: "Add WhatsApp number" }),
   ).toHaveCount(0);
   await completeFirstConnectionProfile(page, "ChatGPT");
   const onboarding = page.getByTestId("first-connection-onboarding");
@@ -357,12 +360,6 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     page.getByRole("heading", { name: "Review security before you scan" }),
   ).toHaveCount(0);
   releaseFirstQr?.();
-  await expect(
-    page.getByRole("img", { name: "Scan this WhatsApp QR code" }),
-  ).toBeVisible();
-  await expect(page.getByTestId("connection-setup-status")).toHaveText(
-    "Scan this QR code with WhatsApp.",
-  );
   await expect(
     page.getByRole("heading", { name: "Connect your MCP Client" }),
   ).toBeVisible({ timeout: 15_000 });
@@ -447,6 +444,9 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     page.getByRole("navigation", { name: "Dashboard navigation" }),
   ).toBeVisible();
   await page.getByRole("link", { name: "WhatsApp Connections" }).click();
+  await expect(
+    page.getByText("1 currently connected or retained.", { exact: false }),
+  ).toBeVisible();
   await expect(page.getByTestId("whatsapp-connection")).toContainText(
     "Number ending 3456",
   );
@@ -474,7 +474,9 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     }),
   ).toHaveCount(0);
   await page.getByRole("link", { name: "WhatsApp Connections" }).click();
-  await page.getByRole("button", { name: "Register WhatsApp Number" }).click();
+  await page
+    .getByRole("button", { name: "Add another WhatsApp number" })
+    .click();
   await expect(page.getByLabel("Name", { exact: true })).toBeEnabled();
   await expect(page.getByLabel("Name", { exact: true })).toHaveValue("");
   await expect(page.getByLabel("WhatsApp number")).toBeEnabled();
@@ -501,6 +503,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(saveConfiguration).toBeEnabled();
   await saveConfiguration.click();
   await expect(configuration).toContainText("Name saved.");
+  await expectSuccessToast(page, "Name saved.");
   expect(renameRequests).toBe(1);
   expect(retentionUpdateRequests).toBe(0);
   await expect(connection).toContainText("Work WhatsApp");
@@ -509,6 +512,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await page.getByRole("option", { name: "7 days" }).click();
   await saveConfiguration.click();
   await expect(configuration).toContainText("Current policy: 7 days");
+  await expectSuccessToast(page, "Message Retention Policy saved");
   expect(renameRequests).toBe(1);
   expect(retentionUpdateRequests).toBe(1);
   await retentionPolicy.click();
@@ -523,6 +527,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
     .check();
   await saveConfiguration.click();
   await expect(configuration).toContainText("retain until Connection Deletion");
+  await expectSuccessToast(page, "Message Retention Policy saved");
   await expect(page.getByTestId("whatsapp-connection")).not.toContainText(
     "session-authority",
   );
@@ -604,6 +609,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   await expect(page.getByTestId("recipient-exclusion-status")).toContainText(
     "Normal no longer tracks Ada Lovelace.",
   );
+  await expectSuccessToast(page, "Normal no longer tracks Ada Lovelace.");
   await expect(
     exclusions.getByRole("button", { name: "Track again Ada Lovelace" }),
   ).toBeVisible();
@@ -628,6 +634,7 @@ test("drives the signed-in browser-to-API boundary over real HTTP", async ({
   expect(await providerObservations.json()).toEqual([
     "reconcileSession",
     "connectSession",
+    "reconcileSession",
     "getQrCode",
     "reconcileSession",
     "verifySessionNumber",
@@ -811,7 +818,9 @@ test.describe("Connection Setup loading UI", () => {
     const placeholderBox = await placeholder.boundingBox();
     expect(placeholderBox).not.toBeNull();
     releaseFirstQr?.();
-    await expect.poll(() => firstQrResponseStatus).toBe(200);
+    await expect.poll(() => firstQrResponseStatus).toBe(202);
+    await expect(placeholder).toBeVisible();
+    releaseQrPoll?.();
 
     const qrImage = page.getByRole("img", {
       name: "Scan this WhatsApp QR code",
@@ -832,7 +841,6 @@ test.describe("Connection Setup loading UI", () => {
     );
     await expect(placeholder).toHaveCount(0);
     await expect(loadingProgress).toHaveCount(0);
-    releaseQrPoll?.();
     await expect(
       setup.getByRole("button", { name: "Start again" }),
     ).toBeVisible();
@@ -918,7 +926,7 @@ test("shows a terminal provisioning failure during Connection Setup", async ({
   ).toHaveCount(0);
 });
 
-test("starts irreversible Connection Deletion and keeps the deleted connection gone after refresh", async ({
+test("starts irreversible Connection Deletion without restarting onboarding after refresh", async ({
   page,
   request,
 }) => {
@@ -963,9 +971,6 @@ test("starts irreversible Connection Deletion and keeps the deleted connection g
     await setup.getByLabel("WhatsApp number").fill("+1 (555) 012-3456");
     await setup.getByRole("button", { name: "Continue", exact: true }).click();
     await expect(
-      page.getByRole("img", { name: "Scan this WhatsApp QR code" }),
-    ).toBeVisible();
-    await expect(
       page.getByRole("heading", { name: "Connect your MCP Client" }),
     ).toBeVisible({ timeout: 15_000 });
     await onboarding.getByRole("button", { name: "Go to dashboard" }).click();
@@ -1007,12 +1012,17 @@ test("starts irreversible Connection Deletion and keeps the deleted connection g
   await expect(page.getByTestId("whatsapp-connection")).toHaveCount(0);
   await expect(page.getByText("No WhatsApp Connections yet.")).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Register WhatsApp Number" }),
+    page.getByRole("button", { name: "Add WhatsApp number" }),
   ).toBeVisible();
 
   await page.reload();
+  await expect(page).toHaveURL(/\/dashboard\/connections$/u);
   await expect(page.getByTestId("whatsapp-connection")).toHaveCount(0);
-  await expectStandaloneOnboarding(page);
+  await expect(page.getByTestId("first-connection-onboarding")).toHaveCount(0);
+  await expect(page.getByText("No WhatsApp Connections yet.")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Add WhatsApp number" }),
+  ).toBeVisible();
   await page.unrouteAll({ behavior: "ignoreErrors" });
 });
 
@@ -1195,4 +1205,103 @@ test("opens the Personal Account automatically after Clerk signs in", async ({
       "Signed in. Continue to create or open your Personal Account.",
     ),
   ).toHaveCount(0);
+});
+
+test("adds a second and third WhatsApp number before showing the three-number limit", async ({
+  page,
+  request,
+}) => {
+  await page.route("https://api.example.test/**", async (route) => {
+    const original = route.request();
+    const localUrl = new URL(original.url());
+    localUrl.protocol = "http:";
+    localUrl.hostname = "127.0.0.1";
+    localUrl.port = apiPort;
+
+    const response = await request.fetch(localUrl.toString(), {
+      data: original.postDataBuffer(),
+      headers: {
+        ...original.headers(),
+        origin: "http://127.0.0.1:3000",
+      },
+      method: original.method(),
+    });
+    await route.fulfill({
+      body: await response.body(),
+      headers: {
+        ...response.headers(),
+        "access-control-allow-origin": webOrigin,
+      },
+      status: response.status(),
+    });
+  });
+  await installClerkBrowser(page, { signedIn: true });
+  await page.goto("/dashboard/connections");
+
+  const onboarding = page.getByTestId("first-connection-onboarding");
+  const connectionsHeading = page.getByRole("heading", {
+    name: "Your WhatsApp Connections",
+  });
+  await expect(onboarding.or(connectionsHeading)).toBeVisible();
+
+  if (await onboarding.isVisible()) {
+    await completeFirstConnectionProfile(page);
+    await onboarding
+      .getByRole("button", { name: "Continue", exact: true })
+      .click();
+    const setup = page.getByRole("dialog", { name: "Connection Setup" });
+    await setup.getByLabel("Name", { exact: true }).fill("Personal WhatsApp");
+    await setup.getByLabel("WhatsApp number").fill("+1 (555) 012-3456");
+    await setup.getByRole("button", { name: "Continue", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Connect your MCP Client" }),
+    ).toBeVisible({ timeout: 15_000 });
+    await onboarding.getByRole("button", { name: "Go to dashboard" }).click();
+    await page.getByRole("link", { name: "WhatsApp Connections" }).click();
+  }
+
+  await expect(
+    page
+      .getByTestId("whatsapp-connection")
+      .first()
+      .or(page.getByText("No WhatsApp Connections yet.")),
+  ).toBeVisible();
+
+  const addNumber = async (name: string, number: string, suffix: string) => {
+    const existing = page
+      .getByTestId("whatsapp-connection")
+      .filter({ hasText: `ending ${suffix}` });
+    if ((await existing.count()) > 0) return;
+
+    await page
+      .getByRole("button", {
+        name: /^Add (?:another )?WhatsApp number$/u,
+      })
+      .click();
+    const setup = page.getByRole("dialog", {
+      name: "New WhatsApp Connection",
+    });
+    await setup.getByLabel("Name", { exact: true }).fill(name);
+    await setup.getByLabel("WhatsApp number").fill(number);
+    await setup.getByRole("button", { name: "Continue", exact: true }).click();
+    await expect(page.getByTestId("connection-setup-status")).toHaveText(
+      "WhatsApp Connection active.",
+      { timeout: 15_000 },
+    );
+    await expect(existing).toBeVisible();
+    await setup.getByRole("button", { name: "Close" }).click();
+  };
+
+  await addNumber("Personal WhatsApp", "+1 (555) 012-3456", "3456");
+  await addNumber("Family WhatsApp", "+1 (555) 012-3457", "3457");
+  await addNumber("Work WhatsApp", "+1 (555) 012-3458", "3458");
+
+  await expect(page.getByTestId("whatsapp-connection")).toHaveCount(3);
+  await expect(
+    page.getByText("3 currently connected or retained.", { exact: false }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "3-number limit reached" }),
+  ).toBeDisabled();
+  await page.unrouteAll({ behavior: "ignoreErrors" });
 });

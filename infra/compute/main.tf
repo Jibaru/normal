@@ -330,7 +330,7 @@ resource "cloudflare_worker_version" "provider_control" {
     {
       name = "WASENDER_REFERENCE_SECRET"
       type = "inherit"
-    }
+    },
   ]
 }
 

@@ -486,6 +486,7 @@ export const createApiKey = async ({
 }): Promise<
   | { readonly created: CreatedApiKeyRecord; readonly ok: true }
   | { readonly error: string | undefined; readonly ok: false }
+  | { readonly clerk_error: unknown }
 > => {
   const response = await authorizedJson({
     init: {
@@ -497,6 +498,14 @@ export const createApiKey = async ({
     url: endpoint,
   });
   if (!response.ok) {
+    if (
+      response.status === 403 &&
+      typeof response.body === "object" &&
+      response.body !== null &&
+      "clerk_error" in response.body
+    ) {
+      return response.body as { readonly clerk_error: unknown };
+    }
     return {
       error:
         typeof (response.body as { error?: unknown }).error === "string"

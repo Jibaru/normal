@@ -8,6 +8,9 @@ const dnsResponse = (address = "93.184.216.34") =>
 describe("outbound PDF source validation", () => {
   test("decodes only bounded PDF bytes with a version signature", () => {
     expect(decodePdfBase64("JVBERi0xLjcKJSVFT0YK")).toEqual(pdf);
+    expect(decodePdfBase64("JVBERi0xLjcKWB==")).toEqual(
+      new TextEncoder().encode("%PDF-1.7\nX"),
+    );
     expect(() => decodePdfBase64(btoa("not a pdf"))).toThrow();
   });
 

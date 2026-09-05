@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { installClerkBrowser } from "../support/clerk-browser";
+import { expectSuccessToast } from "../support/toasts";
 
 const apiPort = process.env.PLAYWRIGHT_API_PORT ?? "8787";
 const webOrigin = `http://127.0.0.1:${process.env.PLAYWRIGHT_WEB_PORT ?? "3000"}`;
@@ -13,6 +14,8 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
 }) => {
   let createRequests = 0;
   let failKeysListAfterCreate = true;
+  let reverificationOpened = false;
+  const createAuthorizations: Array<string | undefined> = [];
   const tokenRequests: Array<unknown> = [];
   await page.route("https://api.example.test/**", async (route) => {
     const original = route.request();
@@ -61,6 +64,26 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
     }
     if (requestPath === "/v1/api-keys" && original.method() === "POST") {
       createRequests += 1;
+      createAuthorizations.push(original.headers().authorization);
+      if (original.headers().authorization !== "Bearer fresh-session-token") {
+        await route.fulfill({
+          body: JSON.stringify({
+            clerk_error: {
+              metadata: {
+                reverification: {
+                  afterMinutes: 5,
+                  level: "first_factor",
+                },
+              },
+              reason: "reverification-error",
+              type: "forbidden",
+            },
+          }),
+          contentType: "application/json",
+          status: 403,
+        });
+        return;
+      }
     }
     if (
       requestPath === "/v1/api-keys" &&
@@ -84,6 +107,7 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
       data: original.postDataBuffer(),
       headers: {
         ...original.headers(),
+        authorization: "Bearer signed-test-user",
         origin: "http://127.0.0.1:3000",
       },
       method: original.method(),
@@ -98,8 +122,15 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
     });
   });
   await installClerkBrowser(page, {
+    onReverification: () => {
+      reverificationOpened = true;
+    },
     onTokenRequest: (options) => tokenRequests.push(options),
+    reverifiedToken: "fresh-session-token",
+    renderReverification: true,
+    sessionToken: "stale-session-token",
     signedIn: true,
+    token: "custom-template-token",
   });
   await context.grantPermissions(["clipboard-read", "clipboard-write"], {
     origin: webOrigin,
@@ -134,7 +165,34 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
     })
     .check();
   await createDialog.getByRole("button", { name: "Create API Key" }).click();
+  await expect.poll(() => reverificationOpened).toBe(true);
+  const clerkDialog = page.getByRole("dialog", {
+    name: "Verify your identity",
+  });
+  await expect(clerkDialog).toBeVisible();
+  await expect(createDialog).toBeVisible();
+  const clerkLayer = page.getByTestId("clerk-reverification-layer");
+  const [clerkZIndex, formZIndex, clerkIsTopmost] = await Promise.all([
+    clerkLayer.evaluate((element) => Number(getComputedStyle(element).zIndex)),
+    createDialog.evaluate((element) =>
+      Number(getComputedStyle(element.parentElement as HTMLElement).zIndex),
+    ),
+    clerkDialog.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      const topmost = document.elementFromPoint(
+        bounds.left + bounds.width / 2,
+        bounds.top + bounds.height / 2,
+      );
+      return topmost !== null && element.contains(topmost);
+    }),
+  ]);
+  expect(clerkZIndex).toBeGreaterThan(formZIndex);
+  expect(clerkIsTopmost).toBe(true);
+  await clerkDialog
+    .getByRole("button", { name: "Complete verification" })
+    .click();
   await expect(createDialog).toBeHidden();
+  await expectSuccessToast(page, "API Key created");
 
   const reveal = panel.getByLabel("New API Key credential");
   await expect(reveal).toBeVisible();
@@ -143,7 +201,11 @@ test("creates, lists, and revokes an API Key across the browser-to-API boundary"
   expect(plaintext).toMatch(
     /^normal_apk_[A-Za-z0-9_-]{21}\.[A-Za-z0-9_-]{43}$/u,
   );
-  expect(createRequests).toBe(1);
+  expect(createRequests).toBe(2);
+  expect(createAuthorizations).toEqual([
+    "Bearer stale-session-token",
+    "Bearer fresh-session-token",
+  ]);
   expect(tokenRequests).toContainEqual({ skipCache: true });
   await expect(panel).not.toContainText("temporarily unavailable");
   await expect(panel.getByTestId("api-key-row")).toContainText("CI");

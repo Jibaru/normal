@@ -52,6 +52,45 @@ class TestClerk {
 
   __internal_openReverification(options) {
     window.__clerkTestConfig?.openReverification?.();
+    if (window.__clerkTestConfig?.renderReverification) {
+      const backdrop = document.createElement("div");
+      backdrop.dataset.testid = "clerk-reverification-layer";
+      Object.assign(backdrop.style, {
+        alignItems: "center",
+        background: "rgba(0, 0, 0, 0.4)",
+        display: "flex",
+        inset: "0",
+        justifyContent: "center",
+        position: "fixed",
+        zIndex: "10000",
+      });
+
+      const dialog = document.createElement("div");
+      dialog.setAttribute("aria-label", "Verify your identity");
+      dialog.setAttribute("aria-modal", "true");
+      dialog.setAttribute("role", "dialog");
+      Object.assign(dialog.style, {
+        background: "white",
+        borderRadius: "12px",
+        color: "black",
+        padding: "24px",
+      });
+
+      const title = document.createElement("p");
+      title.textContent = "Verify your identity";
+      const complete = document.createElement("button");
+      complete.textContent = "Complete verification";
+      complete.addEventListener("click", () => {
+        backdrop.remove();
+        window.__clerkTestConfig?.completeReverification?.();
+        options?.afterVerification?.();
+      });
+      dialog.append(title, complete);
+      backdrop.append(dialog);
+      document.body.append(backdrop);
+      return;
+    }
+    window.__clerkTestConfig?.completeReverification?.();
     options?.afterVerification?.();
   }
 }

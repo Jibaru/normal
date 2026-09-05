@@ -117,6 +117,7 @@ bun run validate:infra
 bun run test
 bun run build
 bun run manifests:validate
+bun run observability:validate
 bun run infra:validate
 ```
 
@@ -187,9 +188,9 @@ tofu -chdir=infra/compute apply \
 
 Generate the 32-byte locator key inside the approved recovery inventory, where
 it can remain stable for the environment. Load that value and the account-level
-Personal Access Token without echoing either one, then create both required
-bindings atomically. The pipe does not put either plaintext value in a file,
-saved plan, or OpenTofu state:
+Personal Access Token without echoing them, then create both required bindings
+atomically. The pipe does not put any plaintext
+value in a file, saved plan, or OpenTofu state:
 
 ```sh
 read -rsp "WASENDER_REFERENCE_SECRET: " WASENDER_REFERENCE_SECRET
@@ -203,6 +204,14 @@ bun -e 'process.stdout.write(JSON.stringify({
 }))' | wrangler secret bulk \
   --cwd apps/provider-control \
   --env "$DEPLOYMENT_ENVIRONMENT"
+if wrangler secret list \
+  --cwd apps/provider-control \
+  --env "$DEPLOYMENT_ENVIRONMENT" \
+  --format json | jq -e 'any(.[]; .name == "WEBSHARE_API_KEY")' >/dev/null; then
+  wrangler secret delete WEBSHARE_API_KEY \
+    --cwd apps/provider-control \
+    --env "$DEPLOYMENT_ENVIRONMENT"
+fi
 wrangler secret list \
   --cwd apps/provider-control \
   --env "$DEPLOYMENT_ENVIRONMENT"
@@ -546,19 +555,95 @@ verify the three secret names before relying on its schedule. The broker retains
 the reviewed emergency assumer in its trust policy for incident recovery, but
 neither authority receives content permissions directly.
 
+The deletion credential broker is a separate authority declared by
+`infra/aws/deletion-credential-broker.template.json`. Deploy it against the
+existing GitHub OIDC provider with the exact `DeletionCoordinatorRoleArn`, then
+update the production KMS stack's `DeletionCoordinatorAssumerArn` parameter to
+the broker role ARN. Retain the prior deletion bootstrap principal only as the
+broker's reviewed emergency assumer. Store the broker output as
+`AWS_DELETION_CREDENTIAL_BROKER_ROLE_ARN` and the coordinator role output as
+`AWS_DELETION_COORDINATOR_ROLE_ARN` in the protected `production` GitHub
+environment.
+
+Bootstrap the broker only from the authenticated production infrastructure
+shell. These commands derive the existing coordinator and emergency authority
+without printing credentials:
+
+```sh
+export AWS_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+export GITHUB_OIDC_PROVIDER_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"
+export AWS_DELETION_COORDINATOR_ROLE_ARN="$(
+  tofu -chdir=infra/aws output -raw deletion_coordinator_role_arn
+)"
+export DELETION_EMERGENCY_ASSUMER_ARN="$(
+  aws cloudformation describe-stacks \
+    --stack-name whatsapp-mcp-production-kms \
+    --query "Stacks[0].Parameters[?ParameterKey=='DeletionCoordinatorAssumerArn'].ParameterValue | [0]" \
+    --output text
+)"
+
+aws cloudformation deploy \
+  --stack-name whatsapp-mcp-production-deletion-credential-broker \
+  --template-file infra/aws/deletion-credential-broker.template.json \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --no-fail-on-empty-changeset \
+  --parameter-overrides \
+    "DeletionCoordinatorRoleArn=${AWS_DELETION_COORDINATOR_ROLE_ARN}" \
+    "EmergencyAssumerArn=${DELETION_EMERGENCY_ASSUMER_ARN}" \
+    "GitHubOidcProviderArn=${GITHUB_OIDC_PROVIDER_ARN}"
+
+export AWS_DELETION_CREDENTIAL_BROKER_ROLE_ARN="$(
+  aws cloudformation describe-stacks \
+    --stack-name whatsapp-mcp-production-deletion-credential-broker \
+    --query "Stacks[0].Outputs[?OutputKey=='DeletionCredentialBrokerRoleArn'].OutputValue | [0]" \
+    --output text
+)"
+```
+
+Re-run the reviewed `tofu -chdir=infra/aws plan` command above with every
+unchanged production input and
+`-var="deletion_coordinator_assumer_arn=${AWS_DELETION_CREDENTIAL_BROKER_ROLE_ARN}"`,
+review the plan for that one trust-parameter change, then apply its saved plan:
+
+```sh
+tofu -chdir=infra/aws apply kms.tfplan
+
+gh variable set AWS_DELETION_COORDINATOR_ROLE_ARN \
+  --env production \
+  --body "${AWS_DELETION_COORDINATOR_ROLE_ARN}"
+gh variable set AWS_DELETION_CREDENTIAL_BROKER_ROLE_ARN \
+  --env production \
+  --body "${AWS_DELETION_CREDENTIAL_BROKER_ROLE_ARN}"
+```
+
+Set the broker variable last because it enables the workflows. Production
+deployment checks both variables before migration or any Worker publication,
+so an incomplete bootstrap fails before changing production.
+
+Run `rotate-production-deletion-credentials.yml` manually and verify that the
+three session secret names exist only on
+`whatsapp-mcp-deletion-coordinator`. The workflow renews them every 20 minutes,
+and production deployment renews them again before publishing the coordinator.
+Credential rotation uses a dedicated concurrency group so a long production
+operation or recovery drill cannot delay renewal beyond the one-hour session.
+Never copy the API Content Runtime session to the coordinator or allow either
+broker to assume the other's runtime role.
+
 Production MCP smoke uses the separate
 `infra/aws/mcp-smoke-credential.template.json` stack. Deploy it with the
 existing GitHub OIDC provider ARN and a distinct emergency recovery assumer,
 then store its outputs as protected environment variables
 `AWS_MCP_SMOKE_CREDENTIAL_ROLE_ARN` and `MCP_SMOKE_REFRESH_SECRET_ID` in both
-`production` and `production-launch-gate`. Store the reviewed public client ID
-as `MCP_SMOKE_CLIENT_ID`. The role trusts only those two exact environment
-subjects and can only describe, read, and create a version of that one secret.
+`production` and `production-launch-gate`. The workflows fix the reviewed
+public client ID to `deployment-smoke`; do not add a mutable client-ID variable.
+The role trusts only those two exact environment subjects and can only describe,
+read, and create a version of that one secret.
 
-Do not give Cloudflare the administrator, deletion coordinator,
-provider-control, or ordinary operator credentials. Never print the assumed
-credentials or store them in GitHub secrets, repository files, workflow
-artifacts, or shell history.
+Do not give Cloudflare the administrator, provider-control, or ordinary
+operator credentials. The deletion coordinator Worker receives only its
+short-lived, purpose-specific role session. Never print assumed credentials or
+store them in GitHub secrets, repository files, workflow artifacts, or shell
+history.
 
 Generate the deletion-marker HMAC once per environment, store it only as the
 `DELETION_MARKER_HMAC_SECRET` Worker secret and in the encrypted recovery
@@ -716,7 +801,11 @@ both names under `secrets.required`, so a subsequent Wrangler upload or deploy
 fails before publishing code if the selected environment does not already have
 both secrets. OpenTofu represents both names as `inherit` bindings, so every
 subsequent provider-control version preserves the already stored ciphertext
-without putting either plaintext value in input, a saved plan, or state. Run
+without putting either plaintext value in input, a saved plan, or state. The
+provider-control Wrangler deployment retains the migrated SQLite-backed
+`ProviderAllocationGate` class without binding it; production lifecycle calls do
+not use proxy allocation. The workflow idempotently deletes the dormant
+`WEBSHARE_API_KEY` after provider-control is live. Run
 the bootstrap against `development`, `preview`, and `production` independently;
 never rely on one environment's secrets for another.
 
@@ -733,32 +822,59 @@ private service-binding health before deploying the API. Never rotate
 ## Smoke check
 
 Create a dedicated approved MCP Authorization for deployment automation with
-the minimum discovery scope needed by the release policy. During bootstrap,
-complete consent once, capture the returned refresh credential without printing
-it, and put it into the exact `MCP_SMOKE_REFRESH_SECRET_ID` through a reviewed
-stdin or console operation. Never place it in a command argument, shell history,
-OpenTofu input/state, GitHub secret, workflow output, log, or artifact. Store the
-independently generated `SMOKE_CHECK_SECRET` in GitHub and the API Worker as
-before. The deployment and launch-gate workflows assume the narrow smoke role
-through GitHub OIDC and run the same command:
+the minimum `connections:read` discovery scope needed by the release policy.
+First deploy the API containing the source-allowlisted `deployment-smoke`
+client. Because the old refresh family belongs to a different client, the first
+ordinary production workflow run is expected to fail only at its final MCP
+smoke step after the API deployment succeeds. Verify that the API deployment
+step completed and that no earlier step failed; do not bypass the workflow with
+an improvised API-only deployment. Authenticate to AWS as the exact emergency
+assumer reviewed when the smoke stack was deployed, then run the PKCE bootstrap
+from a trusted local machine:
+
+```sh
+SMOKE_API_ORIGIN="https://api.normal.fast" \
+AWS_MCP_SMOKE_CREDENTIAL_ROLE_ARN="$(gh variable get AWS_MCP_SMOKE_CREDENTIAL_ROLE_ARN --env production)" \
+SMOKE_MCP_REFRESH_SECRET_ID="$(gh variable get MCP_SMOKE_REFRESH_SECRET_ID --env production)" \
+bun run deploy:smoke:bootstrap
+```
+
+The command assumes the narrow smoke role for 15 minutes, verifies the exact
+secret exists, binds an ephemeral listener only to `127.0.0.1`, opens the
+source-allowlisted authorization request with S256 PKCE and a random state, and
+requests only `connections:read`. Complete Clerk reverification and consent for
+one designated smoke-test WhatsApp Connection. The command exchanges the code,
+writes only the returned refresh credential directly to the exact Secrets
+Manager secret, prints only `{"status":"ok"}`, and discards the access token.
+It never prints either token or passes one through a command argument, shell
+history, OpenTofu input/state, GitHub secret, workflow output, log, or artifact.
+If exchange or persistence fails, revoke the newly created MCP Authorization
+before retrying bootstrap.
+
+Store the independently generated `SMOKE_CHECK_SECRET` in GitHub and the API
+Worker as before. The deployment and launch-gate workflows assume the narrow
+smoke role through GitHub OIDC and run the rotating smoke command with the fixed
+client:
 
 ```sh
 SMOKE_API_ORIGIN="$(tofu -chdir=infra/compute output -raw api_origin)" \
 SMOKE_DOCS_ORIGIN="$(tofu -chdir=infra/compute output -raw docs_origin)" \
 SMOKE_WEB_ORIGIN="$(tofu -chdir=infra/compute output -raw web_origin)" \
-SMOKE_MCP_CLIENT_ID="$MCP_SMOKE_CLIENT_ID" \
 SMOKE_MCP_REFRESH_SECRET_ID="$MCP_SMOKE_REFRESH_SECRET_ID" \
 SMOKE_CHECK_SECRET="$DEPLOYMENT_SMOKE_CHECK_SECRET" \
 bun run deploy:smoke
 ```
 
-The command first reads the current refresh credential and proves durable write
-authority by creating an equivalent secret version before contacting OAuth. It
-then exchanges the one-time credential, persists the descendant, and only then
-uses the ephemeral ten-minute access token for MCP smoke. All production
-deployment, migration, recovery, launch, release, and credential-rotation
-workflows use the `production-operations` concurrency group, so only one
-production operation can run at a time.
+The command first resolves the exact `AWSCURRENT` version through
+`DescribeSecret`, then reads that immutable version with both its version ID and
+the `AWSCURRENT` stage so a stale stage mapping fails closed instead of returning
+a consumed predecessor. It proves durable write authority by creating an
+equivalent secret version before contacting OAuth, exchanges the one-time
+credential, persists the descendant, and only then uses the ephemeral ten-minute
+access token for MCP smoke. All production deployment, migration, recovery,
+launch, release, and credential-rotation workflows use the
+`production-operations` concurrency group, so only one production operation can
+run at a time.
 
 The command validates web and API health, the static docs origin serving the
 generated OpenAPI document with reviewed security headers and no Scalar CDN or

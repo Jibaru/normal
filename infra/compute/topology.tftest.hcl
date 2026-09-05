@@ -311,7 +311,7 @@ run "development_topology" {
       "inherit:WASENDER_REFERENCE_SECRET",
       "plain_text:DEPLOYMENT_ENVIRONMENT",
     ])
-    error_message = "Provider-control must receive only its environment and inherited Wasender secrets."
+    error_message = "Provider-control must receive only its environment and Wasender lifecycle secrets."
   }
 
   assert {

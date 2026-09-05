@@ -15,6 +15,9 @@
   "vars": {
     "DEPLOYMENT_ENVIRONMENT": "production"
   },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ProviderAllocationGate"] }
+  ],
   "env": {
     "development": {
       "name": "whatsapp-mcp-provider-control-development",

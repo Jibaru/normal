@@ -21,6 +21,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -81,6 +82,10 @@ import {
 } from "@/lib/query/resources";
 import { captureProductAnalyticsEvent } from "../effect/product-analytics";
 import { AccountOverview } from "./account-overview";
+import {
+  getWhatsAppConnectionCapacity,
+  WHATSAPP_CONNECTION_LIMIT,
+} from "./connection-capacity";
 import {
   nextConnectionSetupPollDelayMs,
   observationMetricDurationMs,
@@ -370,6 +375,7 @@ export function PublicBoundaryJourney({
   });
 
   const connections = connectionsQuery.data ?? [];
+  const connectionCapacity = getWhatsAppConnectionCapacity(connections.length);
   const authorizations = authorizationsQuery.data ?? [];
   const insights = insightsQuery.data ?? null;
   const activityLogs = flattenActivityLogs(activityLogsQuery.data?.pages);
@@ -458,7 +464,10 @@ export function PublicBoundaryJourney({
     if (!onboardingQuery.isSuccess || sawInitialConnections.current) return;
     sawInitialConnections.current = true;
     setOnboardingProfile(onboardingQuery.data);
-    setShowFirstConnectionOnboarding(true);
+    setShowFirstConnectionOnboarding(
+      onboardingQuery.data === null ||
+        onboardingQuery.data.firstConnectionCompletedAt === null,
+    );
   }, [
     connectionsQuery.data,
     connectionsQuery.isSuccess,
@@ -842,6 +851,7 @@ export function PublicBoundaryJourney({
         ...current,
         [connection.id]: "Name saved.",
       }));
+      toast.success("Name saved.");
     } catch {
       setNameStatus((current) => ({
         ...current,
@@ -902,6 +912,12 @@ export function PublicBoundaryJourney({
         ...current,
         [connection.id]: `Message Retention Policy saved. Current policy: ${body.policy?.days === null ? "retain until Connection Deletion" : `${body.policy?.days} days`}. Shorter policies apply promptly to retained content.`,
       }));
+      toast.success("Message Retention Policy saved", {
+        description:
+          body.policy?.days === null
+            ? "Current policy: retain until Connection Deletion. Shorter policies apply promptly to retained content."
+            : `Current policy: ${body.policy?.days} days. Shorter policies apply promptly to retained content.`,
+      });
     } catch {
       setRetentionStatus((current) => ({
         ...current,
@@ -1252,7 +1268,8 @@ export function PublicBoundaryJourney({
       if (
         body.personal_account?.state !== "active" ||
         body.personal_account.message_retention_days !== 30 ||
-        body.personal_account.whatsapp_connection_limit !== 3 ||
+        body.personal_account.whatsapp_connection_limit !==
+          WHATSAPP_CONNECTION_LIMIT ||
         body.personal_account.stored_media_limit_bytes !== 5_368_709_120
       ) {
         setState("unavailable");
@@ -1312,11 +1329,14 @@ export function PublicBoundaryJourney({
 
   useEffect(() => {
     if (view !== "overview") return;
+    if (!dashboardReady) return;
+    if (showFirstConnectionOnboarding) return;
+    if (insightsState !== "ok") return;
     captureProductAnalyticsEvent({
       event: "feature_used",
       feature: "account_insights_viewed",
     });
-  }, [view]);
+  }, [dashboardReady, insightsState, showFirstConnectionOnboarding, view]);
 
   const revokeAuthorization = async (authorization: McpAuthorization) => {
     setRevokingAuthorization(authorization.id);
@@ -1433,16 +1453,26 @@ export function PublicBoundaryJourney({
       }
       if (
         body.error === "whatsapp_number_unavailable" ||
+        body.error === "whatsapp_number_cleanup_in_progress" ||
+        body.error === "whatsapp_number_deletion_in_progress" ||
         body.error === "connection_limit_reached"
       ) {
         setupStateRef.current =
           body.error === "whatsapp_number_unavailable"
             ? "number_unavailable"
-            : body.error;
+            : body.error === "whatsapp_number_cleanup_in_progress"
+              ? "number_cleanup_in_progress"
+              : body.error === "whatsapp_number_deletion_in_progress"
+                ? "number_deletion_in_progress"
+                : body.error;
         setSetupState(
           body.error === "whatsapp_number_unavailable"
             ? "number_unavailable"
-            : body.error,
+            : body.error === "whatsapp_number_cleanup_in_progress"
+              ? "number_cleanup_in_progress"
+              : body.error === "whatsapp_number_deletion_in_progress"
+                ? "number_deletion_in_progress"
+                : body.error,
         );
         return;
       }
@@ -1610,6 +1640,7 @@ export function PublicBoundaryJourney({
           {view === "overview" ? (
             <AccountOverview
               authorizations={authorizations}
+              authorizationState={authorizationState}
               connections={connections}
               insights={insights}
               insightsState={insightsState}
@@ -2088,11 +2119,13 @@ export function PublicBoundaryJourney({
                 Your WhatsApp Connections
               </h2>
               <p className="text-sm text-muted-foreground">
-                Connection health, message history, and reconnect controls.
+                Add and manage up to {connectionCapacity.limit} WhatsApp
+                numbers. {connections.length} currently connected or retained.
               </p>
             </div>
             <FormOverlay
               onOpenChange={(open) => {
+                if (open && connectionCapacity.reached) return;
                 const durableActiveSetup =
                   setupId !== null &&
                   setupState !== "cancelled" &&
@@ -2113,8 +2146,14 @@ export function PublicBoundaryJourney({
               }}
               open={setupDialogOpen}
             >
-              <FormOverlayTrigger render={<Button />}>
-                Register WhatsApp Number
+              <FormOverlayTrigger
+                render={<Button disabled={connectionCapacity.reached} />}
+              >
+                {connectionCapacity.reached
+                  ? `${connectionCapacity.limit}-number limit reached`
+                  : connections.length === 0
+                    ? "Add WhatsApp number"
+                    : "Add another WhatsApp number"}
               </FormOverlayTrigger>
               <FormOverlayContent>
                 <FormOverlayHeader>

@@ -21,6 +21,10 @@ import {
   type SetupMarker,
 } from "./control";
 import { providerOrigin } from "./provider-origin";
+import {
+  WebshareProxySelectionError,
+  type WebshareProxySelector,
+} from "./webshare";
 
 const safeReadAttemptTimeoutMs = 10_000;
 const safeReadMaximumAttempts = 3;
@@ -59,6 +63,11 @@ export interface WasenderLifecycleTelemetryEvent {
   readonly responseBytes: number;
 }
 
+export interface WasenderProxyAllocationCoordinator {
+  readonly release: (setupMarker: SetupMarker) => Promise<void>;
+  readonly reserve: (setupMarker: SetupMarker) => Promise<void>;
+}
+
 export interface WasenderLifecycleDependencies {
   readonly fetch?: Fetch;
   readonly now?: () => number;
@@ -66,6 +75,8 @@ export interface WasenderLifecycleDependencies {
   readonly renderQr?: (payload: string) => string;
   readonly sleep?: (milliseconds: number) => Promise<void>;
   readonly telemetry?: (event: WasenderLifecycleTelemetryEvent) => void;
+  readonly proxyAllocationCoordinator?: WasenderProxyAllocationCoordinator;
+  readonly proxySelector?: WebshareProxySelector;
 }
 
 interface ProviderSession {
@@ -74,6 +85,7 @@ interface ProviderSession {
   readonly ignoreGroups: boolean | null;
   readonly logMessages: boolean | null;
   readonly name: string;
+  readonly proxyUrl: string | null;
   readonly readIncomingMessages: boolean | null;
   readonly status: string;
   readonly webhookEnabled: boolean | null;
@@ -138,6 +150,7 @@ const parseProviderSession = (
     ignore_groups: ignoreGroups,
     log_messages: logMessages,
     name,
+    proxy_url: proxyUrl,
     read_incoming_messages: readIncomingMessages,
     status,
     webhook_enabled: webhookEnabled,
@@ -152,6 +165,9 @@ const parseProviderSession = (
     name.length === 0 ||
     typeof status !== "string" ||
     status.length === 0 ||
+    (proxyUrl !== undefined &&
+      proxyUrl !== null &&
+      typeof proxyUrl !== "string") ||
     (apiKey !== undefined && typeof apiKey !== "string") ||
     (webhookSecret !== undefined &&
       webhookSecret !== null &&
@@ -185,6 +201,7 @@ const parseProviderSession = (
     ignoreGroups: typeof ignoreGroups === "boolean" ? ignoreGroups : null,
     logMessages: typeof logMessages === "boolean" ? logMessages : null,
     name,
+    proxyUrl: typeof proxyUrl === "string" ? proxyUrl : null,
     readIncomingMessages:
       typeof readIncomingMessages === "boolean" ? readIncomingMessages : null,
     status,
@@ -369,6 +386,8 @@ export const makeWasenderSessionLifecycle = (
     ((milliseconds: number) =>
       new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
   const telemetry = dependencies.telemetry ?? (() => undefined);
+  const proxyAllocationCoordinator = dependencies.proxyAllocationCoordinator;
+  const proxySelector = dependencies.proxySelector;
   const keyPromise = crypto.subtle.importKey(
     "raw",
     decodeHex(validated.referenceSecret),
@@ -694,6 +713,127 @@ export const makeWasenderSessionLifecycle = (
     session.webhookEvents.length === webhookEvents.length &&
     webhookEvents.every((event) => session.webhookEvents?.includes(event));
 
+  const hasProxyConfiguration = (session: ProviderSession): boolean => {
+    if (proxySelector === undefined) return true;
+    if (session.proxyUrl === null) return false;
+    try {
+      const url = new URL(session.proxyUrl);
+      return (
+        url.protocol === "socks5:" &&
+        url.hostname === "p.webshare.io" &&
+        url.username.length > 0 &&
+        url.password.length > 0 &&
+        Number(url.port) >= 9_999 &&
+        Number(url.port) <= 19_999 &&
+        url.pathname === "" &&
+        url.search === "" &&
+        url.hash === ""
+      );
+    } catch {
+      return false;
+    }
+  };
+
+  const hasSessionConfiguration = (
+    session: ProviderSession,
+    webhookUrl: string,
+  ): boolean =>
+    hasWebhookConfiguration(session, webhookUrl) &&
+    hasProxyConfiguration(session);
+
+  const selectProxyUrl = async (
+    setupMarker: SetupMarker,
+    session?: ProviderSession,
+    operation: "lifecycle-write" | "safe-read" = "lifecycle-write",
+  ): Promise<string | undefined> => {
+    if (proxySelector === undefined) return undefined;
+    try {
+      const providerSessions = await loadProviderSessions();
+      const occupiedProxyUrls: Redacted.Redacted<string>[] = [];
+      for (const candidate of providerSessions) {
+        if (candidate.id === session?.id) continue;
+        const detail = await loadDetail(candidate.id);
+        if (detail.proxyUrl !== null) {
+          occupiedProxyUrls.push(Redacted.make(detail.proxyUrl));
+        }
+      }
+      const selected = await proxySelector.select({
+        ...(session?.proxyUrl === null || session?.proxyUrl === undefined
+          ? {}
+          : { currentProxyUrl: Redacted.make(session.proxyUrl) }),
+        occupiedProxyUrls,
+        setupMarker,
+      });
+      return Redacted.value(selected);
+    } catch (cause) {
+      if (isProviderFailure(cause)) {
+        if (operation === "safe-read") throw cause;
+        const transient =
+          cause.code === "throttled" ||
+          cause.code === "timed_out" ||
+          cause.code === "unavailable";
+        throw writeFailure(cause.code, transient);
+      }
+      if (operation === "safe-read") {
+        throw safeFailure(
+          cause instanceof WebshareProxySelectionError &&
+            !cause.retryable &&
+            !cause.capacityUnavailable
+            ? "integrity_failed"
+            : "unavailable",
+        );
+      }
+      if (
+        cause instanceof WebshareProxySelectionError &&
+        cause.capacityUnavailable
+      ) {
+        throw writeFailure("source_rejected", false);
+      }
+      if (cause instanceof WebshareProxySelectionError && !cause.retryable) {
+        throw writeFailure("integrity_failed", false);
+      }
+      throw writeFailure("unavailable", true);
+    }
+  };
+
+  const withProxyAllocationReservation = async <Value>(
+    setupMarker: SetupMarker,
+    required: boolean,
+    task: () => Promise<Value>,
+  ): Promise<Value> => {
+    if (!required || proxyAllocationCoordinator === undefined) return task();
+    try {
+      await proxyAllocationCoordinator.reserve(setupMarker);
+    } catch {
+      throw writeFailure("unavailable", true);
+    }
+    try {
+      const value = await task();
+      try {
+        await proxyAllocationCoordinator.release(setupMarker);
+      } catch {
+        throw writeFailure("unavailable", true);
+      }
+      return value;
+    } catch (cause) {
+      if (!isProviderFailure(cause)) {
+        throw writeFailure("unavailable", true);
+      }
+      if (
+        cause.operation === "lifecycle-write" &&
+        cause.retryDecision === "reconcile_before_repeat"
+      ) {
+        throw cause;
+      }
+      try {
+        await proxyAllocationCoordinator.release(setupMarker);
+      } catch {
+        throw writeFailure("unavailable", true);
+      }
+      throw cause;
+    }
+  };
+
   const effect = <Value>(task: () => Promise<Value>) =>
     Effect.tryPromise({
       try: task,
@@ -708,6 +848,18 @@ export const makeWasenderSessionLifecycle = (
     const summary = await resolveProviderSession(session);
     if (!summary) throw writeFailure("invalid_response", false);
     const detail = await loadDetail(summary.id);
+    if (action === "connect") {
+      const selectedProxyUrl = await selectProxyUrl(
+        summary.name as SetupMarker,
+        detail,
+      );
+      if (
+        selectedProxyUrl !== undefined &&
+        detail.proxyUrl !== selectedProxyUrl
+      ) {
+        throw writeFailure("integrity_failed", false);
+      }
+    }
     const body = await writeJson(
       `/api/whatsapp-sessions/${summary.id}/${action}`,
       action === "connect"
@@ -759,7 +911,14 @@ export const makeWasenderSessionLifecycle = (
         const existing = await loadSessionsForMarker(setupMarker);
         if (existing.length === 1) {
           const adopted = existing[0];
-          if (!adopted || !hasWebhookConfiguration(adopted, webhookUrl)) {
+          if (!adopted || !hasSessionConfiguration(adopted, webhookUrl)) {
+            throw writeFailure("integrity_failed", false);
+          }
+          const selectedProxyUrl = await selectProxyUrl(setupMarker, adopted);
+          if (
+            selectedProxyUrl !== undefined &&
+            adopted.proxyUrl !== selectedProxyUrl
+          ) {
             throw writeFailure("integrity_failed", false);
           }
           return toLifecycleSession(adopted);
@@ -767,31 +926,40 @@ export const makeWasenderSessionLifecycle = (
         if (existing.length > 1) {
           throw writeFailure("integrity_failed", false);
         }
-        const body = await writeJson("/api/whatsapp-sessions", {
-          body: {
-            account_protection: true,
-            ignore_groups: false,
-            log_messages: false,
-            name: marker,
-            phone_number: number,
-            read_incoming_messages: false,
-            webhook_enabled: true,
-            webhook_events: webhookEvents,
-            webhook_url: webhookUrl,
+        const proxyUrl = await selectProxyUrl(setupMarker);
+        return withProxyAllocationReservation(
+          setupMarker,
+          proxyUrl !== undefined,
+          async () => {
+            const body = await writeJson("/api/whatsapp-sessions", {
+              body: {
+                account_protection: true,
+                ignore_groups: false,
+                log_messages: false,
+                name: marker,
+                phone_number: number,
+                ...(proxyUrl === undefined ? {} : { proxy_url: proxyUrl }),
+                read_incoming_messages: false,
+                webhook_enabled: true,
+                webhook_events: webhookEvents,
+                webhook_url: webhookUrl,
+              },
+              method: "POST",
+            });
+            return completeLifecycleWrite(async () => {
+              const created = parseProviderSession(parseData(body.value), true);
+              if (
+                !created ||
+                created.name !== marker ||
+                !hasSessionConfiguration(created, webhookUrl) ||
+                (proxyUrl !== undefined && created.proxyUrl !== proxyUrl)
+              ) {
+                throw writeFailure("invalid_response", true);
+              }
+              return toLifecycleSession(created);
+            });
           },
-          method: "POST",
-        });
-        return completeLifecycleWrite(async () => {
-          const created = parseProviderSession(parseData(body.value), true);
-          if (
-            !created ||
-            created.name !== marker ||
-            !hasWebhookConfiguration(created, webhookUrl)
-          ) {
-            throw writeFailure("invalid_response", true);
-          }
-          return toLifecycleSession(created);
-        });
+        );
       }),
     deleteSession: ({ session }) =>
       effect(async (): Promise<SessionDeletionObservation> => {
@@ -853,19 +1021,28 @@ export const makeWasenderSessionLifecycle = (
         };
       }),
     listSessions: ({ setupMarker }) => effect(() => listSessions(setupMarker)),
-    reconcileSession: ({ setupMarker, webhookEndpoint }) =>
+    reconcileSession: ({ requireConnectReady, setupMarker, webhookEndpoint }) =>
       effect(async (): Promise<SessionReconciliation> => {
         const providerSessions = await loadSessionsForMarker(setupMarker);
         if (providerSessions.length === 0) return { outcome: "absent" };
         if (providerSessions.length === 1) {
           const providerSession = providerSessions[0];
           if (!providerSession) throw safeFailure("invalid_response");
+          const validateProxy =
+            requireConnectReady === true || webhookEndpoint !== undefined;
+          const selectedProxyUrl = validateProxy
+            ? await selectProxyUrl(setupMarker, providerSession, "safe-read")
+            : undefined;
           if (
-            webhookEndpoint !== undefined &&
-            !hasWebhookConfiguration(
-              providerSession,
-              Redacted.value(webhookEndpoint),
-            )
+            (webhookEndpoint !== undefined &&
+              !hasSessionConfiguration(
+                providerSession,
+                Redacted.value(webhookEndpoint),
+              )) ||
+            (validateProxy &&
+              (!hasProxyConfiguration(providerSession) ||
+                (selectedProxyUrl !== undefined &&
+                  providerSession.proxyUrl !== selectedProxyUrl)))
           ) {
             throw safeFailure("integrity_failed");
           }
@@ -896,25 +1073,36 @@ export const makeWasenderSessionLifecycle = (
         }
         const providerSession = providerSessions[0];
         if (!providerSession) throw writeFailure("integrity_failed", false);
-        await writeJson(`/api/whatsapp-sessions/${providerSession.id}`, {
-          body: {
-            account_protection: true,
-            ignore_groups: false,
-            log_messages: false,
-            read_incoming_messages: false,
-            webhook_enabled: true,
-            webhook_events: webhookEvents,
-            webhook_url: webhookUrl,
+        const proxyUrl = await selectProxyUrl(setupMarker, providerSession);
+        return withProxyAllocationReservation(
+          setupMarker,
+          proxyUrl !== undefined && providerSession.proxyUrl !== proxyUrl,
+          async () => {
+            await writeJson(`/api/whatsapp-sessions/${providerSession.id}`, {
+              body: {
+                account_protection: true,
+                ignore_groups: false,
+                log_messages: false,
+                ...(proxyUrl === undefined ? {} : { proxy_url: proxyUrl }),
+                read_incoming_messages: false,
+                webhook_enabled: true,
+                webhook_events: webhookEvents,
+                webhook_url: webhookUrl,
+              },
+              method: "PUT",
+            });
+            return completeLifecycleWrite(async () => {
+              const repaired = await loadDetail(providerSession.id);
+              if (
+                !hasSessionConfiguration(repaired, webhookUrl) ||
+                (proxyUrl !== undefined && repaired.proxyUrl !== proxyUrl)
+              ) {
+                throw writeFailure("integrity_failed", true);
+              }
+              return toLifecycleSession(repaired);
+            });
           },
-          method: "PUT",
-        });
-        return completeLifecycleWrite(async () => {
-          const repaired = await loadDetail(providerSession.id);
-          if (!hasWebhookConfiguration(repaired, webhookUrl)) {
-            throw writeFailure("integrity_failed", true);
-          }
-          return toLifecycleSession(repaired);
-        });
+        );
       }),
   };
 };

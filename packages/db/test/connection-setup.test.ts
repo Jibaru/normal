@@ -655,6 +655,30 @@ describe("Connection Setup repository", () => {
     ]);
   });
 
+  test("identifies an owned cancelled Setup reservation as cleanup in progress", async () => {
+    const repository = makeConnectionSetupRepository(provider);
+    const setupId = "cst_000000000000000000001";
+    await repository.start(
+      startInput(accountA, setupId, "123456789012345678901", 1),
+    );
+    await repository.cancel({
+      cancelledAt: "2026-07-31T12:01:00.000Z",
+      clerkUserId: "user_setupa",
+      setupId,
+    });
+
+    await expect(
+      repository.start(
+        startInput(
+          accountA,
+          "cst_000000000000000000002",
+          "223456789012345678901",
+          1,
+        ),
+      ),
+    ).resolves.toEqual({ outcome: "number_cleanup_in_progress" });
+  });
+
   test("expires incomplete setups exactly at 15 minutes and recovers cleanup work", async () => {
     const repository = makeConnectionSetupRepository(provider);
     const setupId = "cst_000000000000000000001";

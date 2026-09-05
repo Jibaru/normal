@@ -73,6 +73,7 @@ describe("onboarding profile contract", () => {
     const profile = {
       completed_at: "2026-08-13T12:00:00.000Z",
       created_at: "2026-08-13T12:00:00.000Z",
+      first_connection_completed_at: null,
       intended_mcp_client: "chatgpt",
       primary_use_case: "summaries",
       research_call_interest: "not_sure",

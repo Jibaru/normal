@@ -119,6 +119,7 @@ export interface SessionLifecycle {
     readonly session: LifecycleSessionLocator;
   }) => AdapterEffect<SessionNumberVerification>;
   readonly reconcileSession: (request: {
+    readonly requireConnectReady?: true | undefined;
     readonly setupMarker: SetupMarker;
     readonly webhookEndpoint?: WebhookEndpoint | undefined;
   }) => AdapterEffect<SessionReconciliation>;
@@ -151,4 +152,5 @@ export {
   type WasenderLifecycleConfig,
   type WasenderLifecycleDependencies,
   type WasenderLifecycleTelemetryEvent,
+  type WasenderProxyAllocationCoordinator,
 } from "./control-wasender";

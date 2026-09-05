@@ -1,6 +1,27 @@
 import { exports } from "cloudflare:workers";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
+const json = (body: unknown) =>
+  new Response(JSON.stringify(body), {
+    headers: { "content-type": "application/json" },
+  });
+
+const webhookEvents = [
+  "contacts.update",
+  "contacts.upsert",
+  "groups.update",
+  "groups.upsert",
+  "message-receipt.update",
+  "message.sent",
+  "messages-group.received",
+  "messages-personal.received",
+  "messages.delete",
+  "messages.received",
+  "messages.update",
+  "messages.upsert",
+  "session.status",
+];
+
 describe("provider-control Worker entrypoint", () => {
   test("serves the health canary through its service-binding entrypoint", async () => {
     const response = await exports.default.fetch(
@@ -59,6 +80,52 @@ describe("provider-control Worker entrypoint", () => {
       ok: false,
     });
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  test("creates a safely configured provider session without a proxy", async () => {
+    const setupMarker = "cst_0123456789abcdefghijk";
+    const webhookUrl =
+      "https://api.example.test/webhooks/wasender/30000000-0000-4000-8000-000000000041";
+    let createBody: Record<string, unknown> | undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (request.method === "POST") {
+        createBody = (await request.json()) as Record<string, unknown>;
+        return json({
+          data: {
+            ...createBody,
+            api_key: "session_credential",
+            created_at: "2026-08-25T22:00:00Z",
+            id: 41,
+            status: "NEED_SCAN",
+            updated_at: "2026-08-25T22:00:00Z",
+            webhook_secret: "webhook_secret",
+          },
+          success: true,
+        });
+      }
+      return json({ data: [], success: true });
+    });
+
+    const result = await exports.default.createSession({
+      phoneNumber: "+15550123456",
+      setupMarker,
+      webhookUrl,
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    expect(createBody).toMatchObject({
+      account_protection: true,
+      ignore_groups: false,
+      log_messages: false,
+      name: setupMarker,
+      phone_number: "+15550123456",
+      read_incoming_messages: false,
+      webhook_enabled: true,
+      webhook_events: webhookEvents,
+      webhook_url: webhookUrl,
+    });
+    expect(createBody).not.toHaveProperty("proxy_url");
   });
 
   test("does not expose lifecycle operations over HTTP", async () => {

@@ -46,8 +46,12 @@ describe("production MCP smoke credential infrastructure", () => {
       expect(workflow).toContain("id-token: write");
       expect(workflow).toContain("AWS_MCP_SMOKE_CREDENTIAL_ROLE_ARN");
       expect(workflow).toContain("MCP_SMOKE_REFRESH_SECRET_ID");
+      expect(workflow).not.toMatch(/(?:MCP_SMOKE|SMOKE_MCP)_CLIENT_ID/u);
       expect(workflow).not.toContain("MCP_SMOKE_ACCESS_TOKEN");
       expect(workflow).not.toMatch(/\$GITHUB_(?:ENV|OUTPUT)/u);
     }
+    expect(await read("scripts/mcp-smoke-credentials.ts")).toContain(
+      'const clientId = "deployment-smoke";',
+    );
   });
 });

@@ -14,6 +14,7 @@ import type {
 } from "./session";
 import { PdfSending as PdfSendingTag } from "./session";
 import {
+  type BoundedBody,
   classifySendResponse,
   isProtectedString,
   type OutboundSendRuntime,
@@ -37,7 +38,7 @@ const contactIdentifier =
   /^(?:\+[1-9]\d{1,14}|[1-9]\d{6,14}|[1-9]\d{6,14}(?::\d{1,5})?@s\.whatsapp\.net|[1-9]\d{1,31}(?::\d{1,5})?@lid|@[A-Za-z0-9._-]{1,64})$/u;
 const groupIdentifier = /^[1-9]\d{1,31}(?:-[1-9]\d{1,31})?@g\.us$/u;
 
-const providerDestination = (
+export const providerDestination = (
   kind: "contact" | "group",
   identifier: string,
 ): string | null => {
@@ -72,7 +73,7 @@ const retryAfter = (
     : null;
 };
 
-const uploadFailure = (response?: Response): PdfSendResult => {
+export const uploadFailure = (response?: Response): PdfSendResult => {
   if (response?.status === 401 || response?.status === 403) {
     return {
       outcome: "definitive_failure",
@@ -94,7 +95,7 @@ const uploadFailure = (response?: Response): PdfSendResult => {
   };
 };
 
-const publicUrlFrom = (text: string | null): string | null => {
+export const publicUrlFrom = (text: string | null): string | null => {
   if (text === null) return null;
   try {
     const value: unknown = JSON.parse(text);
@@ -121,19 +122,24 @@ const publicUrlFrom = (text: string | null): string | null => {
   }
 };
 
-const requestWithTimeout = async (
+export const requestWithTimeout = async (
   runtime: OutboundSendRuntime,
   input: string,
   init: RequestInit,
-): Promise<Response> => {
+  timeoutMs: number,
+): Promise<{ readonly body: BoundedBody; readonly response: Response }> => {
   const controller = new AbortController();
   let timedOut = false;
   const timeout = runtime.setTimeout(() => {
     timedOut = true;
     controller.abort();
-  }, 15_000);
+  }, timeoutMs);
   try {
-    return await runtime.fetch(input, { ...init, signal: controller.signal });
+    const response = await runtime.fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+    return { body: await readBoundedBody(response), response };
   } catch (error) {
     if (timedOut) throw new DOMException("aborted", "AbortError");
     throw error;
@@ -196,21 +202,28 @@ export const makeWasenderPdfSendingWithRuntime = (
             result = uploadFailure();
           } else {
             uploadAttemptCount = 1;
+            let uploadBody: BoundedBody;
             let uploadResponse: Response;
             try {
-              uploadResponse = await requestWithTimeout(runtime, uploadUrl, {
-                body: bytes,
-                headers: {
-                  authorization: `Bearer ${authority}`,
-                  "content-type": "application/pdf",
-                },
-                method: "POST",
-                redirect: "manual",
-              });
+              ({ body: uploadBody, response: uploadResponse } =
+                await requestWithTimeout(
+                  runtime,
+                  uploadUrl,
+                  {
+                    body: bytes,
+                    headers: {
+                      authorization: `Bearer ${authority}`,
+                      "content-type": "application/pdf",
+                    },
+                    method: "POST",
+                    redirect: "manual",
+                  },
+                  10_000,
+                ));
             } catch {
               uploadResponse = new Response(null, { status: 503 });
+              uploadBody = await readBoundedBody(uploadResponse);
             }
-            const uploadBody = await readBoundedBody(uploadResponse);
             responseBytes = uploadBody.bytes;
             const documentUrl = uploadResponse.ok
               ? publicUrlFrom(uploadBody.text)
@@ -221,7 +234,7 @@ export const makeWasenderPdfSendingWithRuntime = (
             } else {
               sendAttemptCount = 1;
               try {
-                const response = await requestWithTimeout(
+                const { body, response } = await requestWithTimeout(
                   runtime,
                   sendMessageUrl,
                   {
@@ -237,8 +250,8 @@ export const makeWasenderPdfSendingWithRuntime = (
                     method: "POST",
                     redirect: "manual",
                   },
+                  15_000,
                 );
-                const body = await readBoundedBody(response);
                 responseBytes = body.bytes;
                 result = await classifySendResponse(
                   response,

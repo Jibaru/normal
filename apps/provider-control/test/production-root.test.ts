@@ -37,6 +37,17 @@ describe("provider-control production root", () => {
     expect(response.status).toBe(503);
   });
 
+  test("does not require Webshare configuration", async () => {
+    const response = await createProductionHandler({
+      DEPLOYMENT_ENVIRONMENT: "production",
+      WASENDER_API_CREDENTIAL: "12|opaque+provider/credential=value",
+      WASENDER_REFERENCE_SECRET:
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    })(new Request("https://provider-control.internal/health"));
+
+    expect(response.status).toBe(200);
+  });
+
   test("fails closed when deployment configuration is absent", async () => {
     const response = await createProductionHandler({})(
       new Request("https://provider-control.internal/health"),

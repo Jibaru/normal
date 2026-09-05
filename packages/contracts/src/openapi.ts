@@ -118,7 +118,7 @@ export const restRouteRegistry = [
   },
   {
     description:
-      "Create or exactly replay one Send Operation using exactly one destination: a known active `ctc_` contact, a joined `grp_` group, an E.164 `phone`, or a WhatsApp `username`. Supply exact `text`, or supply `file_name` with exactly one PDF source: `pdf_url` or standard padded `pdf_base64`. PDFs may not exceed 16 MiB. Requires `Idempotency-Key`. Conversation identifiers, provider JIDs, channel identifiers, and self-attested confirmation flags are not accepted. Direct addresses are not persisted or returned and fail closed while a Recipient Exclusion is active on the Connection. PDF source and provider upload URLs are not retained or returned. Exact replay returns the existing operation without resending. Failed and unknown post-boundary outcomes remain Send Operation resources.",
+      "Create or exactly replay one Send Operation using exactly one destination: a known active `ctc_` contact, a joined `grp_` group, an E.164 `phone`, or a WhatsApp `username`. Supply exact `text`; supply `file_name` with exactly one PDF source (`pdf_url` or standard padded `pdf_base64`); or supply exactly one JPEG/PNG image source (`image_url` or standard padded `image_base64`) with an optional `caption` and no filename. PDFs may not exceed 16 MiB and images may not exceed 5,000,000 bytes. Requires `Idempotency-Key`. Conversation identifiers, provider JIDs, channel identifiers, and self-attested confirmation flags are not accepted. Direct addresses are not persisted or returned and fail closed while a Recipient Exclusion is active on the Connection. Source and provider upload URLs are not retained or returned. Exact replay returns the existing operation without resending. Failed and unknown post-boundary outcomes remain Send Operation resources.",
     method: "POST",
     operationId: "createSendOperation",
     path: "/v1/connections/{connection_id}/send-operations",
@@ -380,6 +380,17 @@ const createPdfBase64SendOperationExample = {
   pdf_base64: "JVBERi0xLjcKJSVFT0YK",
 };
 
+const createImageUrlSendOperationExample = {
+  recipient_id: "ctc_xxxxxxxxxxxxxxxxxxxxx",
+  image_url: "https://files.example.com/photo.jpg",
+  caption: "A photo from a server-side automation.",
+};
+
+const createImageBase64SendOperationExample = {
+  recipient_id: "ctc_xxxxxxxxxxxxxxxxxxxxx",
+  image_base64: "iVBORw0KGgo=",
+};
+
 const apiKeySummaryExample = {
   connection_ids: ["con_xxxxxxxxxxxxxxxxxxxxx"],
   created_at: "2026-08-14T12:00:00.000Z",
@@ -479,7 +490,7 @@ export const generateOpenApiDocument = (): Record<string, unknown> => ({
     },
     {
       description:
-        "Idempotent text and PDF Send Operations created by the calling API Key. Creating a Send Operation is the caller's explicit action; Client Confirmation is MCP-specific and is not a REST field.",
+        "Idempotent text, PDF, and JPEG/PNG image Send Operations created by the calling API Key. Creating a Send Operation is the caller's explicit action; Client Confirmation is MCP-specific and is not a REST field.",
       name: "Send Operations",
     },
   ],
@@ -1345,6 +1356,14 @@ export const generateOpenApiDocument = (): Record<string, unknown> => ({
                 pdfBase64: {
                   summary: "PDF from standard padded Base64",
                   value: createPdfBase64SendOperationExample,
+                },
+                imageUrl: {
+                  summary: "JPEG image from an HTTPS URL with a caption",
+                  value: createImageUrlSendOperationExample,
+                },
+                imageBase64: {
+                  summary: "PNG image from standard padded Base64",
+                  value: createImageBase64SendOperationExample,
                 },
               },
               schema: { $ref: "#/components/schemas/CreateSendOperation" },

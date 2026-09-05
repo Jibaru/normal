@@ -36,21 +36,20 @@ Secret examples never contain usable key material.
 | Operations control origin | Non-secret | Recovery verifier, recovery game day, and observability canary | OpenTofu assigns `https://operations.normal.fast` in production. Use `/v1/availability`, `/v1/alerts`, and `/v1/receipts` only with their separate bearer credentials. It is not an application API origin. |
 | `CLOUDFLARE_ANALYTICS_TOKEN` | Secret | Operations control only | Zone scoped Cloudflare token with Analytics Read and no write authority. It queries HTTP request and Email Service delivery evidence for the production zone. |
 | `CLOUDFLARE_ZONE_ID` | Sensitive identifier | Operations control and infrastructure runners | Exact production zone containing the API, operations, and pager sending hostnames. Store it with the operations Worker secrets so a request cannot redirect an analytics query. |
-| `MCP_SMOKE_CLIENT_ID` | Public authorization-policy identifier | Deployment and launch-gate workflows | The reviewed public OAuth client ID used by the dedicated deployment-smoke MCP Authorization. Change only with the corresponding client-policy review and reauthorization. |
-| `MCP_SMOKE_REFRESH_SECRET_ID` | Sensitive identifier | Deployment and launch-gate workflows | The exact AWS Secrets Manager secret created by `mcp-smoke-credential.template.json`. Its plaintext is the current one-time refresh credential and is read and replaced only by the environment-bound smoke role. |
+| `MCP_SMOKE_REFRESH_SECRET_ID` | Sensitive identifier | Deployment and launch-gate workflows | The exact AWS Secrets Manager secret created by `mcp-smoke-credential.template.json`. Its plaintext is the current one-time refresh credential and is read and replaced only by the environment-bound smoke role. Readers resolve the exact `AWSCURRENT` version with `DescribeSecret`, then bind both that version ID and stage when fetching its value so a stale mapping fails closed instead of replaying a consumed predecessor. |
 | `AWS_MCP_SMOKE_CREDENTIAL_ROLE_ARN` | Non-secret authority identifier | GitHub Actions OIDC | Exact role allowed to read and rotate only the production smoke refresh secret. Trust is limited to this repository's `production` and `production-launch-gate` protected environments. |
 | `MCP_REQUESTS_PER_MINUTE` | Non-secret approved quota | API MCP and REST resource server | Authoritative per-Personal-Account request reservations allowed in an exact rolling minute, shared by MCP and REST. REST also applies the same reviewed value as the per-API-Key minute limit. Set the reviewed positive integer through `mcp_requests_per_minute`; there is no production default. |
 | `MCP_REQUESTS_PER_HOUR` | Non-secret approved quota | API MCP and REST resource server | Authoritative per-Personal-Account request reservations allowed in an exact rolling hour, shared by MCP and REST. REST also applies the same reviewed value as the per-API-Key hour limit. Set the reviewed integer through `mcp_requests_per_hour`; it must be at least the minute value and has no production default. |
-| `READ_MESSAGE_RECORDS_PER_DAY` | Non-secret approved quota | API MCP resource server | Authoritative per-Personal-Account Stored Message records returned per UTC day. Tombstones count and there is no production default. |
-| `DECRYPTED_MEDIA_BYTES_PER_DAY` | Non-secret approved quota | API MCP resource server | Authoritative per-Personal-Account full plaintext Stored Media bytes reserved per UTC day before decryption. There is no production default. |
+| `READ_MESSAGE_RECORDS_PER_DAY` | Non-secret approved quota | API MCP and REST resource server | Authoritative per-Personal-Account Stored Message records returned per UTC day, shared by MCP and REST. Tombstones count and there is no production default. |
+| `DECRYPTED_MEDIA_BYTES_PER_DAY` | Non-secret approved quota | API MCP and REST resource server | Authoritative per-Personal-Account full plaintext Stored Media bytes reserved per UTC day before decryption, shared by MCP and REST. There is no production default. |
 | `MCP_CURSOR_HMAC_SECRET` | Secret | API MCP and REST resource server | Dedicated 32-byte hex HMAC key for authorization-bound pagination cursors. REST Directory cursors use a distinct signing document that binds the API Key grant and operation ID, so MCP and REST cursors are not interchangeable. Generate independently with `openssl rand -hex 32`; never reuse OAuth, content, provider-reference, webhook, reservation, or deletion keys. Rotation invalidates outstanding short-lived cursors. |
 | `API_KEY_HMAC_SECRET` | Secret | API API Key management, REST authentication, and direct MCP authentication | Dedicated 32-byte hex HMAC key for User-created API Key credential digests. The Worker computes the digest and passes only the public handle and digest to `bootstrap_api_key`. API Key-shaped credentials at `POST /mcp` take this path before OAuth middleware; failure never falls back to OAuth. Generate independently with `openssl rand -hex 32`; never reuse OAuth, cursor, content, provider-reference, webhook, reservation, or deletion keys. A Personal Account may retain at most ten active API Keys. Creating an API Key requires Clerk first-factor verification within five minutes. Optional expiry is enforced with database time on the next request; hourly scheduled work then clears the digest and later purges safe expired or revoked metadata after 90 days. Connection Deletion removes that WhatsApp Connection from every API Key and permanently revokes a key that loses its last selected Connection, clearing the digest. Disconnection does not revoke the key. Every production database restore revokes every restored API Key, clears every digest, and requires a newly generated secret before traffic reopens; the predecessor is not accepted as a verification fallback. Users create replacement keys after recovery. Routine rotation that preserves active keys is not part of v1. |
-| `SEND_FINGERPRINT_HMAC_SECRET` | Secret | API outbound-send workflow | Dedicated 32-byte hex HMAC key for non-reversible exact-request fingerprints retained with idempotency bindings. Generate independently; do not replace it while any 90-day binding remains live. |
+| `SEND_FINGERPRINT_HMAC_SECRET` | Secret | API outbound-send workflow | Dedicated 32-byte hex HMAC key for domain-separated non-reversible exact-request and request-shape fingerprints retained with idempotency bindings, including image MIME and optional exact caption. Generate independently; do not replace it while any 90-day binding remains live. |
 | `SENDS_PER_MINUTE` | Non-secret approved quota | API outbound-send workflow | Per-authorization exact rolling-minute send reservation limit. There is no production default. |
 | `SENDS_PER_DAY` | Non-secret approved quota | API outbound-send workflow | Per-Personal-Account UTC-day send reservation limit. There is no production default. |
 | `MESSAGE_RETENTION_DAY_OPTIONS` | Non-secret reviewed product policy | API and web Message Retention Policy controls | Set to the reviewed strictly increasing comma-separated finite-day choices containing the 30-day default; `7,30,90` is the private-beta example. Change only through a reviewed product deployment. |
 | `DATABASE_URL` | Secret | Database tooling that consumes `@whatsapp-mcp/db/config` | Issue a restricted Neon role URL, store it in the deployment secret store, and rotate it through Neon plus the deployment platform. API production traffic uses Hyperdrive instead. |
-| `MIGRATION_DATABASE_URL` | Secret | `bun run db:migrate` and `bun run db:check` | Obtain the direct, unpooled owner URL from the sensitive OpenTofu output. It must be a TLS Neon URL and must never be configured on a Worker or web deployable. Rotate it by rotating the Neon migration-owner password. |
+| `MIGRATION_DATABASE_URL` | Secret | `bun run db:migrate`, `bun run db:check`, and the protected account-envelope recovery workflow | Obtain the direct, unpooled owner URL from the sensitive OpenTofu output. It must be a TLS Neon URL and must never be configured on a Worker or web deployable. Rotate it by rotating the Neon migration-owner password. |
 | `NEON_API_KEY` | Secret | OpenTofu Neon provider | Issue an organization-scoped automation key, keep it only in the infrastructure runner, and rotate it in Neon. |
 | `CLOUDFLARE_API_TOKEN` | Secret | OpenTofu Cloudflare provider and Wrangler | Scope it to the declared Workers, R2, KV, Queues, schedules, Hyperdrive, and API custom domain in the current environment's account. Rotate it in Cloudflare. |
 | `CLOUDFLARE_ACCOUNT_ID` | Sensitive identifier | Wrangler | Cloudflare account selected for Worker deployment. |
@@ -62,17 +61,19 @@ Secret examples never contain usable key material.
 | `AWS_KMS_REGION` | Non-secret | API and deletion coordinator | Must be exactly `us-east-1`, matching ADR 0013 and the KMS stack region. |
 | `KMS_CONTENT_ROOT_KEY_ARN` | Non-secret | API | The environment's `ContentRootKeyArn` CloudFormation output. The production root accepts only a `us-east-1` KMS key ARN. |
 | `KMS_DELETION_COORDINATOR_KEY_ARN` | Non-secret | API Deletion Capsule writer and deletion coordinator | The environment's distinct `DeletionCoordinatorKeyArn` output. The Content Runtime role may encrypt capsules but cannot decrypt them; the coordinator role may decrypt but cannot encrypt. |
+| `AWS_DELETION_CREDENTIAL_BROKER_ROLE_ARN` | Non-secret identifier | Protected `production` GitHub environment | GitHub OIDC broker that may assume only the production Deletion Coordinator role. It has no KMS authority itself and is distinct from the API content credential broker. |
+| `AWS_DELETION_COORDINATOR_ROLE_ARN` | Non-secret identifier | Protected `production` GitHub environment | Exact production `DeletionCoordinatorRoleArn`. The credential rotation and deployment workflows assume it only through the dedicated deletion credential broker and upload its one-hour session only to the deletion coordinator Worker. |
 | Break-glass role ARN | Non-secret | Incident credential broker only | The environment's `BreakGlassRoleArn` output. Sessions require MFA, last at most one hour, and must carry the approved `personalAccountId` and `breakGlassRequestId` tags. Never configure this role on an application Worker. |
 | `DELETION_COORDINATOR_DATABASE_URL` | Secret | Deletion coordinator | TLS Neon URL authenticated only as `whatsapp_deletion_runtime`. The role can list marker IDs and confirm provider absence, but cannot select tenant tables. |
 | `DELETION_MARKER_HMAC_SECRET` | Secret | API deletion-marker writer | Dedicated 32-byte hex HMAC key for restore-external marker object keys. Generate independently with `openssl rand -hex 32`, retain it in the recovery inventory, and never reuse a provider-reference, webhook, cursor, or content key. |
 | `RECIPIENT_TRANSITION_HMAC_SECRET` | Secret | API WhatsApp Recipient Exclusion writer and restore coordinator | Dedicated 32-byte hex HMAC key that derives the non-reversible recipient transition journal prefix from environment, WhatsApp Connection identity, recipient kind, and stable recipient locator. Generate independently with `openssl rand -hex 32`, retain it in the recovery inventory, and never reuse a deletion-marker, provider-reference, webhook, cursor, OAuth, WhatsApp Number, or content key. Losing it makes existing journal evidence unreadable and keeps a restored branch closed. |
-| `NEON_BRANCH_ID` | Internal | API and restore coordinator | The exact opaque Neon branch identity. Readiness is bound to it so a restored branch inherits a non-matching approval and remains closed. |
+| `NEON_BRANCH_ID` | Internal | API, restore coordinator, and the protected account-envelope recovery workflow | The exact opaque Neon branch identity. Readiness is bound to it so a restored branch inherits a non-matching approval and remains closed. Account-envelope recovery additionally verifies that its migration-owner connection reaches this exact serving branch. |
 | `RESTORE_DATABASE_URL` | Secret | Restore coordinator only | Direct TLS Neon URL for the `whatsapp_restore_runtime` role. It exposes only restore replay functions and must never be bound to the API or other Workers. |
 | Recovery control origin | Non-secret | Protected `production-recovery` GitHub environment | OpenTofu assigns the distinct `https://recovery.normal.fast/drills` production endpoint. Store it as `RECOVERY_AUTOMATION_URL`; it is not an application API origin and accepts only the closed authenticated drill contract. |
 | `RECOVERY_CONTROL_TOKEN` | Secret | Recovery control and protected `production-recovery` GitHub environment | Generate an independent random bearer credential. The Worker compares fixed-size SHA-256 digests without data-dependent early return. Rotate both stores together; never reuse an API Key, OAuth, smoke, or provider credential. |
-| `NEON_RECOVERY_API_KEY` | Secret | Recovery control and recovery verifier | Issue a project-scoped Neon control-plane key limited to recovery branch lifecycle. It must not be an organization-wide infrastructure key or database credential. Rotate both Worker stores together. |
-| `NEON_PROJECT_ID` | Sensitive identifier | Recovery control and recovery verifier | Exact project selected by the project-scoped recovery key. Store with Worker secrets so it cannot be redirected by a request. |
-| `NEON_PARENT_BRANCH_ID` | Sensitive identifier | Recovery control and recovery verifier | Exact production parent branch allowed for PITR children. It is independent from serving `NEON_BRANCH_ID`; every create, reconcile, reset, URI, and delete operation rechecks it. |
+| `NEON_RECOVERY_API_KEY` | Secret | Recovery control, recovery verifier, and the protected account-envelope recovery workflow | Issue a project-scoped Neon control-plane key limited to recovery branch lifecycle. It must not be an organization-wide infrastructure key or database credential. Rotate every consumer together. |
+| `NEON_PROJECT_ID` | Sensitive identifier | Recovery control, recovery verifier, and the protected account-envelope recovery workflow | Exact project selected by the project-scoped recovery key. Store with Worker or protected workflow secrets so it cannot be redirected by a request. |
+| `NEON_PARENT_BRANCH_ID` | Sensitive identifier | Recovery control, recovery verifier, and the protected account-envelope recovery workflow | Exact production parent branch allowed for PITR children. It is independent from serving `NEON_BRANCH_ID` generally; every create, reconcile, reset, URI, and delete operation rechecks it, while account-envelope recovery additionally requires it to be the current serving branch. |
 | `RECOVERY_EVIDENCE_TOKEN` | Secret | Recovery control and recovery verifier only | Dedicated bearer credential on the private recovery-control-to-verifier service binding. Generate independently and never reuse an API, provider, or observability credential. |
 | `RECOVERY_VERIFIER_DATABASE_PASSWORD` | Secret | Recovery control and recovery verifier only | Dedicated 32-byte hex password for the SQL-created `whatsapp_recovery_auditor` role on disposable recovery branches. Recovery control rotates the role to this value only after forward migrations, and the verifier uses it only through a direct TLS connection. Generate independently and never reuse a Neon API, migration-owner, serving runtime, or application credential. |
 | `OBSERVABILITY_QUERY_URL` / `OBSERVABILITY_QUERY_TOKEN` | Secret operational endpoint and read credential | Recovery verifier and operations control | Set the URL to `https://operations.normal.fast/v1/availability` and use an independent bearer credential. Operations control returns exact seven day first party, Wasender, and WhatsApp availability plus the deployed API smoke result. The verifier derives RPO from the requested point and the committed heartbeat read from the recovered Neon branch, never from observability input. The query exposes no request, content, provider, or tenant identifiers. |
@@ -227,7 +228,12 @@ global fetch protection.
 
 Before consent, the API exactly matches `client_id`, `redirect_uri`,
 `resource`, response type, and PKCE against the source-defined client policy.
-Fixed clients use the local allowlist. A URL-shaped ChatGPT client ID must be an
+Fixed clients use the local allowlist. The `deployment-smoke` client accepts
+only the literal HTTP `127.0.0.1` loopback redirect with the exact registered
+path, a nonzero explicit callback port, and no query or fragment; the
+dynamically selected RFC 8252 callback port is the only variable part. It also
+admits only `connections:read`, independently of what a caller requests or a
+User selects. A URL-shaped ChatGPT client ID must be an
 HTTPS `chatgpt.com` OAuth metadata document ending in `/client.json`; the OAuth
 provider fetches and validates that document, and every advertised redirect
 must also be HTTPS on `chatgpt.com`. ChatGPT metadata may identify the client as
@@ -303,7 +309,9 @@ memory only. Deployment, migration, recovery drills, launch gate, and the
 public API release gate share the `production-operations` concurrency group
 with production credential rotation, preserving one serialized credential
 lineage.
-Neither token may enter GitHub secrets, command arguments, outputs, artifacts,
+The workflows fix the public client ID to `deployment-smoke`; it is not a
+mutable repository or environment variable. Neither token may enter GitHub
+secrets, command arguments, outputs, artifacts,
 telemetry, repository state, or OpenTofu state.
 
 Migration 0009 adds an ADR 0023 `mca_` management handle and the consent-time
@@ -373,15 +381,19 @@ Its response is an explicit allowlist and never exposes internal IDs, message
 or media content, full phone numbers, credentials, OAuth tokens, API Key
 secrets, provider identifiers, scope sets, request or response content, or raw
 payloads. MCP-channel rows remain compatible; API-channel rows omit
-`mcp_authorization_id` and present the `apk_` handle instead. MCP tool
-telemetry is limited to `mcp.tool_call.completed`, the fixed
-`list_connections` or `list_groups` tool name, an allowlisted outcome, the API service name, and
-the bounded result count on success. REST telemetry is limited to
-`rest.operation.completed`, the fixed `list_connections`, `list_contacts`,
-`list_groups`, `list_chats`, `read_messages`, `read_stored_media`, or
-`send_text_message` operation name, an allowlisted outcome, the API service name, and the bounded
-result count on success. Do not enrich either event with tenant, authorization, client,
-Connection, quota, credential, request, or response fields.
+`mcp_authorization_id` and present the `apk_` handle instead. MCP tool telemetry
+is limited to `mcp.tool_call.completed`, one fixed contract-defined tool name
+(`list_connections`, `list_contacts`, `list_groups`, `list_chats`,
+`read_messages`, `search_messages`, `send_text_message`, `send_pdf_file`,
+`send_image`, or `get_send_status`), an allowlisted outcome, the API service
+name, and the bounded result count on success. REST telemetry is limited to
+`rest.operation.completed`, one fixed contract-defined operation name
+(`list_connections`, `list_contacts`, `list_groups`, `list_chats`,
+`read_messages`, `read_stored_media`, `search_messages`, `send_text_message`,
+`send_pdf_file`, `send_image`, or `get_send_status`), an allowlisted outcome,
+the API service name, and the bounded result count on success. Do not enrich
+either event with tenant, authorization, client, Connection, quota, credential,
+request, or response fields.
 
 The endpoint returns at most 100 newest-first records at a time. Follow its
 opaque `next_cursor` until it is `null` to traverse the complete unexpired
@@ -407,18 +419,20 @@ Connection, send, network, or capability identifiers.
 
 The signed-in `GET /v1/personal-account/insights` overview returns a closed
 allowlist of aggregate counts for the last 30 UTC days: WhatsApp Connection
-state totals, retained inbound and outbound Stored Message totals with the
-previous window for comparison, conversation mix and weekly activity, Send
-Operation confirmed/failed/unknown totals, active MCP Authorization count, and
-a 30-point daily series. It never returns message content, media, conversation
-or recipient identity, phone numbers, credentials, public handles, tenant
-identifiers, or provider identifiers. Review telemetry is
+state totals, retained inbound and outbound Stored Message totals,
+conversation mix and weekly activity, Send Operation confirmed/failed/unknown
+totals, active MCP Authorization count, and a 30-point daily series. Counts
+exclude WhatsApp Connections in Connection Deletion. It never returns message
+content, media, conversation or recipient identity, phone numbers, credentials,
+public handles, tenant identifiers, or provider identifiers, and it does not
+compare against a prior retention window. Review telemetry is
 `account_insights.review.completed` with only inbound and outbound counts,
 window days, and the API service name.
 
 The public OAuth clients are defined in `apps/api/src/oauth.ts`:
 
 ```text
+Normal deployment smoke: client_id=deployment-smoke, redirect_uri=http://127.0.0.1:<ephemeral-port>/oauth/callback
 Claude: client_id=claude, redirect_uri=https://claude.ai/api/mcp/auth_callback
 Claude CIMD: client_id=https://claude.ai/oauth/mcp-oauth-client-metadata, redirect_uri=https://claude.ai/api/mcp/auth_callback
 ChatGPT: client_id=chatgpt, redirect_uri=https://chatgpt.com/connector/oauth/djePJ1RTfjI5 or https://chatgpt.com/connector_platform_oauth_redirect
@@ -427,20 +441,27 @@ ChatGPT CIMD: client_id=https://chatgpt.com/oauth/.../client.json, redirects sup
 
 Client IDs identify public PKCE clients and are not credentials. Treat every
 client, redirect, metadata-document origin, or client-class source change as an
-authorization-policy change. Authorization requires exact string equality, and KV never acts as the
-client registry.
+authorization-policy change. Authorization requires exact string equality
+except for the reviewed deployment-smoke loopback port, and KV never acts as
+the client registry.
 
-Provider-control startup also validates both Wasender secrets before serving
-even its private health route or an RPC method. The Wrangler manifest declares
-both names as required secrets, so deployment fails before serving when either
-secret has not been configured. Its adapter always calls the fixed
+Provider-control startup validates the two Wasender secrets before serving even
+its private health route or an RPC method. The Wrangler manifest declares both
+names as required secrets, so deployment fails before serving when either secret
+has not been configured. Its lifecycle adapter calls only the fixed
 `https://api.wapi.crafter.run` origin with the account-level credential, forces
 provider message logging and automatic incoming-message reads off during
-creation, and emits only operation class, normalized outcome, attempt, duration,
+creation, and omits `proxy_url`. The dormant Webshare selector and migrated
+`ProviderAllocationGate` class are not present in the production composition or
+bound manifest. Wasender's current session configuration is reread inside every
+operation, but an existing proxy assignment is neither required nor removed.
+The adapter emits only operation class,
+normalized outcome, attempt, duration,
 bounded response size, RPC method, and normalized result code. No telemetry
 field contains a Connection Setup marker, WhatsApp Number, provider locator,
-per-session authority, Provider API Credential, or raw result. No runtime value
-can select a fake provider or an alternate origin.
+per-session authority, Provider API Credential, proxy URL, proxy credential, or
+raw result. No runtime value can enable proxy assignment, select a fake provider,
+or select an alternate origin.
 
 `WASENDER_REFERENCE_SECRET` must remain stable because persisted adapter
 locators are keyed by it. To rotate it, stop provisioning, retain the old value,
@@ -519,12 +540,17 @@ cascades on Personal Account purge. Personal Account Deletion removes it with
 other User-addressable tenant data; a terminally deleted profile must not become
 readable after restore.
 
-The same profile row records security-stage completion. The browser marks that
-transition through an idempotent `PATCH` on the profile route before showing
-Connection Setup. A refresh therefore resumes Connection Setup without replaying
-the security disclosures, including when no Connection Setup has been created.
-Neon also requires this durable completion before the first Connection Setup,
-so browser state alone cannot bypass the security stage.
+The same profile row records security-stage completion and the first successful
+WhatsApp Connection activation. The first-activation marker remains after
+Connection Deletion so an account with zero current Connections does not restart
+onboarding. Both markers share the profile's Personal Account ownership,
+deletion, restore, and access behavior and contain no WhatsApp Number or provider
+identity. The browser marks the security transition through an idempotent `PATCH`
+on the profile route before showing Connection Setup. A refresh therefore resumes
+Connection Setup without replaying the security disclosures, including when no
+Connection Setup has been created. Neon also requires this durable completion
+before the first Connection Setup, so browser state alone cannot bypass the
+security stage.
 
 The first Connection Setup is rejected at the API boundary until a completed
 profile exists, except when the Personal Account already retains a WhatsApp
@@ -737,8 +763,10 @@ The owning signed-in browser reads
 Worker. The API resolves the verified Clerk User through the narrow activation
 bootstrap function before it invokes provider-control. It first reconciles the
 deterministic setup marker, starts QR linking only after that reconciliation
-shows a single non-connected provider session, and then asks provider-control
-for the current generated SVG. An available SVG is streamed directly as
+shows a single non-connected provider session, and returns `connecting` without
+immediately reading provider state after that lifecycle write. A later browser
+observation reconciles the session and asks provider-control for the current
+generated SVG. An available SVG is streamed directly as
 `image/svg+xml` with `Cache-Control: no-store`, a restrictive content security
 policy, and `X-Content-Type-Options: nosniff`. The bytes exist only in the
 bounded provider-control RPC result, API response, and browser object URL; no
@@ -884,16 +912,18 @@ hash, or other Stored Media metadata. The complete format and authenticated
 context are documented in [the encrypted Stored Media container
 specification](stored-media-container.md).
 
-## Wasender text-send authority
+## Wasender outbound-send authority
 
-Text sending does not add an account-level Provider API Credential, endpoint
+Text, PDF, and image sending do not add an account-level Provider API Credential, endpoint
 override, public route, service binding, or infrastructure secret. The
-production adapter always calls
-`https://api.wapi.crafter.run/api/send-message` over the Worker's existing
-outbound HTTPS capability, rejects redirects, and cannot select a test
-transport at runtime. This zero-binding infrastructure delta keeps ordinary
-connection operations outside provider-control and preserves ADR 0004's
-least-privilege split.
+production adapters always call the fixed
+`https://api.wapi.crafter.run/api/send-message` and
+`https://api.wapi.crafter.run/api/upload` endpoints over the Worker's existing
+outbound HTTPS capability, reject unapproved redirects, and cannot select a test
+transport at runtime. Provider upload URLs remain adapter-local and are never
+persisted. This zero-binding infrastructure delta keeps ordinary connection
+operations outside provider-control and preserves ADR 0004's least-privilege
+split.
 
 The adapter is composed per WhatsApp Connection with two values already
 protected by the connection's encryption boundary: its session-specific
@@ -905,10 +935,12 @@ runtime connection records, not deployment environment variables, so they do
 not belong in `.dev.vars`, Wrangler bindings, OpenTofu state, or operator
 configuration.
 
-Text-send telemetry is mandatory at composition and is limited to operation
-class, normalized outcome, attempt count, duration, and bounded response-byte
-count. It must not include text, phone numbers, recipient or message tokens,
-session authority, raw response data, URLs, or provider status values.
+Outbound-send telemetry is mandatory at composition and is limited to operation
+class, normalized outcome, upload and send attempt counts where applicable,
+duration, and bounded byte counts. It must not include text or captions, image
+bytes or MIME, PDF filenames, phone numbers, recipient or message tokens,
+session authority, raw response data, source or provider URLs, or provider
+status values.
 
 ## Infrastructure inputs
 
@@ -955,10 +987,10 @@ that would serialize them into state.
 
 Each environment declares four separate R2 buckets. Encrypted Webhook Events
 expire after seven days and incomplete multipart uploads abort after one day.
-Stored Media has no blanket object-expiry rule because Message Retention Policy
-can be shorter or explicitly retain content until deletion; application
-retention jobs own object deletion, while incomplete multipart uploads still
-abort after one day. Encrypted Deletion Capsules have no age-based deletion
+Stored Media, including Pending Send Files, has no blanket object-expiry rule
+because Message Retention Policy can be shorter or explicitly retain content
+until deletion; application retention jobs own object deletion, while
+incomplete multipart uploads still abort after one day. Encrypted Deletion Capsules have no age-based deletion
 rule: only confirmed provider absence permits the deletion coordinator to
 destroy one, and an overdue capsule must alert rather than silently lose the
 cleanup identifier. The capsule bucket is protected from OpenTofu destroy.

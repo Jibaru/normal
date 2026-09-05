@@ -74,7 +74,6 @@ for (const deployable of deployables) {
     ].sort();
     const forbiddenAuthority = [
       "d1_databases",
-      "durable_objects",
       "hyperdrive",
       "kv_namespaces",
       "queues",
@@ -93,9 +92,15 @@ for (const deployable of deployables) {
         !hasSameStrings(requiredSecrets(configuration), requiredSecretNames)
       ) {
         throw new Error(
-          `Provider-control ${configurationName} configuration must require both lifecycle secrets.`,
+          `Provider-control ${configurationName} configuration must require all lifecycle secrets.`,
         );
       }
+      assertAbsent(
+        configuration,
+        ["durable_objects"],
+        () =>
+          `Provider-control ${configurationName} must not bind the dormant proxy allocation gate.`,
+      );
     }
   } else if (deployable === "deletion-coordinator") {
     const configurations = manifestConfigurations(manifest);
@@ -420,6 +425,18 @@ for (const deployable of deployables) {
       if (!hasSameStrings(configuredCrons(configuration), requiredApiCrons)) {
         throw new Error(
           `API ${configurationName} configuration must schedule minute recovery, five-minute reconciliation, and hourly retention.`,
+        );
+      }
+      const provisioning = findQueueConsumer(
+        configuration,
+        `whatsapp-mcp-connection-setup-provisioning${environmentSuffix}`,
+      );
+      if (
+        provisioning?.max_batch_size !== 1 ||
+        provisioning.max_concurrency !== 1
+      ) {
+        throw new Error(
+          `API ${configurationName} configuration must serialize provider provisioning so proxy assignment remains unique.`,
         );
       }
       const ingestion = findQueueConsumer(

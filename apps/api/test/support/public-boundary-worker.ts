@@ -138,6 +138,7 @@ const onboardingProfiles = new Map<
   {
     readonly completedAt: string;
     readonly createdAt: string;
+    readonly firstConnectionCompletedAt: string | null;
     readonly intendedMcpClient: "claude" | "chatgpt" | "other" | "not_sure";
     readonly primaryUseCase:
       | "conversation_search"
@@ -310,8 +311,6 @@ const testAccountInsights = (observedAt: Date) => {
     messages: {
       inbound,
       outbound,
-      previousInbound: total > 0 ? 9 : 0,
-      previousOutbound: total > 0 ? 3 : 0,
     },
     sends: {
       confirmed: outbound,
@@ -777,6 +776,8 @@ const makeTestLayer = (
           const profile = {
             completedAt: existing?.completedAt ?? input.updatedAt,
             createdAt: existing?.createdAt ?? input.updatedAt,
+            firstConnectionCompletedAt:
+              existing?.firstConnectionCompletedAt ?? null,
             intendedMcpClient: input.intendedMcpClient,
             primaryUseCase: input.primaryUseCase,
             researchCallInterest: input.researchCallInterest,
@@ -1409,7 +1410,10 @@ const makeTestLayer = (
       nextLifecycleClaimId: Effect.succeed(
         "40000000-0000-4000-8000-000000000018",
       ),
-      nextPublicId: Effect.succeed("con_000000000000000000018"),
+      nextPublicId: Effect.sync(
+        () =>
+          `con_${String(18 + whatsAppConnections.length).padStart(21, "0")}`,
+      ),
       nextWebhookIdentityKey: Effect.succeed(new Uint8Array(32).fill(18)),
     }),
     Layer.succeed(WhatsAppConnectionPersistence, {
@@ -1431,6 +1435,20 @@ const makeTestLayer = (
             stateChangedAt: input.connectedAt,
           };
           whatsAppConnections.push(connection);
+          const setupOwner = [...connectionSetups.values()].find(
+            ({ setup }) => setup.setupId === input.setupId,
+          )?.clerkUserId;
+          const profile =
+            setupOwner === undefined
+              ? undefined
+              : onboardingProfiles.get(setupOwner);
+          if (setupOwner !== undefined && profile !== undefined) {
+            onboardingProfiles.set(setupOwner, {
+              ...profile,
+              firstConnectionCompletedAt:
+                profile.firstConnectionCompletedAt ?? input.connectedAt,
+            });
+          }
           return protectedTestConnection(connection);
         }),
       claimLifecycle: ({
@@ -1734,7 +1752,13 @@ const makeTestLayer = (
           return {
             ok: true as const,
             value: {
-              outcome: phoneNumber === "+15550123456" ? "match" : "mismatch",
+              outcome: [
+                "+15550123456",
+                "+15550123457",
+                "+15550123458",
+              ].includes(phoneNumber)
+                ? "match"
+                : "mismatch",
             },
           };
         }),

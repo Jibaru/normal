@@ -30,7 +30,9 @@ test("loads the Scalar reference on a mobile viewport", async ({ page }) => {
   await assertReference(page, { height: 812, width: 375 });
 });
 
-test("shows text and PDF Send Operation request schemas", async ({ page }) => {
+test("shows text, PDF, and image Send Operation request schemas", async ({
+  page,
+}) => {
   const response = await page.goto(
     "/#tag/send-operations/POST/v1/connections/{connection_id}/send-operations",
   );
@@ -49,6 +51,12 @@ test("shows text and PDF Send Operation request schemas", async ({ page }) => {
   ).toBeVisible();
   await expect(
     page.getByRole("option", { name: "PDF file (Base64)" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("option", { name: "Image from URL" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("option", { name: "Image file (Base64)" }),
   ).toBeVisible();
 });
 

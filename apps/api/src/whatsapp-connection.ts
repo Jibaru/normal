@@ -173,6 +173,7 @@ export interface WhatsAppConnectionProviderService {
     readonly session: string;
   }) => Effect.Effect<ProviderControlResult<QrCodeObservation>>;
   readonly reconcile: (input: {
+    readonly requireConnectReady?: true | undefined;
     readonly setupMarker: string;
   }) => Effect.Effect<ProviderControlResult<SessionReconciliation>>;
   readonly verifyNumber: (input: {
@@ -642,6 +643,7 @@ export const observeConnectionSetup = (
     }
 
     let session = reconciliation.session;
+    let startedConnecting = false;
     if (
       session.connectionState !== "connected" &&
       session.connectionState !== "connecting"
@@ -649,6 +651,7 @@ export const observeConnectionSetup = (
       session = yield* providerValue(
         yield* provider.connect({ session: session.session }),
       );
+      startedConnecting = true;
     }
     if (session.connectionState === "connected") {
       const number = yield* revealSetupNumber(loaded.setup);
@@ -674,6 +677,10 @@ export const observeConnectionSetup = (
         connection: yield* activate(loaded.setup, session),
         outcome: "connected",
       };
+    }
+
+    if (startedConnecting && session.connectionState === "connecting") {
+      return { outcome: "connecting" };
     }
 
     const qr = yield* providerValue(
@@ -744,6 +751,7 @@ export const reconcileWhatsAppConnectionLifecycle = (
     let providerSession: LifecycleSession | null = null;
     let state: Exclude<WhatsAppConnectionState, "deleting"> = "degraded";
     const reconciled = yield* provider.reconcile({
+      ...(action === "reconnect" ? { requireConnectReady: true as const } : {}),
       setupMarker: claim.setupMarker,
     });
     if (reconciled.ok) {
@@ -775,6 +783,9 @@ export const reconcileWhatsAppConnectionLifecycle = (
             : written.value.connectionState;
       } else {
         const afterAmbiguousWrite = yield* provider.reconcile({
+          ...(action === "reconnect"
+            ? { requireConnectReady: true as const }
+            : {}),
           setupMarker: claim.setupMarker,
         });
         if (afterAmbiguousWrite.ok) {

@@ -67,6 +67,7 @@ export type OnboardingSecurityCompletionWrite =
 export const OnboardingProfile = Schema.Struct({
   completed_at: Schema.String,
   created_at: Schema.String,
+  first_connection_completed_at: Schema.NullOr(Schema.String),
   intended_mcp_client: OnboardingIntendedMcpClient,
   primary_use_case: OnboardingPrimaryUseCase,
   research_call_interest: OnboardingResearchCallInterest,

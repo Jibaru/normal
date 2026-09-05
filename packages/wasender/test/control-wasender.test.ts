@@ -9,6 +9,7 @@ import {
   type WebhookEndpoint,
   type WhatsAppNumber,
 } from "../src/control";
+import { WebshareProxySelectionError } from "../src/webshare";
 
 const credential = Redacted.make("pat_0123456789abcdef0123456789abcdef");
 const referenceSecret = Redacted.make(
@@ -19,6 +20,7 @@ const phoneNumber = Redacted.make("+15550123456") as WhatsAppNumber;
 const webhookEndpoint = Redacted.make(
   "https://api.example.test/webhooks/wasender/30000000-0000-4000-8000-000000000041",
 ) as WebhookEndpoint;
+const proxyUrl = "socks5://proxy-one:password-one@p.webshare.io:10000";
 const webhookEvents = [
   "contacts.update",
   "contacts.upsert",
@@ -143,6 +145,388 @@ describe("real Wasender lifecycle adapter", () => {
     expect(Redacted.value(result.authority as SessionAuthority)).toContain(
       "session_credential",
     );
+  });
+
+  test("assigns an unused proxy while creating a provider session", async () => {
+    const requests: Request[] = [];
+    const reservations: string[] = [];
+    const releases: string[] = [];
+    const responses = [
+      json({ success: true, data: [] }),
+      json({ success: true, data: [] }),
+      json({
+        success: true,
+        data: providerSession({ proxy_url: proxyUrl }),
+      }),
+    ];
+    const lifecycle = makeWasenderSessionLifecycle(
+      { credential, referenceSecret },
+      {
+        fetch: async (request) => {
+          requests.push(request);
+          return responses.shift() ?? json({}, { status: 500 });
+        },
+        proxySelector: {
+          select: async (input) => {
+            expect(input.setupMarker).toBe(setupMarker);
+            expect(input.occupiedProxyUrls).toEqual([]);
+            return Redacted.make(proxyUrl);
+          },
+        },
+        proxyAllocationCoordinator: {
+          release: async (marker) => {
+            releases.push(String(marker));
+          },
+          reserve: async (marker) => {
+            reservations.push(String(marker));
+          },
+        },
+      },
+    );
+
+    await Effect.runPromise(
+      lifecycle.createSession({ phoneNumber, setupMarker, webhookEndpoint }),
+    );
+
+    expect(requests.map((request) => request.method)).toEqual([
+      "GET",
+      "GET",
+      "POST",
+    ]);
+    expect(await requests[2]?.json()).toMatchObject({ proxy_url: proxyUrl });
+    expect(reservations).toEqual([setupMarker]);
+    expect(releases).toEqual([setupMarker]);
+  });
+
+  test("loads session details before treating proxies as unoccupied", async () => {
+    const assignedProxy = new URL(proxyUrl);
+    assignedProxy.port = "10001";
+    const assignedProxyUrl = assignedProxy.href;
+    const otherSummary = providerSession({
+      api_key: undefined,
+      id: 42,
+      name: "other",
+      proxy_url: undefined,
+    });
+    const otherDetail = providerSession({
+      id: 42,
+      name: "other",
+      proxy_url: assignedProxyUrl,
+    });
+    const responses = [
+      json({ success: true, data: [otherSummary] }),
+      json({ success: true, data: [otherSummary] }),
+      json({ success: true, data: otherDetail }),
+      json({
+        success: true,
+        data: providerSession({ proxy_url: proxyUrl }),
+      }),
+    ];
+    const lifecycle = makeWasenderSessionLifecycle(
+      { credential, referenceSecret },
+      {
+        fetch: async () => responses.shift() ?? json({}, { status: 500 }),
+        proxySelector: {
+          select: async (input) => {
+            expect(input.occupiedProxyUrls.map(Redacted.value)).toEqual([
+              assignedProxyUrl,
+            ]);
+            return Redacted.make(proxyUrl);
+          },
+        },
+      },
+    );
+
+    await Effect.runPromise(
+      lifecycle.createSession({ phoneNumber, setupMarker, webhookEndpoint }),
+    );
+
+    expect(responses).toEqual([]);
+  });
+
+  test("reconciles before retrying a transient proxy-list failure", async () => {
+    const lifecycle = makeWasenderSessionLifecycle(
+      { credential, referenceSecret },
+      {
+        fetch: async () => json({ success: true, data: [] }),
+        proxySelector: {
+          select: async () => {
+            throw new WebshareProxySelectionError(true);
+          },
+        },
+      },
+    );
+
+    const failure = await runFailure(
+      lifecycle.createSession({ phoneNumber, setupMarker, webhookEndpoint }),
+    );
+
+    expect(failure).toMatchObject({
+      code: "unavailable",
+      operation: "lifecycle-write",
+      retryDecision: "reconcile_before_repeat",
+    });
+  });
+
+  test("maps empty paid proxy inventory to provider capacity unavailability", async () => {
+    const lifecycle = makeWasenderSessionLifecycle(
+      { credential, referenceSecret },
+      {
+        fetch: async () => json({ success: true, data: [] }),
+        proxySelector: {
+          select: async () => {
+            throw new WebshareProxySelectionError(false, true);
+          },
+        },
+      },
+    );
+
+    const failure = await runFailure(
+      lifecycle.createSession({ phoneNumber, setupMarker, webhookEndpoint }),
+    );
+
+    expect(failure).toMatchObject({
+      code: "source_rejected",
+      operation: "lifecycle-write",
+      retryDecision: "do_not_retry",
+    });
+  });
+
+  test("maps an unavailable allocation snapshot to a retryable lifecycle write", async () => {
+    let calls = 0;
+    const lifecycle = makeWasenderSessionLifecycle(
+      { credential, referenceSecret },
+      {
+        fetch: async () => {
+          calls += 1;
+          return calls === 1
+            ? json({ success: true, data: [] })
+            : json({}, { status: 503 });
+        },
+        random: () => 0,
+        sleep: async () => undefined,
+        proxySelector: {
+          select: async () => Redacted.make(proxyUrl),
+        },
+      },
+    );
+
+    const failure = await runFailure(
+      lifecycle.createSession({ phoneNumber, setupMarker, webhookEndpoint }),
+    );
+
+    expect(calls).toBe(4);
+    expect(failure).toMatchObject({
+      code: "unavailable",
+      operation: "lifecycle-write",
+      retryDecision: "reconcile_before_repeat",
+    });
+  });
+
+  test("preserves a permanent allocation snapshot failure", async () => {
+    let calls = 0;
+    const lifecycle = makeWasenderSessionLifecycle(
+      { credential, referenceSecret },
+      {
+        fetch: async () => {
+          calls += 1;
+          return calls === 1
+            ? json({ success: true, data: [] })
+            : json({ success: true, data: { malformed: true } });
+        },
+        proxySelector: {
+          select: async () => Redacted.make(proxyUrl),
+        },
+      },
+    );
+
+    const failure = await runFailure(
+      lifecycle.createSession({ phoneNumber, setupMarker, webhookEndpoint }),
+    );
+
+    expect(calls).toBe(2);
+    expect(failure).toMatchObject({
+      code: "invalid_response",
+      operation: "lifecycle-write",
+      retryDecision: "do_not_retry",
+    });
+  });
+
+  test("repairs a missing proxy without reusing another session's assignment", async () => {
+    const otherProxyUrl = "socks5://proxy-two:password-two@p.webshare.io:10001";
+    const targetWithoutProxy = providerSession({ proxy_url: null });
+    const other = providerSession({
+      api_key: undefined,
+      id: 42,
+      name: "other",
+      proxy_url: otherProxyUrl,
+    });
+    const requests: Request[] = [];
+    const responses = [
+      json({ success: true, data: [targetWithoutProxy, other] }),
+      json({ success: true, data: targetWithoutProxy }),
+      json({ success: true, data: [targetWithoutProxy, other] }),
+      json({
+        success: true,
+        data: { ...other, api_key: "session_credential" },
+      }),
+      json({
+        success: true,
+        data: providerSession({ proxy_url: proxyUrl }),
+      }),
+      json({
+        success: true,
+        data: providerSession({ proxy_url: proxyUrl }),
+      }),
+    ];
+    const lifecycle = makeWasenderSessionLifecycle(
+      { credential, referenceSecret },
+      {
+        fetch: async (request) => {
+          requests.push(request);
+          return responses.shift() ?? json({}, { status: 500 });
+        },
+        proxySelector: {
+          select: async (input) => {
+            expect(input.currentProxyUrl).toBeUndefined();
+            expect(
+              input.occupiedProxyUrls.map((value) => Redacted.value(value)),
+            ).toEqual([otherProxyUrl]);
+            return Redacted.make(proxyUrl);
+          },
+        },
+      },
+    );
+
+    await Effect.runPromise(
+      lifecycle.repairSessionConfiguration({ setupMarker, webhookEndpoint }),
+    );
+
+    expect(requests.map((request) => request.method)).toEqual([
+      "GET",
+      "GET",
+      "GET",
+      "GET",
+      "PUT",
+      "GET",
+    ]);
+    expect(await requests[4]?.json()).toMatchObject({ proxy_url: proxyUrl });
+  });
+
+  test("reports a missing proxy as configuration drift", async () => {
+    const responses = [
+      json({
+        success: true,
+        data: [providerSession({ api_key: undefined, proxy_url: null })],
+      }),
+      json({ success: true, data: providerSession({ proxy_url: null }) }),
+      json({
+        success: true,
+        data: [providerSession({ api_key: undefined, proxy_url: null })],
+      }),
+    ];
+    const lifecycle = makeWasenderSessionLifecycle(
+      { credential, referenceSecret },
+      {
+        fetch: async () => responses.shift() ?? json({}, { status: 500 }),
+        proxySelector: {
+          select: async () => Redacted.make(proxyUrl),
+        },
+      },
+    );
+
+    const failure = await runFailure(
+      lifecycle.reconcileSession({ requireConnectReady: true, setupMarker }),
+    );
+
+    expect(failure.code).toBe("integrity_failed");
+  });
+
+  test("reports a duplicate proxy assignment as configuration drift", async () => {
+    const configured = providerSession({ proxy_url: proxyUrl });
+    const responses = [
+      json({
+        success: true,
+        data: [providerSession({ api_key: undefined, proxy_url: proxyUrl })],
+      }),
+      json({ success: true, data: configured }),
+      json({
+        success: true,
+        data: [
+          providerSession({ api_key: undefined, proxy_url: proxyUrl }),
+          providerSession({
+            api_key: undefined,
+            id: 42,
+            name: "other",
+            proxy_url: proxyUrl,
+          }),
+        ],
+      }),
+      json({
+        success: true,
+        data: providerSession({ id: 42, name: "other", proxy_url: proxyUrl }),
+      }),
+    ];
+    const lifecycle = makeWasenderSessionLifecycle(
+      { credential, referenceSecret },
+      {
+        fetch: async () => responses.shift() ?? json({}, { status: 500 }),
+        proxySelector: {
+          select: async ({ occupiedProxyUrls }) =>
+            Redacted.make(
+              occupiedProxyUrls.some(
+                (value) => Redacted.value(value) === proxyUrl,
+              )
+                ? "socks5://proxy-three:password-three@p.webshare.io:10002"
+                : proxyUrl,
+            ),
+        },
+      },
+    );
+
+    const failure = await runFailure(
+      lifecycle.reconcileSession({ setupMarker, webhookEndpoint }),
+    );
+
+    expect(failure.code).toBe("integrity_failed");
+  });
+
+  test("reports a stale proxy assignment as configuration drift", async () => {
+    const staleProxyUrl =
+      "socks5://stale-proxy:stale-password@p.webshare.io:10003";
+    const responses = [
+      json({
+        success: true,
+        data: [
+          providerSession({ api_key: undefined, proxy_url: staleProxyUrl }),
+        ],
+      }),
+      json({
+        success: true,
+        data: providerSession({ proxy_url: staleProxyUrl }),
+      }),
+      json({
+        success: true,
+        data: [
+          providerSession({ api_key: undefined, proxy_url: staleProxyUrl }),
+        ],
+      }),
+    ];
+    const lifecycle = makeWasenderSessionLifecycle(
+      { credential, referenceSecret },
+      {
+        fetch: async () => responses.shift() ?? json({}, { status: 500 }),
+        proxySelector: {
+          select: async () => Redacted.make(proxyUrl),
+        },
+      },
+    );
+
+    const failure = await runFailure(
+      lifecycle.reconcileSession({ setupMarker, webhookEndpoint }),
+    );
+
+    expect(failure.code).toBe("integrity_failed");
   });
 
   test("repairs group webhook delivery on an existing provider session", async () => {
@@ -470,13 +854,26 @@ describe("real Wasender lifecycle adapter", () => {
 
   test("does not repeat an ambiguous create timeout", async () => {
     let calls = 0;
+    const reservations: string[] = [];
+    const releases: string[] = [];
     const lifecycle = makeWasenderSessionLifecycle(
       { credential, referenceSecret },
       {
         fetch: async () => {
           calls += 1;
-          if (calls === 1) return json({ success: true, data: [] });
+          if (calls <= 2) return json({ success: true, data: [] });
           throw new DOMException("timed out", "AbortError");
+        },
+        proxyAllocationCoordinator: {
+          release: async (marker) => {
+            releases.push(String(marker));
+          },
+          reserve: async (marker) => {
+            reservations.push(String(marker));
+          },
+        },
+        proxySelector: {
+          select: async () => Redacted.make(proxyUrl),
         },
       },
     );
@@ -485,7 +882,9 @@ describe("real Wasender lifecycle adapter", () => {
       lifecycle.createSession({ phoneNumber, setupMarker, webhookEndpoint }),
     );
 
-    expect(calls).toBe(2);
+    expect(calls).toBe(3);
+    expect(reservations).toEqual([setupMarker]);
+    expect(releases).toEqual([]);
     expect(failure).toEqual({
       _tag: "ProviderNeutralFailure",
       code: "timed_out",
@@ -539,6 +938,53 @@ describe("real Wasender lifecycle adapter", () => {
     expect(await requests[4]?.json()).toEqual({ linkMethod: "qr" });
   });
 
+  test("refuses to connect a session with a stale proxy assignment", async () => {
+    const staleProxy = new URL(proxyUrl);
+    staleProxy.port = "10003";
+    const staleProxyUrl = staleProxy.href;
+    const staleSummary = providerSession({
+      api_key: undefined,
+      proxy_url: staleProxyUrl,
+    });
+    const staleDetail = providerSession({ proxy_url: staleProxyUrl });
+    const responses = [
+      json({ success: true, data: [staleSummary] }),
+      json({ success: true, data: staleDetail }),
+      json({ success: true, data: [staleSummary] }),
+      json({ success: true, data: staleDetail }),
+      json({ success: true, data: [staleSummary] }),
+    ];
+    const requests: Request[] = [];
+    const lifecycle = makeWasenderSessionLifecycle(
+      { credential, referenceSecret },
+      {
+        fetch: async (request) => {
+          requests.push(request);
+          return responses.shift() ?? json({}, { status: 500 });
+        },
+        proxySelector: {
+          select: async () => Redacted.make(proxyUrl),
+        },
+      },
+    );
+    const sessions = await Effect.runPromise(
+      lifecycle.listSessions({ setupMarker }),
+    );
+    const session = sessions[0];
+    if (!session) throw new Error("missing session fixture");
+
+    const failure = await runFailure(
+      lifecycle.connectSession({ session: session.session }),
+    );
+
+    expect(failure).toMatchObject({
+      code: "integrity_failed",
+      operation: "lifecycle-write",
+      retryDecision: "do_not_retry",
+    });
+    expect(requests.every(({ method }) => method === "GET")).toBe(true);
+  });
+
   test("disconnects by opaque locator with one lifecycle write", async () => {
     const responses = [
       json({
@@ -570,6 +1016,11 @@ describe("real Wasender lifecycle adapter", () => {
         fetch: async (request) => {
           requests.push(request);
           return responses[calls++] ?? json({}, { status: 500 });
+        },
+        proxySelector: {
+          select: async () => {
+            throw new Error("disconnect must not inspect proxy inventory");
+          },
         },
       },
     );

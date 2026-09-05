@@ -73,6 +73,7 @@ export type McpToolName =
   | "list_groups"
   | "send_text_message"
   | "send_pdf_file"
+  | "send_image"
   | "get_send_status"
   | "list_chats"
   | "read_messages"
@@ -1710,6 +1711,7 @@ const requiredScope = (toolName: McpToolName): McpAuthorizationScope =>
     ? "connections:read"
     : toolName === "send_text_message" ||
         toolName === "send_pdf_file" ||
+        toolName === "send_image" ||
         toolName === "get_send_status"
       ? "messages:send"
       : toolName === "list_chats"

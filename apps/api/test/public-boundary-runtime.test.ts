@@ -253,6 +253,7 @@ describe("public-boundary Worker harness", () => {
         },
       );
 
+    const connecting = await exports.default.fetch(qrRequest());
     const qr = await exports.default.fetch(qrRequest());
     const connected = await exports.default.fetch(qrRequest());
     const listed = await exports.default.fetch(
@@ -296,6 +297,10 @@ describe("public-boundary Worker harness", () => {
       }),
     );
 
+    expect(connecting.status).toBe(202);
+    expect(connecting.headers.get("x-connection-setup-state")).toBe(
+      "connecting",
+    );
     expect(qr.status).toBe(200);
     expect(qr.headers.get("content-type")).toBe("image/svg+xml");
     expect((await qr.arrayBuffer()).byteLength).toBeGreaterThan(0);
@@ -350,7 +355,7 @@ describe("public-boundary Worker harness", () => {
         body: JSON.stringify({
           idempotency_key: "423456789012345678901",
           name: "Work WhatsApp",
-          whatsapp_number: "+1 (555) 012-3457",
+          whatsapp_number: "+1 (555) 012-3459",
         }),
         headers: {
           authorization: "Bearer signed-test-user",
@@ -374,6 +379,7 @@ describe("public-boundary Worker harness", () => {
           },
         },
       );
+    const connecting = await exports.default.fetch(qrRequest());
     const qr = await exports.default.fetch(qrRequest());
     const rejected = await exports.default.fetch(qrRequest());
     const listed = await exports.default.fetch(
@@ -385,6 +391,10 @@ describe("public-boundary Worker harness", () => {
       }),
     );
 
+    expect(connecting.status).toBe(202);
+    expect(connecting.headers.get("x-connection-setup-state")).toBe(
+      "connecting",
+    );
     expect(qr.status).toBe(200);
     expect(qr.headers.get("content-type")).toBe("image/svg+xml");
     expect(rejected.status).toBe(409);
@@ -394,7 +404,7 @@ describe("public-boundary Worker harness", () => {
     });
     expect(await listed.json()).not.toMatchObject({
       whatsapp_connections: expect.arrayContaining([
-        expect.objectContaining({ number_suffix: "3457" }),
+        expect.objectContaining({ number_suffix: "3459" }),
       ]),
     });
   });

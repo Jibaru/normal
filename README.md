@@ -8,7 +8,7 @@ The platform is currently built for a private beta. Privacy, deletion, auditabil
 
 ## What is in this repo
 
-This is a Bun and Turbo monorepo with seven deployable apps:
+This is a Bun and Turbo monorepo with ten deployable apps:
 
 | Path | Purpose | Runtime |
 | --- | --- | --- |
@@ -18,6 +18,7 @@ This is a Bun and Turbo monorepo with seven deployable apps:
 | `apps/provider-control` | Private boundary for provider provisioning and control | Cloudflare Workers |
 | `apps/deletion-coordinator` | Continues deletion after access and key use have stopped | Cloudflare Workers |
 | `apps/restore-coordinator` | Reconciles restored data with deletion markers and recovery rules | Cloudflare Workers |
+| `apps/operations-control` | Authenticated availability evidence and pager delivery | Cloudflare Workers |
 | `apps/recovery-control` | Runs authenticated, serialized, non-serving production recovery drills | Cloudflare Workers and Workflows |
 | `apps/recovery-verifier` | Independently verifies guarded recovery branches and aggregate objectives | Cloudflare Workers |
 | `apps/recovery-game-day` | Exercises disposable quarterly KV, Queue, R2, KMS, and pager capabilities | Cloudflare Workers |
@@ -29,7 +30,7 @@ Shared code is split by responsibility:
 | `packages/domain` | Pure domain rules and state transitions |
 | `packages/contracts` | MCP, API, health, handle, and service binding schemas |
 | `packages/db` | Drizzle schema, migrations, RLS-aware repositories, and database tools |
-| `packages/wasender` | Thin provider adapter for connection lifecycle, media, and webhook normalization |
+| `packages/wasender` | Thin provider adapter for connection lifecycle, Directory, text and PDF sending, media, and webhook normalization |
 | `infra` | OpenTofu configuration for Cloudflare, Vercel, Neon, and AWS KMS |
 | `scripts` | Deployment, validation, recovery, observability, and launch gate tooling |
 
@@ -178,7 +179,7 @@ The most important rules are simple:
 
 Development, preview, and production have separate configuration and infrastructure authority. Do not deploy by improvising commands from local manifests.
 
-Follow [`docs/runbooks/deployment.md`](docs/runbooks/deployment.md), but use [the production workflow](.github/workflows/deploy-production.yml) as the executable deployment order: migrate and check the database, then deploy provider-control, deletion coordinator, restore coordinator, recovery control, the rendered API, web, docs, and finally smoke the release. Production recovery, key rotation, replay, break-glass access, and environment teardown each have dedicated runbooks under `docs/runbooks`.
+Follow [`docs/runbooks/deployment.md`](docs/runbooks/deployment.md), but use [the production workflow](.github/workflows/deploy-production.yml) as the executable deployment order: migrate and check the database, then deploy provider-control, deletion coordinator, restore coordinator, operations control, recovery game day, recovery verifier, recovery control, the rendered API, web, docs, and finally smoke the release. Production recovery, key rotation, replay, break-glass access, and environment teardown each have dedicated runbooks under `docs/runbooks`.
 
 ## Sandcastle
 

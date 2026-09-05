@@ -3,6 +3,7 @@
 import { useAuth, useReverification } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -155,7 +156,7 @@ export function ApiKeysPanel({
       });
     },
     onSuccess: (result) => {
-      if (!result.ok) return;
+      if (!("ok" in result) || !result.ok) return;
       queryClient.setQueryData(
         queryKeys.apiKeys(),
         (current: ReadonlyArray<ApiKeyRecord> | undefined) =>
@@ -189,6 +190,10 @@ export function ApiKeysPanel({
     setCreateError(null);
     try {
       const result = await submitCreate();
+      if (!("ok" in result)) {
+        setCreateError("API Key creation was cancelled or failed. Try again.");
+        return;
+      }
       if (!result.ok) {
         if (result.error === "duplicate_name") {
           setCreateError("An active API Key already uses this name.");
@@ -223,6 +228,7 @@ export function ApiKeysPanel({
       setSelectedConnections([]);
       setExpiresAt("");
       setCreateDialogOpen(false);
+      toast.success("API Key created");
     } catch {
       setCreateError("API Key creation was cancelled or failed. Try again.");
     }

@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { toast } from "sonner";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Field,
@@ -60,6 +61,8 @@ export type ConnectionSetupState =
   | "provisioning_quarantined"
   | "replayed"
   | "invalid"
+  | "number_cleanup_in_progress"
+  | "number_deletion_in_progress"
   | "number_unavailable"
   | "connection_limit_reached"
   | "expired"
@@ -121,6 +124,7 @@ export interface OnboardingProfile {
   readonly whatsappUsageContext: WhatsAppUsageContext;
   readonly role: OnboardingRole;
   readonly securityCompletedAt: string | null;
+  readonly firstConnectionCompletedAt: string | null;
   readonly intendedMcpClient: IntendedMcpClient;
   readonly researchCallInterest: ResearchCallInterest;
   readonly createdAt: string;
@@ -343,6 +347,8 @@ export function decodeOnboardingProfileResponse(
     !isResearchCallInterest(record.research_call_interest) ||
     !isIsoDate(record.created_at) ||
     !isIsoDate(record.updated_at) ||
+    (record.first_connection_completed_at !== null &&
+      !isIsoDate(record.first_connection_completed_at)) ||
     (record.completed_at !== null && !isIsoDate(record.completed_at)) ||
     (record.security_completed_at !== null &&
       !isIsoDate(record.security_completed_at))
@@ -354,6 +360,7 @@ export function decodeOnboardingProfileResponse(
     whatsappUsageContext: record.whatsapp_usage_context,
     role: record.role,
     securityCompletedAt: record.security_completed_at,
+    firstConnectionCompletedAt: record.first_connection_completed_at,
     intendedMcpClient: record.intended_mcp_client,
     researchCallInterest: record.research_call_interest,
     createdAt: record.created_at,
@@ -488,6 +495,12 @@ function connectionSetupStatusText(
   if (setupState === "number_unavailable") {
     return "That WhatsApp Number is already in use.";
   }
+  if (setupState === "number_cleanup_in_progress") {
+    return "Your previous Connection Setup is still releasing this WhatsApp Number. Please try again in a few minutes.";
+  }
+  if (setupState === "number_deletion_in_progress") {
+    return "Your previous Connection Deletion is still removing this WhatsApp Number. Please try again in a few minutes.";
+  }
   if (setupState === "connection_limit_reached") {
     return "Your Personal Account already has three active setup or Connection slots.";
   }
@@ -618,6 +631,20 @@ function connectionSetupPanelCopy(
       body: "That WhatsApp Number is already reserved by another Connection Setup or WhatsApp Connection.",
       hint: "Enter a different WhatsApp Number and continue.",
       title: "WhatsApp Number unavailable",
+    };
+  }
+  if (setupState === "number_cleanup_in_progress") {
+    return {
+      body: "Your previous Connection Setup ended, but provider cleanup must finish before Normal can reserve this number again.",
+      hint: "Try the same WhatsApp Number again in a few minutes.",
+      title: "Connection Setup cleanup in progress",
+    };
+  }
+  if (setupState === "number_deletion_in_progress") {
+    return {
+      body: "Your previous WhatsApp Connection is deleted, but provider cleanup must finish before Normal can reserve this number again.",
+      hint: "Try the same WhatsApp Number again in a few minutes.",
+      title: "Connection Deletion in progress",
     };
   }
   if (setupState === "connection_limit_reached") {
@@ -1257,6 +1284,7 @@ export function FirstConnectionOnboarding({
       setProfileState("idle");
       markStageCompleted("profile");
       captureProductAnalyticsEvent({ event: "onboarding_profile_completed" });
+      toast.success("Onboarding profile saved");
       setStage("security");
     } catch {
       setProfileState("unavailable");
@@ -1296,6 +1324,7 @@ export function FirstConnectionOnboarding({
       setProfile(savedProfile);
       onProfileSaved(savedProfile);
       setSecurityState("idle");
+      toast.success("Security completion saved");
       completeStage("security", "connection_setup");
     } catch {
       setSecurityState("unavailable");

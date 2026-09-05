@@ -10,6 +10,7 @@ import {
 const completedProfile: OnboardingProfile = {
   completedAt: "2026-08-18T12:00:00.000Z",
   createdAt: "2026-08-18T12:00:00.000Z",
+  firstConnectionCompletedAt: null,
   intendedMcpClient: "chatgpt",
   primaryUseCase: "conversation_search",
   researchCallInterest: "yes",
